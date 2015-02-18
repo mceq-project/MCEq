@@ -6,7 +6,10 @@ __pycache__/
 *.ppd
 
 # eclipse stuff
-.*
+.p*
+.e*
+.settings
+._
 
 # C extensions
 *.so

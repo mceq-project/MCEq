@@ -1,0 +1,6 @@
+[submodule "CRFluxModels"]
+	path = CRFluxModels
+	url = https://github.com/afedynitch/CRFluxModels.git
+[submodule "ParticleDataTool"]
+	path = ParticleDataTool
+	url = https://github.com/afedynitch/ParticleDataTool.git
