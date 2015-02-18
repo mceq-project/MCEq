@@ -2,7 +2,7 @@
 from mceq_config import dbg, config
 
 if config['msis_python'] == 'ctypes':
-    from c_msis_interface import *  #@UnusedWildImport
+    from c_msis_interface import *
 else:
     from nrlmsise_00_header import *
 
