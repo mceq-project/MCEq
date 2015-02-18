@@ -1,6 +1,7 @@
 import sys
 sys.path.append("./CRFluxModels")
 sys.path.append("./ParticleDataTool")
+sys.path.append("./Python-NRLMSISE-00")
 #commented out since projects are far from beeing ready for prime time.
 #sys.path.append("../Fedynitch2012")
 #sys.path.append("../AnalyticalApproximation")
@@ -44,6 +45,9 @@ config = {
 
 # Atmospheric model in the format: (model, parametrise ation, options)
 "atm_model": ('CORSIKA', 'BK_USStd', None),
+
+# Version of NRLMSISE-00 python library (ctypes, native)
+"msis_python": "native",
 
 # List of particles which decay products will be scored
 # in a 'obs_' category
