@@ -1,8 +1,9 @@
 import sys
-sys.path.append("../AnalyticalApproximation")
-sys.path.append("../CRFluxModels")
-sys.path.append("../ParticleDataTool")
-sys.path.append("../Fedynitch2012")
+sys.path.append("./CRFluxModels")
+sys.path.append("./ParticleDataTool")
+#commented out since projects are far from beeing ready for prime time.
+#sys.path.append("../Fedynitch2012")
+#sys.path.append("../AnalyticalApproximation")
 
 
 config = {
@@ -15,7 +16,7 @@ config = {
 #=========================================================================
 
 # Directory where the data files for the calculation are stored
-"data_dir": '/Users/afedynitch/Documents/KIT/artifacts/matrix_method/data_files',
+"data_dir": './data',
 
 # File name of particle production yields
 "yield_fname": "yield_dict.ppd",
@@ -30,7 +31,7 @@ config = {
 'atm_cache_file':'atm_cache.ppd',
 
 # full path to libmkl_rt.[so/dylib]
-"MKL_path": "/Users/afedynitch/anaconda/lib/libmkl_rt.dylib",
+"MKL_path": "/home/afedynitch/anaconda/lib/libmkl_rt.dylib",
 
 #=========================================================================
 # Basic calculation settings
@@ -71,7 +72,7 @@ config = {
 # Use sparse linear algebra (recommended!)
 "use_sparse": True,
 
-# CUDA float precision (has no effect on other solvers than CUDA)
+# CUDA float precision
 "CUDA_precision": 32,
 
 #=========================================================================
