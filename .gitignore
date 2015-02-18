@@ -9,7 +9,7 @@ __pycache__/
 .p*
 .e*
 .settings
-._
+.DS*
 
 # C extensions
 *.so

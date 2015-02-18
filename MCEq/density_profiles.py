@@ -58,7 +58,7 @@ def _load_cache():
     try:
         return pickle.load(open(fname, 'r'))
     except IOError:
-        print "atmospheres::_load_cache(): creating new cache.."
+        print "density_profiles::_load_cache(): creating new cache.."
         return {}
 
 def _dump_cache(cache):
@@ -72,9 +72,10 @@ def _dump_cache(cache):
     import cPickle as pickle
     
     if dbg > 0:
-        print "atmsopheres(): dumping cache."
+        print "density_profiles::_dump_cache() dumping cache."
     fname = join(config['data_dir'],
                  config['atm_cache_file'])
+    print fname
     try:
         pickle.dump(cache, open(fname, 'w'), protocol=-1)
     except IOError:
@@ -591,7 +592,7 @@ class MSIS00Atmosphere(CascadeAtmosphere):
     _msis = None
     
     def __init__(self, location, season):
-        from pymsis00 import NRLMSISE00
+        from msis_wrapper import NRLMSISE00
         self.msis = NRLMSISE00()
         self.init_parameters(location, season)
         CascadeAtmosphere.__init__(self)
