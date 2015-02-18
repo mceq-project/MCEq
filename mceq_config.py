@@ -95,8 +95,10 @@ config = {
     "allow_resonances": [],
     # Disable mixing of resonance approx. and propagation
     "no_mixing": False
+    }
 }
-}
+
+
 
 dbg = config['debug_level']
 
