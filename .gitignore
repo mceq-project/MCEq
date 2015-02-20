@@ -5,6 +5,7 @@ __pycache__/
 # pickled or decompressed files
 *.ppd
 *.ppl
+examples/.ipynb_*
 
 # eclipse stuff
 .p*
