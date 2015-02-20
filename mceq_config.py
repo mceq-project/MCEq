@@ -31,14 +31,12 @@ config = {
 # File where to cache interpolating splines of the atmosphere module
 'atm_cache_file':'atm_cache.ppd',
 
-# full path to libmkl_rt.[so/dylib]
-"MKL_path": "/home/afedynitch/anaconda/lib/libmkl_rt.dylib",
+# full path to libmkl_rt.[so/dylib] (if kernel=='MKL')
+"MKL_path": "/Users/afedynitch/anaconda/lib/libmkl_rt.dylib",
 
 #=========================================================================
-# Basic calculation settings
+# Atmosphere and geometry settings
 #=========================================================================
-# Zenith angle in degrees. 0 means vertical, 90 is horizontal
-"theta_deg": 0.0,
 
 # Use file for caching calculated atmospheric rho(X) splines
 "use_atm_cache": True,
@@ -66,7 +64,7 @@ config = {
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "MKL",
+"kernel_config": "numpy",
 
 "ode_params": {'name':'vode',
                'method':'adams',
@@ -75,6 +73,11 @@ config = {
 
 # Use sparse linear algebra (recommended!)
 "use_sparse": True,
+
+#Number of MKL threads (for sparse matrix multiplication the performance
+#advantage from using more than 1 thread is only a few precent due to
+#memory bandwidth)
+"MKL_treads": 1,
 
 # CUDA float precision
 "CUDA_precision": 32,

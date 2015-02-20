@@ -24,9 +24,10 @@ from mceq_config import config, dbg
 
 
 class NCEParticle():
+
     """Bundles different particle properties for simplified 
     availability of particle properties in :class:`MCEq.core.MCEqRun`.
-    
+
     Args:
       pdgid (int): PDG ID of the particle
       particle_db (object): handle to an instance of :class:`ParticleDataTool.SibyllParticleTable`
@@ -34,16 +35,17 @@ class NCEParticle():
       cs_db (object): handle to an instance of :class:`InteractionYields`
       d (int): dimension of the energy grid 
     """
+
     def __init__(self, pdgid, particle_db,
                  pythia_db, cs_db, d):
-        
+
         #: (float) mixing energy, transition between hadron and resonance behavior
         self.E_mix = 0
         #: (int) energy grid index, where transition between hadron and resonance occurs
         self.mix_idx = 0
-        #: (float) critical energy in air at the surface 
+        #: (float) critical energy in air at the surface
         self.E_crit = 0
-        
+
         #: (bool) particle is a hadron (meson or baryon)
         self.is_hadron = False
         #: (bool) particle is a meson
@@ -54,19 +56,19 @@ class NCEParticle():
         self.is_lepton = False
         #: (bool) particle is an alias (PDG ID encodes special scoring behavior)
         self.is_alias = False
-        #: (bool) particle has both, hadron and resonance properties 
+        #: (bool) particle has both, hadron and resonance properties
         self.is_mixed = False
         #: (bool) if particle has just resonance behavior
         self.is_resonance = False
         #: (bool) particle is interacting projectile
         self.is_projectile = False
-        
+
         self.pdgid = pdgid
         self.particle_db = particle_db
         self.pythia_db = pythia_db
         self.cs = cs_db
         self.d = d
-        
+
         self.E_crit = self.critical_energy()
         self.name = particle_db.pdg2modname[pdgid]
 
@@ -83,7 +85,7 @@ class NCEParticle():
 
     def hadridx(self):
         """Returns index range where particle behaves as hadron.
-        
+
         Returns:
           :func:`tuple` (int,int): range on energy grid
         """
@@ -91,7 +93,7 @@ class NCEParticle():
 
     def residx(self):
         """Returns index range where particle behaves as resonance.
-        
+
         Returns:
           :func:`tuple` (int,int): range on energy grid
         """
@@ -99,7 +101,7 @@ class NCEParticle():
 
     def lidx(self):
         """Returns lower index of particle range in state vector.
-        
+
         Returns:
           (int): lower index in state vector :attr:`MCEqRun.phi`
         """
@@ -107,7 +109,7 @@ class NCEParticle():
 
     def uidx(self):
         """Returns upper index of particle range in state vector.
-        
+
         Returns:
           (int): upper index in state vector :attr:`MCEqRun.phi`
         """
@@ -117,7 +119,7 @@ class NCEParticle():
         """Returns inverse decay length (or infinity (np.inf), if 
         particle is stable), where the air density :math:`\\rho` is 
         factorized out.
-        
+
         Args:
           E (float): energy in laboratory system in GeV 
         Returns:
@@ -133,20 +135,20 @@ class NCEParticle():
 
     def inverse_interaction_length(self, cs=None):
         """Returns inverse interaction length in Air.
-        
+
         Returns:
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
         """
-        
+
         m_air = 14.5 * 1.672621 * 1e-24  # <A> * m_proton [g]
         return np.ones(self.d) * self.cs.get_cs(self.pdgid) / m_air
 
     def critical_energy(self):
         """Returns critical energy where decay and interaction
         are balanced.
-        
+
         Approximate value in Air.
-        
+
         Returns:
           (float): :math:`\\frac{m\\ 6.4 \\text{km}}{c\\tau}` in GeV
         """
@@ -159,10 +161,10 @@ class NCEParticle():
     def calculate_mixing_energy(self, e_grid, no_mix=False):
         """Calculates interaction/decay length in Air and decides if 
         the particle has resonance and/or hadron behavior.
-        
+
         Class attributes :attr:`is_mixed`, :attr:`E_mix`, :attr:`mix_idx`, 
         :attr:`is_resonance` are calculated here.
-        
+
         Args:
           e_grid (np.array): energy grid of size :attr:`d`
           no_mix (bool): if True, mixing is disabled and all particles 
@@ -170,7 +172,7 @@ class NCEParticle():
         """
 
         cross_over = config["hybrid_crossover"]
-        
+
         if abs(self.pdgid) in [2212, 2112]:
             self.mix_idx = 0
             self.is_mixed = False
@@ -188,10 +190,10 @@ class NCEParticle():
 
         lint = np.ones(d) / inv_intlen
         d_tilde = 1 / self.inverse_decay_length(e_grid)
-        
+
         # multiply with typical air density at the surface
         ldec = d_tilde * 1.240e-03
-        
+
         criterium = ldec / lint
 
         if np.max(criterium) < cross_over:
@@ -225,34 +227,67 @@ class NCEParticle():
             self.is_alias, self.E_mix)
         return a_string
 
-#         i(Ei0)->j(Ej0)    ...     i(EiN)->j(Ej0) 
+#         i(Ei0)->j(Ej0)    ...     i(EiN)->j(Ej0)
 #         i(Ei0)->j(Ej1)    ...     i(EiN)->j(Ej1)
 #             ...                        ...
 #             ...                        ...
 #             ...                        ...
 #         i(Ei0)->j(EjN)   .....    i(EiN)->j(EjN)
-class InteractionYields():
-    """Class for managing the dictionary of interaction yield matrices.
+
+
+def _decompress(fname):
+    """Decompresses and unpickles dictionaries stored in bz2
+    format.
+
+    Args:
+      fname (str): file name
     
+    Returns:
+      content of decompressed and unpickled file.
+
+    Raises:
+      IOError: if file not found
+
+    """
+    import os
+    import bz2
+    import cPickle as pickle
+    fcompr = os.path.splitext(fname)[0] + '.bz2'
+
+    if not os.path.isfile(fcompr):
+        raise IOError('decompress():: File {0} not found.'.format(fcompr))
+    
+    if dbg > 1:
+        print 'Decompressing', fcompr, '.'
+    
+    data = pickle.load(bz2.BZ2File(fcompr))
+    pickle.dump(data, open(fname, 'w'), protocol=-1)
+
+    return data
+
+class InteractionYields():
+
+    """Class for managing the dictionary of interaction yield matrices.
+
     The class unpickles a dictionary, which contains the energy grid 
     and :math:`x` spectra, sampled from hadronic interaction models.    
-    
-    
-    
+
+
+
     A list of available interaction model keys can be printed by::
-        
+
         $ print yield_obj
-    
+
     Args:
       interaction_model (str): name of the interaction model
       charm_model (str, optional): name of the charm model
-    
+
     """
     #: (str) InterAction Model name
     iam = None
     #: (str) charm model name
     charm_model = None
-    #: (numpy.array) energy grid bin centers 
+    #: (numpy.array) energy grid bin centers
     e_grid = None
     #: (numpy.array) energy grid bin endges
     e_bins = None
@@ -276,10 +311,10 @@ class InteractionYields():
     def _load(self):
         """Un-pickles the yields dictionary using the path specified as
         ``yield_fname`` in :mod:`mceq_config`.
-        
+
         Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`weights`, 
         :attr:`dim` are set here.
-        
+
         Raises:
           IOError: if file not found
         """
@@ -287,11 +322,13 @@ class InteractionYields():
         from os.path import join
         try:
             with open(join(config['data_dir'],
-                       config['yield_fname']), 'r') as f:
+                           config['yield_fname']), 'r') as f:
                 self.yield_dict = pickle.load(f)
         except IOError:
-            raise IOError('InteractionYields::_load(): Yield file not found.')
-        
+            self.yield_dict = _decompress(join(config['data_dir'],
+                                            config['yield_fname']))
+            #raise IOError('InteractionYields::_load(): Yield file not found.')
+
         self.e_grid = self.yield_dict.pop('evec')
         self.e_bins = self.yield_dict.pop('ebins')
         self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
@@ -301,11 +338,11 @@ class InteractionYields():
 
     def _gen_index(self, yield_dict):
         """Generates index of mother-daughter relationships.
-        
+
         Currently this function is called each time an interaction model
         is set. In future versions this index will be part of the pickled
         dictionary.
-        
+
         Args:
           yield_dict (dict): dictionary of yields for one interaction model
         """
@@ -318,13 +355,14 @@ class InteractionYields():
             proj, sec = key
             # exclude electrons and photons
             if np.sum(mat) > 0 and abs(sec) not in [11, 22]:
-                assert(sec not in self.secondary_dict[proj]), ("InteractionYields:_gen_index()::" + 
-                    "Error in construction of index array: {0} -> {1}".format(proj, sec)) 
+                assert(sec not in self.secondary_dict[proj]), \
+                ("InteractionYields:_gen_index()::" +
+                "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 self.secondary_dict[proj].append(sec)
 
     def set_interaction_model(self, interaction_model):
         """Selects an interaction model and prepares all internal variables. 
-        
+
         Args:
           interaction_model (str): interaction model name
         Raises:
@@ -336,8 +374,8 @@ class InteractionYields():
             return
 
         if interaction_model not in self.yield_dict.keys():
-            raise Exception("InteractionYields(): No coupling matrices " + 
-                            "available for the selected interaction " + 
+            raise Exception("InteractionYields(): No coupling matrices " +
+                            "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
 
         self._gen_index(self.yield_dict[interaction_model])
@@ -349,7 +387,7 @@ class InteractionYields():
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
         ``daughter`` combination
-        
+
         Args:
           projectile (int): PDG ID of projectile particle
           daughter (int): PDG ID of final state daughter/secondary particle
@@ -361,7 +399,7 @@ class InteractionYields():
             return True
         else:
             if dbg > 1:
-                print ('InteractionYields::is_yield(): no interaction matrix ' + 
+                print ('InteractionYields::is_yield(): no interaction matrix ' +
                        "for {0}, {1}->{2}".format(self.iam, projectile, daughter))
             return False
 
@@ -369,13 +407,13 @@ class InteractionYields():
 
     def get_y_matrix(self, projectile, daughter):
         """Returns a ``DIM x DIM`` yield matrix.
-        
+
         Args:
           projectile (int): PDG ID of projectile particle
           daughter (int): PDG ID of final state daughter/secondary particle
         Returns:
           numpy.array: yield matrix
-          
+
         Note:
           In the current version, the matrices have to be multiplied by the 
           bin widths. In later versions they will be stored with the multiplication
@@ -388,7 +426,7 @@ class InteractionYields():
                          daughter, dtridx, cmat):
         """Copies a subset, defined in tuples ``projidx`` and ``dtridx`` from
         the ``yield_matrix(projectile,daughter)`` into ``cmat``
-        
+
         Args:
           projectile (int): PDG ID of projectile particle
           projidx (int,int): tuple containing index range relative 
@@ -400,24 +438,24 @@ class InteractionYields():
         """
         cmat[dtridx[0]:dtridx[1], projidx[0]:projidx[1]] = \
             self.get_y_matrix(projectile, daughter)[dtridx[0]:dtridx[1],
-                                         projidx[0]:projidx[1]]
+                                                    projidx[0]:projidx[1]]
 
     def inject_custom_charm_model(self, model='MRS'):
         """Overwrites the charm production yields of the yield 
         dictionary for the current interaction model with yields from 
         a custom model.
-        
+
         The function walks through all (projectile, charm_daughter) 
         combinations and replaces the yield matrices with those from
         the ``model``.
-        
+
         Args:
           model (str): charm model name
-        
+
         Raises:
           NotImplementedError: if model string unknown.
         """
-        
+
         from ParticleDataTool import SibyllParticleTable
         from charm_models import MRS_charm  # @UnresolvedImport
 
@@ -427,8 +465,8 @@ class InteractionYields():
         if self.charm_model and self.charm_model != model and \
                 self.charm_model not in ['sibyll23_pl', 'MRS']:
             print self.charm_model, model
-            raise Exception('InteractionYields:inject_custom_charm_model()::' + 
-                            'changing injected charm model back to ' + 
+            raise Exception('InteractionYields:inject_custom_charm_model()::' +
+                            'changing injected charm model back to ' +
                             'default not implemented .')
 
         sib = SibyllParticleTable()
@@ -449,10 +487,10 @@ class InteractionYields():
             for proj in self.projectiles:
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = self.yield_dict[
-                        'SIBYLL2.3_rc1_pl'][(proj, chid)] * 14.3
+                        'SIBYLL2.3_rc1_pl'][(proj, chid)] * 14.5
 
         else:
-            raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' + 
+            raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
                                       ' Unsupported model')
 
         self._gen_index(self.yields)
@@ -467,26 +505,28 @@ class InteractionYields():
 
 
 class DecayYields():
+
     """Class for managing the dictionary of decay yield matrices.
-    
+
     The class un-pickles a dictionary, which contains :math:`x` 
     spectra of decay products/daughters, sampled from PYTHIA 8 
     Monte Carlo.    
-    
+
     Args:
       weights (numpy.array): bin widths of energy grid
     """
+
     def __init__(self, weights):
         self.weights = weights
         self._load()
         self._gen_index()
-        
+
         self.particle_keys = self.mothers
 
     def _load(self):
         """Un-pickles the yields dictionary using the path specified as
         ``decay_fname`` in :mod:`mceq_config`.
-        
+
         Raises:
           IOError: if file not found
         """
@@ -494,33 +534,35 @@ class DecayYields():
         from os.path import join
         try:
             with open(join(config['data_dir'],
-                       config['decay_fname']), 'r') as f:
+                           config['decay_fname']), 'r') as f:
                 self.decay_dict = pickle.load(f)
         except IOError:
-            raise IOError('DecayYields::_load(): Yield file not found.')
-            
+            self.decay_dict = _decompress(join(config['data_dir'],
+                                            config['decay_fname']))
+            # raise IOError('DecayYields::_load(): Yield file not found.')
+
     def _gen_index(self):
         """Generates index of mother-daughter relationships.
-        
+
         This function is called once after un-pickling. In future 
         versions this index will be part of the pickled dictionary.
         """
         self.mothers = np.unique(zip(*self.decay_dict.keys())[0])
         self.daughter_dict = {}
-        
+
         for mother in self.mothers:
             self.daughter_dict[mother] = []
-        
+
         for key, mat in self.decay_dict.iteritems():
             mother, daughter = key
             if np.sum(mat) > 0:
                 if daughter not in self.daughter_dict[mother]:
                     self.daughter_dict[mother].append(daughter)
-        
+
         # special treatment for muons, which should decay even if they
-        # have an alias ID  
-        # the ID 7313 not included, since it's "a copy of" 
-        for alias in [7013, 7113, 7213]: 
+        # have an alias ID
+        # the ID 7313 not included, since it's "a copy of"
+        for alias in [7013, 7113, 7213]:
             self.daughter_dict[alias] = self.daughter_dict[13]
             self.daughter_dict[-alias] = self.daughter_dict[-13]
             for d in self.daughter_dict[alias]:
@@ -530,20 +572,20 @@ class DecayYields():
 
     def get_d_matrix(self, mother, daughter):
         """Returns a ``DIM x DIM`` decay matrix.
-        
+
         Args:
           mother (int): PDG ID of mother particle
           daughter (int): PDG ID of final state daughter particle
         Returns:
           numpy.array: decay matrix
-          
+
         Note:
           In the current version, the matrices have to be multiplied by the 
           bin widths. In later versions they will be stored with the multiplication
           carried out. 
         """
         if dbg > 1 and not self.is_daughter(mother, daughter):
-            print ("DecayYields:get_d_matrix():: trying to get empty matrix" + 
+            print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
                    "{0} -> {1}").format(mother, daughter)
         # TODO: fix structure of the decay dict
         return (self.decay_dict[(mother, daughter)].T).dot(self.weights)
@@ -552,7 +594,7 @@ class DecayYields():
                      daughter, dtridx, dmat):
         """Copies a subset, defined in tuples ``moidx`` and ``dtridx`` from
         the ``decay_matrix(mother,daughter)`` into ``dmat``
-        
+
         Args:
           mother (int): PDG ID of mother particle
           moidx (int,int): tuple containing index range relative 
@@ -568,22 +610,22 @@ class DecayYields():
 
     def is_daughter(self, mother, daughter):
         """Checks if ``daughter`` is a decay daughter of ``mother``.
-        
+
         Args:
           mother (int): PDG ID of projectile particle
           daughter (int): PDG ID of daughter particle
         Returns:
           bool: ``True`` if ``daughter`` is daughter of ``mother`` 
         """
-        if (mother not in self.daughter_dict.keys() or 
-            daughter not in self.daughter_dict[mother]):
+        if (mother not in self.daughter_dict.keys() or
+                daughter not in self.daughter_dict[mother]):
             return False
         else:
             return True
 
     def daughters(self, mother):
         """Checks if ``mother`` decays and returns the list of daughter particles.
-        
+
         Args:
           mother (int): PDG ID of projectile particle
         Returns:
@@ -604,12 +646,13 @@ class DecayYields():
 
 
 class HadAirCrossSections():
+
     """Class for managing the dictionary of hadron-air cross-sections.
-    
+
     The class unpickles a dictionary, which contains proton-air,
     pion-air and kaon-air cross-sections tabulated on the common 
     energy grid.
-    
+
     Args:
       interaction_model (str): name of the interaction model
     """
@@ -617,7 +660,7 @@ class HadAirCrossSections():
     iam = None
     #: current energy grid
     egrid = None
-    
+
     #: unit - :math:`\text{GeV} \cdot \text{fm}`
     GeVfm = 0.19732696312541853
     #: unit - :math:`\text{GeV} \cdot \text{cm}`
@@ -626,9 +669,9 @@ class HadAirCrossSections():
     GeV2mbarn = 10.0 * GeVfm ** 2
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm ** 2 / GeV2mbarn
-    
+
     def __init__(self, interaction_model):
-        
+
         self._load()
 
         if interaction_model != None:
@@ -640,7 +683,7 @@ class HadAirCrossSections():
     def _load(self):
         """Un-pickles a dictionary using the path specified as
         ``decay_fname`` in :mod:`mceq_config`.
-        
+
         Raises:
           IOError: if file not found
         """
@@ -648,38 +691,40 @@ class HadAirCrossSections():
         from os.path import join
         try:
             with open(join(config['data_dir'],
-                       config['cs_fname']), 'r') as f:
+                           config['cs_fname']), 'r') as f:
                 self.cs_dict = pickle.load(f)
         except IOError:
-            raise IOError('HadAirCrossSections::_load(): ' + 
-                          'Yield file not found.')
-        
+            self.cs_dict = _decompress(join(config['data_dir'],
+                                            config['cs_fname']))
+            # raise IOError('HadAirCrossSections::_load(): ' +
+            #               'Yield file not found.')
+
         self.egrid = self.cs_dict['evec']
 
     def set_interaction_model(self, interaction_model):
         """Selects an interaction model and prepares all internal variables. 
-        
+
         Args:
           interaction_model (str): interaction model name
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
         if interaction_model == self.iam and dbg > 0:
-            print ("InteractionYields:set_interaction_model():: Model " + 
-                self.iam + " already loaded.")
+            print ("InteractionYields:set_interaction_model():: Model " +
+                   self.iam + " already loaded.")
             return
 
         if interaction_model.find('SIBYLL2.2') == 0 or \
                 interaction_model.find('SIBYLL2.3') == 0:
             if dbg > 1:
-                print ("InteractionYields:set_interaction_model():: Model " + 
-                       interaction_model + " with SIBYLL2.2.")
-            self.iam = 'SIBYLL2.2'
+                print ("InteractionYields:set_interaction_model():: Model " +
+                       interaction_model + " selected.")
+            self.iam = 'SIBYLL2.3'
         elif interaction_model in self.cs_dict.keys():
             self.iam = interaction_model
         else:
             print "Available interaction models: ", self.cs_dict.keys()
-            raise Exception("HadAirCrossSections(): No cross-sections for the desired " + 
+            raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
                             "interaction model {0} available.".format(interaction_model))
         self.cs = self.cs_dict[self.iam]
 
@@ -687,22 +732,22 @@ class HadAirCrossSections():
         """Returns inelastic ``projectile``-air cross-section 
         :math:`\\sigma_{inel}^{proj-Air}(E)` as vector spanned over 
         the energy grid.
-        
+
         Args:
           projectile (int): PDG ID of projectile particle
           mbarn (bool,optional): if ``True``, the units of the cross-section
                                  will be :math:`mbarn`, else :math:`\\text{cm}^2` 
-        
+
         Returns:
           numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2` 
         """
-        
+
         message_templ = 'HadAirCrossSections(): replacing {0} with {1} cross-section'
         scale = 1.0
-        
+
         if not mbarn:
             scale = self.mbarn2cm2
-            
+
         if abs(projectile) in self.cs.keys():
             return scale * self.cs[projectile]
         elif abs(projectile) in [411, 421, 431, 15]:

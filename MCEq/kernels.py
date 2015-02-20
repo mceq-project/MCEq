@@ -60,12 +60,21 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
+
+    grid_sol = []
+    grid_step = 0
+    
     for step in xrange(nsteps):
         if prog_bar and (step % 200 == 0):
             prog_bar.update(step)
         phi += (int_m.dot(phi) + dec_m.dot(rho_inv[step] * phi)) * dX[step]
+        
+        if (grid_idcs and grid_step < len(grid_idcs) 
+            and grid_idcs[grid_step] == step):
+            grid_sol.append(np.copy(phi))
+            grid_step += 1
 
-    return phi
+    return phi, grid_sol
 
 
 def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
@@ -237,9 +246,9 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     # dense vector + dense vector
     axpy = mkl.cblas_daxpy
 
-    # Set number of threads to 3 or less, since matrix-vector 
-    # multiplication is memory bandwidth limited
-    mkl.mkl_set_num_threads(byref(c_int(3)))
+    # Set number of threads to sufficiently small number, since 
+    # matrix-vector multiplication is memory bandwidth limited
+    mkl.mkl_set_num_threads(byref(c_int(config['MKL_threads'])))
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(c_double))
