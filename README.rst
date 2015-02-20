@@ -105,4 +105,4 @@ Contributers
 
 Copyright and license
 ---------------------
-Code and documentation copyright 2014-2015 Anatoli Fedynitch. Code released under `the MIT license<https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
+Code and documentation copyright 2014-2015 Anatoli Fedynitch. Code released under `the MIT license <https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
