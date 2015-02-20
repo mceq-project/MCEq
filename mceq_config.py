@@ -1,4 +1,6 @@
 import sys
+import platform
+import os.path as path
 sys.path.append("./CRFluxModels")
 sys.path.append("./ParticleDataTool")
 sys.path.append("./Python-NRLMSISE-00")
@@ -6,10 +8,18 @@ sys.path.append("./Python-NRLMSISE-00")
 #sys.path.append("../Fedynitch2012")
 #sys.path.append("../AnalyticalApproximation")
 
+#detrmine shared library extension
+lib_ext = None
+if platform.platform().find('Linux') != -1:
+    lib_ext = '.so'
+elif platform.platform().find('Darwin') != -1:
+    lib_ext = '.dylib'
+else:
+    lib_ext = '.dll'
 
 config = {
 
-# Debug flag for verbose printing
+# Debug flag for verbose printing, 0 = minimum
 "debug_level": 1,
 
 #=========================================================================
@@ -31,8 +41,8 @@ config = {
 # File where to cache interpolating splines of the atmosphere module
 'atm_cache_file':'atm_cache.ppd',
 
-# full path to libmkl_rt.[so/dylib] (if kernel=='MKL')
-"MKL_path": "/Users/afedynitch/anaconda/lib/libmkl_rt.dylib",
+# full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
+"MKL_path": path.join(sys.prefix, 'lib', 'libmkl_rt') + lib_ext,
 
 #=========================================================================
 # Atmosphere and geometry settings

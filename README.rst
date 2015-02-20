@@ -73,7 +73,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	This will ask conda to download and install all needed packages into its default environment. 
 
-#. (Optional, can be skipped) If you know what a `virtualenv` is, the corresponding commands to download and 	install all packages in a newly created environment `mceq_env` are
+#. (Optional, can be skipped) If you know what a `virtualenv` is, the corresponding commands to download and install all packages in a newly created environment `mceq_env` are
 
 	.. code-block:: bash
 
@@ -85,6 +85,14 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	.. code-block:: bash
 
 	   $ deactivate
+
+#. (Optional) Acceleration of the integration routines can be achieved using `Intel MKL <https://software.intel.com/en-us/intel-mkl>`_. For academic use on Linux it is free. Anaconda offers MKL-linked numpy binaries free for academic use as well. It is necessary to register using your *.edu* mail adress to receive license. The demo period is 30 days. If you want to give it a try
+
+	.. code-block:: bash
+
+		   $ conda install mkl
+
+	Change in `mceq_config.py` the `kernel` entry to 'MKL'.
 
 #. Run some example
 
