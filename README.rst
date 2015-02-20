@@ -56,11 +56,11 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	Open a new terminal window to reload your new `$PATH` variable.
 
 
-#. `Cd` to you desired working directory. And clone this project.
+#. `Cd` to you desired working directory. And clone this project including submodules:
 
 	.. code-block:: bash
 
-	   $ git clone https://github.com/afedynitch/MCEq.git
+	   $ git clone --recursive https://github.com/afedynitch/MCEq.git
 
 	It will clone this github repository into a folder called `MCEq` and download all files.
 	Enter this directory. 
@@ -71,7 +71,9 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	   $ conda install --file conda_req.txt
 
-	This will ask conda to download and install all needed packages into its default environment. If you know what a `virtualenv` is, the corresponding commands to download and install all packages in a newly created environment `mceq_env` are
+	This will ask conda to download and install all needed packages into its default environment. 
+
+#. (Optional, can be skipped) If you know what a `virtualenv` is, the corresponding commands to download and 	install all packages in a newly created environment `mceq_env` are
 
 	.. code-block:: bash
 
@@ -88,7 +90,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	.. code-block:: bash
 
-	   $ ipython-notebook
+	   $ ipython notebook
 
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
