@@ -79,7 +79,8 @@ def _dump_cache(cache):
     try:
         pickle.dump(cache, open(fname, 'w'), protocol=-1)
     except IOError:
-        raise IOError("atmospheres::_dump_cache(): cache file not found.")
+        raise IOError("density_profiles::_dump_cache(): " + 
+                'could not (re-)create cache. Wrong working directory?')
 
 class CascadeAtmosphere():
     """Abstract class containing common methods on atmosphere.
@@ -592,8 +593,12 @@ class MSIS00Atmosphere(CascadeAtmosphere):
     _msis = None
     
     def __init__(self, location, season):
-        from msis_wrapper import NRLMSISE00
-        self.msis = NRLMSISE00()
+        from msis_wrapper import cNRLMSISE00, pyNRLMSISE00
+        if config['msis_python'] == 'ctypes':
+            self.msis = cNRLMSISE00()
+        else:
+            self.msis = pyNRLMSISE00()
+
         self.init_parameters(location, season)
         CascadeAtmosphere.__init__(self)
 
