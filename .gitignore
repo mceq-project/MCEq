@@ -7,6 +7,9 @@ __pycache__/
 *.ppl
 examples/.ipynb_*
 
+# Tables from other scietific publication
+references*
+
 # eclipse stuff
 .p*
 .e*

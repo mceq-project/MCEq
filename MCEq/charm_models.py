@@ -94,7 +94,7 @@ class MRS_charm(CharmModel):
     #: charm secondaries, which are predicted by this model
     allowed_sec = [411, 421, 431, 4122]
     
-    def __init__(self, e_grid, e_bins, csm):
+    def __init__(self, e_grid, csm):
         
         # Fragmentation functions
         self.lambda_c_frag = lambda x: 1 / 1.47 * x
