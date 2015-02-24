@@ -74,8 +74,10 @@ config = {
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "numpy",
+"kernel_config": "MKL",
 
+#parameters for the odepack integrator. More details at 
+#http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
 "ode_params": {'name':'vode',
                'method':'adams',
                'nsteps':10000,
@@ -86,8 +88,8 @@ config = {
 
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to
-#memory bandwidth)
-"MKL_treads": 1,
+#memory bandwidth limitations)
+"MKL_threads": 4,
 
 # CUDA float precision
 "CUDA_precision": 32,
