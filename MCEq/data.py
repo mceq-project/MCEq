@@ -484,10 +484,17 @@ class InteractionYields():
                         proj, chid)
 
         elif model == 'sibyll23_pl':
+            cs_h_air = HadAirCrossSections('SIBYLL2.3', self.data_dir)
+            cs_h_p = HadAirCrossSections('SIBYLL2.3_pp', self.data_dir)
             for proj in self.projectiles:
+                cs_scale = cs_h_p.get_cs(proj)/cs_h_air.get_cs(prof)
                 for chid in charm_modids:
+                    # rescale yields with sigma_pp/sigma_air to ensure
+                    # that in a later step indeed sigma_{pp,ccbar} is taken
+                    
+                    
                     self.yields[(proj, chid)] = self.yield_dict[
-                        'SIBYLL2.3_rc1_pl'][(proj, chid)] * 14.5
+                        'SIBYLL2.3_rc1_pl'][(proj, chid)] * cs_scale * 14.5
 
         else:
             raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
