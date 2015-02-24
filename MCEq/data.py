@@ -360,7 +360,7 @@ class InteractionYields():
                 "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 self.secondary_dict[proj].append(sec)
 
-    def set_interaction_model(self, interaction_model):
+    def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables. 
 
         Args:
@@ -368,9 +368,10 @@ class InteractionYields():
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
-        if interaction_model == self.iam:
-            print "InteractionYields:set_interaction_model():: Model " + \
-                self.iam + " already loaded."
+        if not force and interaction_model == self.iam:
+            if dbg > 0:
+                print ("InteractionYields:set_interaction_model():: Model " +
+                    self.iam + " already loaded.")
             return
 
         if interaction_model not in self.yield_dict.keys():
@@ -383,6 +384,7 @@ class InteractionYields():
         self.nspec = len(self.projectiles)
         self.yields = self.yield_dict[interaction_model]
         self.iam = interaction_model
+        self.charm_model = None
 
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
@@ -462,21 +464,26 @@ class InteractionYields():
         if model == None:
             return
 
-        if self.charm_model and self.charm_model != model and \
-                self.charm_model not in ['sibyll23_pl', 'MRS']:
-            print self.charm_model, model
-            raise Exception('InteractionYields:inject_custom_charm_model()::' +
-                            'changing injected charm model back to ' +
-                            'default not implemented .')
+        if self.charm_model and self.charm_model != model:
+            # reload the yields from the main dictionary
+            self.set_interaction_model(self.iam, force=True)
+#            raise Exception('InteractionYields:inject_custom_charm_model()::' +
+#                            'changing injected charm model back to ' +
+#                            'default not implemented .')
 
         sib = SibyllParticleTable()
         charm_modids = [sib.modid2pdg[modid] for modid in
                         sib.mod_ids if abs(modid) >= 59]
         del sib
-
+        # make a copy of current yields before starting overwriting/injecting
+        # a charm model on top
+        from copy import copy
+        self.yields = copy(self.yields)
+        
         if model == 'MRS':
+            
             # Set charm production to zero
-            cs = HadAirCrossSections(self.iam, self.data_dir)
+            cs = HadAirCrossSections(self.iam)
             mrs = MRS_charm(self.e_grid, cs)
             for proj in self.projectiles:
                 for chid in charm_modids:
@@ -484,17 +491,16 @@ class InteractionYields():
                         proj, chid)
 
         elif model == 'sibyll23_pl':
-            cs_h_air = HadAirCrossSections('SIBYLL2.3', self.data_dir)
-            cs_h_p = HadAirCrossSections('SIBYLL2.3_pp', self.data_dir)
+            cs_h_air = HadAirCrossSections('SIBYLL2.3')
+            cs_h_p = HadAirCrossSections('SIBYLL2.3_pp')
             for proj in self.projectiles:
-                cs_scale = cs_h_p.get_cs(proj)/cs_h_air.get_cs(prof)
+                cs_scale = np.diag(cs_h_p.get_cs(proj)/cs_h_air.get_cs(proj))
                 for chid in charm_modids:
                     # rescale yields with sigma_pp/sigma_air to ensure
                     # that in a later step indeed sigma_{pp,ccbar} is taken
                     
-                    
                     self.yields[(proj, chid)] = self.yield_dict[
-                        'SIBYLL2.3_rc1_pl'][(proj, chid)] * cs_scale * 14.5
+                        'SIBYLL2.3_rc1_pl'][(proj, chid)].dot(cs_scale) * 14.5
 
         else:
             raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
@@ -721,14 +727,17 @@ class HadAirCrossSections():
                    self.iam + " already loaded.")
             return
 
-        if interaction_model.find('SIBYLL2.2') == 0 or \
-                interaction_model.find('SIBYLL2.3') == 0:
+        if interaction_model in self.cs_dict.keys():
+            self.iam = interaction_model
+            
+        elif interaction_model.find('SIBYLL2.2') == 0:
             if dbg > 1:
                 print ("InteractionYields:set_interaction_model():: Model " +
                        interaction_model + " selected.")
             self.iam = 'SIBYLL2.3'
-        elif interaction_model in self.cs_dict.keys():
-            self.iam = interaction_model
+        
+        elif interaction_model.find('SIBYLL2.3') == 0:
+            self.iam = 'SIBYLL2.3'
         else:
             print "Available interaction models: ", self.cs_dict.keys()
             raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
