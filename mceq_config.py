@@ -4,6 +4,7 @@ import os.path as path
 sys.path.append("./CRFluxModels")
 sys.path.append("./ParticleDataTool")
 sys.path.append("./Python-NRLMSISE-00")
+sys.path.append("./c-NRLMSISE-00")
 #commented out since projects are far from beeing ready for prime time.
 #sys.path.append("../Fedynitch2012")
 #sys.path.append("../AnalyticalApproximation")
@@ -55,7 +56,7 @@ config = {
 "atm_model": ('CORSIKA', 'BK_USStd', None),
 
 # Version of NRLMSISE-00 python library (ctypes, native)
-"msis_python": "native",
+"msis_python": "ctypes",
 
 # List of particles which decay products will be scored
 # in a 'obs_' category

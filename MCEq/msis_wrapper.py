@@ -150,7 +150,7 @@ def test():
     import numpy as np
     import matplotlib.pyplot as plt
     
-    msis = NRLMSISE00()
+    msis = cNRLMSISE00()
     den = np.vectorize(msis.get_density)
     
     plt.figure(figsize=(16, 5))
