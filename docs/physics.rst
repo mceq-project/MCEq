@@ -6,7 +6,7 @@ main purpose of the current program version is to calculate inclusive fluxes
 of leptons (:math:`\mu,\ \nu_{\mu},\ \nu_e\ \text{and}\ \nu_{\tau}`) in the Earth's
 atmosphere. The calculation requires a spherical model of the Earth's atmosphere
 which on hand is based on its :mod:`MCEq.geometry` and on the other hand parameterizations
-or numerical models of the :mod:`MCEq.atmosphere`.
+or numerical models of the :mod:`MCEq.density_profiles`.
 
 Alternatiely, this code could be used for calculations of the high energy hadron 
 and lepton flux in astrophysical environments, where the gas density and the 
@@ -23,6 +23,8 @@ the :class:`MCEq.charm_models.MRS_charm`, which can be coupled with any other in
 model for normal hadron production. In practice any kind of model which predicts a
 :math:`x` distribution can be employed in this code as extension of the 
 :mod:`MCEq.charm_models` module.  
+
+----------
 
 .. automodule:: MCEq.density_profiles
    :members:

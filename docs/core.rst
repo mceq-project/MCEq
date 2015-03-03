@@ -3,7 +3,6 @@ Core functionality
 
 .. automodule:: MCEq.core
    :members:
-   :private-members:
 
 ----------   
 

@@ -66,6 +66,8 @@ master_doc = 'index'
 project = u'Matrix Cascade Equation (MCEq)'
 copyright = u'2014, Anatoli Fedynitch'
 
+autodoc_member_order = 'groupwise'
+
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
 # built documents.

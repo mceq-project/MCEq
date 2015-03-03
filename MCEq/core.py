@@ -569,9 +569,12 @@ class MCEqRun():
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
         
+        This functions is quick and does not require re-generation of
+        matrices.
+        
         Args:
           interaction_model (:class:`CRFluxModel.PrimaryFlux`): reference
-          to primary model class
+          to primary model **class**
           tag (tuple): positional argument list for model class
         """
         if self.delay_pmod_init:
@@ -690,6 +693,19 @@ class MCEqRun():
         self.phi0[self.pdg2pref[2112].lidx() + idx_up] = n_neutrons * wE_up / widths[idx_up] ** 2
         
     def set_atm_model(self, atm_config):
+        """Sets model of the atmosphere.
+        
+        To choose, for example, a CORSIKA parametrization for the Southpole in January,
+        do the following::
+        
+            mceq_instance.set_atm_model(('CORSIKA', 'PL_SouthPole', 'January'))
+        
+        More details about the choices can be found in :mod:`MCEq.density_profiles`. Calling
+        this method will issue a recalculation of the interpolation and the integration path.
+        
+        Args:
+          atm_config (tuple of strings): (parametrization type, location string, season string)
+        """
         from MCEq.density_profiles import CorsikaAtmosphere, MSIS00Atmosphere
 
         base_model, location, season = atm_config
@@ -712,6 +728,13 @@ class MCEqRun():
             self.set_theta_deg(self.theta_deg)
 
     def set_theta_deg(self, theta_deg):
+        """Sets zenith angle :math:`\\theta` as seen from a detector.
+        
+        Currently only 'down-going' angles (0-90 degrees) are supported.
+        
+        Args:
+          atm_config (tuple of strings): (parametrization type, location string, season string)
+        """
         if dbg:
             print 'MCEqRun::set_theta_deg(): ', theta_deg
             
