@@ -52,12 +52,12 @@ class MCEqRun():
       interaction_model (string): PDG ID of the particle
       atm_model (string,sting,string): model type, location, season
       primary_model (class, param_tuple): classes derived from 
-      :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple  
+        :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple  
       theta_deg (float): zenith angle :math:`\\theta` in degrees, 
-      measured positively from vertical direction
+        measured positively from vertical direction
       vetos (dict): different controls, see :mod:`mceq_config`
       obs_ids (list): list of particle name strings. Those lepton decay
-      products will be scored in the special ``obs_`` categories
+        products will be scored in the special ``obs_`` categories
     """
     def __init__(self, interaction_model, atm_model, primary_model,
                  theta_deg, vetos, obs_ids, *args, **kwargs):
