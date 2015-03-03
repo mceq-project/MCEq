@@ -1,12 +1,16 @@
 [submodule "CRFluxModels"]
 	path = CRFluxModels
 	url = https://github.com/afedynitch/CRFluxModels.git
+	ignore = dirty
 [submodule "ParticleDataTool"]
 	path = ParticleDataTool
 	url = https://github.com/afedynitch/ParticleDataTool.git
+	ignore = dirty
 [submodule "https://github.com/afedynitch/Python-NRLMSISE-00.git"]
 	path = https://github.com/afedynitch/Python-NRLMSISE-00.git
 	url = https://github.com/afedynitch/Python-NRLMSISE-00.git
+	ignore = dirty
 [submodule "Python-NRLMSISE-00"]
 	path = Python-NRLMSISE-00
 	url = https://github.com/afedynitch/Python-NRLMSISE-00.git
+	ignore = dirty
