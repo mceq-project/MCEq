@@ -12,6 +12,7 @@ Contents:
    :maxdepth: 3
 
    intro
+   citations
    modules
 
 Indices and tables
