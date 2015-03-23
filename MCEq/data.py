@@ -296,7 +296,7 @@ class InteractionYields():
     #: (int) dimension of grid
     dim = 0
     #: (tuple) selection of a band of coeffictients (in xf)
-    xf_band = None
+    band = None
 
     def __init__(self, interaction_model, charm_model=None):
 
