@@ -295,6 +295,8 @@ class InteractionYields():
     weights = None
     #: (int) dimension of grid
     dim = 0
+    #: (tuple) selection of a band of coeffictients (in xf)
+    band = None
 
     def __init__(self, interaction_model, charm_model=None):
 
@@ -386,6 +388,15 @@ class InteractionYields():
         self.iam = interaction_model
         self.charm_model = None
 
+    def set_xf_band(self, xf_low_idx, xf_up_idx):
+
+        xf_bins = self.e_bins/self.e_bins[-1]
+        self.band = (xf_low_idx, xf_up_idx)
+        if dbg > 0:
+            print ('InteractionYields::set_xf_band(): limiting '
+            'Feynman x range to: {0:5.2f} - {1:5.2f}').format(xf_bins[self.band[0]], 
+                                                              xf_bins[self.band[1]])
+
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
         ``daughter`` combination
@@ -422,7 +433,16 @@ class InteractionYields():
           carried out. 
         """
         # TODO: modify yields to include the bin size
-        return self.yields[(projectile, daughter)].dot(self.weights)
+        if not self.band:
+            return self.yields[(projectile, daughter)].dot(self.weights)
+        else:
+            m = self.yields[(projectile, daughter)].dot(self.weights)
+            # set all elements except those inside selected xf band to 0
+            
+            m[np.tril_indices(self.dim, -2 - self.band[1])] = 0
+            if self.band[0] < 0:
+                m[np.triu_indices(self.dim, -self.band[0])] = 0
+            return m
 
     def assign_yield_idx(self, projectile, projidx,
                          daughter, dtridx, cmat):
