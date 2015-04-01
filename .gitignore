@@ -8,7 +8,8 @@ __pycache__/
 examples/.ipynb_*
 
 # Tables from other scietific publication
-references*
+/references/
+/prototyping/
 
 # eclipse stuff
 .p*
@@ -66,3 +67,4 @@ docs/_build/
 
 # PyBuilder
 target/
+
