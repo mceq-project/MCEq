@@ -370,7 +370,7 @@ class MCEqRun():
             if config['use_sparse']:
                 print "    nnz        :", self.dec_m.nnz
             if dbg > 1:
-                print "    sum        :", np.sum(self.int_m)
+                print "    sum        :", np.sum(self.dec_m)
 
 
         print self.cname + "::_init_default_matrices():Done filling matrices."
