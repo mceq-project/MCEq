@@ -11,7 +11,7 @@ classes.
 
 The :class:`Yields` instantiates derived classes of
 :class:`CharmModel` and calls :func:`CharmModel.get_yield_matrix`
-when overwriting a model yield file in 
+when overwriting a model yield file in
 :func:`Yields.set_custom_charm_model`.
 """
 
@@ -24,18 +24,18 @@ class CharmModel():
 
     Note:
       Do not instantiate this class directly.
-    
+
     """
     __metaclass__ = ABCMeta
-    
+
     @abstractmethod
     def get_yield_matrix(self, proj, sec):
         """The implementation of this abstract method returns
-        the yield matrix spanned over the energy grid of the calculation. 
+        the yield matrix spanned over the energy grid of the calculation.
 
         Args:
            proj (int): PDG ID of the interacting particle (projectile)
-           sec (int): PDG ID of the final state charmed meson (secondary) 
+           sec (int): PDG ID of the final state charmed meson (secondary)
 
         Returns:
            np.array: yield matrix
@@ -43,72 +43,72 @@ class CharmModel():
         Raises:
             NotImplementedError:
         """
-        raise NotImplementedError("CharmModel::get_yield_matrix(): " + 
+        raise NotImplementedError("CharmModel::get_yield_matrix(): " +
                                   "Base class called.")
-    
+
 class MRS_charm(CharmModel):
     """Martin-Ryskin-Stasto charm model.
-    
-    The model is described in A. D. Martin, M. G. Ryskin, 
+
+    The model is described in A. D. Martin, M. G. Ryskin,
     and A. M. Stasto, Acta Physica Polonica B 34, 3273 (2003).
-    The parameterization of the inclusive :math:`c\\bar{c}` 
-    cross-section is given in the appendix of the paper. 
+    The parameterization of the inclusive :math:`c\\bar{c}`
+    cross-section is given in the appendix of the paper.
     This formula provides the behavior of the cross-section,
-    while fragmentation functions and certain scales are 
+    while fragmentation functions and certain scales are
     needed to obtain meson and baryon fluxes as a function
     of the kinematic variable :math:`x_F`. At high energies
     and :math:`x_F > 0.05`, where this model is valid,
     :math:`x_F \\approx x=E_c/E_{proj}`.
     Here, these fragmentation functions are used:
-    
+
         - :math:`D`-mesons :math:`\\frac{4}{3} x`
         - :math:`\\Lambda`-baryons :math:`\\frac{1}{1.47} x`
-        
-    The production ratios between the different types of 
-    :math:`D`-mesons are stored in the attribute :attr:`cs_scales` 
-    and :attr:`D0_scale`, where :attr:`D0_scale` is the 
-    :math:`c\\bar{c}` to :math:`D^0` ratio and :attr:`cs_scales` 
-    stores the production ratios of :math:`D^\\pm/D^0`, 
+
+    The production ratios between the different types of
+    :math:`D`-mesons are stored in the attribute :attr:`cs_scales`
+    and :attr:`D0_scale`, where :attr:`D0_scale` is the
+    :math:`c\\bar{c}` to :math:`D^0` ratio and :attr:`cs_scales`
+    stores the production ratios of :math:`D^\\pm/D^0`,
     :math:`D_s/D^0` and :math:`\\Lambda_c/D^0`.
-    
+
     Since the model employs only perturbartive production of
     charm, the charge conjugates are symmetric, i.e.
     :math:`\\sigma_{D^+} = \\sigma_{D^-}` etc.
-    
+
     Args:
       e_grid (np.array): energy grid as it is defined in
                          :class:`MCEqRun`.
       csm (np.array): inelastic cross-sections as used in
                       :class:`MCEqRun`.
     """
-    
+
     #: fractions of cross-section wrt to D0 cross-section
     cs_scales = {421:1., 411:0.5,
                  431:0.15, 4122:0.45}
     #: D0 cross-section wrt to the ccbar cross-section
     D0_scale = 1. / 2.1
-    
+
     #: hadron projectiles, which are allowed to produce charm
     allowed_proj = [2212, -2212, 2112, -2112, 211, -211, 321, -321]
-    
+
     #: charm secondaries, which are predicted by this model
     allowed_sec = [411, 421, 431, 4122]
-    
+
     def __init__(self, e_grid, csm):
-        
-        # Fragmentation functions
-        self.lambda_c_frag = lambda x: 1 / 1.47 * x
-        self.d_frag = lambda x: 4. / 3. * x
-        
+
+        # inverted fragmentation functions
+        self.lambda_c_frag = lambda xhad: 1 / 1.47 * xhad
+        self.d_frag = lambda xhad: 4. / 3. * xhad
+
         self.e_grid = e_grid
         self.d = e_grid.size
         self.no_prod = np.zeros(self.d ** 2).reshape(self.d,
                                                      self.d)
         self.siginel = csm.get_cs(2212, mbarn=True)
-        
+
     def sigma_cc(self, E):
         """Returns the integrated ccbar cross-section in mb.
-        
+
         Note:
           Integration is not going over complete phase-space due to
           limitations of the parameterization.
@@ -120,19 +120,19 @@ class MRS_charm(CharmModel):
                 [quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E ])
         else:
             return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
-        
+
     def dsig_dx(self, x, E):
-        """Returns the Feynman-:math:`x_F` distribution 
+        """Returns the Feynman-:math:`x_F` distribution
         of :math:`\\sigma_{c\\bar{c}}` in mb
-        
+
         Args:
           x (float or np.array): :math:`x_F`
           E (float): center-of-mass energy in GeV
-        
+
         Returns:
           float: :math:`\\sigma_{c\\bar{c}}` in mb
         """
-        
+
         x = np.asarray(x)
         E = np.asarray(E)
         beta = 0.05 - 0.016 * np.log(E / 10e4)
@@ -149,34 +149,34 @@ class MRS_charm(CharmModel):
             raise Exception("MRS_charm()::out of range")
         res = np.zeros_like(x)
         ran = (x > 0.01) & (x < 0.7)
-        res[ran] = np.array(A * x[ran] ** (beta - 1.) * 
+        res[ran] = np.array(A * x[ran] ** (beta - 1.) *
                             (1 - x[ran] ** 1.2) ** n / 1e3)
         return res
-    
+
     def D_dist(self, x, E, mes):
-        """Returns the Feynman-:math:`x_F` distribution 
+        """Returns the Feynman-:math:`x_F` distribution
         of :math:`\\sigma_{D-mesons}` in mb
-        
+
         Args:
           x (float or np.array): :math:`x_F`
           E (float): center-of-mass energy in GeV
           mes (int): PDG ID of D-meson: :math:`\\pm421, \\pm431, \\pm411`
-        
+
         Returns:
           float: :math:`\\sigma_{D-mesons}` in mb
         """
         xc = self.d_frag(x)
         return self.dsig_dx(xc, E) * self.D0_scale * self.cs_scales[mes]
-    
+
     def LambdaC_dist(self, x, E):
-        """Returns the Feynman-:math:`x_F` distribution 
+        """Returns the Feynman-:math:`x_F` distribution
         of :math:`\\sigma_{\\Lambda_C}` in mb
-        
+
         Args:
           x (float or np.array): :math:`x_F`
           E (float): center-of-mass energy in GeV
           mes (int): PDG ID of D-meson: :math:`\\pm421, \\pm431, \\pm411`
-        
+
         Returns:
           float: :math:`\\sigma_{D-mesons}` in mb
         """
@@ -185,22 +185,22 @@ class MRS_charm(CharmModel):
 
     def get_yield_matrix(self, proj, sec):
         """Returns the yield matrix in proper format for :class:`MCEqRun`.
-        
+
         Args:
           proj (int): projectile PDG ID :math:`\\pm` [2212, 211, 321]
           sec (int): charmed particle PDG ID :math:`\\pm` [411, 421, 431, 4122]
-        
+
         Returns:
-          np.array: yield matrix if (proj,sec) combination allowed, 
+          np.array: yield matrix if (proj,sec) combination allowed,
                     else zero matrix
         """
         # TODO: Make this function a member of the base class!
-        
+
         if (proj not in self.allowed_proj) or (abs(sec) not in self.allowed_sec):
             return self.no_prod
-        
+
         self.xdist = None
-        
+
         if abs(sec) == 4122 and \
             ((np.sign(proj) != np.sign(sec)) or abs(proj) < 1000):
             return self.no_prod
@@ -208,35 +208,35 @@ class MRS_charm(CharmModel):
             self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
         if abs(sec) != 4122:
             self.xdist = lambda e: self.D_dist(self.e_grid / e, e, abs(sec)) / e
-        
+
         m_out = np.zeros_like(self.no_prod)
-        
+
         # convert x distribution to E_sec distribution and distribute on the grid
         for i, e in enumerate(self.e_grid):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
-        
+
         if dbg > 1:
-            print ('MRS_charm::get_yield_matrix({0},{1}): ' + 
+            print ('MRS_charm::get_yield_matrix({0},{1}): ' +
                    'returning matrix').format(proj, sec)
-        
+
         return m_out
-    
+
     def test(self):
         """Plots the meson, baryon and charm quark distribution as shown in
         the plot below.
-        
+
         .. figure:: graphics/MRS_test.pdf
             :scale: 50 %
             :alt: output of test function
-        
+
         """
         import matplotlib.pyplot as plt
 
         xvec = np.linspace(0.0001, 1., 20)
-        
+
         # Energy for plotting inclusive cross-sections
         eprobe = 1e7
-        
+
         plt.figure(figsize=(8.5, 4))
         plt.subplot(121)
         plt.semilogy(xvec, xvec * self.dsig_dx(xvec, eprobe),
@@ -252,7 +252,7 @@ class MRS_charm(CharmModel):
         plt.legend()
         plt.xlabel(r'$x_F$')
         plt.ylabel(r'inclusive $\sigma$ [mb]')
-        
+
         plt.subplot(122)
         evec = np.logspace(4, 11, 100)
         plt.loglog(np.sqrt(evec), self.sigma_cc(evec),
@@ -261,7 +261,66 @@ class MRS_charm(CharmModel):
         plt.xlabel(r'$\sqrt{s}$ [GeV]')
         plt.ylabel(r'$\sigma_{c\bar{c}}$ [mb]')
         plt.tight_layout()
-        
-        
-        
-        
+
+
+class WHR_charm(MRS_charm):
+    """Logan Wille, Francis Halzen, Hall Reno.
+
+    The approach is the same as in  A. D. Martin, M. G. Ryskin,
+    and A. M. Stasto, Acta Physica Polonica B 34, 3273 (2003).
+    The parameterization of the inclusive :math:`c\\bar{c}`
+    cross-section is replaced by interpolated tables from the
+    calculation. Fragmentation functions and certain scales are
+    needed to obtain meson and baryon fluxes as a function
+    of the kinematic variable :math:`x_F`. At high energies
+    and :math:`x_F > 0.05`, where this model is valid,
+    :math:`x_F \\approx x=E_c/E_{proj}`.
+    Here, these fragmentation functions are used:
+
+        - :math:`D`-mesons :math:`\\frac{4}{3} x`
+        - :math:`\\Lambda`-baryons :math:`\\frac{1}{1.47} x`
+
+    The production ratios between the different types of
+    :math:`D`-mesons are stored in the attribute :attr:`cs_scales`
+    and :attr:`D0_scale`, where :attr:`D0_scale` is the
+    :math:`c\\bar{c}` to :math:`D^0` ratio and :attr:`cs_scales`
+    stores the production ratios of :math:`D^\\pm/D^0`,
+    :math:`D_s/D^0` and :math:`\\Lambda_c/D^0`.
+
+    Since the model employs only perturbartive production of
+    charm, the charge conjugates are symmetric, i.e.
+    :math:`\\sigma_{D^+} = \\sigma_{D^-}` etc.
+
+    Args:
+      e_grid (np.array): energy grid as it is defined in
+                         :class:`MCEqRun`.
+      csm (np.array): inelastic cross-sections as used in
+                      :class:`MCEqRun`.
+    """
+
+    def __init__(self, e_grid, csm):
+        import cPickle as pickle
+
+        self.sig_table = pickle.load(
+            open('references/logan_charm.ppl', 'r'))
+        self.e_idcs = {}
+        for i, e in enumerate(e_grid):
+            self.e_idcs[e] = i
+
+        MRS_charm.__init__(self, e_grid, csm)
+
+
+    def dsig_dx(self, x, E):
+        """Returns the Feynman-:math:`x_F` distribution
+        of :math:`\\sigma_{c\\bar{c}}` in mb
+
+        Args:
+          x (float or np.array): :math:`x_F`
+          E (float): center-of-mass energy in GeV
+
+        Returns:
+          float: :math:`\\sigma_{c\\bar{c}}` in mb
+        """
+        res = self.sig_table[self.e_idcs[E]](x) * 1e-3 #mub -> mb
+        res[res < 0] = 0.
+        return res
