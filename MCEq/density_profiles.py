@@ -131,7 +131,7 @@ class CascadeAtmosphere():
         """
         from scipy.integrate import quad
         from time import time
-        from scipy.interpolate import UnivariateSpline
+        from scipy.interpolate import UnivariateSpline, interp1d
         
         if self.theta_deg == None:
             raise Exception('{0}::calculate_density_spline(): ' + 
@@ -150,7 +150,6 @@ class CascadeAtmosphere():
         dl_vec = np.linspace(0, path_length, n_steps)
         
         now = time()
-        
         # Calculate integral for each depth point 
         # functionality could be more efficient :)
         X_int = np.zeros_like(dl_vec, dtype='float64')
@@ -163,11 +162,20 @@ class CascadeAtmosphere():
         self.X_surf = X_int[-1]
         
         # Interpolate with bi-splines without smoothing
+        h_intp = [geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
+        X_intp = [X for X in reversed(X_int[1:])]
+
+#        print  splrep(np.array(h_intp),
+#                      np.log(X_intp),
+#                      k=2, s=0.0)
+        self.s_h2X = UnivariateSpline(h_intp,np.log(X_intp),
+                                      k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
                                         k=2, s=0.0)
         
         print 'Average spline error:', np.std(vec_rho_l(dl_vec) / 
                                               self.s_X2rho(X_int))
+        
 
     def set_theta(self, theta_deg):
         """Configures geometry and initiates spline calculation for
@@ -234,6 +242,22 @@ class CascadeAtmosphere():
 
         """
         return 1 / self.s_X2rho(X)
+    
+    def h2X(self, h):
+        """Returns the depth along path as function of height above
+        surface. 
+
+        The spline `s_X2rho` is used, which was calculated or retrieved
+        from cache during the :func:`set_theta` call.
+
+        Args:
+           h (float):  vertical height above surface in cm
+
+        Returns:
+           float: X  slant depth in g/cm**2
+
+        """
+        return np.exp(self.s_h2X(h))
     
     def X2rho(self, X):
         """Returns the density :math:`\\rho(X)`. 

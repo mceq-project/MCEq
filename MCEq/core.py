@@ -392,10 +392,21 @@ class MCEqRun():
             print "Install the module with 'easy_install progressbar', or",
             print "get it from http://qubit.ic.unicamp.br/~nilton"
             raise ImportError("It's easy do do this...")
-        self.progressBar = ProgressBar(maxval=maximum,
-                                       widgets=[Percentage(), ' ',
-                                                Bar(), ' ',
-                                                ETA()])
+        if config['prog_bar']:
+            self.progressBar = ProgressBar(maxval=maximum,
+                                           widgets=[Percentage(), ' ',
+                                           Bar(), ' ',
+                                           ETA()])
+        else:
+            class FakeProg:
+                def start(self):
+                    pass
+                def update(self, arg):
+                    pass
+                def finish(self):
+                    pass
+                
+            self.progressBar = FakeProg() 
     
     def _alias(self, mother, daughter):
         """Returns pair of alias indices, if ``mother``/``daughter`` combination
@@ -535,7 +546,6 @@ class MCEqRun():
         self.yields_params['interaction_model'] = interaction_model
         self.yields_params['charm_model'] = charm_model
         
-        #If a custom charm model is selected force re-read of yields
         self.y.set_interaction_model(interaction_model)
         self.y.inject_custom_charm_model(charm_model)
 
@@ -651,6 +661,9 @@ class MCEqRun():
             n_neutrons = A - Z
             # convert energy to energy per nucleon
             E = E / float(A)
+            if E < np.min(self.e_grid):
+                raise Exception('MCEqRun::set_single_primary_particle():' +
+                    'energy per nucleon too low for primary ' + str(corsika_id))
         
         if dbg > 1:
             print ('MCEqRun::set_single_primary_particle(): superposition:' + 
@@ -907,8 +920,8 @@ class MCEqRun():
         
         self.progressBar.finish()
 
-        print ("\n{0}::vode(): time elapsed during " + 
-               "integration: {1} sec").format(self.cname, time() - start)
+        if dbg > 0: print ("\n{0}::vode(): time elapsed during " + 
+            "integration: {1} sec").format(self.cname, time() - start)
         
         self.solution = r.y
 
@@ -958,15 +971,15 @@ class MCEqRun():
 
         self.progressBar.finish()
 
-        print ("\n{0}::_forward_euler(): time elapsed during " + 
-               "integration: {1} sec").format(self.cname, time() - start)
+        if dbg > 0: print ("\n{0}::_forward_euler(): time elapsed during " + 
+            "integration: {1} sec").format(self.cname, time() - start)
 
-    def _calculate_integration_path(self, int_grid, grid_var):
+    def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
-        print "MCEqRun::_calculate_integration_path():"
+        if dbg > 0: print "MCEqRun::_calculate_integration_path():"
         
         if (self.integration_path and np.alltrue(int_grid == self.int_grid) and
-            np.alltrue(self.grid_var == grid_var)):
+            np.alltrue(self.grid_var == grid_var) and not force):
             return   
         
         self.int_grid, self.grid_var = int_grid, grid_var
@@ -1051,9 +1064,9 @@ class EdepZFactors():
     
     def _gen_integrator(self):
         try:
-            from numba import jit, double
-            @jit(argtypes=[double[:], double[:], double[:],
-                           double[:, :], double[:]], target='cpu')
+            from numba import jit, double, boolean
+            @jit(argtypes=[double[:], double[:], double[:], double[:],
+                           double[:, :], double[:], boolean], target='cpu')
             def calculate_zfac(e_vec, e_widths, nuc_flux, proj_cs, y, zfac, use_cs):
                 for h, E_h in enumerate(e_vec):
                     for k in range(len(e_vec)):
@@ -1064,7 +1077,7 @@ class EdepZFactors():
                         csfac = proj_cs[k] / proj_cs[h] if use_cs else 1.
                         
                         zfac[h] += nuc_flux[k] / nuc_flux[h] * csfac * \
-                            y[:, k][h] * dE_k
+                            y[:, k][h] #* dE_k
         except ImportError:
             print "Warning! Numba not in PYTHONPATH. ZFactor calculation won't work."
         

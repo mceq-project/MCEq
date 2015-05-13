@@ -23,6 +23,10 @@ config = {
 # Debug flag for verbose printing, 0 = minimum
 "debug_level": 1,
 
+# Use progress_bars
+"prog_bar": False,
+
+
 #=========================================================================
 # Paths and library locations
 #=========================================================================
@@ -50,7 +54,7 @@ config = {
 #=========================================================================
 
 # Use file for caching calculated atmospheric rho(X) splines
-"use_atm_cache": True,
+"use_atm_cache": False,
 
 # Atmospheric model in the format: (model, parametrise ation, options)
 "atm_model": ('CORSIKA', 'BK_USStd', None),

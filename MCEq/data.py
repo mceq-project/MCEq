@@ -358,7 +358,7 @@ class InteractionYields():
             # exclude electrons and photons
             if np.sum(mat) > 0 and abs(sec) not in [11, 22]:
                 assert(sec not in self.secondary_dict[proj]), \
-                ("InteractionYields:_gen_index()::" +
+                ("InteractionYields:_gen_index()::" + 
                 "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 self.secondary_dict[proj].append(sec)
 
@@ -372,13 +372,13 @@ class InteractionYields():
         """
         if not force and interaction_model == self.iam:
             if dbg > 0:
-                print ("InteractionYields:set_interaction_model():: Model " +
+                print ("InteractionYields:set_interaction_model():: Model " + 
                     self.iam + " already loaded.")
             return
 
         if interaction_model not in self.yield_dict.keys():
-            raise Exception("InteractionYields(): No coupling matrices " +
-                            "available for the selected interaction " +
+            raise Exception("InteractionYields(): No coupling matrices " + 
+                            "available for the selected interaction " + 
                             "model: {0}.".format(interaction_model))
 
         self._gen_index(self.yield_dict[interaction_model])
@@ -390,11 +390,11 @@ class InteractionYields():
 
     def set_xf_band(self, xf_low_idx, xf_up_idx):
 
-        xf_bins = self.e_bins/self.e_bins[-1]
+        xf_bins = self.e_bins / self.e_bins[-1]
         self.band = (xf_low_idx, xf_up_idx)
         if dbg > 0:
             print ('InteractionYields::set_xf_band(): limiting '
-            'Feynman x range to: {0:5.2f} - {1:5.2f}').format(xf_bins[self.band[0]], 
+            'Feynman x range to: {0:5.2f} - {1:5.2f}').format(xf_bins[self.band[0]],
                                                               xf_bins[self.band[1]])
 
     def is_yield(self, projectile, daughter):
@@ -412,7 +412,7 @@ class InteractionYields():
             return True
         else:
             if dbg > 1:
-                print ('InteractionYields::is_yield(): no interaction matrix ' +
+                print ('InteractionYields::is_yield(): no interaction matrix ' + 
                        "for {0}, {1}->{2}".format(self.iam, projectile, daughter))
             return False
 
@@ -479,7 +479,7 @@ class InteractionYields():
         """
 
         from ParticleDataTool import SibyllParticleTable
-        from charm_models import MRS_charm  # @UnresolvedImport
+        from charm_models import MRS_charm, WHR_charm  # @UnresolvedImport
 
         if model == None:
             return
@@ -495,13 +495,12 @@ class InteractionYields():
         charm_modids = [sib.modid2pdg[modid] for modid in
                         sib.mod_ids if abs(modid) >= 59]
         del sib
-        # make a copy of current yields before starting overwriting/injecting
-        # a charm model on top
-        from copy import copy
-        self.yields = copy(self.yields)
+#        # make a copy of current yields before starting overwriting/injecting
+#        # a charm model on top
+#        from copy import copy
+#        self.yields = copy(self.yields)
         
         if model == 'MRS':
-            
             # Set charm production to zero
             cs = HadAirCrossSections(self.iam)
             mrs = MRS_charm(self.e_grid, cs)
@@ -509,12 +508,23 @@ class InteractionYields():
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = mrs.get_yield_matrix(
                         proj, chid)
+        
+        elif model == 'WHR':
+            
+            cs_h_air = HadAirCrossSections('SIBYLL2.3')
+            cs_h_p = HadAirCrossSections('SIBYLL2.3_pp')
+            whr = WHR_charm(self.e_grid, cs_h_air)
+            for proj in self.projectiles:
+                cs_scale = np.diag(cs_h_p.get_cs(proj) / cs_h_air.get_cs(proj)) * 14.5
+                for chid in charm_modids:
+                    self.yields[(proj, chid)] = whr.get_yield_matrix(
+                        proj, chid) * 14.5  #.dot(cs_scale)
 
         elif model == 'sibyll23_pl':
             cs_h_air = HadAirCrossSections('SIBYLL2.3')
             cs_h_p = HadAirCrossSections('SIBYLL2.3_pp')
             for proj in self.projectiles:
-                cs_scale = np.diag(cs_h_p.get_cs(proj)/cs_h_air.get_cs(proj))
+                cs_scale = np.diag(cs_h_p.get_cs(proj) / cs_h_air.get_cs(proj))
                 for chid in charm_modids:
                     # rescale yields with sigma_pp/sigma_air to ensure
                     # that in a later step indeed sigma_{pp,ccbar} is taken
@@ -523,7 +533,7 @@ class InteractionYields():
                         'SIBYLL2.3_rc1_pl'][(proj, chid)].dot(cs_scale) * 14.5
 
         else:
-            raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
+            raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' + 
                                       ' Unsupported model')
 
         self._gen_index(self.yields)
@@ -618,7 +628,7 @@ class DecayYields():
           carried out. 
         """
         if dbg > 1 and not self.is_daughter(mother, daughter):
-            print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
+            print ("DecayYields:get_d_matrix():: trying to get empty matrix" + 
                    "{0} -> {1}").format(mother, daughter)
         # TODO: fix structure of the decay dict
         return (self.decay_dict[(mother, daughter)].T).dot(self.weights)
@@ -743,7 +753,7 @@ class HadAirCrossSections():
           Exception: if invalid name specified in argument ``interaction_model``
         """
         if interaction_model == self.iam and dbg > 0:
-            print ("InteractionYields:set_interaction_model():: Model " +
+            print ("InteractionYields:set_interaction_model():: Model " + 
                    self.iam + " already loaded.")
             return
 
@@ -752,7 +762,7 @@ class HadAirCrossSections():
             
         elif interaction_model.find('SIBYLL2.2') == 0:
             if dbg > 1:
-                print ("InteractionYields:set_interaction_model():: Model " +
+                print ("InteractionYields:set_interaction_model():: Model " + 
                        interaction_model + " selected.")
             self.iam = 'SIBYLL2.3'
         
@@ -760,7 +770,7 @@ class HadAirCrossSections():
             self.iam = 'SIBYLL2.3'
         else:
             print "Available interaction models: ", self.cs_dict.keys()
-            raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
+            raise Exception("HadAirCrossSections(): No cross-sections for the desired " + 
                             "interaction model {0} available.".format(interaction_model))
         self.cs = self.cs_dict[self.iam]
 

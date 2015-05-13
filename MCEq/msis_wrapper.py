@@ -86,7 +86,12 @@ class pyNRLMSISE00(NRLMSISE00Base):
         if tag not in self.month2doy.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
         self.input.doy = self.month2doy[tag]
-        
+    
+    def set_doy(self, doy):
+        if doy < 0 or doy > 365:
+            raise Exception("NRLMSISE00::set_doy(): Day of year out of range.") 
+        self.input.doy = int(doy)
+    
     def get_density(self, altitude_cm):
         self.input.alt = altitude_cm / 1e5
         gtd7(self.input, self.flags, self.output)
@@ -133,6 +138,11 @@ class cNRLMSISE00(NRLMSISE00Base):
         if tag not in self.month2doy.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
         self.input.doy = self.month2doy[tag]
+    
+    def set_doy(self, doy):
+        if doy < 0 or doy > 365:
+            raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
+        self.input.doy = doy
         
     def get_density(self, altitude_cm):
         input = self.input

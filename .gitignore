@@ -7,9 +7,14 @@ __pycache__/
 *.ppl
 examples/.ipynb_*
 
-# Tables from other scietific publication
+# Tables from other publications
 /references/
+
+# Prototype scripts
 /prototyping/
+
+# Not licensed
+/c-NRLMSISE-00/
 
 # eclipse stuff
 .p*
@@ -67,4 +72,3 @@ docs/_build/
 
 # PyBuilder
 target/
-
