@@ -13,11 +13,11 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
     from mceq_config import config
     from MCEq.core import MCEqRun
     import CRFluxModels as pm
-    
+
     mceq_run = MCEqRun(interaction_model='SIBYLL2.1',
                        primary_model=(pm.HillasGaisser2012, "H3a"),
                        **config)
-    
+
     mceq_run.set_theta_deg(60.)
     mceq_run.solve()
 
@@ -29,31 +29,31 @@ from mceq_config import dbg, config
 
 class MCEqRun():
     """Main class for handling the calclation.
-    
+
     This class is the main user interface for the caclulation. It will
-    handle initialization and various error/configuration checks. The 
-    setup has to be accomplished before invoking the integration routine 
+    handle initialization and various error/configuration checks. The
+    setup has to be accomplished before invoking the integration routine
     is :func:`MCeqRun.solve`. Changes of configuration, such as:
-    
+
     - interaction model in :meth:`MCEqRun.set_interaction_model`,
-    - primary flux in :func:`MCEqRun.set_primary_model`, 
+    - primary flux in :func:`MCEqRun.set_primary_model`,
     - zenith angle in :func:`MCEqRun.set_theta_deg`,
     - density profile in :func:`MCEqRun.set_atm_model`,
     - member particles of the special ``obs_`` group in :func:`MCEqRun.set_obs_particles`,
-    
-    can be made on an active instance of this class, while calling 
+
+    can be made on an active instance of this class, while calling
     :func:`MCEqRun.solve` subsequently to calculate the solution
     corresponding to the settings.
-    
+
     The result can be retrieved by calling :func:`MCEqRun.get_solution`.
-    
-    
+
+
     Args:
       interaction_model (string): PDG ID of the particle
       atm_model (string,sting,string): model type, location, season
-      primary_model (class, param_tuple): classes derived from 
-        :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple  
-      theta_deg (float): zenith angle :math:`\\theta` in degrees, 
+      primary_model (class, param_tuple): classes derived from
+        :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple
+      theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
       vetos (dict): different controls, see :mod:`mceq_config`
       obs_ids (list): list of particle name strings. Those lepton decay
@@ -116,7 +116,7 @@ class MCEqRun():
             self._gen_list_of_particles()
 
         # Particle index shortcuts
-        #: (dict) Converts PDG ID to index in state vector 
+        #: (dict) Converts PDG ID to index in state vector
         self.pdg2nceidx = {}
         #: (dict) Converts particle name to index in state vector
         self.pname2nceidx = {}
@@ -128,7 +128,7 @@ class MCEqRun():
         self.nceidx2pdg = {}
         #: (dict) Converts index in state vector to reference of :class:`data.NCEParticle`
         self.nceidx2pname = {}
-        
+
         for p in self.particle_species:
             try:
                 nceidx = p.nceidx
@@ -147,8 +147,8 @@ class MCEqRun():
         self.dim_states = self.d * self.n_tot_species
 
         self.I = np.eye(self.dim_states)
-        self.e_weight = np.array(self.n_tot_species * 
-                                 list(self.y.e_bins[1:] - 
+        self.e_weight = np.array(self.n_tot_species *
+                                 list(self.y.e_bins[1:] -
                                       self.y.e_bins[:-1]))
 
         self._init_alias_tables()
@@ -162,9 +162,9 @@ class MCEqRun():
                 print_str += ('"{:}", ' * n_cols).format(*str_list[i * n_cols:(i + 1)
                                                          * n_cols]) + '\n'
             print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
-            
+
             print print_str.strip()[:-1]
-            
+
 
         if dbg > 0:
             print "\nHadrons:\n"
@@ -214,27 +214,27 @@ class MCEqRun():
         # Set initial flux condition
         if primary_model != None:
             self.set_primary_model(*self.pm_params)
-    
+
     def _gen_list_of_particles(self):
         """Determines the list of particles for calculation and
-        returns lists of instances of :class:`data.NCEParticle` . 
-        
+        returns lists of instances of :class:`data.NCEParticle` .
+
         The particles which enter this list are those, which have a
         defined index in the SIBYLL 2.3 interaction model. Included are
         most relevant baryons and mesons and some of their high mass states.
-        More details about the particles which enter the calculation can 
+        More details about the particles which enter the calculation can
         be found in :mod:`ParticleDataTool`.
-        
+
         Returns:
           (tuple of lists of :class:`data.NCEParticle`): (all particles,
           cascade particles, resonances)
         """
         from MCEq.data import NCEParticle
-        
+
         if dbg > 1:
-            print (self.cname + "::_gen_list_of_particles():" + 
+            print (self.cname + "::_gen_list_of_particles():" +
                    "Generating particle list.")
-        
+
         particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
         particle_list = [NCEParticle(h, self.modtab, self.pd,
                                      self.cs, self.d) for h in particles]
@@ -252,22 +252,22 @@ class MCEqRun():
             h.nceidx = nceidx
 
         return cascade_particles + resonances, cascade_particles, resonances
-    
+
     def _init_alias_tables(self):
         """Sets up the functionality of aliases and defines the meaning of
-        'prompt'.  
-        
+        'prompt'.
+
         The identification of the last mother particle of a lepton is implemented
         via index aliases. I.e. the PDG index of muon neutrino 14 is transformed
         into 7114 if it originates from decays of a pion, 7214 in case of kaon or
         7014 if the mother particle is very short lived (prompt). The 'very short lived'
         means that the critical energy :math:`\\varepsilon \\ge \\varepsilon(D^\pm)`.
-        This includes all charmed hadrons, as well as resonances such as :math:`\\eta`.    
-       
+        This includes all charmed hadrons, as well as resonances such as :math:`\\eta`.
+
         The aliases for the special ``obs_`` category are also initialized here.
         """
         if dbg > 1:
-            print (self.cname + "::_init_alias_tables():" + 
+            print (self.cname + "::_init_alias_tables():" +
                    "Initializing links to alias IDs.")
         self.alias_table = {}
         prompt_ids = []
@@ -293,11 +293,11 @@ class MCEqRun():
                         (obs_id, 13): 7313,
                         (obs_id, 14): 7314,
                         (obs_id, 16): 7316})
-    
+
     def _init_Lambda_int(self):
         """Initializes the interaction length vector according to the order
         of particles in state vector.
-         
+
         :math:`\\boldsymbol{\\Lambda_{int}} = (1/\\lambda_{int,0},...,1/\\lambda_{int,N})`
         """
         self.Lambda_int = np.hstack([p.inverse_interaction_length()
@@ -307,33 +307,33 @@ class MCEqRun():
         """Initializes the decay length vector according to the order
         of particles in state vector. The shortest decay length is determined
         here as well.
-         
+
         :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
         """
         self.Lambda_dec = np.hstack([p.inverse_decay_length(self.e_grid)
                             for p in self.cascade_particles])
         self.max_ldec = np.max(self.Lambda_dec)
-    
+
     def _convert_to_sparse(self):
         """Converts interaction and decay matrix into sparse format using
         :class:`scipy.sparse.csr_matrix`.
         """
-        
+
         from scipy.sparse import csr_matrix
         if dbg > 0:
-            print (self.cname + "::_convert_to_sparse():" + 
+            print (self.cname + "::_convert_to_sparse():" +
                    "Converting to sparse (CSR) matrix format.")
         self.int_m = csr_matrix(self.int_m)
         self.dec_m = csr_matrix(self.dec_m)
-    
+
     def _init_default_matrices(self):
         """Constructs the matrices for calculation.
-        
+
         These are:
-        
+
         - :math:`\\boldsymbol{M}_{int} = (-\\boldsymbol{1} + \\boldsymbol{C}){\\boldsymbol{\\Lambda}}_{int}`,
         - :math:`\\boldsymbol{M}_{dec} = (-\\boldsymbol{1} + \\boldsymbol{D}){\\boldsymbol{\\Lambda}}_{dec}`.
-        
+
         For ``dbg > 0`` some general information about matrix shape and the number of
         non-zero elements is printed. The intermediate matrices :math:`\\boldsymbol{C}` and
         :math:`\\boldsymbol{D}` are deleted afterwards to save memory.
@@ -346,16 +346,16 @@ class MCEqRun():
         self.int_m = (-self.I + self.C) * self.Lambda_int
         # decay part
         self.dec_m = (-self.I + self.D) * self.Lambda_dec
-        
+
         del self.C, self.D
-        
+
         if config['use_sparse']:
             self._convert_to_sparse()
-            
+
         if dbg > 0:
-            int_m_density = (float(np.count_nonzero(self.int_m)) / 
+            int_m_density = (float(np.count_nonzero(self.int_m)) /
                          float(self.int_m.size))
-            dec_m_density = (float(np.count_nonzero(self.dec_m)) / 
+            dec_m_density = (float(np.count_nonzero(self.dec_m)) /
                          float(self.dec_m.size))
             print "C Matrix info:"
             print "    density    :", int_m_density
@@ -374,14 +374,14 @@ class MCEqRun():
 
 
         print self.cname + "::_init_default_matrices():Done filling matrices."
-    
+
     def _init_progress_bar(self, maximum):
         """Initializes the progress bar.
-        
+
         The progress bar is a small python package which shows a progress
         bar and remaining time. It should you cost no time to install it
         from your favorite repositories such as pip, easy_install, anaconda, etc.
-        
+
         Raises:
           ImportError: if package not available
         """
@@ -405,21 +405,21 @@ class MCEqRun():
                     pass
                 def finish(self):
                     pass
-                
-            self.progressBar = FakeProg() 
-    
+
+            self.progressBar = FakeProg()
+
     def _alias(self, mother, daughter):
         """Returns pair of alias indices, if ``mother``/``daughter`` combination
         belongs to an alias.
-        
+
         Args:
           mother (int): PDG ID of mother particle
           daughter (int): PDG ID of daughter particle
         Returns:
           tuple(int, int): lower and upper index in state vector of alias or ``None``
         """
-        
-        
+
+
         ref = self.pdg2pref
         abs_mo = np.abs(mother)
         abs_d = np.abs(daughter)
@@ -433,14 +433,14 @@ class MCEqRun():
     def _alternate_score(self, mother, daughter):
         """Returns pair of special score indices, if ``mother``/``daughter`` combination
         belongs to the ``obs_`` category.
-        
+
         Args:
           mother (int): PDG ID of mother particle
           daughter (int): PDG ID of daughter particle
         Returns:
           tuple(int, int): lower and upper index in state vector of ``obs_`` group or ``None``
         """
-        
+
         ref = self.pdg2pref
         abs_mo = np.abs(mother)
         abs_d = np.abs(daughter)
@@ -453,25 +453,25 @@ class MCEqRun():
 
     def get_solution(self, particle_name, mag=0., grid_idx=None):
         """Retrieves solution of the calculation on the energy grid.
-        
+
         Some special prefixes are accepted for lepton names:
-        
+
         - The total flux of muons, muon neutrinos etc. from all sources
           can be retrieved by the prefix ``total_``, i.e. ``total_numu``
         - The conventional flux of muons, muon neutrinos etc. from all sources
-          can be retrieved by the prefix ``total_``, i.e. ``total_numu`` 
-        
+          can be retrieved by the prefix ``total_``, i.e. ``total_numu``
+
         Args:
           particle_name (str): The name of the particle such, e.g.
-            ``total_mu+`` for the total flux spectrum of positive muons or 
+            ``total_mu+`` for the total flux spectrum of positive muons or
             ``pr_antinumu`` for the flux spectrum of prompt anti muon neutrinos
-          mag (float, optional): 'magnification factor': the solution is 
+          mag (float, optional): 'magnification factor': the solution is
             multiplied by ``sol`` :math:`= \\Phi \\cdot E^{mag}`
           grid_idx (int, optional): if the integrator has been configured to save
-            intermediate solutions on a depth grid, then ``grid_idx`` specifies 
+            intermediate solutions on a depth grid, then ``grid_idx`` specifies
             the index of the depth grid for which the solution is retrieved. If
-            not specified the flux at the surface is returned 
-        
+            not specified the flux at the surface is returned
+
         Returns:
           (numpy.array): flux of particles on energy grid :attr:`e_grid`
         """
@@ -482,7 +482,7 @@ class MCEqRun():
             sol = self.solution
         else:
             sol = self.grid_sol[grid_idx]
-            
+
         if particle_name.startswith('total'):
             lep_str = particle_name.split('_')[1]
             for prefix in ('pr_', 'pi_', 'k_', ''):
@@ -506,10 +506,10 @@ class MCEqRun():
     def set_obs_particles(self, obs_ids):
         """Adds a list of mother particle strings which decay products
         should be scored in the special ``obs_`` category.
-        
-        Decay and interaction matrix will be regenerated automatically 
+
+        Decay and interaction matrix will be regenerated automatically
         after performing this call.
-        
+
         Args:
           obs_ids (list of strings): mother particle names
         """
@@ -532,20 +532,20 @@ class MCEqRun():
 
     def set_interaction_model(self, interaction_model, charm_model=None):
         """Sets interaction model and/or an external charm model for calculation.
-        
-        Decay and interaction matrix will be regenerated automatically 
+
+        Decay and interaction matrix will be regenerated automatically
         after performing this call.
-        
+
         Args:
           interaction_model (str): name of interaction model
           charm_model (str, optional): name of charm model
         """
         if dbg:
             print 'MCEqRun::set_interaction_model(): ', interaction_model
-            
+
         self.yields_params['interaction_model'] = interaction_model
         self.yields_params['charm_model'] = charm_model
-        
+
         self.y.set_interaction_model(interaction_model)
         self.y.inject_custom_charm_model(charm_model)
 
@@ -578,10 +578,10 @@ class MCEqRun():
 
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
-        
+
         This functions is quick and does not require re-generation of
         matrices.
-        
+
         Args:
           interaction_model (:class:`CRFluxModel.PrimaryFlux`): reference
           to primary model **class**
@@ -615,43 +615,43 @@ class MCEqRun():
         self.phi0 = phi0
 
     def set_single_primary_particle(self, E, corsika_id):
-        """Set type and energy of a single primary nucleus to 
+        """Set type and energy of a single primary nucleus to
         calculation of particle yields.
-        
+
         The functions uses the superposition theorem, where the flux of
-        a nucleus with mass A and charge Z is modeled by using Z protons 
+        a nucleus with mass A and charge Z is modeled by using Z protons
         and A-Z neutrons at energy :math:`E_{nucleon}= E_{nucleus} / A`
         The nucleus type is defined via :math:`\\text{CORSIKA ID} = A*100 + Z`. For
         example iron has the CORSIKA ID 5226.
-        
-        A continuous input energy range is allowed between 
+
+        A continuous input energy range is allowed between
         :math:`50*A\ \\text{GeV} < E_\\text{nucleus} < 10^{10}*A\ \\text{GeV}`.
-        
+
         Args:
           E (float): (total) energy of nucleus in GeV
-          corsika_id (int): ID of nucleus (see text) 
+          corsika_id (int): ID of nucleus (see text)
         """
         if self.delay_pmod_init:
             if dbg > 1:
                 print 'MCEqRun::set_single_primary_particle(): Initialization delayed..'
             return
         if dbg > 0:
-            print ('MCEqRun::set_single_primary_particle(): corsika_id={0}, ' + 
+            print ('MCEqRun::set_single_primary_particle(): corsika_id={0}, ' +
                    'particle energy={1:5.3g} GeV').format(corsika_id, E)
-        
+
         try:
             self.dim_states
         except:
             self.finalize_pmodel = True
-        
+
         E_gr = self.e_grid
         widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
-        
+
         w_scale = widths[0] / E_gr[0]
-        
+
         n_protons = 0
         n_neutrons = 0
-        
+
         if corsika_id == 14:
             n_protons = 1
         else:
@@ -664,13 +664,13 @@ class MCEqRun():
             if E < np.min(self.e_grid):
                 raise Exception('MCEqRun::set_single_primary_particle():' +
                     'energy per nucleon too low for primary ' + str(corsika_id))
-        
+
         if dbg > 1:
-            print ('MCEqRun::set_single_primary_particle(): superposition:' + 
-                   'n_protons={0}, n_neutrons={1}, ' + 
+            print ('MCEqRun::set_single_primary_particle(): superposition:' +
+                   'n_protons={0}, n_neutrons={1}, ' +
                    'energy per nucleon={2:5.3g} GeV').format(n_protons, n_neutrons, E)
-        
-        
+
+
         # find energy grid index closest to E
         idx_min = np.argmin(abs(E - E_gr))
         idx_up, idx_lo = 0, 0
@@ -681,41 +681,41 @@ class MCEqRun():
         else:
             idx_up = idx_min
             idx_lo = idx_min - 1
-        # calculate the effective bin width at E 
+        # calculate the effective bin width at E
         wE = E * w_scale
         E_up = E + wE / 2.
         E_lo = E - wE / 2.
         # determine partial widths in 2 neighboring bins
         wE_up = E_up - (E_gr[idx_up] - widths[idx_up] / 2.)
         wE_lo = E_gr[idx_lo] + widths[idx_lo] / 2. - E_lo
-        
+
         self.phi0 = np.zeros(self.dim_states)
-        
+
         if dbg > 1:
-            print ('MCEqRun::set_single_primary_particle(): \n \t' + 
-                   'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t' + 
+            print ('MCEqRun::set_single_primary_particle(): \n \t' +
+                   'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t' +
                    'fractional contribution for upper bin @ E={2:5.3g} GeV: {3:5.3}').format(
                                                      E_gr[idx_lo], wE_lo / widths[idx_lo],
                                                      E_gr[idx_up], wE_up / widths[idx_up])
-        
+
         self.phi0[self.pdg2pref[2212].lidx() + idx_lo] = n_protons * wE_lo / widths[idx_lo] ** 2
         self.phi0[self.pdg2pref[2212].lidx() + idx_up] = n_protons * wE_up / widths[idx_up] ** 2
-        
-        
+
+
         self.phi0[self.pdg2pref[2112].lidx() + idx_lo] = n_neutrons * wE_lo / widths[idx_lo] ** 2
         self.phi0[self.pdg2pref[2112].lidx() + idx_up] = n_neutrons * wE_up / widths[idx_up] ** 2
-        
+
     def set_atm_model(self, atm_config):
         """Sets model of the atmosphere.
-        
+
         To choose, for example, a CORSIKA parametrization for the Southpole in January,
         do the following::
-        
+
             mceq_instance.set_atm_model(('CORSIKA', 'PL_SouthPole', 'January'))
-        
+
         More details about the choices can be found in :mod:`MCEq.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
-        
+
         Args:
           atm_config (tuple of strings): (parametrization type, location string, season string)
         """
@@ -742,20 +742,20 @@ class MCEqRun():
 
     def set_theta_deg(self, theta_deg):
         """Sets zenith angle :math:`\\theta` as seen from a detector.
-        
+
         Currently only 'down-going' angles (0-90 degrees) are supported.
-        
+
         Args:
           atm_config (tuple of strings): (parametrization type, location string, season string)
         """
         if dbg:
             print 'MCEqRun::set_theta_deg(): ', theta_deg
-            
+
         if self.atm_config == None or not bool(self.atm_model):
             raise Exception(
-                'MCEqRun::set_theta_deg(): Can not set theta, since ' + 
+                'MCEqRun::set_theta_deg(): Can not set theta, since ' +
                 'atmospheric model not properly initialized.')
-            
+
         if self.atm_model.theta_deg == theta_deg:
             print 'Theta selection correponds to cached value, skipping calc.'
             return
@@ -865,7 +865,7 @@ class MCEqRun():
     def solve(self, **kwargs):
 
         if dbg > 1:
-            print (self.cname + "::solve(): " + 
+            print (self.cname + "::solve(): " +
                    "solver={0} and sparse={1}").format(self.solver,
                                                        self.sparse)
 
@@ -877,7 +877,7 @@ class MCEqRun():
             raise Exception(
                 ("MCEq::solve(): Unknown integrator selection '{0}'."
                  ).format(config['integrator']))
-    
+
     def _odepack(self, dXstep=1., initial_depth=0.1,
                  *args, **kwargs):
         from scipy.integrate import ode
@@ -899,12 +899,12 @@ class MCEqRun():
         # Setup solver
         r = ode(dPhi_dX).set_integrator(
             with_jacobian=False, **config['ode_params'])
-        
+
         r.set_initial_value(phi0, initial_depth)
-        
+
         # Solve
         X_surf = self.atm_model.X_surf
-        
+
         self._init_progress_bar(X_surf)
         self.progressBar.start()
         start = time()
@@ -914,15 +914,15 @@ class MCEqRun():
 #             if (i % 100) == 0:
 #                 print "Solving at depth X =", r.t, X_i
             r.integrate(r.t + dXstep)
-        
+
         # Do last step to make sure the rational number X_surf is reached
         r.integrate(X_surf)
-        
+
         self.progressBar.finish()
 
-        if dbg > 0: print ("\n{0}::vode(): time elapsed during " + 
+        if dbg > 0: print ("\n{0}::vode(): time elapsed during " +
             "integration: {1} sec").format(self.cname, time() - start)
-        
+
         self.solution = r.y
 
     def _forward_euler(self, int_grid=None, grid_var='X'):
@@ -934,7 +934,7 @@ class MCEqRun():
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         if dbg > 0:
-            print ("{0}::_forward_euler(): Solver will perform {1} " + 
+            print ("{0}::_forward_euler(): Solver will perform {1} " +
                    "integration steps.").format(self.cname, nsteps)
 
         self._init_progress_bar(nsteps)
@@ -946,67 +946,67 @@ class MCEqRun():
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
 
-        elif (config['kernel_config'] == 'CUDA' and 
+        elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == False):
             kernel = kernels.kern_CUDA_dense
-        
-        elif (config['kernel_config'] == 'CUDA' and 
+
+        elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == True):
             kernel = kernels.kern_CUDA_sparse
 
-        elif (config['kernel_config'] == 'MKL' and 
+        elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] == True):
             kernel = kernels.kern_MKL_sparse
         else:
             raise Exception(
-                ("MCEq::_forward_euler(): " + 
+                ("MCEq::_forward_euler(): " +
                 "Unsupported integrator settings '{0}/{1}'."
                  ).format(
                 'sparse' if config['use_sparse'] else 'dense',
                 config['kernel_config']))
-        
-        
+
+
         self.solution, self.grid_sol = kernel(nsteps, dX, rho_inv,
             self.int_m, self.dec_m, phi0, grid_idcs, self.progressBar)
 
         self.progressBar.finish()
 
-        if dbg > 0: print ("\n{0}::_forward_euler(): time elapsed during " + 
+        if dbg > 0: print ("\n{0}::_forward_euler(): time elapsed during " +
             "integration: {1} sec").format(self.cname, time() - start)
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
         if dbg > 0: print "MCEqRun::_calculate_integration_path():"
-        
+
         if (self.integration_path and np.alltrue(int_grid == self.int_grid) and
             np.alltrue(self.grid_var == grid_var) and not force):
-            return   
-        
+            return
+
         self.int_grid, self.grid_var = int_grid, grid_var
         if grid_var != 'X':
-            raise NotImplementedError('MCEqRun::_calculate_integration_path():' + 
+            raise NotImplementedError('MCEqRun::_calculate_integration_path():' +
                'choice of grid variable other than the depth X are not possible, yet.')
-            
+
         X_surf = self.atm_model.X_surf
         ri = self.atm_model.r_X2rho
         max_ldec = self.max_ldec
 
         dX_vec = []
         rho_inv_vec = []
-        
+
         X = 0.
         step = 0
         grid_step = 0
         grid_idcs = []
-        
+
         self._init_progress_bar(X_surf)
         self.progressBar.start()
-        
+
         while X < X_surf:
             self.progressBar.update(X)
             ri_x = ri(X)
             dX = 1. / (max_ldec * ri_x)
-            if (np.any(int_grid) and (grid_step < int_grid.size) 
+            if (np.any(int_grid) and (grid_step < int_grid.size)
                 and (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
                 grid_idcs.append(step)
@@ -1050,7 +1050,7 @@ class EdepZFactors():
         sec_hadr = sec_hadr
         if self.y.is_yield(proj, sec_hadr):
             if dbg > 1:
-                print (("EdepZFactors::get_zfactor(): " + 
+                print (("EdepZFactors::get_zfactor(): " +
                         "calculating zfactor Z({0},{1})").format())
             y_mat = self.y.get_y_matrix(proj, sec_hadr)
 
@@ -1061,7 +1061,7 @@ class EdepZFactors():
         if logx:
             return np.log10(self.e_vec), zfac
         return self.e_vec, zfac
-    
+
     def _gen_integrator(self):
         try:
             from numba import jit, double, boolean
@@ -1075,10 +1075,10 @@ class EdepZFactors():
                         if E_k < E_h:
                             continue
                         csfac = proj_cs[k] / proj_cs[h] if use_cs else 1.
-                        
+
                         zfac[h] += nuc_flux[k] / nuc_flux[h] * csfac * \
                             y[:, k][h] #* dE_k
         except ImportError:
             print "Warning! Numba not in PYTHONPATH. ZFactor calculation won't work."
-        
+
         self.calculate_zfac = calculate_zfac
