@@ -11,7 +11,7 @@ examples/.ipynb_*
 /references/
 
 # Prototype scripts
-/prototyping/
+prototyping
 
 # Not licensed
 /c-NRLMSISE-00/
