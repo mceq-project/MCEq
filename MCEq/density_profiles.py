@@ -9,9 +9,9 @@ Currently, two different types models are supported:
 - Linsley-type/CORSIKA-style parameterization
 - Numerical atmosphere via external routine (NRLMSISE-00)
 
-Both implementations have to inherit from the abstract class 
-:class:`CascadeAtmosphere`, which provides the functions for other parts of
-the program. In particular the function :func:`CascadeAtmosphere.get_density` 
+Both implementations have to inherit from the abstract class
+:class:`EarthAtmosphere`, which provides the functions for other parts of
+the program. In particular the function :func:`EarthAtmosphere.get_density`
 
 Typical interaction::
 
@@ -20,9 +20,9 @@ Typical interaction::
       $ print 'density at X=100', atm_object.X2rho(100.)
 
 The class :class:`MCEqRun` will only the following routines::
-    - :func:`CascadeAtmosphere.set_theta`,
-    - :func:`CascadeAtmosphere.r_X2rho`.
-    
+    - :func:`EarthAtmosphere.set_theta`,
+    - :func:`EarthAtmosphere.r_X2rho`.
+
 If you are extending this module make sure to provide these
 functions without breaking compatibility.
 
@@ -33,7 +33,7 @@ Example:
 """
 
 import numpy as np
-import geometry as geom
+import geometry
 from numba import jit, double  # @UnresolvedImport
 from os.path import join
 from abc import ABCMeta, abstractmethod
@@ -54,7 +54,7 @@ def _load_cache():
         print "atmospheres::_load_cache(): loading cache."
     fname = join(config['data_dir'],
                  config['atm_cache_file'])
-    
+
     try:
         return pickle.load(open(fname, 'r'))
     except IOError:
@@ -70,7 +70,7 @@ def _dump_cache(cache):
         IOError:
     """
     import cPickle as pickle
-    
+
     if dbg > 0:
         print "density_profiles::_dump_cache() dumping cache."
     fname = join(config['data_dir'],
@@ -79,29 +79,244 @@ def _dump_cache(cache):
     try:
         pickle.dump(cache, open(fname, 'w'), protocol=-1)
     except IOError:
-        raise IOError("density_profiles::_dump_cache(): " + 
+        raise IOError("density_profiles::_dump_cache(): " +
                 'could not (re-)create cache. Wrong working directory?')
 
-class CascadeAtmosphere():
+class GeneralizedTarget():
+
+    len_target = config['len_target'] * 1e2  # cm
+    env_density = config['env_density']  # g/cm3
+    env_name = config['env_name']
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """Resets material list to defaults."""
+        self.mat_list = [[0., self.len_target,
+                          self.env_density,
+                          self.env_name]]
+        self._update_variables()
+
+    def _update_variables(self):
+        """Updates internal variables. Not needed to call by user."""
+
+        self.start_bounds, self.end_bounds, \
+            self.densities = zip(*self.mat_list)[:-1]
+        self.densities = np.array(self.densities)
+        self.start_bounds = np.array(self.start_bounds)
+        self.end_bounds = np.array(self.end_bounds)
+        self.max_den = np.max(self.densities)
+        self._integrate()
+
+    def set_length(self, new_length_cm):
+        if new_length_cm < self.mat_list[-1][0]:
+            raise Exception("GeneralizedTarget::set_length(): " +
+                            "can not set length below lower boundary of last " +
+                            "material.")
+        self.len_target = new_length_cm
+        self.mat_list[-1][1] = new_length_cm
+        self._update_variables()
+
+    def add_material(self, start_position_cm, density, name):
+        """Adds one additional material to a composite target.
+
+        Args:
+           start_position_cm (float):  position where the material starts
+                                       counted from target origin l|X = 0 in cm
+           density (float):  density of material in g/cm**3
+           name (str):  any user defined name
+
+        Raises:
+            Exception: If requested start_position_cm is not properly defined.
+        """
+
+        if (start_position_cm < 0. or
+            start_position_cm > self.len_target):
+            raise Exception("GeneralizedTarget::add_material(): " +
+                            "distance exceeds target dimensions.")
+        elif start_position_cm < self.mat_list[-1][0]:
+            raise Exception("GeneralizedTarget::add_material(): " +
+                            "start_position_cm is ahead of previous material.")
+
+        self.mat_list[-1][1] = start_position_cm
+        self.mat_list.append([start_position_cm,
+                              self.len_target, density, name])
+
+
+        if dbg > 0:
+            ("{0}::add_material(): Material '{1}' added. " +
+            "location on path {2} to {3} m").format(self.__class__.__name__,
+            name, self.mat_list[-1][0], self.mat_list[-1][1])
+
+        self._update_variables()
+
+    def set_theta(self, *args):
+        """This method is not defined for the generalized target. The purpose
+        is to catch usage errors.
+
+        Raises:
+            NotImplementedError: always
+        """
+
+        raise NotImplementedError('GeneralizedTarget::set_theta(): Method'
+                                  + 'not defined for this target class.')
+
+    def _integrate(self):
+        """Walks through material list and computes the depth along the
+        position (path). Computes the spline for the position-depth relation
+        and determines the maximum depth for the material selection.
+
+        Method does not need to be called by the user, instead the class
+        calls it when necessary.
+        """
+
+        from scipy.interpolate import UnivariateSpline
+        self.density_depth = None
+        self.knots = [0.]
+        self.X_int = [0.]
+
+        for start, end, density, name in self.mat_list:
+            self.knots.append(end)
+            self.X_int.append(density*(end-start) + self.X_int[-1])
+
+        self.s_X2h = UnivariateSpline(self.X_int, self.knots, k=1, s=0.)
+        self.s_h2X = UnivariateSpline(self.knots, self.X_int, k=1, s=0.)
+        self.max_X = self.X_int[-1]
+
+
+    def get_density_X(self, X):
+        """Returns the density in g/cm**3 as a function of depth X.
+
+        Args:
+           X (float):  depth in g/cm**2
+
+        Returns:
+           float: density in g/cm**3
+
+        Raises:
+            Exception: If requested depth exceeds target.
+        """
+        X = np.atleast_1d(X)
+        #allow for some small constant extrapolation for odepack solvers
+        if X[-1] > self.max_X and X[-1] < self.max_X*1.003:
+            X[-1] = self.max_X
+        if np.min(X) < 0. or np.max(X) > self.max_X:
+            raise Exception(("GeneralizedTarget::get_density_X(): " +
+                                      "requested depth {0:4.3f} " +
+                                      "exceeds target.").format(np.max(X)))
+
+        return self.get_density(self.s_X2h(X))
+
+    def r_X2rho(self, X):
+        """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
+
+        The spline `s_X2rho` is used, which was calculated or retrieved
+        from cache during the :func:`set_theta` call.
+
+        Args:
+           X (float):  slant depth in g/cm**2
+
+        Returns:
+           float: :math:`1/\\rho` in cm**3/g
+
+        """
+        return 1./self.get_density_X(X)
+
+    def get_density(self, l_cm):
+        """Returns the density in g/cm**3 as a function of position l in cm.
+
+        Args:
+           l (float):  position in target in cm
+
+        Returns:
+           float: density in g/cm**3
+
+        Raises:
+            Exception: If requested position exceeds target length.
+        """
+        l = np.atleast_1d(l_cm)
+        res = np.zeros_like(l)
+
+        if np.min(l) < 0 or np.max(l) > self.len_target:
+            raise Exception("GeneralizedTarget::get_density(): " +
+                                "requested position exceeds target legth.")
+        for i in range(len(l)):
+            bi = 0
+            while not (l[i] >= self.start_bounds[bi] and
+                      l[i] <= self.end_bounds[bi]):
+                bi += 1
+            res[i] = self.densities[bi]
+        return res
+
+    def draw_materials(self, axes=None):
+        """Makes a plot of depth and density profile as a function
+        of the target length. The list of materials is printed out, too.
+
+        Args:
+           axes (plt.axes, optional):  handle for matplotlib axes
+        """
+        import matplotlib.pyplot as plt
+
+        if not axes:
+            plt.figure(figsize=(5,2.5))
+            axes = plt.gca()
+        ymax = np.max(self.X_int)*1.01
+        for nm, mat in enumerate(self.mat_list):
+            xstart = mat[0]
+            xend = mat[1]
+            alpha = 0.188*mat[2] + 0.248
+            if alpha > 1:
+                alpha = 1.
+            elif alpha < 0.:
+                alpha = 0.
+            axes.fill_between((xstart/1e2, xend/1e2),(ymax,ymax),
+                              (0.,0.), label=mat[2],facecolor='grey',
+                              alpha=alpha)
+            axes.text(0.5e-2*(xstart + xend),0.5*ymax,str(nm))
+        plt.plot([xl/1e2 for xl in self.knots], self.X_int, lw=1.7, color='r')
+        axes.set_ylim(0.,ymax)
+        axes.set_xlabel('distance in target [m]')
+        axes.set_ylabel(r'depth [g/cm$^2$]')
+        self.print_table()
+
+    def print_table(self):
+        """Prints table of materials to standard output.
+        """
+        import matplotlib.pyplot as plt
+
+        templ = '{0:^3} | {1:15} | {2:^9.3f} | {3:^9.3f} | {4:^8.5f}'
+        print '********************* List of materials *************************'
+        head = '{0:3} | {1:15} | {2:9} | {3:9} | {4:9}'.format(
+            'no', 'name', 'start [m]','end [m]','density [g/cm**3]')
+        print '-'* len(head)
+        print head
+        print '-'* len(head)
+        for nm, mat in enumerate(self.mat_list):
+            print templ.format(nm, mat[3], mat[0]/1e2, mat[1]/1e2, mat[2])
+
+
+class EarthAtmosphere():
     """Abstract class containing common methods on atmosphere.
-    You have to inherit from this class and implement the virtual method 
+    You have to inherit from this class and implement the virtual method
     :func:`get_density`.
 
     Note:
       Do not instantiate this class directly.
-       
+
     Attributes:
       thrad (float): current zenith angle :math:`\\theta` in radiants
       theta_deg (float): current zenith angle :math:`\\theta` in degrees
-      X_surf (float): Slant depth at the surface according to the geometry
-                      defined in the :mod:`MCEq.geometry`
-    
+      max_X (float): Slant depth at the surface according to the geometry
+                     defined in the :mod:`MCEq.geometry`
+
     """
 
     __metaclass__ = ABCMeta
     thrad = None
     theta_deg = None
-    X_surf = None
+    max_X = None
+    max_den = 1.240e-03
 
     @abstractmethod
     def get_density(self, h_cm):
@@ -116,12 +331,12 @@ class CascadeAtmosphere():
         Raises:
             NotImplementedError:
         """
-        raise NotImplementedError("CascadeAtmosphere::get_density(): " + 
+        raise NotImplementedError("EarthAtmosphere::get_density(): " +
                                   "Base class called.")
 
     def calculate_density_spline(self, n_steps=1000):
         """Calculates and stores a spline of :math:`\\rho(X)`.
-        
+
         Args:
           n_steps (int, optional): number of :math:`X` values
                                    to use for interpolation
@@ -132,25 +347,25 @@ class CascadeAtmosphere():
         from scipy.integrate import quad
         from time import time
         from scipy.interpolate import UnivariateSpline, interp1d
-        
+
         if self.theta_deg == None:
-            raise Exception('{0}::calculate_density_spline(): ' + 
+            raise Exception('{0}::calculate_density_spline(): ' +
                             'zenith angle not set'.format(
                              self.__class__.__name__))
         else:
-            print ('{0}::calculate_density_spline(): ' + 
-                   'Calculating spline of rho(X) for zenith ' + 
+            print ('{0}::calculate_density_spline(): ' +
+                   'Calculating spline of rho(X) for zenith ' +
                    '{1} degrees.').format(self.__class__.__name__,
                                          self.theta_deg)
 
         thrad = self.thrad
-        path_length = geom.l(thrad)
+        path_length = self.geom.l(thrad)
         vec_rho_l = np.vectorize(
-            lambda delta_l: self.get_density(geom.h(delta_l, thrad)))
+            lambda delta_l: self.get_density(self.geom.h(delta_l, thrad)))
         dl_vec = np.linspace(0, path_length, n_steps)
-        
+
         now = time()
-        # Calculate integral for each depth point 
+        # Calculate integral for each depth point
         # functionality could be more efficient :)
         X_int = np.zeros_like(dl_vec, dtype='float64')
         for i, dl in enumerate(dl_vec):
@@ -159,10 +374,11 @@ class CascadeAtmosphere():
         print '.. took {0:1.2f}s'.format(time() - now)
 
         # Save depth value at h_obs
-        self.X_surf = X_int[-1]
-        
+        self.max_X = X_int[-1]
+        self.max_den = self.get_density(self.geom.h(0, thrad))
+
         # Interpolate with bi-splines without smoothing
-        h_intp = [geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
+        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
 
 #        print  splrep(np.array(h_intp),
@@ -172,30 +388,30 @@ class CascadeAtmosphere():
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
                                         k=2, s=0.0)
-        
-        print 'Average spline error:', np.std(vec_rho_l(dl_vec) / 
+
+        print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
                                               self.s_X2rho(X_int))
-        
+
 
     def set_theta(self, theta_deg):
         """Configures geometry and initiates spline calculation for
         :math:`\\rho(X)`.
-        
+
         If the option 'use_atm_cache' is enabled in the config, the
         function will check, if a corresponding spline is available
-        in the cache and use it. Otherwise it will call 
-        :func:`calculate_density_spline`,  make the function 
-        :func:`r_X2rho` available to the core code and store the spline 
+        in the cache and use it. Otherwise it will call
+        :func:`calculate_density_spline`,  make the function
+        :func:`r_X2rho` available to the core code and store the spline
         in the cache.
-         
+
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector
         """
         def calculate_and_store(key, cache):
-            self.thrad = geom._theta_rad(theta_deg)
+            self.thrad = self.geom._theta_rad(theta_deg)
             self.theta_deg = theta_deg
             self.calculate_density_spline()
-            cache[key][theta_deg] = (self.X_surf, self.s_X2rho)
+            cache[key][theta_deg] = (self.max_X, self.s_X2rho)
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg:
@@ -210,9 +426,9 @@ class CascadeAtmosphere():
                 try:
                     closest = _get_closest(theta_deg, cache[key].keys())[1]
                     if abs(closest - theta_deg) < 1.:
-                        self.thrad = geom._theta_rad(closest)
+                        self.thrad = self.geom._theta_rad(closest)
                         self.theta_deg = closest
-                        self.X_surf, self.s_X2rho = cache[key][closest]
+                        self.max_X, self.s_X2rho = cache[key][closest]
                     else:
                         calculate_and_store(key, cache)
                 except:
@@ -224,12 +440,12 @@ class CascadeAtmosphere():
                 calculate_and_store(key, cache)
 
         else:
-            self.thrad = geom._theta_rad(theta_deg)
+            self.thrad = self.geom._theta_rad(theta_deg)
             self.theta_deg = theta_deg
             self.calculate_density_spline()
 
     def r_X2rho(self, X):
-        """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`. 
+        """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
 
         The spline `s_X2rho` is used, which was calculated or retrieved
         from cache during the :func:`set_theta` call.
@@ -241,11 +457,11 @@ class CascadeAtmosphere():
            float: :math:`1/\\rho` in cm**3/g
 
         """
-        return 1 / self.s_X2rho(X)
-    
+        return 1. / self.s_X2rho(X)
+
     def h2X(self, h):
         """Returns the depth along path as function of height above
-        surface. 
+        surface.
 
         The spline `s_X2rho` is used, which was calculated or retrieved
         from cache during the :func:`set_theta` call.
@@ -258,9 +474,9 @@ class CascadeAtmosphere():
 
         """
         return np.exp(self.s_h2X(h))
-    
+
     def X2rho(self, X):
-        """Returns the density :math:`\\rho(X)`. 
+        """Returns the density :math:`\\rho(X)`.
 
         The spline `s_X2rho` is used, which was calculated or retrieved
         from cache during the :func:`set_theta` call.
@@ -303,32 +519,33 @@ class CascadeAtmosphere():
 #=========================================================================
 # CorsikaAtmosphere
 #=========================================================================
-class CorsikaAtmosphere(CascadeAtmosphere):
+class CorsikaAtmosphere(EarthAtmosphere):
     """Class, holding the parameters of a Linsley type parameterization
-    similar to the Air-Shower Monte Carlo 
+    similar to the Air-Shower Monte Carlo
     `CORSIKA <https://web.ikp.kit.edu/corsika/>`_.
-    
+
     The parameters pre-defined parameters are taken from the CORSIKA
-    manual. If new sets of parameters are added to :func:`init_parameters`, 
+    manual. If new sets of parameters are added to :func:`init_parameters`,
     the array _thickl can be calculated using :func:`calc_thickl` .
-    
+
     Attributes:
-      _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters 
-                                _aatm, _batm, _catm, _thickl, _hlay 
+      _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters
+                                _aatm, _batm, _catm, _thickl, _hlay
                                 for each of the 5 layers
     Args:
       location (str): see :func:`init_parameters`
       season (str,optional): see :func:`init_parameters`
     """
     _atm_param = None
-    
+
     def __init__(self, location, season=None):
         self.init_parameters(location, season)
-        CascadeAtmosphere.__init__(self)
+        self.geom = geometry.EarthGeometry()
+        EarthAtmosphere.__init__(self)
 
     def init_parameters(self, location, season=None):
         """Initializes :attr:`_atm_param`.
-        
+
         +--------------+-------------------+------------------------------+
         | location     | CORSIKA Table     | Description/season           |
         +==============+===================+==============================+
@@ -342,17 +559,17 @@ class CorsikaAtmosphere(CascadeAtmosphere):
         +--------------+-------------------+------------------------------+
         |"PL_SouthPole"|      29 and 30    |  P. Lipari's  Jan and Aug    |
         +--------------+-------------------+------------------------------+
-        
-        
+
+
         Args:
           location (str): see table
           season (str, optional): choice of season for supported locations
-                          
+
         Raises:
           Exception: if parameter set not available
         """
         _aatm, _batm, _catm, _thickl, _hlay = None, None, None, None, None
-        self.X_surf = None
+        self.max_X = None
         if location == "USStd":
             _aatm = np.array([-186.5562, -94.919, 0.61289, 0.0, 0.01128292])
             _batm = np.array([1222.6562, 1144.9069, 1305.5948, 540.1778, 1.0])
@@ -399,7 +616,7 @@ class CorsikaAtmosphere(CascadeAtmosphere):
                     [1020.370363, 586.143464, 228.374393, 1.338258, 0.000214])
                 _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
             else:
-                raise Exception('CorsikaAtmosphere(): Season "' + season + 
+                raise Exception('CorsikaAtmosphere(): Season "' + season +
                                 '" not parameterized for location SouthPole.')
         elif location == 'PL_SouthPole':
             if season == 'January':
@@ -421,24 +638,24 @@ class CorsikaAtmosphere(CascadeAtmosphere):
                     [1019.946057, 391.739652, 138.023515, 43.687992, 0.000022])
                 _hlay = np.array([0.0, 6.67e5, 13.33e5, 2.0e6, 1.0e7])
             else:
-                raise Exception('CorsikaAtmosphere(): Season "' + season + 
+                raise Exception('CorsikaAtmosphere(): Season "' + season +
                                 '" not parameterized for location SouthPole.')
         else:
-            raise Exception("CorsikaAtmosphere:init_parameters(): Location " + 
+            raise Exception("CorsikaAtmosphere:init_parameters(): Location " +
                             str(location) + " not parameterized.")
 
         self._atm_param = np.array([_aatm, _batm, _catm, _thickl, _hlay])
-        
+
         self.location, self.season = location, season
         # Clear cached theta value to force spline recalculation
         self.theta_deg = None
 
     def depth2height(self, x_v):
         """Converts column/vertical depth to height.
-        
+
         Args:
           x_v (float): column depth :math:`X_v` in g/cm**2
-          
+
         Returns:
           float: height in cm
         """
@@ -459,10 +676,10 @@ class CorsikaAtmosphere(CascadeAtmosphere):
 
     def height2depth(self, h_cm):
         """Converts height to column/vertical depth.
-        
+
         Args:
           h_cm (float): height in cm
-          
+
         Returns:
           float: column depth :math:`X_v` in g/cm**2
         """
@@ -486,12 +703,12 @@ class CorsikaAtmosphere(CascadeAtmosphere):
 
     def get_density(self, h_cm):
         """ Returns the density of air in g/cm**3.
-        
+
         Uses the optimized module function :func:`corsika_get_density_jit`.
-        
+
         Args:
           h_cm (float): height in cm
-        
+
         Returns:
           float: column depth :math:`\\rho(h_{cm})` in g/cm**3
         """
@@ -499,33 +716,33 @@ class CorsikaAtmosphere(CascadeAtmosphere):
 
     def rho_inv(self, X, cos_theta):
         """Returns reciprocal density in cm**3/g using planar approximation.
-        
+
         This function uses the optimized function :func:`planar_rho_inv_jit`
-         
+
         Args:
           h_cm (float): height in cm
-        
+
         Returns:
           float: :math:`\\frac{1}{\\rho}(X,\\cos{\\theta})` cm**3/g
         """
         return planar_rho_inv_jit(X, cos_theta, self._atm_param)
 
     def calc_thickl(self):
-        """Calculates thickness layers for :func:`depth2height` 
-        
-        The analytical inversion of the CORSIKA parameterization 
+        """Calculates thickness layers for :func:`depth2height`
+
+        The analytical inversion of the CORSIKA parameterization
         relies on the knowledge about the depth :math:`X`, where
         trasitions between layers/exponentials occur.
-        
+
         Example:
           Create a new set of parameters in :func:`init_parameters`
           inserting arbitrary values in the _thikl array::
 
           $ cor_atm = CorsikaAtmosphere(new_location, new_season)
           $ cor_atm.calc_thickl()
-          
-          Replace _thickl values with printout. 
-        
+
+          Replace _thickl values with printout.
+
         """
         from scipy.integrate import quad
         thickl = []
@@ -538,15 +755,15 @@ class CorsikaAtmosphere(CascadeAtmosphere):
 @jit(double(double, double, double[:, :]), target='cpu')
 def planar_rho_inv_jit(X, cos_theta, param):
     """Optimized calculation of :math:`1/\\rho(X,\\theta)` in
-    planar approximation. 
-    
-    This function can be used for calculations where 
-    :math:`\\theta < 70^\\circ`.  
-    
+    planar approximation.
+
+    This function can be used for calculations where
+    :math:`\\theta < 70^\\circ`.
+
     Args:
       X (float): slant depth in g/cm**2
       cos_theta (float): :math:`\\cos(\\theta)`
-    
+
     Returns:
       float: :math:`1/\\rho(X,\\theta)` in cm**3/g
     """
@@ -572,12 +789,12 @@ def planar_rho_inv_jit(X, cos_theta, param):
 def corsika_get_density_jit(h_cm, param):
     """Optimized calculation of :math:`\\rho(h)` in
     according to CORSIKA type parameterization.
-    
+
     Args:
       h_cm (float): height above surface in cm
-      param (numpy.array): 5x5 parameter array from 
+      param (numpy.array): 5x5 parameter array from
                         :class:`CorsikaAtmosphere`
-    
+
     Returns:
       float: :math:`\\rho(h)` in g/cm**3
     """
@@ -597,25 +814,25 @@ def corsika_get_density_jit(h_cm, param):
 
     return res
 
-class MSIS00Atmosphere(CascadeAtmosphere):
+class MSIS00Atmosphere(EarthAtmosphere):
     """Wrapper class for a python interface to the NRLMSISE-00 model.
-    
+
     `NRLMSISE-00 <http://ccmc.gsfc.nasa.gov/modelweb/atmos/nrlmsise00.html>`_
     is an empirical model of the Earth's atmosphere. It is available as
-    a FORTRAN 77 code or as a verson traslated into 
-    `C by Dominik Borodowski <http://www.brodo.de/english/pub/nrlmsise/>`_.  
-    Here a PYTHON wrapper has been used. 
-    
+    a FORTRAN 77 code or as a verson traslated into
+    `C by Dominik Borodowski <http://www.brodo.de/english/pub/nrlmsise/>`_.
+    Here a PYTHON wrapper has been used.
+
     Attributes:
-      _msis : NRLMSISE-00 python wrapper object handler 
-    
+      _msis : NRLMSISE-00 python wrapper object handler
+
     Args:
       location (str): see :func:`init_parameters`
       season (str,optional): see :func:`init_parameters`
     """
-    
+
     _msis = None
-    
+
     def __init__(self, location, season):
         from msis_wrapper import cNRLMSISE00, pyNRLMSISE00
         if config['msis_python'] == 'ctypes':
@@ -624,13 +841,14 @@ class MSIS00Atmosphere(CascadeAtmosphere):
             self.msis = pyNRLMSISE00()
 
         self.init_parameters(location, season)
-        CascadeAtmosphere.__init__(self)
+        self.geom = geometry.EarthGeometry()
+        EarthAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
         """Sets location and season in :class:`NRLMSISE-00`.
-        
-        Translates location and season into day of year 
-        and geo coordinates.   
+
+        Translates location and season into day of year
+        and geo coordinates.
 
         Args:
           location (str): Supported are "SouthPole" and "Karlsruhe"
@@ -638,19 +856,19 @@ class MSIS00Atmosphere(CascadeAtmosphere):
         """
         self.msis.set_location(location)
         self.msis.set_season(season)
-        
+
         self.location, self.season = location, season
         # Clear cached value to force spline recalculation
         self.theta_deg = None
 
     def get_density(self, h_cm):
         """ Returns the density of air in g/cm**3.
-        
+
         Wraps around ctypes calls to the NRLMSISE-00 C library.
-        
+
         Args:
           h_cm (float): height in cm
-        
+
         Returns:
           float: column depth :math:`\\rho(h_{cm})` in g/cm**3
         """
@@ -663,13 +881,13 @@ if __name__ == '__main__':
     atm_obj = CorsikaAtmosphere('PL_SouthPole', 'January')
 
     atm_obj.set_theta(0.0)
-    x_vec = np.linspace(0, atm_obj.X_surf, 10000)
+    x_vec = np.linspace(0, atm_obj.max_X, 10000)
     plt.plot(x_vec, 1 / atm_obj.r_X2rho(x_vec), lw=1.5,
              label="PL_SouthPole/January")
-    
+
     atm_obj.init_parameters('PL_SouthPole', 'August')
     atm_obj.set_theta(0.0)
-    x_vec = np.linspace(0, atm_obj.X_surf, 10000)
+    x_vec = np.linspace(0, atm_obj.max_X, 10000)
     plt.plot(x_vec, 1 / atm_obj.r_X2rho(x_vec), lw=1.5,
              label="PL_SouthPole/August")
     plt.legend()

@@ -1,6 +1,7 @@
 import sys
 import platform
 import os.path as path
+sys.path.append(".")
 sys.path.append("./CRFluxModels")
 sys.path.append("./ParticleDataTool")
 sys.path.append("./Python-NRLMSISE-00")
@@ -56,8 +57,9 @@ config = {
 # Use file for caching calculated atmospheric rho(X) splines
 "use_atm_cache": False,
 
-# Atmospheric model in the format: (model, parametrise ation, options)
-"atm_model": ('CORSIKA', 'BK_USStd', None),
+# Atmospheric model in the format: (model, (arguments))
+"density_model": ('CORSIKA', ('BK_USStd', None)),
+# "density_model": ('GeneralizedTarget', None),
 
 # Version of NRLMSISE-00 python library (ctypes, native)
 "msis_python": "ctypes",
@@ -66,22 +68,27 @@ config = {
 # in a 'obs_' category
 "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
-# Geometry
+#parameters for EarthGeometry
 "r_E": 6391.e3,  # Earth radius in m
 "h_obs": 0.,  # observation level in m
 "h_atm": 112.8e3,  # top of the atmosphere in m
 
+#Default parameters for GeneralizedTarget
+"len_target": 1000., # Total length of the target [m]
+"env_density": 0.001225, # density of default material in g/cm^3
+"env_name": "air",
+
 #===========================================================================
 # Parameters of numerical integration
 #===========================================================================
-    
+
 # Selection of integrator (euler/odepack)
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
 "kernel_config": "MKL",
 
-#parameters for the odepack integrator. More details at 
+#parameters for the odepack integrator. More details at
 #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
 "ode_params": {'name':'vode',
                'method':'adams',

@@ -38,7 +38,7 @@ class MCEqRun():
     - interaction model in :meth:`MCEqRun.set_interaction_model`,
     - primary flux in :func:`MCEqRun.set_primary_model`,
     - zenith angle in :func:`MCEqRun.set_theta_deg`,
-    - density profile in :func:`MCEqRun.set_atm_model`,
+    - density profile in :func:`MCEqRun.set_density_model`,
     - member particles of the special ``obs_`` group in :func:`MCEqRun.set_obs_particles`,
 
     can be made on an active instance of this class, while calling
@@ -50,7 +50,7 @@ class MCEqRun():
 
     Args:
       interaction_model (string): PDG ID of the particle
-      atm_model (string,sting,string): model type, location, season
+      density_model (string,sting,string): model type, location, season
       primary_model (class, param_tuple): classes derived from
         :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
@@ -59,7 +59,7 @@ class MCEqRun():
       obs_ids (list): list of particle name strings. Those lepton decay
         products will be scored in the special ``obs_`` categories
     """
-    def __init__(self, interaction_model, atm_model, primary_model,
+    def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, vetos, obs_ids, *args, **kwargs):
 
         from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
@@ -68,7 +68,7 @@ class MCEqRun():
         self.cname = self.__class__.__name__
 
         # Save atmospheric parameters
-        self.atm_config = atm_model
+        self.density_config = density_model
         self.theta_deg = theta_deg
 
         # Save yields class parameters
@@ -110,6 +110,8 @@ class MCEqRun():
         self.d = self.y.dim
         #: (np.array) energy grid (bin centers)
         self.e_grid = self.y.e_grid
+
+        self.e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
         # Hadron species include the everything excluding pure resonances
         self.particle_species, self.cascade_particles, self.resonances = \
@@ -208,14 +210,14 @@ class MCEqRun():
             self.delay_pmod_init = True
 
         # Set atmosphere and geometry
-        if atm_model != None:
-            self.set_atm_model(self.atm_config)
+        if density_model != None:
+            self.set_density_model(self.density_config)
 
         # Set initial flux condition
         if primary_model != None:
             self.set_primary_model(*self.pm_params)
 
-    def _gen_list_of_particles(self):
+    def _gen_list_of_particles(self, max_density=1.240e-03):
         """Determines the list of particles for calculation and
         returns lists of instances of :class:`data.NCEParticle` .
 
@@ -243,7 +245,8 @@ class MCEqRun():
 
         for p in particle_list:
             p.calculate_mixing_energy(self.e_grid,
-                                      self.vetos['no_mixing'])
+                                      self.vetos['no_mixing'],
+                                      max_density = max_density)
 
         cascade_particles = [p for p in particle_list if not p.is_resonance]
         resonances = [p for p in particle_list if p.is_resonance]
@@ -705,40 +708,45 @@ class MCEqRun():
         self.phi0[self.pdg2pref[2112].lidx() + idx_lo] = n_neutrons * wE_lo / widths[idx_lo] ** 2
         self.phi0[self.pdg2pref[2112].lidx() + idx_up] = n_neutrons * wE_up / widths[idx_up] ** 2
 
-    def set_atm_model(self, atm_config):
+    def set_density_model(self, density_config):
         """Sets model of the atmosphere.
 
         To choose, for example, a CORSIKA parametrization for the Southpole in January,
         do the following::
 
-            mceq_instance.set_atm_model(('CORSIKA', 'PL_SouthPole', 'January'))
+            mceq_instance.set_density_model(('CORSIKA', 'PL_SouthPole', 'January'))
 
         More details about the choices can be found in :mod:`MCEq.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
 
         Args:
-          atm_config (tuple of strings): (parametrization type, location string, season string)
+          density_config (tuple of strings): (parametrization type, arguments)
         """
-        from MCEq.density_profiles import CorsikaAtmosphere, MSIS00Atmosphere
+        import MCEq.density_profiles as dprof
 
-        base_model, location, season = atm_config
+        base_model, model_config = density_config
 
         if dbg:
-            print 'MCEqRun::set_atm_model(): ', base_model, location, season
+            print 'MCEqRun::set_density_model(): ', base_model, model_config
 
         if base_model == 'MSIS00':
-            self.atm_model = MSIS00Atmosphere(
-                location, season)
+            self.density_model = dprof.MSIS00Atmosphere(*model_config)
         elif base_model == 'CORSIKA':
-            self.atm_model = CorsikaAtmosphere(
-                location, season)
+            self.density_model = dprof.CorsikaAtmosphere(*model_config)
+        elif base_model == 'GeneralizedTarget':
+            self.density_model = dprof.GeneralizedTarget()
         else:
             raise Exception(
-                'MCEqRun::set_atm_model(): Unknown atmospheric base model.')
-        self.atm_config = atm_config
+                'MCEqRun::set_density_model(): Unknown atmospheric base model.')
+        self.density_config = density_config
 
-        if self.theta_deg != None:
+        if self.theta_deg != None and base_model != 'GeneralizedTarget':
             self.set_theta_deg(self.theta_deg)
+        elif base_model == 'GeneralizedTarget':
+            self.integration_path = None
+
+        self._gen_list_of_particles(max_density=self.density_model.max_den)
+
 
     def set_theta_deg(self, theta_deg):
         """Sets zenith angle :math:`\\theta` as seen from a detector.
@@ -751,16 +759,19 @@ class MCEqRun():
         if dbg:
             print 'MCEqRun::set_theta_deg(): ', theta_deg
 
-        if self.atm_config == None or not bool(self.atm_model):
+        if self.density_config == None or not bool(self.density_model):
             raise Exception(
                 'MCEqRun::set_theta_deg(): Can not set theta, since ' +
                 'atmospheric model not properly initialized.')
+        elif self.density_config[0] == 'GeneralizedTarget':
+            raise Exception(
+                'MCEqRun::set_theta_deg(): Target does not support angles.')
 
-        if self.atm_model.theta_deg == theta_deg:
+        if self.density_model.theta_deg == theta_deg:
             print 'Theta selection correponds to cached value, skipping calc.'
             return
 
-        self.atm_model.set_theta(theta_deg)
+        self.density_model.set_theta(theta_deg)
         self.integration_path = None
 
     def _zero_mat(self):
@@ -878,10 +889,10 @@ class MCEqRun():
                 ("MCEq::solve(): Unknown integrator selection '{0}'."
                  ).format(config['integrator']))
 
-    def _odepack(self, dXstep=1., initial_depth=0.1,
+    def _odepack(self, dXstep=1., initial_depth=0.0,
                  *args, **kwargs):
         from scipy.integrate import ode
-        ri = self.atm_model.r_X2rho
+        ri = self.density_model.r_X2rho
 
         # Functional to solve
         def dPhi_dX(X, phi, *args):
@@ -903,20 +914,22 @@ class MCEqRun():
         r.set_initial_value(phi0, initial_depth)
 
         # Solve
-        X_surf = self.atm_model.X_surf
+        max_X = self.density_model.max_X
 
-        self._init_progress_bar(X_surf)
+        self._init_progress_bar(max_X)
         self.progressBar.start()
         start = time()
-
-        while r.successful() and r.t < X_surf:
+        i = 0
+        while r.successful() and (r.t + dXstep) < max_X:
             self.progressBar.update(r.t)
-#             if (i % 100) == 0:
-#                 print "Solving at depth X =", r.t, X_i
+            if (i % 1) == 0:
+                print "Solving at depth X =", r.t
             r.integrate(r.t + dXstep)
-
-        # Do last step to make sure the rational number X_surf is reached
-        r.integrate(X_surf)
+            i += 1
+        if r.t < max_X:
+            r.integrate(max_X)
+        # Do last step to make sure the rational number max_X is reached
+        r.integrate(max_X)
 
         self.progressBar.finish()
 
@@ -987,8 +1000,8 @@ class MCEqRun():
             raise NotImplementedError('MCEqRun::_calculate_integration_path():' +
                'choice of grid variable other than the depth X are not possible, yet.')
 
-        X_surf = self.atm_model.X_surf
-        ri = self.atm_model.r_X2rho
+        max_X = self.density_model.max_X
+        ri = self.density_model.r_X2rho
         max_ldec = self.max_ldec
 
         dX_vec = []
@@ -999,10 +1012,10 @@ class MCEqRun():
         grid_step = 0
         grid_idcs = []
 
-        self._init_progress_bar(X_surf)
+        self._init_progress_bar(max_X)
         self.progressBar.start()
 
-        while X < X_surf:
+        while X < max_X:
             self.progressBar.update(X)
             ri_x = ri(X)
             dX = 1. / (max_ldec * ri_x)
