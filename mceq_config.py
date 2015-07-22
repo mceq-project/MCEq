@@ -58,14 +58,14 @@ config = {
 "use_atm_cache": False,
 
 # Atmospheric model in the format: (model, (arguments))
-"density_model": ('CORSIKA', ('BK_USStd', None)),
-# "density_model": ('GeneralizedTarget', None),
+# "density_model": ('CORSIKA', ('BK_USStd', None)),
+"density_model": ('GeneralizedTarget', None),
 
 # Version of NRLMSISE-00 python library (ctypes, native)
 "msis_python": "ctypes",
 
 # List of particles which decay products will be scored
-# in a 'obs_' category
+# in the 'obs_' category
 "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
 #parameters for EarthGeometry

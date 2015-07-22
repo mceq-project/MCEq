@@ -731,6 +731,8 @@ class MCEqRun():
 
         if base_model == 'MSIS00':
             self.density_model = dprof.MSIS00Atmosphere(*model_config)
+        elif base_model == 'MSIS00_IC':
+            self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
         elif base_model == 'CORSIKA':
             self.density_model = dprof.CorsikaAtmosphere(*model_config)
         elif base_model == 'GeneralizedTarget':
@@ -922,7 +924,7 @@ class MCEqRun():
         i = 0
         while r.successful() and (r.t + dXstep) < max_X:
             self.progressBar.update(r.t)
-            if (i % 1) == 0:
+            if (i % 1000) == 0:
                 print "Solving at depth X =", r.t
             r.integrate(r.t + dXstep)
             i += 1

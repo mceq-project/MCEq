@@ -130,7 +130,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.alt_surface = self.locations[self.current_location][2]
 
     def set_location_coord(self, longitude, latitude):
-        if abs(latitude) > 180 or abs(longitude) > 90:
+        if abs(longitude) > 180 or abs(latitude) > 90:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid input.")
         self.input.g_lat = c_double(latitude)
         self.input.g_long = c_double(longitude)

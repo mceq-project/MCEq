@@ -80,7 +80,8 @@ def _dump_cache(cache):
         pickle.dump(cache, open(fname, 'w'), protocol=-1)
     except IOError:
         raise IOError("density_profiles::_dump_cache(): " +
-                'could not (re-)create cache. Wrong working directory?')
+            'could not (re-)create cache. Wrong working directory?')
+
 
 class GeneralizedTarget():
 
@@ -143,11 +144,10 @@ class GeneralizedTarget():
         self.mat_list.append([start_position_cm,
                               self.len_target, density, name])
 
-
         if dbg > 0:
             ("{0}::add_material(): Material '{1}' added. " +
-            "location on path {2} to {3} m").format(self.__class__.__name__,
-            name, self.mat_list[-1][0], self.mat_list[-1][1])
+             "location on path {2} to {3} m").format(self.__class__.__name__,
+             name, self.mat_list[-1][0], self.mat_list[-1][1])
 
         self._update_variables()
 
@@ -393,7 +393,7 @@ class EarthAtmosphere():
                                               self.s_X2rho(X_int))
 
 
-    def set_theta(self, theta_deg):
+    def set_theta(self, theta_deg, force_spline_calc=False):
         """Configures geometry and initiates spline calculation for
         :math:`\\rho(X)`.
 
@@ -406,6 +406,8 @@ class EarthAtmosphere():
 
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector
+          force_spline_calc (bool): forces (re-)calculation of the
+                                    spline for each call
         """
         def calculate_and_store(key, cache):
             self.thrad = self.geom._theta_rad(theta_deg)
@@ -414,11 +416,13 @@ class EarthAtmosphere():
             cache[key][theta_deg] = (self.max_X, self.s_X2rho)
             _dump_cache(cache)
 
-        if self.theta_deg == theta_deg:
-            print self.__class__.__name__ + '::set_theta(): Using previous' + \
-                'density spline.'
+        if self.theta_deg == theta_deg and not force_spline_calc:
+            print (self.__class__.__name__ + 
+                   '::set_theta(): Using previous' +
+                   'density spline.')
             return
-        elif config['use_atm_cache']:
+            
+        elif config['use_atm_cache'] and not force_spline_calc:
             from MCEq.misc import _get_closest
             cache = _load_cache()
             key = (self.__class__.__name__, self.location, self.season)
@@ -814,7 +818,9 @@ def corsika_get_density_jit(h_cm, param):
 
     return res
 
+
 class MSIS00Atmosphere(EarthAtmosphere):
+
     """Wrapper class for a python interface to the NRLMSISE-00 model.
 
     `NRLMSISE-00 <http://ccmc.gsfc.nasa.gov/modelweb/atmos/nrlmsise00.html>`_
@@ -836,9 +842,9 @@ class MSIS00Atmosphere(EarthAtmosphere):
     def __init__(self, location, season):
         from msis_wrapper import cNRLMSISE00, pyNRLMSISE00
         if config['msis_python'] == 'ctypes':
-            self.msis = cNRLMSISE00()
+            self._msis = cNRLMSISE00()
         else:
-            self.msis = pyNRLMSISE00()
+            self._msis = pyNRLMSISE00()
 
         self.init_parameters(location, season)
         self.geom = geometry.EarthGeometry()
@@ -854,8 +860,8 @@ class MSIS00Atmosphere(EarthAtmosphere):
           location (str): Supported are "SouthPole" and "Karlsruhe"
           season (str): months of the year: January, February, etc.
         """
-        self.msis.set_location(location)
-        self.msis.set_season(season)
+        self._msis.set_location(location)
+        self._msis.set_season(season)
 
         self.location, self.season = location, season
         # Clear cached value to force spline recalculation
@@ -872,7 +878,71 @@ class MSIS00Atmosphere(EarthAtmosphere):
         Returns:
           float: column depth :math:`\\rho(h_{cm})` in g/cm**3
         """
-        return self.msis.get_density(h_cm)
+        return self._msis.get_density(h_cm)
+
+
+
+class MSIS00IceCubeCentered(MSIS00Atmosphere):
+
+    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
+    setting with the zenith angle of the detector.
+
+    Args:
+      location (str): see :func:`init_parameters`
+      season (str,optional): see :func:`init_parameters`
+    """
+    def __init__(self, location, season):
+        if location != 'SouthPole':
+            if dbg > 0: print ('{0} location forced to SouthPole in' + 
+                            ' class').format(self.__class__.__name__)
+            location = 'SouthPole'
+        MSIS00Atmosphere.__init__(self, location, season)
+
+
+    def latitude(self, det_zenith_deg):
+        """ Returns the geographic latitude of the shower impact point.
+
+        Assumes a spherical earth. The detector is 1948m under the 
+        surface.
+
+        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
+
+        Args:
+          det_zenith_deg (float): zenith angle at detector in degrees
+
+        Returns:
+          float: latitude of the impact point in degrees
+        """
+        r = config['r_E']
+        d = 1948  # m
+
+        theta_rad = det_zenith_deg/180.*np.pi
+
+        x = (np.sqrt(2.*r*d + ((r - d)*np.cos(theta_rad))**2 - d**2)
+             - (r - d)*np.cos(theta_rad))
+
+        return -90. + np.arctan2(x * np.sin(theta_rad),
+                                 r - d + x * np.cos(theta_rad))/np.pi*180.
+
+    def set_theta(self, theta_deg):
+
+        self._msis.set_location_coord(longitude=0.,
+                                      latitude=self.latitude(theta_deg))
+        if dbg > 0:
+            print ('{0}::set_theta(): latitude = {1} for ' + 
+                'zenith angle = {2}').format(self.__class__.__name__,
+                                             self.latitude(theta_deg),
+                                             theta_deg)
+        if theta_deg > 90.:
+            if dbg > 0:
+                print ('{0}::set_theta(): theta = {1} below horizon.' + 
+                    'using theta = {2}').format(self.__class__.__name__,
+                                                 theta_deg,
+                                                 180. - theta_deg)
+            theta_deg = 180. - theta_deg
+        MSIS00Atmosphere.set_theta(self, theta_deg,
+                                   force_spline_calc=True)
+
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
