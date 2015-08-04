@@ -58,8 +58,9 @@ config = {
 "use_atm_cache": False,
 
 # Atmospheric model in the format: (model, (arguments))
-# "density_model": ('CORSIKA', ('BK_USStd', None)),
-"density_model": ('GeneralizedTarget', None),
+"density_model": ('CORSIKA', ('BK_USStd', None)),
+# "density_model": ('MSIS00_IC',('SouthPole','January')),
+# "density_model": ('GeneralizedTarget', None),
 
 # Version of NRLMSISE-00 python library (ctypes, native)
 "msis_python": "ctypes",
