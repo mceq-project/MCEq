@@ -1,7 +1,7 @@
 import sys
 import platform
 import os.path as path
-base = path.dirname(__file__)
+base = path.dirname(path.abspath(__file__))
 sys.path.append(base)
 sys.path.append(base+"/CRFluxModels")
 sys.path.append(base+"/ParticleDataTool")
