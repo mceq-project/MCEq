@@ -1,11 +1,12 @@
 import sys
 import platform
 import os.path as path
-sys.path.append(".")
-sys.path.append("./CRFluxModels")
-sys.path.append("./ParticleDataTool")
-sys.path.append("./Python-NRLMSISE-00")
-sys.path.append("./c-NRLMSISE-00")
+base = path.dirname(__file__)
+sys.path.append(base)
+sys.path.append(base+"/CRFluxModels")
+sys.path.append(base+"/ParticleDataTool")
+sys.path.append(base+"/Python-NRLMSISE-00")
+sys.path.append(base+"/c-NRLMSISE-00")
 #commented out since projects are far from beeing ready for prime time.
 #sys.path.append("../Fedynitch2012")
 #sys.path.append("../AnalyticalApproximation")
@@ -33,7 +34,7 @@ config = {
 #=========================================================================
 
 # Directory where the data files for the calculation are stored
-"data_dir": './data',
+"data_dir": base+'/data',
 
 # File name of particle production yields
 "yield_fname": "yield_dict.ppd",
