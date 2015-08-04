@@ -459,10 +459,15 @@ class MCEqRun():
 
         Some special prefixes are accepted for lepton names:
 
-        - The total flux of muons, muon neutrinos etc. from all sources
+        - the total flux of muons, muon neutrinos etc. from all sources/mothers
           can be retrieved by the prefix ``total_``, i.e. ``total_numu``
-        - The conventional flux of muons, muon neutrinos etc. from all sources
-          can be retrieved by the prefix ``total_``, i.e. ``total_numu``
+        - the conventional flux of muons, muon neutrinos etc. from all sources
+          can be retrieved by the prefix ``conv_``, i.e. ``conv_numu``
+        - correspondigly, the flux of leptons which originated from the decay
+          of a charged pion carries the prefix ``pi_`` and from a kaon ``k_``
+        - conventional leptons originating neither from pion nor from kaon
+          decay are collected in a category without any prefix, e.g. ``numu`` or
+          ``mu+``
 
         Args:
           particle_name (str): The name of the particle such, e.g.
