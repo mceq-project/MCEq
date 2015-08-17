@@ -27,6 +27,7 @@ import numpy as np
 from time import time
 from mceq_config import dbg, config
 
+
 class MCEqRun():
     """Main class for handling the calclation.
 
@@ -167,7 +168,6 @@ class MCEqRun():
 
             print print_str.strip()[:-1]
 
-
         if dbg > 0:
             print "\nHadrons:\n"
             print_in_rows([p.name for p in self.particle_species if p.is_hadron
@@ -203,18 +203,18 @@ class MCEqRun():
                         print p.name + '_' + str(i), some_index
 
         # Set interaction model and compute grids and matrices
-        if interaction_model != None:
+        if interaction_model is not None:
             self.delay_pmod_init = False
             self.set_interaction_model(interaction_model)
         else:
             self.delay_pmod_init = True
 
         # Set atmosphere and geometry
-        if density_model != None:
+        if density_model is not None:
             self.set_density_model(self.density_config)
 
         # Set initial flux condition
-        if primary_model != None:
+        if primary_model is not None:
             self.set_primary_model(*self.pm_params)
 
     def _gen_list_of_particles(self, max_density=1.240e-03):
@@ -246,7 +246,7 @@ class MCEqRun():
         for p in particle_list:
             p.calculate_mixing_energy(self.e_grid,
                                       self.vetos['no_mixing'],
-                                      max_density = max_density)
+                                      max_density=max_density)
 
         cascade_particles = [p for p in particle_list if not p.is_resonance]
         resonances = [p for p in particle_list if p.is_resonance]
@@ -288,7 +288,7 @@ class MCEqRun():
         # check if leptons coming from mesons located in obs_ids should be
         # in addition scored in a separate category (73xx)
         self.obs_table = {}
-        if self.obs_ids != None:
+        if self.obs_ids is not None:
             for obs_id in self.obs_ids:
                 if obs_id in self.pdg2pref.keys():
                     self.obs_table.update({
@@ -314,7 +314,7 @@ class MCEqRun():
         :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
         """
         self.Lambda_dec = np.hstack([p.inverse_decay_length(self.e_grid)
-                            for p in self.cascade_particles])
+                                     for p in self.cascade_particles])
         self.max_ldec = np.max(self.Lambda_dec)
 
     def _convert_to_sparse(self):
@@ -357,9 +357,9 @@ class MCEqRun():
 
         if dbg > 0:
             int_m_density = (float(np.count_nonzero(self.int_m)) /
-                         float(self.int_m.size))
+                             float(self.int_m.size))
             dec_m_density = (float(np.count_nonzero(self.dec_m)) /
-                         float(self.dec_m.size))
+                             float(self.dec_m.size))
             print "C Matrix info:"
             print "    density    :", int_m_density
             print "    shape      :", self.int_m.shape
@@ -374,7 +374,6 @@ class MCEqRun():
                 print "    nnz        :", self.dec_m.nnz
             if dbg > 1:
                 print "    sum        :", np.sum(self.dec_m)
-
 
         print self.cname + "::_init_default_matrices():Done filling matrices."
 
@@ -398,14 +397,16 @@ class MCEqRun():
         if config['prog_bar']:
             self.progressBar = ProgressBar(maxval=maximum,
                                            widgets=[Percentage(), ' ',
-                                           Bar(), ' ',
-                                           ETA()])
+                                                    Bar(), ' ',
+                                                    ETA()])
         else:
             class FakeProg:
                 def start(self):
                     pass
+
                 def update(self, arg):
                     pass
+
                 def finish(self):
                     pass
 
@@ -421,7 +422,6 @@ class MCEqRun():
         Returns:
           tuple(int, int): lower and upper index in state vector of alias or ``None``
         """
-
 
         ref = self.pdg2pref
         abs_mo = np.abs(mother)
@@ -486,7 +486,7 @@ class MCEqRun():
         res = np.zeros(self.d)
         ref = self.pname2pref
         sol = None
-        if grid_idx == None:
+        if grid_idx is None:
             sol = self.solution
         else:
             sol = self.grid_sol[grid_idx]
@@ -521,7 +521,7 @@ class MCEqRun():
         Args:
           obs_ids (list of strings): mother particle names
         """
-        if obs_ids == None:
+        if obs_ids is None:
             self.obs_ids = None
             return
         self.obs_ids = []
@@ -671,13 +671,13 @@ class MCEqRun():
             E = E / float(A)
             if E < np.min(self.e_grid):
                 raise Exception('MCEqRun::set_single_primary_particle():' +
-                    'energy per nucleon too low for primary ' + str(corsika_id))
+                                'energy per nucleon too low for primary ' +
+                                str(corsika_id))
 
         if dbg > 1:
             print ('MCEqRun::set_single_primary_particle(): superposition:' +
                    'n_protons={0}, n_neutrons={1}, ' +
                    'energy per nucleon={2:5.3g} GeV').format(n_protons, n_neutrons, E)
-
 
         # find energy grid index closest to E
         idx_min = np.argmin(abs(E - E_gr))
@@ -703,12 +703,10 @@ class MCEqRun():
             print ('MCEqRun::set_single_primary_particle(): \n \t' +
                    'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t' +
                    'fractional contribution for upper bin @ E={2:5.3g} GeV: {3:5.3}').format(
-                                                     E_gr[idx_lo], wE_lo / widths[idx_lo],
-                                                     E_gr[idx_up], wE_up / widths[idx_up])
+                E_gr[idx_lo], wE_lo / widths[idx_lo], E_gr[idx_up], wE_up / widths[idx_up])
 
         self.phi0[self.pdg2pref[2212].lidx() + idx_lo] = n_protons * wE_lo / widths[idx_lo] ** 2
         self.phi0[self.pdg2pref[2212].lidx() + idx_up] = n_protons * wE_up / widths[idx_up] ** 2
-
 
         self.phi0[self.pdg2pref[2112].lidx() + idx_lo] = n_neutrons * wE_lo / widths[idx_lo] ** 2
         self.phi0[self.pdg2pref[2112].lidx() + idx_up] = n_neutrons * wE_up / widths[idx_up] ** 2
@@ -747,13 +745,12 @@ class MCEqRun():
                 'MCEqRun::set_density_model(): Unknown atmospheric base model.')
         self.density_config = density_config
 
-        if self.theta_deg != None and base_model != 'GeneralizedTarget':
+        if self.theta_deg is not None and base_model != 'GeneralizedTarget':
             self.set_theta_deg(self.theta_deg)
         elif base_model == 'GeneralizedTarget':
             self.integration_path = None
 
         self._gen_list_of_particles(max_density=self.density_model.max_den)
-
 
     def set_theta_deg(self, theta_deg):
         """Sets zenith angle :math:`\\theta` as seen from a detector.
@@ -766,7 +763,7 @@ class MCEqRun():
         if dbg:
             print 'MCEqRun::set_theta_deg(): ', theta_deg
 
-        if self.density_config == None or not bool(self.density_model):
+        if self.density_config is None or not bool(self.density_model):
             raise Exception(
                 'MCEqRun::set_theta_deg(): Can not set theta, since ' +
                 'atmospheric model not properly initialized.')
@@ -785,7 +782,7 @@ class MCEqRun():
         return np.zeros((self.d, self.d))
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs,
-                      propmat, reclev=0):
+                       propmat, reclev=0):
         r = self.pdg2pref
 
         if dbg > 2:
@@ -868,7 +865,7 @@ class MCEqRun():
                                             pref[s].hadridx(),
                                             cmat)
                     self.C[pref[s].lidx():pref[s].uidx(),
-                                 p.lidx():p.uidx()] += cmat
+                           p.lidx():p.uidx()] += cmat
 
                 cmat = self._zero_mat()
                 self.y.assign_yield_idx(p.pdgid,
@@ -940,8 +937,10 @@ class MCEqRun():
 
         self.progressBar.finish()
 
-        if dbg > 0: print ("\n{0}::vode(): time elapsed during " +
-            "integration: {1} sec").format(self.cname, time() - start)
+        if dbg > 0:
+            print ("\n{0}::vode(): time elapsed during " +
+                   "integration: {1} sec").format(
+                   self.cname, time() - start)
 
         self.solution = r.y
 
@@ -1043,62 +1042,3 @@ class MCEqRun():
         rho_inv_vec = np.array(rho_inv_vec, dtype=np.float32)
         self.integration_path = dX_vec.size, dX_vec, \
                                 rho_inv_vec, grid_idcs
-
-class EdepZFactors():
-
-    def __init__(self, interaction_model,
-                 primary_flux_model):
-        from MCEq.data import InteractionYields, HadAirCrossSections
-        from ParticleDataTool import SibyllParticleTable
-        from misc import get_bins_and_width_from_centers
-
-        self.y = InteractionYields(interaction_model)
-        self.cs = HadAirCrossSections(interaction_model)
-
-        self.pm = primary_flux_model
-        self.e_bins, self.e_widths = get_bins_and_width_from_centers(
-            self.y.e_grid)
-        self.e_vec = self.y.e_grid
-        self.iamod = interaction_model
-        self.sibtab = SibyllParticleTable()
-        self._gen_integrator()
-
-    def get_zfactor(self, proj, sec_hadr, logx=False, use_cs=True):
-        proj_cs_vec = self.cs.get_cs(proj)
-        nuc_flux = self.pm.tot_nucleon_flux(self.e_vec)
-        zfac = np.zeros(self.y.dim)
-        sec_hadr = sec_hadr
-        if self.y.is_yield(proj, sec_hadr):
-            if dbg > 1:
-                print (("EdepZFactors::get_zfactor(): " +
-                        "calculating zfactor Z({0},{1})").format())
-            y_mat = self.y.get_y_matrix(proj, sec_hadr)
-
-            self.calculate_zfac(self.e_vec, self.e_widths,
-                                nuc_flux, proj_cs_vec,
-                                y_mat, zfac, use_cs)
-
-        if logx:
-            return np.log10(self.e_vec), zfac
-        return self.e_vec, zfac
-
-    def _gen_integrator(self):
-        try:
-            from numba import jit, double, boolean
-            @jit(argtypes=[double[:], double[:], double[:], double[:],
-                           double[:, :], double[:], boolean], target='cpu')
-            def calculate_zfac(e_vec, e_widths, nuc_flux, proj_cs, y, zfac, use_cs):
-                for h, E_h in enumerate(e_vec):
-                    for k in range(len(e_vec)):
-                        E_k = e_vec[k]
-                        dE_k = e_widths[k]
-                        if E_k < E_h:
-                            continue
-                        csfac = proj_cs[k] / proj_cs[h] if use_cs else 1.
-
-                        zfac[h] += nuc_flux[k] / nuc_flux[h] * csfac * \
-                            y[:, k][h] #* dE_k
-        except ImportError:
-            print "Warning! Numba not in PYTHONPATH. ZFactor calculation won't work."
-
-        self.calculate_zfac = calculate_zfac
