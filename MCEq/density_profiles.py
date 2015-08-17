@@ -39,6 +39,7 @@ from os.path import join
 from abc import ABCMeta, abstractmethod
 from mceq_config import dbg, config
 
+
 def _load_cache():
     """Loads atmosphere cache from file.
 
@@ -61,6 +62,7 @@ def _load_cache():
         print "density_profiles::_load_cache(): creating new cache.."
         return {}
 
+
 def _dump_cache(cache):
     """Stores atmosphere cache to file.
 
@@ -80,7 +82,7 @@ def _dump_cache(cache):
         pickle.dump(cache, open(fname, 'w'), protocol=-1)
     except IOError:
         raise IOError("density_profiles::_dump_cache(): " +
-            'could not (re-)create cache. Wrong working directory?')
+                      'could not (re-)create cache. Wrong working directory?')
 
 
 class GeneralizedTarget():
@@ -132,8 +134,7 @@ class GeneralizedTarget():
             Exception: If requested start_position_cm is not properly defined.
         """
 
-        if (start_position_cm < 0. or
-            start_position_cm > self.len_target):
+        if (start_position_cm < 0. or start_position_cm > self.len_target):
             raise Exception("GeneralizedTarget::add_material(): " +
                             "distance exceeds target dimensions.")
         elif start_position_cm < self.mat_list[-1][0]:
@@ -146,8 +147,9 @@ class GeneralizedTarget():
 
         if dbg > 0:
             ("{0}::add_material(): Material '{1}' added. " +
-             "location on path {2} to {3} m").format(self.__class__.__name__,
-             name, self.mat_list[-1][0], self.mat_list[-1][1])
+             "location on path {2} to {3} m").format(
+                self.__class__.__name__, name,
+                self.mat_list[-1][0], self.mat_list[-1][1])
 
         self._update_variables()
 
@@ -184,7 +186,6 @@ class GeneralizedTarget():
         self.s_h2X = UnivariateSpline(self.knots, self.X_int, k=1, s=0.)
         self.max_X = self.X_int[-1]
 
-
     def get_density_X(self, X):
         """Returns the density in g/cm**3 as a function of depth X.
 
@@ -203,8 +204,8 @@ class GeneralizedTarget():
             X[-1] = self.max_X
         if np.min(X) < 0. or np.max(X) > self.max_X:
             raise Exception(("GeneralizedTarget::get_density_X(): " +
-                                      "requested depth {0:4.3f} " +
-                                      "exceeds target.").format(np.max(X)))
+                             "requested depth {0:4.3f} " +
+                             "exceeds target.").format(np.max(X)))
 
         return self.get_density(self.s_X2h(X))
 
@@ -240,11 +241,11 @@ class GeneralizedTarget():
 
         if np.min(l) < 0 or np.max(l) > self.len_target:
             raise Exception("GeneralizedTarget::get_density(): " +
-                                "requested position exceeds target legth.")
+                            "requested position exceeds target legth.")
         for i in range(len(l)):
             bi = 0
             while not (l[i] >= self.start_bounds[bi] and
-                      l[i] <= self.end_bounds[bi]):
+                       l[i] <= self.end_bounds[bi]):
                 bi += 1
             res[i] = self.densities[bi]
         return res
@@ -259,7 +260,7 @@ class GeneralizedTarget():
         import matplotlib.pyplot as plt
 
         if not axes:
-            plt.figure(figsize=(5,2.5))
+            plt.figure(figsize=(5, 2.5))
             axes = plt.gca()
         ymax = np.max(self.X_int)*1.01
         for nm, mat in enumerate(self.mat_list):
@@ -270,12 +271,12 @@ class GeneralizedTarget():
                 alpha = 1.
             elif alpha < 0.:
                 alpha = 0.
-            axes.fill_between((xstart/1e2, xend/1e2),(ymax,ymax),
-                              (0.,0.), label=mat[2],facecolor='grey',
+            axes.fill_between((xstart/1e2, xend/1e2), (ymax, ymax),
+                              (0., 0.), label=mat[2], facecolor='grey',
                               alpha=alpha)
-            axes.text(0.5e-2*(xstart + xend),0.5*ymax,str(nm))
+            axes.text(0.5e-2*(xstart + xend), 0.5*ymax, str(nm))
         plt.plot([xl/1e2 for xl in self.knots], self.X_int, lw=1.7, color='r')
-        axes.set_ylim(0.,ymax)
+        axes.set_ylim(0., ymax)
         axes.set_xlabel('distance in target [m]')
         axes.set_ylabel(r'depth [g/cm$^2$]')
         self.print_table()
@@ -283,15 +284,14 @@ class GeneralizedTarget():
     def print_table(self):
         """Prints table of materials to standard output.
         """
-        import matplotlib.pyplot as plt
 
         templ = '{0:^3} | {1:15} | {2:^9.3f} | {3:^9.3f} | {4:^8.5f}'
         print '********************* List of materials *************************'
         head = '{0:3} | {1:15} | {2:9} | {3:9} | {4:9}'.format(
-            'no', 'name', 'start [m]','end [m]','density [g/cm**3]')
-        print '-'* len(head)
+            'no', 'name', 'start [m]', 'end [m]', 'density [g/cm**3]')
+        print '-' * len(head)
         print head
-        print '-'* len(head)
+        print '-' * len(head)
         for nm, mat in enumerate(self.mat_list):
             print templ.format(nm, mat[3], mat[0]/1e2, mat[1]/1e2, mat[2])
 
@@ -313,10 +313,13 @@ class EarthAtmosphere():
     """
 
     __metaclass__ = ABCMeta
-    thrad = None
-    theta_deg = None
-    max_X = None
-    max_den = 1.240e-03
+
+    def __init__(self, args, **kwargs):
+        self.geom = geometry.EarthGeometry()
+        self.thrad = None
+        self.theta_deg = None
+        self.max_X = None
+        self.max_den = 1.240e-03
 
     @abstractmethod
     def get_density(self, h_cm):
@@ -346,17 +349,17 @@ class EarthAtmosphere():
         """
         from scipy.integrate import quad
         from time import time
-        from scipy.interpolate import UnivariateSpline, interp1d
+        from scipy.interpolate import UnivariateSpline
 
-        if self.theta_deg == None:
+        if self.theta_deg is None:
             raise Exception('{0}::calculate_density_spline(): ' +
                             'zenith angle not set'.format(
-                             self.__class__.__name__))
+                                self.__class__.__name__))
         else:
             print ('{0}::calculate_density_spline(): ' +
                    'Calculating spline of rho(X) for zenith ' +
                    '{1} degrees.').format(self.__class__.__name__,
-                                         self.theta_deg)
+                                          self.theta_deg)
 
         thrad = self.thrad
         path_length = self.geom.l(thrad)
@@ -384,14 +387,13 @@ class EarthAtmosphere():
 #        print  splrep(np.array(h_intp),
 #                      np.log(X_intp),
 #                      k=2, s=0.0)
-        self.s_h2X = UnivariateSpline(h_intp,np.log(X_intp),
+        self.s_h2X = UnivariateSpline(h_intp, np.log(X_intp),
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
                                         k=2, s=0.0)
 
         print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
                                               self.s_X2rho(X_int))
-
 
     def set_theta(self, theta_deg, force_spline_calc=False):
         """Configures geometry and initiates spline calculation for
@@ -417,11 +419,11 @@ class EarthAtmosphere():
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg and not force_spline_calc:
-            print (self.__class__.__name__ + 
+            print (self.__class__.__name__ +
                    '::set_theta(): Using previous' +
                    'density spline.')
             return
-            
+
         elif config['use_atm_cache'] and not force_spline_calc:
             from MCEq.misc import _get_closest
             cache = _load_cache()
@@ -544,7 +546,6 @@ class CorsikaAtmosphere(EarthAtmosphere):
 
     def __init__(self, location, season=None):
         self.init_parameters(location, season)
-        self.geom = geometry.EarthGeometry()
         EarthAtmosphere.__init__(self)
 
     def init_parameters(self, location, season=None):
@@ -847,7 +848,6 @@ class MSIS00Atmosphere(EarthAtmosphere):
             self._msis = pyNRLMSISE00()
 
         self.init_parameters(location, season)
-        self.geom = geometry.EarthGeometry()
         EarthAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
