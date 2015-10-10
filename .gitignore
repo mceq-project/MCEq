@@ -6,6 +6,9 @@ __pycache__/
 *.ppd
 *.ppl
 examples/.ipynb_*
+# Dev stuff
+prototyping/
+c-NRLM*
 
 # Tables from other publications
 /references/
