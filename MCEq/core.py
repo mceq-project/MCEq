@@ -926,7 +926,7 @@ class MCEqRun():
         i = 0
         while r.successful() and (r.t + dXstep) < max_X:
             self.progressBar.update(r.t)
-            if (i % 1000) == 0:
+            if (i % 5000) == 0:
                 print "Solving at depth X =", r.t
             r.integrate(r.t + dXstep)
             i += 1
