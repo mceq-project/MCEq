@@ -314,7 +314,7 @@ class EarthAtmosphere():
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, args, **kwargs):
+    def __init__(self, *args, **kwargs):
         self.geom = geometry.EarthGeometry()
         self.thrad = None
         self.theta_deg = None
@@ -548,7 +548,7 @@ class CorsikaAtmosphere(EarthAtmosphere):
         self.init_parameters(location, season)
         EarthAtmosphere.__init__(self)
 
-    def init_parameters(self, location, season=None):
+    def init_parameters(self, location, season):
         """Initializes :attr:`_atm_param`.
 
         +--------------+-------------------+------------------------------+

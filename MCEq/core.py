@@ -940,7 +940,7 @@ class MCEqRun():
         if dbg > 0:
             print ("\n{0}::vode(): time elapsed during " +
                    "integration: {1} sec").format(
-                   self.cname, time() - start)
+                    self.cname, time() - start)
 
         self.solution = r.y
 
