@@ -894,7 +894,8 @@ class MCEqRun():
                  ).format(config['integrator']))
 
     def _odepack(self, dXstep=1., initial_depth=0.0,
-                 *args, **kwargs):
+                 int_grid=None, grid_var='X', *args, **kwargs):
+
         from scipy.integrate import ode
         ri = self.density_model.r_X2rho
 
@@ -911,29 +912,67 @@ class MCEqRun():
         # Initial condition
         phi0 = np.copy(self.phi0)
 
+        # Initialize variables
+        grid_sol = []
+
         # Setup solver
         r = ode(dPhi_dX).set_integrator(
             with_jacobian=False, **config['ode_params'])
 
+        if int_grid is not None:
+            initial_depth = int_grid[0]
+            int_grid = int_grid[1:]
+            max_X = int_grid[-1]
+            grid_sol.append(phi0)
+
+            if dbg > 0 and max_X < self.density_model.max_X:
+                print '_odepack(): your X-grid is shorter then the material'
+            elif dbg > 0 and max_X > self.density_model.max_X:
+                print ('_odepack(): your X-grid exceeds the dimentsions ' +
+                       'of the material')
+        else:
+            max_X = self.density_model.max_X
+
+        # Initial value
         r.set_initial_value(phi0, initial_depth)
 
-        # Solve
-        max_X = self.density_model.max_X
+        if dbg > 1:
+            print ('_odepack(): initial depth: {0:3.2e}, ' +
+                   'maximal depth {1:}').format(initial_depth, max_X)
 
         self._init_progress_bar(max_X)
+
         self.progressBar.start()
         start = time()
-        i = 0
-        while r.successful() and (r.t + dXstep) < max_X:
-            self.progressBar.update(r.t)
-            if (i % 5000) == 0:
-                print "Solving at depth X =", r.t
-            r.integrate(r.t + dXstep)
-            i += 1
-        if r.t < max_X:
+        if int_grid is None:
+            i = 0
+            while r.successful() and (r.t + dXstep) < max_X:
+                self.progressBar.update(r.t)
+                if (i % 5000) == 0:
+                    print "Solving at depth X =", r.t
+                r.integrate(r.t + dXstep)
+                i += 1
+            if r.t < max_X:
+                r.integrate(max_X)
+            # Do last step to make sure the rational number max_X is reached
             r.integrate(max_X)
-        # Do last step to make sure the rational number max_X is reached
-        r.integrate(max_X)
+        else:
+            for i, Xi in enumerate(int_grid):
+                if dbg > 1:
+                    print '_odepack(): integrating at X =', Xi
+                elif dbg > 0 and i % 10 == 0:
+                    print '_odepack(): integrating at X =', Xi    
+                
+                while r.successful() and (r.t + dXstep) < Xi:
+                    self.progressBar.update(r.t)
+                    # print '1: dXi = ',r.t + dXstep
+                    r.integrate(r.t + dXstep)
+                
+                # Make sure the integrator arrives at requested step
+                r.integrate(Xi)
+                #Store the solution on grid
+                grid_sol.append(r.y)
+
 
         self.progressBar.finish()
 
@@ -943,6 +982,7 @@ class MCEqRun():
                     self.cname, time() - start)
 
         self.solution = r.y
+        self.grid_sol = grid_sol
 
     def _forward_euler(self, int_grid=None, grid_var='X'):
 
