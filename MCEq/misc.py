@@ -238,10 +238,10 @@ class EdepZFactors():
 
     def _gen_integrator(self):
         try:
-            from numba import jit, double, boolean
+            from numba import jit, double, boolean, void
 
-            @jit(argtypes=[double[:], double[:], double[:], double[:],
-                           double[:, :], double[:], boolean], target='cpu')
+            @jit(void(double[:], double[:], double[:], double[:],
+                  double[:, :], double[:], boolean), target='cpu')
             def calculate_zfac(e_vec, e_widths, nuc_flux, proj_cs, y,
                                zfac, use_cs):
                 for h, E_h in enumerate(e_vec):
