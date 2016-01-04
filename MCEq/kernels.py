@@ -64,17 +64,30 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
     grid_sol = []
     grid_step = 0
     
+    imc = int_m
+    dmc = dec_m
+    dxc = dX
+    ric = rho_inv
+    phc = phi
+
+    if config['FP_precision'] == 32:
+        imc = int_m.astype(np.float32)
+        dmc = dec_m.astype(np.float32)
+        dxc = dX.astype(np.float32)
+        ric = rho_inv.astype(np.float32)
+        phc = phi.astype(np.float32)
+
     for step in xrange(nsteps):
         if prog_bar and (step % 200 == 0):
             prog_bar.update(step)
-        phi += (int_m.dot(phi) + dec_m.dot(rho_inv[step] * phi)) * dX[step]
+        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
         
         if (grid_idcs and grid_step < len(grid_idcs) 
             and grid_idcs[grid_step] == step):
-            grid_sol.append(np.copy(phi))
+            grid_sol.append(np.copy(phc))
             grid_step += 1
 
-    return phi, grid_sol
+    return phc, grid_sol
 
 
 def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
@@ -98,9 +111,9 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     """
     
     calc_precision = None
-    if config['CUDA_precision'] == 32:
+    if config['FP_precision'] == 32:
         calc_precision = np.float32
-    elif config['CUDA_precision'] == 64:
+    elif config['FP_precision'] == 64:
         calc_precision = np.float64
     else:
         raise Exception("kern_CUDA_dense(): Unknown precision specified.")    
@@ -130,7 +143,7 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
             A=cu_dec_m, x=cu_curr_phi, beta=float32(1.0), y=cu_delta_phi)
         cubl.axpy(alpha=float32(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
-    return cu_curr_phi.copy_to_host()
+    return cu_curr_phi.copy_to_host(), []
 
 def kern_CUDA_sparse(nsteps, dX, rho_inv, int_m, dec_m,
                     phi, grid_idcs, prog_bar=None):
@@ -155,9 +168,9 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, int_m, dec_m,
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
     calc_precision = None
-    if config['CUDA_precision'] == 32:
+    if config['FP_precision'] == 32:
         calc_precision = np.float32
-    elif config['CUDA_precision'] == 64:
+    elif config['FP_precision'] == 64:
         calc_precision = np.float64
     else:
         raise Exception("kern_CUDA_sparse(): Unknown precision specified.")    
@@ -211,7 +224,7 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, int_m, dec_m,
                    x=cu_curr_phi, beta=float32(1.0), y=cu_delta_phi)
         cubl.axpy(alpha=float32(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
-    return cu_curr_phi.copy_to_host()
+    return cu_curr_phi.copy_to_host(), []
 
 def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
                     phi, grid_idcs, prog_bar=None):
