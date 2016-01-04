@@ -106,7 +106,7 @@ config = {
 "MKL_threads": 4,
 
 # CUDA float precision
-"CUDA_precision": 32,
+"FP_precision": 32,
 
 #=========================================================================
 # Advanced settings

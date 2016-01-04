@@ -115,8 +115,10 @@ class MCEqRun():
         self.e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
         # Hadron species include the everything excluding pure resonances
+        if 'particle_list' not in kwargs:
+            kwargs['particle_list'] = None
         self.particle_species, self.cascade_particles, self.resonances = \
-            self._gen_list_of_particles()
+            self._gen_list_of_particles(custom_list=kwargs['particle_list'])
 
         # Particle index shortcuts
         #: (dict) Converts PDG ID to index in state vector
@@ -217,7 +219,7 @@ class MCEqRun():
         if primary_model is not None:
             self.set_primary_model(*self.pm_params)
 
-    def _gen_list_of_particles(self, max_density=1.240e-03):
+    def _gen_list_of_particles(self, custom_list=None, max_density=1.240e-03):
         """Determines the list of particles for calculation and
         returns lists of instances of :class:`data.NCEParticle` .
 
@@ -236,8 +238,14 @@ class MCEqRun():
         if dbg > 1:
             print (self.cname + "::_gen_list_of_particles():" +
                    "Generating particle list.")
-
-        particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
+        
+        particles = None
+        
+        if custom_list:
+            particles = [self.modtab.modname2pdg[pname] for pname in custom_list]
+            particles += self.modtab.leptons
+        else:
+            particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
         particle_list = [NCEParticle(h, self.modtab, self.pd,
                                      self.cs, self.d) for h in particles]
 
@@ -277,7 +285,7 @@ class MCEqRun():
         for p in self.particle_species:
             if p.is_lepton or p.is_alias or p.pdgid < 0:
                 continue
-            if p.E_crit >= self.pdg2pref[411].E_crit:
+            if 411 in self.pdg2pref and p.E_crit >= self.pdg2pref[411].E_crit:
                 prompt_ids.append(p.pdgid)
         for lep_id in [12, 13, 14, 16]:
             self.alias_table[(211, lep_id)] = 7100 + lep_id  # pions
@@ -352,26 +360,29 @@ class MCEqRun():
 
         del self.C, self.D
 
+        nnz_int = np.count_nonzero(self.int_m)
+        nnz_dec = np.count_nonzero(self.dec_m)
+
         if config['use_sparse']:
             self._convert_to_sparse()
 
         if dbg > 0:
-            int_m_density = (float(np.count_nonzero(self.int_m)) /
-                             float(self.int_m.size))
-            dec_m_density = (float(np.count_nonzero(self.dec_m)) /
-                             float(self.dec_m.size))
+            int_m_density = (float(nnz_int) /
+                             float(np.prod(self.int_m.shape)))
+            dec_m_density = (float(nnz_dec) /
+                             float(np.prod(self.dec_m.shape)))
             print "C Matrix info:"
-            print "    density    :", int_m_density
-            print "    shape      :", self.int_m.shape
+            print "    density    : {0:3.2%}".format(int_m_density)
+            print "    shape      : {0} x {1}".format(*self.int_m.shape)
             if config['use_sparse']:
-                print "    nnz        :", self.int_m.nnz
+                print "    nnz        : {0}".format(self.int_m.nnz)
             if dbg > 1:
                 print "    sum        :", np.sum(self.int_m)
             print "D Matrix info:"
-            print "    density    :", dec_m_density
-            print "    shape      :", self.dec_m.shape
+            print "    density    : {0:3.2%}".format(dec_m_density)
+            print "    shape      : {0} x {1}".format(*self.dec_m.shape)
             if config['use_sparse']:
-                print "    nnz        :", self.dec_m.nnz
+                print "    nnz        : {0}".format(self.dec_m.nnz)
             if dbg > 1:
                 print "    sum        :", np.sum(self.dec_m)
 
@@ -840,8 +851,6 @@ class MCEqRun():
         self.C = np.zeros((self.dim_states, self.dim_states))
         self.D = np.zeros((self.dim_states, self.dim_states))
 
-        # self.R = self.get_empty_matrix() # R matrix is obsolete
-
         pref = self.pdg2pref
 
         for p in self.cascade_particles:
@@ -857,6 +866,11 @@ class MCEqRun():
 
             # go through all secondaries
             for s in p.secondaries:
+                if s not in self.pdg2pref:
+                    continue
+                if pref[s].is_lepton:
+                    print 'veto leptons', s
+                    continue
                 if not pref[s].is_resonance:
                     cmat = self._zero_mat()
                     self.y.assign_yield_idx(p.pdgid,
