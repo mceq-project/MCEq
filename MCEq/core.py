@@ -5,7 +5,7 @@
 
 This module contains the main program features. Instantiating :class:`MCEq.core.MCEqRun`
 will initialize the data structures and particle tables, create and fill the
-interaction and decay matrix and check if all information for the caclulation
+interaction and decay matrix and check if all information for the calculation
 of inclusive fluxes in the atmosphere is available.
 
 The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
@@ -29,7 +29,7 @@ from mceq_config import dbg, config
 
 
 class MCEqRun():
-    """Main class for handling the calclation.
+    """Main class for handling the calculation.
 
     This class is the main user interface for the caclulation. It will
     handle initialization and various error/configuration checks. The
@@ -246,6 +246,7 @@ class MCEqRun():
             particles += self.modtab.leptons
         else:
             particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
+            
         particle_list = [NCEParticle(h, self.modtab, self.pd,
                                      self.cs, self.d) for h in particles]
 
