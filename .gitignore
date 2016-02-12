@@ -8,7 +8,7 @@ __pycache__/
 examples/.ipynb_*
 # Dev stuff
 prototyping/
-c-NRLM*
+
 
 # Tables from other publications
 /references/
