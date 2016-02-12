@@ -1,0 +1,48 @@
+'''
+Created on Feb 18, 2015
+
+@author: afedynitch
+'''
+
+from ctypes import cdll, Structure, c_long, c_int, \
+                   c_double, pointer, byref, \
+                   POINTER
+try:
+    msis = cdll.LoadLibrary("./msis-00.so")
+except OSError:
+    msis = cdll.LoadLibrary("./c-NRLMSISE-00/msis-00.so")
+#===============================================================================
+# nrlmsise_flags
+#===============================================================================
+class nrlmsise_flags(Structure):
+    _fields_ = [("switches", c_int * 24),
+                ("sw", c_double * 24),
+                ("swc", c_double * 24)]
+#===============================================================================
+# ap_array
+#===============================================================================
+class ap_array(Structure):
+    _fields_ = [("a", c_double * 7)]
+    
+#===============================================================================
+# nrlmsise_input
+#===============================================================================
+class nrlmsise_input(Structure):
+    _field_ = [("year", c_int),
+               ("doy", c_int),
+               ("sec", c_double),
+               ("alt", c_double),
+               ("g_lat", c_double),
+               ("g_long", c_double),
+               ("lst", c_double),
+               ("f107A", c_double),
+               ("f107", c_double),
+               ("ap", c_double),
+               ("ap_a", POINTER(ap_array))]
+    
+#===============================================================================
+# nrlmsise_output
+#===============================================================================
+class nrlmsise_output(Structure):
+    _fields_ = [("d", c_double * 9),
+                ("t", c_double * 2)]
