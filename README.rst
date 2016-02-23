@@ -101,6 +101,16 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
+Troubleshoting
+--------------
+You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>_` if you have previous 
+Python installations. A workaround is to set the environement variable
+	.. code-block:: bash
+
+	   $ export PYTHONNOUSERSITE=1
+	   
+Thanks to F.C. Penha for pointing this out.
+
 Citation
 --------
 If you are using this code in your scientific work, please cite 
