@@ -103,7 +103,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 Troubleshoting
 --------------
-You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>_` if you have previous 
+You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_  if you have previous 
 Python installations. A workaround is to set the environement variable
 	.. code-block:: bash
 
