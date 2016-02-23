@@ -11,13 +11,13 @@ The current development status is **alpha**. Although the numerical part of the 
 `Documentation <http://mceq.readthedocs.org/en/latest/>`_
 ---------------------------------------------------------
 
-As mentioned above the project is development. The current state of the documentation is more suited for developers rather than end-users. Mostly it is auogenerated `sphinx`-docs. Check it out before touching the code.  The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
+As mentioned above the project is development. The current state of the documentation is more suited for developers rather than end-users. Mostly it is auto-generated `sphinx`-docs. Check it out before touching the code.  The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
 
 System requirements
 -------------------
 
 - Some kind of modern CPU (Core2Duo++)
-- 4GB (currently 8GB of RAM is stongly recommended. The solver is not optimzed for memory usage, however there's lots of room for improvement)
+- 4GB (currently 8GB of RAM is strongly recommended. The solver is not optimized for memory usage, however there's lots of room for improvement)
 - ~1GB of disk space
 - a recent Linux or Mac OS X operating system. Windows might be suitable, but was not checked.
 
@@ -39,9 +39,9 @@ Dependencies:
 
 Installation
 ------------
-The installation simplest method relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ by `Continuum Analytics <http://www.continuum.io>`_. It doesn't just improve your life, but also provides most of the scientific computing packages by default. It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, is to add this directory to your system `$PATH` variable. To uninstall just delete this directory.
+The installation simplest method relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ by `Continuum Analytics <http://www.continuum.io>`_. It doesn't just improve your life, but also provides most of the scientific computing packages by default. It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, is to add this directory to your system `$PATH` variable. To un-install just delete this directory.
 
-#. Download one of the installers for your system architecure from here:
+#. Download one of the installers for your system architecture from here:
 
 	* `Anaconda <http://continuum.io/downloads>`_ - larger download, already containing most of the scientific packages and the package manager `conda` itself
 	* `Miniconda <http://conda.pydata.org/miniconda.html>`_ - minimal download, which contains the minimum requirements for the package manager `conda`.
@@ -85,7 +85,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	   $ deactivate
 
-#. (**Optional**) Acceleration of the integration routines can be achieved using `Intel Math Kernel Library <https://software.intel.com/en-us/intel-mkl>`_ (MKL). Anaconda offers MKL-linked numpy binaries free for academic use. It is necessary to register using your *.edu* mail adress to receive a license. The demo period is 30 days. If you want to give it a try
+#. (**Optional**) Acceleration of the integration routines can be achieved using `Intel Math Kernel Library <https://software.intel.com/en-us/intel-mkl>`_ (MKL). Anaconda offers MKL-linked numpy binaries free for academic use. It is necessary to register using your *.edu* mail address to receive a license. The demo period is 30 days. If you want to give it a try
 
 	.. code-block:: bash
 
@@ -102,10 +102,10 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
 
-Troubleshoting
+Troubleshooting
 --------------
 You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_ if you have previous 
-Python installations. A workaround is to set the environement variable
+Python installations. A workaround is to set the environment variable
 	.. code-block:: bash
 
 	   $ export PYTHONNOUSERSITE=1
