@@ -107,7 +107,7 @@ config = {
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to
 #memory bandwidth limitations)
-"MKL_threads": 4,
+"MKL_threads": 12,
 
 # CUDA float precision
 "FP_precision": 64,
