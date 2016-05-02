@@ -3,8 +3,8 @@
 	url = https://github.com/afedynitch/CRFluxModels.git
 [submodule "ParticleDataTool"]
 	path = ParticleDataTool
-	branch = master
 	url = https://github.com/afedynitch/ParticleDataTool.git
+	branch = master
 [submodule "Python-NRLMSISE-00"]
 	path = Python-NRLMSISE-00
 	url = https://github.com/afedynitch/Python-NRLMSISE-00.git
