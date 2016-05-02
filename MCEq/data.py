@@ -66,6 +66,8 @@ class NCEParticle():
         self.pdgid = pdgid
         self.particle_db = particle_db
         self.pythia_db = pythia_db
+        if pdgid in config["vetos"]["veto_decays"]:
+            pythia_db.force_stable(self.pdgid)
         self.cs = cs_db
         self.d = d
         self.max_density = max_density
@@ -598,10 +600,17 @@ class DecayYields():
         self.daughter_dict = {}
 
         for mother in self.mothers:
+            if mother in config["vetos"]["veto_decays"]:
+                if dbg > 1:
+                    print ("DecayYields:_gen_index():: switching off " +
+                        "decays of {0}.").format(mother)
+                continue
             self.daughter_dict[mother] = []
 
         for key, mat in self.decay_dict.iteritems():
             mother, daughter = key
+            if mother in config["vetos"]["veto_decays"]:
+                continue
             if np.sum(mat) > 0:
                 if daughter not in self.daughter_dict[mother]:
                     self.daughter_dict[mother].append(daughter)
@@ -610,12 +619,14 @@ class DecayYields():
         # have an alias ID
         # the ID 7313 not included, since it's "a copy of"
         for alias in [7013, 7113, 7213]:
-            self.daughter_dict[alias] = self.daughter_dict[13]
-            self.daughter_dict[-alias] = self.daughter_dict[-13]
-            for d in self.daughter_dict[alias]:
-                self.decay_dict[(alias, d)] = self.decay_dict[(13, d)]
-            for d in self.daughter_dict[-alias]:
-                self.decay_dict[(-alias, d)] = self.decay_dict[(-13, d)]
+            if 13 not in config["vetos"]["veto_decays"]: 
+                self.daughter_dict[alias] = self.daughter_dict[13]
+                for d in self.daughter_dict[alias]:
+                    self.decay_dict[(alias, d)] = self.decay_dict[(13, d)]
+            if -13 not in config["vetos"]["veto_decays"]:
+                self.daughter_dict[-alias] = self.daughter_dict[-13]
+                for d in self.daughter_dict[-alias]:
+                    self.decay_dict[(-alias, d)] = self.decay_dict[(-13, d)]
 
     def get_d_matrix(self, mother, daughter):
         """Returns a ``DIM x DIM`` decay matrix.

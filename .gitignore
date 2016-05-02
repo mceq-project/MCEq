@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*.o
 
 # pickled or decompressed files
 *.ppd
@@ -15,6 +16,7 @@ prototyping/
 
 # Prototype scripts
 prototyping
+*.bak
 
 # Not licensed
 
