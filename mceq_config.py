@@ -130,6 +130,8 @@ config = {
     "veto_hadrons": [],
     "veto_resonances": [],
     "allow_resonances": [],
+    # Switch off decays. E.g., disable muon decay with [13,-13]
+    "veto_decays": [], 
     # Disable mixing of resonance approx. and propagation
     "no_mixing": False
     }

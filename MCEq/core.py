@@ -378,14 +378,14 @@ class MCEqRun():
             if config['use_sparse']:
                 print "    nnz        : {0}".format(self.int_m.nnz)
             if dbg > 1:
-                print "    sum        :", np.sum(self.int_m)
+                print "    sum        :", self.int_m.sum()
             print "D Matrix info:"
             print "    density    : {0:3.2%}".format(dec_m_density)
             print "    shape      : {0} x {1}".format(*self.dec_m.shape)
             if config['use_sparse']:
                 print "    nnz        : {0}".format(self.dec_m.nnz)
             if dbg > 1:
-                print "    sum        :", np.sum(self.dec_m)
+                print "    sum        :", self.dec_m.sum()
 
         print self.cname + "::_init_default_matrices():Done filling matrices."
 
@@ -896,8 +896,8 @@ class MCEqRun():
 
         if dbg > 1:
             print (self.cname + "::solve(): " +
-                   "solver={0} and sparse={1}").format(self.solver,
-                                                       self.sparse)
+                   "solver={0} and sparse={1}").format(config['integrator'],
+                                                       config['use_sparse'])
 
         if config['integrator'] != "odepack":
             self._forward_euler(**kwargs)
