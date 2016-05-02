@@ -1,4 +1,4 @@
-CFLAGS = -Wall -O3 -g 
+CFLAGS = -Wall -O3 -g -fPIC
 CC = gcc 
 LIBTOOL = /opt/local/bin/glibtool
 
