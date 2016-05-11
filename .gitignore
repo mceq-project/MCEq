@@ -4,6 +4,7 @@ __pycache__/
 *.o
 
 # pickled or decompressed files
+*.ppd
 *.ppl
 examples/.ipynb_*
 # Dev stuff
