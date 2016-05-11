@@ -289,24 +289,24 @@ class InteractionYields():
       charm_model (str, optional): name of the charm model
 
     """
-    #: (str) InterAction Model name
-    iam = None
-    #: (str) charm model name
-    charm_model = None
-    #: (numpy.array) energy grid bin centers
-    e_grid = None
-    #: (numpy.array) energy grid bin endges
-    e_bins = None
-    #: (numpy.array) energy grid bin widths
-    weights = None
-    #: (int) dimension of grid
-    dim = 0
-    #: (tuple) selection of a band of coeffictients (in xf)
-    band = None
 
     def __init__(self, interaction_model, charm_model=None):
+        #: (str) InterAction Model name
+        self.iam = None
+        #: (str) charm model name
+        self.charm_model = None
+        #: (numpy.array) energy grid bin centers
+        self.e_grid = None
+        #: (numpy.array) energy grid bin endges
+        self.e_bins = None
+        #: (numpy.array) energy grid bin widths
+        self.weights = None
+        #: (int) dimension of grid
+        self.dim = 0
+        #: (tuple) selection of a band of coeffictients (in xf)
+        self.band = None
 
-        self._load()
+        self._load(interaction_model)
 
         # If parameters are provided during object creation,
         # load the tables during object creation.
@@ -316,7 +316,7 @@ class InteractionYields():
         if charm_model and interaction_model:
             self.inject_custom_charm_model(charm_model)
 
-    def _load(self):
+    def _load(self, interaction_model):
         """Un-pickles the yields dictionary using the path specified as
         ``yield_fname`` in :mod:`mceq_config`.
 
@@ -328,17 +328,22 @@ class InteractionYields():
         """
         import cPickle as pickle
         from os.path import join
+        #Remove dashes and points in the name
+        interaction_model = interaction_model.replace('-','')
+        interaction_model = interaction_model.replace('.','')
         try:
             with open(join(config['data_dir'],
-                           config['yield_fname']), 'rb') as f:
+                interaction_model + '_yields.ppd'), 'rb') as f:
                 self.yield_dict = pickle.load(f)
         except IOError:
             self.yield_dict = _decompress(join(config['data_dir'],
-                                            config['yield_fname']))
-            #raise IOError('InteractionYields::_load(): Yield file not found.')
+                interaction_model + '_yields.ppd'))
+            raise IOError('InteractionYields::_load(): Yield file not found.')
 
         self.e_grid = self.yield_dict.pop('evec')
         self.e_bins = self.yield_dict.pop('ebins')
+        self.mname = self.yield_dict.pop('mname')
+
         self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
         self.dim = self.e_grid.size
         self.no_interaction = np.zeros(self.dim ** 2).reshape(
@@ -381,16 +386,15 @@ class InteractionYields():
                 print ("InteractionYields:set_interaction_model():: Model " +
                     self.iam + " already loaded.")
             return
-
-        if interaction_model not in self.yield_dict.keys():
+        if interaction_model != self.mname:
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
 
-        self._gen_index(self.yield_dict[interaction_model])
+        self._gen_index(self.yield_dict)
 
         self.nspec = len(self.projectiles)
-        self.yields = self.yield_dict[interaction_model]
+        self.yields = self.yield_dict
         self.iam = interaction_model
         self.charm_model = None
 
@@ -598,7 +602,6 @@ class DecayYields():
         """
         self.mothers = np.unique(zip(*self.decay_dict.keys())[0])
         self.daughter_dict = {}
-
         for mother in self.mothers:
             if mother in config["vetos"]["veto_decays"]:
                 if dbg > 1:
@@ -736,7 +739,7 @@ class HadAirCrossSections():
             self.set_interaction_model(interaction_model)
         else:
             # Set some default interaction model to allow for cross-sections
-            self.set_interaction_model('SIBYLL2.2')
+            self.set_interaction_model('SIBYLL2.3')
 
     def _load(self):
         """Un-pickles a dictionary using the path specified as
@@ -767,6 +770,7 @@ class HadAirCrossSections():
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
+        
         if interaction_model == self.iam and dbg > 0:
             print ("InteractionYields:set_interaction_model():: Model " +
                    self.iam + " already loaded.")
@@ -775,14 +779,6 @@ class HadAirCrossSections():
         if interaction_model in self.cs_dict.keys():
             self.iam = interaction_model
 
-        elif interaction_model.find('SIBYLL2.2') == 0:
-            if dbg > 1:
-                print ("InteractionYields:set_interaction_model():: Model " +
-                       interaction_model + " selected.")
-            self.iam = 'SIBYLL2.3'
-
-        elif interaction_model.find('SIBYLL2.3') == 0:
-            self.iam = 'SIBYLL2.3'
         else:
             print "Available interaction models: ", self.cs_dict.keys()
             raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
@@ -823,7 +819,7 @@ class HadAirCrossSections():
             if dbg > 2:
                 print message_templ.format(projectile, 'nucleon')
             return scale * self.cs[2212]
-        elif 11 < abs(projectile) < 17 or 7000 < abs(projectile) < 7500:
+        elif 10 < abs(projectile) < 17 or 7000 < abs(projectile) < 7500:
             if dbg > 2:
                 print 'HadAirCrossSections(): returning 0 cross-section for lepton', projectile
             return 0.

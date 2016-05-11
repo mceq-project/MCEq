@@ -45,10 +45,10 @@ config = {
 "yield_fname": "yield_dict.ppd",
 
 # File name of particle decay spectra
-"decay_fname": "decay_dict.ppd",
+"decay_fname": "decays_v1.ppd",
 
 # File name of the cross-sections tables
-"cs_fname":"cs_dict.ppd",
+"cs_fname":"crosssections.ppd",
 
 # File where to cache interpolating splines of the atmosphere module
 'atm_cache_file':'atm_cache.ppd',
