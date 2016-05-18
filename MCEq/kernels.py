@@ -316,5 +316,5 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
             
 
     # Reset number of threads for MKL
-    mkl.mkl_set_num_threads(byref(c_int(4)))
+    # mkl.mkl_set_num_threads(byref(c_int(4)))
     return npphi, grid_sol

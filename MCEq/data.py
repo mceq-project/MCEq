@@ -306,18 +306,22 @@ class InteractionYields():
         #: (tuple) selection of a band of coeffictients (in xf)
         self.band = None
 
-        self._load(interaction_model)
+        
 
         # If parameters are provided during object creation,
         # load the tables during object creation.
         if interaction_model != None:
+            self._load(interaction_model)
             self.set_interaction_model(interaction_model)
+        else:
+            self._load_egrid('EPOS-LHC')
 
         if charm_model and interaction_model:
             self.inject_custom_charm_model(charm_model)
 
-    def _load(self, interaction_model):
-        """Un-pickles the yields dictionary using the path specified as
+
+    def _load_egrid(self,interaction_model):
+        """Un-pickles one dictionary using the path specified as
         ``yield_fname`` in :mod:`mceq_config`.
 
         Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`weights`,
@@ -342,12 +346,49 @@ class InteractionYields():
 
         self.e_grid = self.yield_dict.pop('evec')
         self.e_bins = self.yield_dict.pop('ebins')
-        self.mname = self.yield_dict.pop('mname')
+        self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
+        self.dim = self.e_grid.size
+        self.no_interaction = np.zeros(self.dim ** 2).reshape(
+            self.dim, self.dim)
+        del self.yield_dict
+
+    def _load(self, interaction_model):
+        """Un-pickles the yields dictionary using the path specified as
+        ``yield_fname`` in :mod:`mceq_config`.
+
+        Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`weights`,
+        :attr:`dim` are set here.
+
+        Raises:
+          IOError: if file not found
+        """
+        import cPickle as pickle
+        from os.path import join
+        if dbg > 1: print 'InteractionYields::_load(): entering..'
+        #Remove dashes and points in the name
+        interaction_model = interaction_model.replace('-','')
+        interaction_model = interaction_model.replace('.','')
+        try:
+            print join(config['data_dir'],
+                interaction_model + '_yields.ppd')
+            with open(join(config['data_dir'],
+                interaction_model + '_yields.ppd'), 'rb') as f:
+                self.yield_dict = pickle.load(f)
+        except IOError:
+            self.yield_dict = _decompress(join(config['data_dir'],
+                interaction_model + '_yields.ppd'))
+            raise IOError('InteractionYields::_load(): Yield file not found.')
+
+        self.e_grid = self.yield_dict.pop('evec')
+        self.e_bins = self.yield_dict.pop('ebins')
+        self.iam = self.yield_dict.pop('mname')
 
         self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
         self.dim = self.e_grid.size
         self.no_interaction = np.zeros(self.dim ** 2).reshape(
             self.dim, self.dim)
+
+        self._gen_index(self.yield_dict)
 
     def _gen_index(self, yield_dict):
         """Generates index of mother-daughter relationships.
@@ -359,6 +400,9 @@ class InteractionYields():
         Args:
           yield_dict (dict): dictionary of yields for one interaction model
         """
+
+        if dbg > 1: print 'InteractionYields::_gen_index(): entering..'
+        
         self.projectiles = np.unique(zip(*yield_dict.keys())[0])
         self.secondary_dict = {}
         for projectile in self.projectiles:
@@ -373,6 +417,11 @@ class InteractionYields():
                 "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 self.secondary_dict[proj].append(sec)
 
+        self.nspec = len(self.projectiles)
+        self.yields = self.yield_dict
+        # self.iam = interaction_model
+        self.charm_model = None
+
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
 
@@ -381,22 +430,20 @@ class InteractionYields():
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
+        print interaction_model, self.iam
         if not force and interaction_model == self.iam:
             if dbg > 0:
                 print ("InteractionYields:set_interaction_model():: Model " +
                     self.iam + " already loaded.")
             return
-        if interaction_model != self.mname:
+        else:
+            self._load(interaction_model)
+        if interaction_model != self.iam:
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
 
-        self._gen_index(self.yield_dict)
-
-        self.nspec = len(self.projectiles)
-        self.yields = self.yield_dict
-        self.iam = interaction_model
-        self.charm_model = None
+        
 
     def set_xf_band(self, xf_low_idx, xf_up_idx):
 
@@ -442,7 +489,16 @@ class InteractionYields():
           bin widths. In later versions they will be stored with the multiplication
           carried out.
         """
+        # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
+
         # TODO: modify yields to include the bin size
+        if config['vetos']['veto_charm_pprod']:
+            if (abs(projectile) > 400 and abs(projectile) < 500 or
+                abs(projectile) > 4000 and abs(projectile) < 5000):
+                if dbg > 1:
+                    print ('InteractionYields::get_y_matrix(): disabled particle ' +
+                        'production by', projectile)
+            return self.no_interaction
         if not self.band:
             return self.yields[(projectile, daughter)].dot(self.weights)
         else:
@@ -717,11 +773,6 @@ class HadAirCrossSections():
     Args:
       interaction_model (str): name of the interaction model
     """
-    #: current interaction model name
-    iam = None
-    #: current energy grid
-    egrid = None
-
     #: unit - :math:`\text{GeV} \cdot \text{fm}`
     GeVfm = 0.19732696312541853
     #: unit - :math:`\text{GeV} \cdot \text{cm}`
@@ -732,6 +783,10 @@ class HadAirCrossSections():
     mbarn2cm2 = GeVcm ** 2 / GeV2mbarn
 
     def __init__(self, interaction_model):
+        #: current interaction model name
+        self.iam = None
+        #: current energy grid
+        self.egrid = None
 
         self._load()
 
@@ -770,12 +825,13 @@ class HadAirCrossSections():
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
-        
+        if interaction_model == 'EPOS-LHC':
+            interaction_model = 'SIBYLL2.1'
+
         if interaction_model == self.iam and dbg > 0:
             print ("InteractionYields:set_interaction_model():: Model " +
                    self.iam + " already loaded.")
             return
-
         if interaction_model in self.cs_dict.keys():
             self.iam = interaction_model
 
@@ -801,10 +857,8 @@ class HadAirCrossSections():
 
         message_templ = 'HadAirCrossSections(): replacing {0} with {1} cross-section'
         scale = 1.0
-
         if not mbarn:
             scale = self.mbarn2cm2
-
         if abs(projectile) in self.cs.keys():
             return scale * self.cs[projectile]
         elif abs(projectile) in [411, 421, 431, 15]:
@@ -815,6 +869,10 @@ class HadAirCrossSections():
             if dbg > 2:
                 print message_templ.format('charmed baryon', 'nucleon')
             return scale * self.cs[2212]
+        elif abs(projectile) == 22:
+            if dbg > 2:
+                print message_templ.format('photon', 'pion')
+            return scale * self.cs[211]
         elif abs(projectile) > 2000 and abs(projectile) < 5000:
             if dbg > 2:
                 print message_templ.format(projectile, 'nucleon')
