@@ -107,7 +107,7 @@ config = {
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to
 #memory bandwidth limitations)
-"MKL_threads": 12,
+"MKL_threads": 24,
 
 # CUDA float precision
 "FP_precision": 64,
@@ -131,7 +131,9 @@ config = {
     "veto_resonances": [],
     "allow_resonances": [],
     # Switch off decays. E.g., disable muon decay with [13,-13]
-    "veto_decays": [], 
+    "veto_decays": [],
+    # Switch off particle production by charm projectiles
+    "veto_charm_pprod": False, 
     # Disable mixing of resonance approx. and propagation
     "no_mixing": False
     }

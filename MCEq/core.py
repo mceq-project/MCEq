@@ -107,10 +107,10 @@ class MCEqRun():
 
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
-        #: (int) dimension of energy grid
-        self.d = self.y.dim
         #: (np.array) energy grid (bin centers)
-        self.e_grid = self.y.e_grid
+        self.e_grid = self.cs.egrid
+        #: (int) dimension of energy grid
+        self.d = self.e_grid.shape[0]
 
         self.e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
@@ -194,7 +194,7 @@ class MCEqRun():
 
         # list particle indices
         self.part_str_vec = []
-        if dbg > 2:
+        if dbg > 3:
             print "Particle matrix indices:"
             some_index = 0
             for p in self.cascade_particles:
@@ -830,9 +830,9 @@ class MCEqRun():
                 if idcs == r[p].hadridx():
                     pstr = 'prop'
                     dstr = 'Mprop'
-                print (reclev * '\t',
-                       'setting {0}[({1},{3})->({2},{4})]'.format(
-                           dstr, r[p_orig].name, r[d].name, pstr, 'prop'))
+                print (reclev * '\t' + 
+                       'setting {0}[({1},{3})->({2},{4})]').format(
+                           dstr, r[p_orig].name, r[d].name, pstr, 'prop')
                 print r[p].name
 
             if r[d].is_mixed:
