@@ -6,7 +6,12 @@ This scientific package might be useful fo all who deal with high-energy inclusi
 Status
 ------
 
-The current development status is **alpha**. Although the numerical part of the program is rather stable, the parts related to user interaction, installation etc. are not finished, yet. Check `the wiki <https://github.com/afedynitch/MCEq/wiki>`_ for further items on the *ToDo-list*. Also feel free to open issues.
+This **dev** branch is a pre-release of the first stable version. It has several new features
+including:
+- extended energy range (10 GeV - 10^11 GeV)
+- new interaction models, SIBYLL 2.3 final and EPOS-LHC
+- particle production from interactions of charmed hadrons (SIBYLL 2.3 only)
+- a generalized target mode, with arbitrary density profiles of target material (instead of air in Earths atmosphere)
 
 `Documentation <http://mceq.readthedocs.org/en/latest/>`_
 ---------------------------------------------------------
