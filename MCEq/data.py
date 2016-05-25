@@ -826,7 +826,7 @@ class HadAirCrossSections():
           Exception: if invalid name specified in argument ``interaction_model``
         """
         if interaction_model == 'EPOS-LHC':
-            interaction_model = 'SIBYLL2.1'
+            interaction_model = 'SIBYLL2.3'
 
         if interaction_model == self.iam and dbg > 0:
             print ("InteractionYields:set_interaction_model():: Model " +
