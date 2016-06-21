@@ -65,7 +65,7 @@ class NCEParticle():
 
         self.pdgid = pdgid
         self.particle_db = particle_db
-        self.pythia_db = pythia_db
+        self.pythia_db = pythia_db  
         if pdgid in config["vetos"]["veto_decays"]:
             pythia_db.force_stable(self.pdgid)
         self.cs = cs_db
@@ -135,7 +135,7 @@ class NCEParticle():
             if cut:
                 dlen[0:self.mix_idx] = 0.
             return dlen
-        except:
+        except ZeroDivisionError:
             return np.ones(self.d) * np.inf
 
     def inverse_interaction_length(self, cs=None):
