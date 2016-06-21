@@ -110,11 +110,11 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
     
-    calc_precision = None
+    fl_pr = None
     if config['FP_precision'] == 32:
-        calc_precision = np.float32
+        fl_pr = np.float32
     elif config['FP_precision'] == 64:
-        calc_precision = np.float64
+        fl_pr = np.float64
     else:
         raise Exception("kern_CUDA_dense(): Unknown precision specified.")    
     
@@ -122,31 +122,82 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     # Setup GPU stuff and upload data to it
     #=======================================================================
     try:
-        from numbapro.cudalib.cublas import Blas  # @UnresolvedImport
-        from numbapro import cuda, float32  # @UnresolvedImport
+        # from numbapro.cudalib.cublas import Blas  # @UnresolvedImport
+        # from numbapro import cuda, float32  # @UnresolvedImport
+        from accelerate.cuda.blas import Blas
+        from accelerate.cuda import cuda
     except ImportError:
         raise Exception("kern_CUDA_dense(): Numbapro CUDA libaries not " + 
                         "installed.\nCan not use GPU.")
     cubl = Blas()
     m, n = int_m.shape
     stream = cuda.stream()
-    cu_int_m = cuda.to_device(int_m.astype(calc_precision), stream)
-    cu_dec_m = cuda.to_device(dec_m.astype(calc_precision), stream)
-    cu_curr_phi = cuda.to_device(phi.astype(calc_precision), stream)
-    cu_delta_phi = cuda.device_array(phi.shape, dtype=calc_precision)
+    cu_int_m = cuda.to_device(int_m.astype(fl_pr), stream)
+    cu_dec_m = cuda.to_device(dec_m.astype(fl_pr), stream)
+    cu_curr_phi = cuda.to_device(phi.astype(fl_pr), stream)
+    cu_delta_phi = cuda.device_array(phi.shape, dtype=fl_pr)
     for step in xrange(nsteps):
         if prog_bar:
             prog_bar.update(step)
-        cubl.gemv(trans='T', m=m, n=n, alpha=float32(1.0), A=cu_int_m,
-            x=cu_curr_phi, beta=float32(0.0), y=cu_delta_phi)
-        cubl.gemv(trans='T', m=m, n=n, alpha=float32(rho_inv[step]),
-            A=cu_dec_m, x=cu_curr_phi, beta=float32(1.0), y=cu_delta_phi)
-        cubl.axpy(alpha=float32(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
+        cubl.gemv(trans='N', m=m, n=n, alpha=fl_pr(1.0), A=cu_int_m,
+            x=cu_curr_phi, beta=fl_pr(0.0), y=cu_delta_phi)
+        cubl.gemv(trans='N', m=m, n=n, alpha=fl_pr(rho_inv[step]),
+            A=cu_dec_m, x=cu_curr_phi, beta=fl_pr(1.0), y=cu_delta_phi)
+        cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
     return cu_curr_phi.copy_to_host(), []
 
-def kern_CUDA_sparse(nsteps, dX, rho_inv, int_m, dec_m,
-                    phi, grid_idcs, prog_bar=None):
+
+class CUDASparseContext(object):
+    def __init__(self, int_m, dec_m, device_id=0):
+
+        if config['FP_precision'] == 32:
+            self.fl_pr = np.float32
+        elif config['FP_precision'] == 64:
+            self.fl_pr = np.float64
+        else:
+            raise Exception("CUDASparseContext(): Unknown precision specified.")    
+        #=======================================================================
+        # Setup GPU stuff and upload data to it
+        #=======================================================================
+        try:
+            from accelerate.cuda.blas import Blas
+            import accelerate.cuda.sparse as cusparse
+            from accelerate.cuda import cuda
+        except ImportError:
+            raise Exception("kern_CUDA_sparse(): Numbapro CUDA libaries not " + 
+                            "installed.\nCan not use GPU.")
+
+        cuda.select_device(0)
+        self.cuda = cuda
+        self.cusp = cusparse.Sparse()
+        self.cubl = Blas()
+        self.set_matrices(int_m, dec_m)
+        
+    def set_matrices(self, int_m, dec_m):
+        import accelerate.cuda.sparse as cusparse
+        from accelerate.cuda import cuda    
+        
+        self.m, self.n = int_m.shape
+        self.int_m_nnz = int_m.nnz
+        self.int_m_csrValA = cuda.to_device(int_m.data.astype(self.fl_pr))
+        self.int_m_csrRowPtrA = cuda.to_device(int_m.indptr)
+        self.int_m_csrColIndA = cuda.to_device(int_m.indices)
+        
+        self.dec_m_nnz = dec_m.nnz
+        self.dec_m_csrValA = cuda.to_device(dec_m.data.astype(self.fl_pr))
+        self.dec_m_csrRowPtrA = cuda.to_device(dec_m.indptr)
+        self.dec_m_csrColIndA = cuda.to_device(dec_m.indices)
+        
+        self.descr = self.cusp.matdescr()
+        self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
+    
+    def set_phi(self, phi):
+        self.cu_curr_phi = self.cuda.to_device(phi.astype(self.fl_pr))
+        self.cu_delta_phi = self.cuda.device_array_like(phi.astype(self.fl_pr))
+
+def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
+                      phi, grid_idcs, prog_bar=None):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation 
     of forward-euler integration.
     
@@ -167,64 +218,38 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
-    calc_precision = None
-    if config['FP_precision'] == 32:
-        calc_precision = np.float32
-    elif config['FP_precision'] == 64:
-        calc_precision = np.float64
-    else:
-        raise Exception("kern_CUDA_sparse(): Unknown precision specified.")    
-    print ("kern_CUDA_sparse(): Warning, the performance is slower than " + 
-           "dense cuBLAS or any type of MKL.")
-    #=======================================================================
-    # Setup GPU stuff and upload data to it
-    #=======================================================================
-    try:
-        from numbapro.cudalib import cusparse  # @UnresolvedImport
-        from numbapro.cudalib.cublas import Blas
-        from numbapro import cuda, float32  # @UnresolvedImport
-    except ImportError:
-        raise Exception("kern_CUDA_sparse(): Numbapro CUDA libaries not " + 
-                        "installed.\nCan not use GPU.")
-    cusp = cusparse.Sparse()
-    cubl = Blas()
-    m, n = int_m.shape
-    int_m_nnz = int_m.nnz
-    int_m_csrValA = cuda.to_device(int_m.data.astype(calc_precision))
-    int_m_csrRowPtrA = cuda.to_device(int_m.indptr)
-    int_m_csrColIndA = cuda.to_device(int_m.indices)
-    
-    dec_m_nnz = dec_m.nnz
-    dec_m_csrValA = cuda.to_device(dec_m.data.astype(calc_precision))
-    dec_m_csrRowPtrA = cuda.to_device(dec_m.indptr)
-    dec_m_csrColIndA = cuda.to_device(dec_m.indices)
-    
-    cu_curr_phi = cuda.to_device(phi.astype(calc_precision))
-    cu_delta_phi = cuda.device_array(phi.shape, dtype=calc_precision)
+    c= context
+    c.set_phi(phi)
 
-    descr = cusp.matdescr()
-    descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
+    grid_step = 0
+    grid_sol = []
     
     for step in xrange(nsteps):
         if prog_bar and (step % 5 == 0):
             prog_bar.update(step)
-        cusp.csrmv(trans='T', m=m, n=n, nnz=int_m_nnz,
-                   descr=descr,
-                   alpha=float32(1.0),
-                   csrVal=int_m_csrValA,
-                   csrRowPtr=int_m_csrRowPtrA,
-                   csrColInd=int_m_csrColIndA,
-                   x=cu_curr_phi, beta=float32(0.0), y=cu_delta_phi)
-        cusp.csrmv(trans='T', m=m, n=n, nnz=dec_m_nnz,
-                   descr=descr,
-                   alpha=float32(rho_inv[step]),
-                   csrVal=dec_m_csrValA,
-                   csrRowPtr=dec_m_csrRowPtrA,
-                   csrColInd=dec_m_csrColIndA,
-                   x=cu_curr_phi, beta=float32(1.0), y=cu_delta_phi)
-        cubl.axpy(alpha=float32(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
+        c.cusp.csrmv(trans='N', m=c.m, n=c.n, nnz=c.int_m_nnz,
+                   descr=c.descr,
+                   alpha=c.fl_pr(1.0),
+                   csrVal=c.int_m_csrValA,
+                   csrRowPtr=c.int_m_csrRowPtrA,
+                   csrColInd=c.int_m_csrColIndA,
+                   x=c.cu_curr_phi, beta=c.fl_pr(0.0), y=c.cu_delta_phi)
+        # print np.sum(cu_curr_phi.copy_to_host())
+        c.cusp.csrmv(trans='N', m=c.m, n=c.n, nnz=c.dec_m_nnz,
+                   descr=c.descr,
+                   alpha=c.fl_pr(rho_inv[step]),
+                   csrVal=c.dec_m_csrValA,
+                   csrRowPtr=c.dec_m_csrRowPtrA,
+                   csrColInd=c.dec_m_csrColIndA,
+                   x=c.cu_curr_phi, beta=c.fl_pr(1.0), y=c.cu_delta_phi)
+        c.cubl.axpy(alpha=c.fl_pr(dX[step]), x=c.cu_delta_phi, y=c.cu_curr_phi)
+        
+        if (grid_idcs and grid_step < len(grid_idcs) 
+            and grid_idcs[grid_step] == step):
+            grid_sol.append(c.cu_curr_phi.copy_to_host())
+            grid_step += 1
 
-    return cu_curr_phi.copy_to_host(), []
+    return c.cu_curr_phi.copy_to_host(), grid_sol
 
 def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
                     phi, grid_idcs, prog_bar=None):
@@ -247,37 +272,53 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
     
-    from ctypes import cdll, c_int, c_double, c_char, POINTER, byref
+    from ctypes import cdll, c_int, c_char, POINTER, byref
+
     try:
         mkl = cdll.LoadLibrary(config['MKL_path'])
     except OSError:
         raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
                         "found. Please check path.")
-
-    # sparse CSR-matrix x dense vector 
-    gemv = mkl.mkl_dcsrmv
-    # dense vector + dense vector
-    axpy = mkl.cblas_daxpy
+    gemv = None
+    axpy = None
+    np_fl = None
+    if config['FP_precision'] == 32:
+        from ctypes import c_float as fl_pr
+        # sparse CSR-matrix x dense vector 
+        gemv = mkl.mkl_scsrmv
+        # dense vector + dense vector
+        axpy = mkl.cblas_saxpy
+        np_fl = np.float32
+    elif config['FP_precision'] == 64:
+        from ctypes import c_double as fl_pr
+        # sparse CSR-matrix x dense vector 
+        gemv = mkl.mkl_dcsrmv
+        # dense vector + dense vector
+        axpy = mkl.cblas_daxpy
+        np_fl = np.float64
+    else:
+        raise Exception("kern_MKL_sparse(): Unknown precision specified.")
+        
 
     # Set number of threads to sufficiently small number, since 
     # matrix-vector multiplication is memory bandwidth limited
     mkl.mkl_set_num_threads(byref(c_int(config['MKL_threads'])))
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
-    int_m_data = int_m.data.ctypes.data_as(POINTER(c_double))
+    int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
     int_m_ci = int_m.indices.ctypes.data_as(POINTER(c_int))
     int_m_pb = int_m.indptr[:-1].ctypes.data_as(POINTER(c_int))
     int_m_pe = int_m.indptr[1:].ctypes.data_as(POINTER(c_int))
 
-    dec_m_data = dec_m.data.ctypes.data_as(POINTER(c_double))
+    dec_m_data = dec_m.data.ctypes.data_as(POINTER(fl_pr))
     dec_m_ci = dec_m.indices.ctypes.data_as(POINTER(c_int))
     dec_m_pb = dec_m.indptr[:-1].ctypes.data_as(POINTER(c_int))
     dec_m_pe = dec_m.indptr[1:].ctypes.data_as(POINTER(c_int))
 
-    npphi = np.copy(phi)
-    phi = npphi.ctypes.data_as(POINTER(c_double))
-    npdelta_phi = np.zeros_like(npphi, dtype='double')
-    delta_phi = npdelta_phi.ctypes.data_as(POINTER(c_double))
+    npphi = np.copy(phi).astype(np_fl)
+    phi = npphi.ctypes.data_as(POINTER(fl_pr))
+    npdelta_phi = np.zeros_like(npphi, dtype=np_fl)
+    delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
     trans = c_char('n')
     npmatd = np.chararray(6)
@@ -285,8 +326,8 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     npmatd[3] = 'C'
     matdsc = npmatd.ctypes.data_as(POINTER(c_char))
     m = c_int(int_m.shape[0])
-    cdzero = c_double(0.)
-    cdone = c_double(1.)
+    cdzero = fl_pr(0.)
+    cdone = fl_pr(1.)
     cione = c_int(1)
     
     grid_step = 0
@@ -302,11 +343,11 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
              phi, byref(cdzero), delta_phi)
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
         gemv(byref(trans), byref(m), byref(m),
-             byref(c_double(rho_inv[step])), matdsc,
+             byref(fl_pr(rho_inv[step])), matdsc,
              dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe,
              phi, byref(cdone), delta_phi)
         # phi = delta_phi * dX + phi
-        axpy(m, c_double(dX[step]),
+        axpy(m, fl_pr(dX[step]),
              delta_phi, cione, phi, cione)
         
         if (grid_idcs and grid_step < len(grid_idcs) 
