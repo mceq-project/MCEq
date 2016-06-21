@@ -28,7 +28,7 @@ else:
 config = {
 
 # Debug flag for verbose printing, 0 = minimum
-"debug_level": 1,
+"debug_level": 2,
 
 # Use progress_bars
 "prog_bar": False,
@@ -66,6 +66,7 @@ config = {
 "density_model": ('CORSIKA', ('BK_USStd', None)),
 # "density_model": ('MSIS00_IC',('SouthPole','January')),
 # "density_model": ('GeneralizedTarget', None),
+
 
 # Version of NRLMSISE-00 python library (ctypes, native)
 "msis_python": "ctypes",
@@ -110,7 +111,7 @@ config = {
 "MKL_threads": 16,
 
 # CUDA float precision
-"FP_precision": 32,
+"FP_precision": 64,
 
 #=========================================================================
 # Advanced settings

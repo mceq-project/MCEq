@@ -28,9 +28,9 @@ class NRLMSISE00Base():
                           'November':305,
                           'December':335}
 
-        self.locations = {'SouthPole':(-90., 0., 2834.*100.),
-                          'Karlsruhe':(49., 8.4, 110. *100.),
-                          'Geneva':(46.2, 6.1, 370. *100.)}
+        self.locations = {'SouthPole':(0.,-90., 2834.*100.),
+                          'Karlsruhe':(8.4, 49., 110. *100.),
+                          'Geneva':(6.1, 46.2, 370. *100.)}
 
         self.daytimes = {'day':43200.,
                          'night':0.}
@@ -73,7 +73,7 @@ class pyNRLMSISE00(NRLMSISE00Base):
         if tag not in self.locations.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
         self.input.alt = self.locations[tag][2]
-        self.set_location_coord(self.locations[tag][1], self.locations[tag][0])
+        self.set_location_coord(*self.locations[tag])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 

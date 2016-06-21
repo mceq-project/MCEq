@@ -9,7 +9,7 @@ __pycache__/
 examples/.ipynb_*
 # Dev stuff
 prototyping/
-
+tests/
 
 # Tables from other publications
 /references/

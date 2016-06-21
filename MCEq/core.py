@@ -102,6 +102,9 @@ class MCEqRun():
         # Store vetos
         self.vetos = vetos
 
+        #Default GPU device id for CUDA
+        self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
+
         # Save observer id
         self.set_obs_particles(obs_ids)
 
@@ -332,11 +335,22 @@ class MCEqRun():
         """
 
         from scipy.sparse import csr_matrix
+        from kernels import CUDASparseContext
         if dbg > 0:
             print (self.cname + "::_convert_to_sparse():" +
                    "Converting to sparse (CSR) matrix format.")
+
         self.int_m = csr_matrix(self.int_m)
         self.dec_m = csr_matrix(self.dec_m)
+
+        if config['kernel_config'] == 'CUDA':
+            try:
+                self.cuda_context.set_matrices(self.int_m,
+                                               self.dec_m)
+            except  AttributeError:
+                self.cuda_context = CUDASparseContext(
+                    self.int_m, self.dec_m,
+                    device_id=self.cuda_device)
 
     def _init_default_matrices(self):
         """Constructs the matrices for calculation.
@@ -466,7 +480,8 @@ class MCEqRun():
         else:
             return None
 
-    def get_solution(self, particle_name, mag=0., grid_idx=None):
+    def get_solution(self, particle_name, mag=0., grid_idx=None,
+                     integrate=False):
         """Retrieves solution of the calculation on the energy grid.
 
         Some special prefixes are accepted for lepton names:
@@ -491,6 +506,8 @@ class MCEqRun():
             intermediate solutions on a depth grid, then ``grid_idx`` specifies
             the index of the depth grid for which the solution is retrieved. If
             not specified the flux at the surface is returned
+          integrate (bool, optional): return averge particle number instead of
+          flux (multiply by bin width)
 
         Returns:
           (numpy.array): flux of particles on energy grid :attr:`e_grid`
@@ -521,7 +538,10 @@ class MCEqRun():
             res = sol[ref[particle_name].lidx():
                       ref[particle_name].uidx()] * \
                 self.e_grid ** mag
-        return res
+        if not integrate:
+            return res
+        else:
+            return res*self.e_widths
 
     def set_obs_particles(self, obs_ids):
         """Adds a list of mother particle strings which decay products
@@ -750,6 +770,8 @@ class MCEqRun():
             self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
         elif base_model == 'CORSIKA':
             self.density_model = dprof.CorsikaAtmosphere(*model_config)
+        elif base_model == 'AIRS':
+            self.density_model = dprof.AIRSAtmosphere(*model_config)
         elif base_model == 'GeneralizedTarget':
             self.density_model = dprof.GeneralizedTarget()
         else:
@@ -864,6 +886,11 @@ class MCEqRun():
             # if p doesn't interact, skip interaction matrices
             if not p.is_projectile:
                 continue
+            elif self.vetos['veto_sec_interactions'] and p.pdgid not in [2212, 2112]:
+                if dbg > 2: print (self.__class__.__name__ + 
+                    '_fill_matrices(): Veto secodary interaction of' +
+                    p.pdgid)
+                continue 
 
             # go through all secondaries
             for s in p.secondaries:
@@ -1017,20 +1044,28 @@ class MCEqRun():
         start = time()
 
         import kernels
+
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
-
+            args = (nsteps, dX, rho_inv, self.int_m, 
+                self.dec_m, phi0, grid_idcs, self.progressBar)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == False):
             kernel = kernels.kern_CUDA_dense
+            args = (nsteps, dX, rho_inv, self.int_m, 
+                self.dec_m, phi0, grid_idcs, self.progressBar)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == True):
             kernel = kernels.kern_CUDA_sparse
+            args = (nsteps, dX, rho_inv, self.cuda_context,
+                phi0, grid_idcs, self.progressBar)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] == True):
             kernel = kernels.kern_MKL_sparse
+            args = (nsteps, dX, rho_inv, self.int_m, 
+                self.dec_m, phi0, grid_idcs, self.progressBar)
         else:
             raise Exception(
                 ("MCEq::_forward_euler(): " +
@@ -1040,8 +1075,7 @@ class MCEqRun():
                 config['kernel_config']))
 
 
-        self.solution, self.grid_sol = kernel(nsteps, dX, rho_inv,
-            self.int_m, self.dec_m, phi0, grid_idcs, self.progressBar)
+        self.solution, self.grid_sol = kernel(*args)
 
         self.progressBar.finish()
 

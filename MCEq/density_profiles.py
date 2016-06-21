@@ -881,6 +881,118 @@ class MSIS00Atmosphere(EarthAtmosphere):
         return self._msis.get_density(h_cm)
 
 
+class AIRSAtmosphere(EarthAtmosphere):
+
+    """Interpolation class for tabulated atmospheres.
+
+    This class is intended to read preprocessed AIRS Satellite data.
+
+    Args:
+      location (str): see :func:`init_parameters`
+      season (str,optional): see :func:`init_parameters`
+    """
+
+    def __init__(self, location, *args, **kwargs):
+        if location != 'SouthPole':
+            raise Exception(self.__class__.__name__ + 
+                "(): Only South Pole location supported. " + location)
+        self.init_parameters(location)
+        EarthAtmosphere.__init__(self)
+
+    def init_parameters(self, location):
+        """Loads tables and prepares interpolation.
+
+        Args:
+          location (str): supported is only "SouthPole"
+          doy (int): Day Of Year
+        """
+        from matplotlib.dates import strpdate2num, UTC, num2date
+        from os import path
+        data_path = (join(path.expanduser('~'),
+            'work/projects/atmospheric_variations/'))
+
+
+        files = [
+            ('dens','airs_amsu_dens_180_daily.txt'),
+            ('temp','airs_amsu_temp_180_daily.txt'),
+            ('alti','airs_amsu_alti_180_daily.txt')]
+
+        data_collection = {}
+
+        #limit SouthPole pressure to <= 600
+        min_press_idx = 4
+        
+        IC79_idx_1 = None
+        IC79_idx_2 = None
+
+        for d_key, fname in files:
+            fname = data_path + 'tables/' + fname
+            tab = np.loadtxt(fname,
+                             converters={0:strpdate2num('%Y/%m/%d')}, 
+                             usecols=[0] + range(2,27))
+            with open(fname,'r') as f:
+                comline = f.readline()
+            # print comline
+            p_levels = [float(s.strip()) for s in 
+                comline.split(' ')[3:] if s != ''][min_press_idx:]
+            dates = num2date(tab[:,0])
+            for di, date in enumerate(dates):
+                if (date.month==6 and date.day==1):
+                    if date.year==2010: IC79_idx_1=di
+                    elif date.year==2011: IC79_idx_2=di
+            surf_val = tab[:,1]
+            cols = tab[:, min_press_idx+2:]
+            data_collection[d_key] = (dates,surf_val,cols)
+
+        self.interp_tab = {}
+        self.dates = {}
+        dates = data_collection['alti'][0]
+
+        for didx, date in enumerate(dates):
+            self.interp_tab[self._get_y_doy(date)] = (
+                    np.array(data_collection['alti'][2][didx,:]*1e2),
+                    np.array(data_collection['dens'][2][didx,:]))
+            self.dates[self._get_y_doy(date)] = date
+
+        self.IC79_start = self._get_y_doy(dates[IC79_idx_1])
+        self.IC79_end = self._get_y_doy(dates[IC79_idx_2])
+        self.IC79_days = (dates[IC79_idx_2] - dates[IC79_idx_1]).days
+        self.location = location
+        self.set_IC79_day(0)
+        # Clear cached value to force spline recalculation
+        self.theta_deg = None
+
+    def set_date(self, year,doy):
+        self.h, self.dens = self.interp_tab[(year,doy)]
+        self.date = self.dates[(year,doy)]
+
+    def set_IC79_day(self, IC79_day):
+        import datetime
+        if IC79_day > self.IC79_days:
+            raise Exception(self.__class__.__name__ + 
+                "::set_IC79_day(): IC79_day above range.")
+        target_day = self._get_y_doy(self.dates[self.IC79_start] + 
+                      datetime.timedelta(days=IC79_day))
+        print 'setting IC79_day', IC79_day
+        self.h, self.dens = self.interp_tab[target_day]
+        self.date = self.dates[target_day]
+
+    def _get_y_doy(self, date):
+        return date.timetuple().tm_year, date.timetuple().tm_yday 
+
+    def get_density(self, h_cm):
+        """ Returns the density of air in g/cm**3.
+
+        Wraps around ctypes calls to the NRLMSISE-00 C library.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: column depth :math:`\\rho(h_{cm})` in g/cm**3
+        """
+        return np.interp(h_cm, self.h, self.dens)
+
 
 class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
@@ -942,6 +1054,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
             theta_deg = 180. - theta_deg
         MSIS00Atmosphere.set_theta(self, theta_deg,
                                    force_spline_calc=True)
+
 
 
 if __name__ == '__main__':

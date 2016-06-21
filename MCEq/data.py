@@ -118,20 +118,22 @@ class NCEParticle():
         """
         return (self.nceidx + 1) * self.d
 
-    def inverse_decay_length(self, E):
+    def inverse_decay_length(self, E, cut = True):
         """Returns inverse decay length (or infinity (np.inf), if
         particle is stable), where the air density :math:`\\rho` is
         factorized out.
 
         Args:
-          E (float): energy in laboratory system in GeV
+          E (float) : energy in laboratory system in GeV
+          cut (bool): set to zero in 'resonance' regime
         Returns:
           (float): :math:`\\frac{\\rho}{\\lambda_{dec}}` in 1/cm
         """
         try:
             dlen = self.pythia_db.mass(self.pdgid) / \
                 self.pythia_db.ctau(self.pdgid) / E
-            dlen[0:self.mix_idx] = 0.
+            if cut:
+                dlen[0:self.mix_idx] = 0.
             return dlen
         except:
             return np.ones(self.d) * np.inf
@@ -342,7 +344,6 @@ class InteractionYields():
         except IOError:
             self.yield_dict = _decompress(join(config['data_dir'],
                 interaction_model + '_yields.ppd'))
-            raise IOError('InteractionYields::_load(): Yield file not found.')
 
         self.e_grid = self.yield_dict.pop('evec')
         self.e_bins = self.yield_dict.pop('ebins')
@@ -377,7 +378,6 @@ class InteractionYields():
         except IOError:
             self.yield_dict = _decompress(join(config['data_dir'],
                 interaction_model + '_yields.ppd'))
-            raise IOError('InteractionYields::_load(): Yield file not found.')
 
         self.e_grid = self.yield_dict.pop('evec')
         self.e_bins = self.yield_dict.pop('ebins')
@@ -492,12 +492,15 @@ class InteractionYields():
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
         # TODO: modify yields to include the bin size
-        if config['vetos']['veto_charm_pprod']:
-            if (abs(projectile) > 400 and abs(projectile) < 500 or
-                abs(projectile) > 4000 and abs(projectile) < 5000):
-                if dbg > 1:
-                    print ('InteractionYields::get_y_matrix(): disabled particle ' +
-                        'production by', projectile)
+        # print config['vetos']['veto_charm_pprod']
+        if (config['vetos']['veto_charm_pprod'] and
+           ((abs(projectile) > 400 and abs(projectile) < 500) or
+            (abs(projectile) > 4000 and abs(projectile) < 5000))):
+           
+            print 'veto', projectile
+            if dbg > 1:
+                print ('InteractionYields::get_y_matrix(): disabled particle ' +
+                    'production by', projectile)
             return self.no_interaction
         if not self.band:
             return self.yields[(projectile, daughter)].dot(self.weights)
