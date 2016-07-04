@@ -93,7 +93,7 @@ config = {
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "MKL",
+"kernel_config": "CUDA",
 
 #parameters for the odepack integrator. More details at
 #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
@@ -111,7 +111,7 @@ config = {
 "MKL_threads": 16,
 
 # CUDA float precision
-"FP_precision": 64,
+"FP_precision": 32,
 
 #=========================================================================
 # Advanced settings
