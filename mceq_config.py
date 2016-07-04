@@ -21,7 +21,7 @@ elif platform.platform().find('Darwin') != -1:
     lib_ext = '.dylib'
 else:
     #Windows case
-    mkl_default = path.join(sys.prefix, 'pkgs', 'mkl-11.3.1-0',
+    mkl_default = path.join(sys.prefix, 'pkgs', 'mkl-11.3.3-1',
                             'Library','bin', 'mkl_rt')
     lib_ext = '.dll'
 
@@ -131,6 +131,7 @@ config = {
     "veto_hadrons": [],
     "veto_resonances": [],
     "allow_resonances": [],
+    'veto_forward_mesons':True,
     # Switch off decays. E.g., disable muon decay with [13,-13]
     "veto_decays": [],
     # Switch off particle production by charm projectiles
