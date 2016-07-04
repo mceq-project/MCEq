@@ -502,10 +502,31 @@ class InteractionYields():
                 print ('InteractionYields::get_y_matrix(): disabled particle ' +
                     'production by', projectile)
             return self.no_interaction
-        if not self.band:
-            return self.yields[(projectile, daughter)].dot(self.weights)
+
+        m = self.yields[(projectile, daughter)].dot(self.weights)
+
+        if config['vetos']['veto_forward_mesons'] and abs(daughter) < 2000 \
+            and (projectile,-daughter) in self.yields.keys():
+            manti = self.yields[(projectile, -daughter)].dot(self.weights)
+            ie = 50
+            print 'sum', (np.sum(m[:,ie - 30:ie]) - np.sum(manti[:,ie - 30:ie]))
+            if (np.sum(m[:,ie - 30:ie]) - np.sum(manti[:,ie - 30:ie])) > 0:
+                if dbg > 1:
+                    print ('InteractionYields::get_y_matrix(): inverting meson ' +
+                    'due to leading particle veto.',daughter,'->',-daughter)
+                m = manti
+            else:
+                if dbg > 1:
+                    print ('InteractionYields::get_y_matrix(): no inversion since ' +
+                    'daughter not leading', daughter)
         else:
-            m = self.yields[(projectile, daughter)].dot(self.weights)
+            if dbg > 2:
+                print ('InteractionYields::get_y_matrix(): no meson inversion ' +
+                    'in leading particle veto.',projectile, daughter)
+
+        if not self.band:
+            return m
+        else:
             # set all elements except those inside selected xf band to 0
 
             m[np.tril_indices(self.dim, -2 - self.band[1])] = 0
