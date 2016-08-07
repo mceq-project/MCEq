@@ -93,7 +93,7 @@ config = {
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "CUDA",
+"kernel_config": "MKL",
 
 #parameters for the odepack integrator. More details at
 #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
@@ -108,10 +108,10 @@ config = {
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to
 #memory bandwidth limitations)
-"MKL_threads": 16,
+"MKL_threads": 1,
 
 # CUDA float precision
-"FP_precision": 32,
+"FP_precision": 64,
 
 #=========================================================================
 # Advanced settings
@@ -131,7 +131,7 @@ config = {
     "veto_hadrons": [],
     "veto_resonances": [],
     "allow_resonances": [],
-    'veto_forward_mesons':True,
+    'veto_forward_mesons':False,
     # Switch off decays. E.g., disable muon decay with [13,-13]
     "veto_decays": [],
     # Switch off particle production by charm projectiles

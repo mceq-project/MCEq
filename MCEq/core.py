@@ -812,7 +812,62 @@ class MCEqRun():
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
 
+    def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, *x_func_args):
+        """Sets combination of projectile/secondary for error propagation.
+
+        The production spectrum of ``sec_pdg`` in interactions of 
+        ``prim_pdg`` is modified according to the function passed to 
+        :func:`InteractionYields.init_mod_matrix`
+
+        Args:
+          prim_pdg (int): interacting (primary) particle PDG ID
+          sec_pdg (int): secondary particle PDG ID
+          x_func (object): reference to function
+          x_func_args (tuple): arguments passed to ``x_func``
+        """
+        
+        if dbg > 0:
+                print (self.__class__.__name__ + 
+                    'set_mod_pprod():{0}/{1}, {2}, {3}').format(
+                    prim_pdg, sec_pdg, x_func.__name__, str(x_func_args))
+        try:
+            if self.prev_pprod_call == (prim_pdg, sec_pdg, 
+                x_func.__name__, x_func_args):
+                print (self.__class__.__name__ + 
+                    'set_mod_pprod(): No changes.. call does nothing.')
+                return
+        except:
+            self.prev_pprod_call = (None, None, None, None)
+
+
+        #If something changed to modifying function, regenerate xmatrix
+        #in yields
+        if (x_func != self.prev_pprod_call[2] or 
+            x_func_args != self.prev_pprod_call[3]): 
+            self.y._init_mod_matrix(x_func, *x_func_args)
+
+        if (prim_pdg != self.prev_pprod_call[0] or
+            sec_pdg != self.prev_pprod_call[1]):
+            self.y._set_mod_pprod(prim_pdg, sec_pdg)
+
+        # Need to regenerate matrices completely
+        self._init_default_matrices()
+
+        self.prev_pprod_call = (prim_pdg, sec_pdg, 
+                              x_func.__name__, x_func_args)
+
+    def unset_mod_pprod(self):
+        """Removed modifications from :func:`MCEqRun.set_mod_pprod`.
+        """
+        if dbg > 0:
+            print (self.__class__.__name__ + 
+                'unset_mod_pprod(): modifications removed')
+
+        self.y.mod_pprod = None
+
     def _zero_mat(self):
+        """Returns a new square zero valued matrix with dimensions of grid. 
+        """
         return np.zeros((self.d, self.d))
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs,
@@ -869,7 +924,10 @@ class MCEqRun():
                 if dbg > 2:
                     print reclev * '\t', '\t terminating at', r[d].name
 
+    # @profile
     def _fill_matrices(self):
+        """Generates the C and D matrix from scratch.
+        """
         # Initialize empty matrices
         self.C = np.zeros((self.dim_states, self.dim_states))
         self.D = np.zeros((self.dim_states, self.dim_states))
@@ -893,6 +951,8 @@ class MCEqRun():
                 continue 
 
             # go through all secondaries
+            # @debug: y_matrix is copied twice in non_res and res
+            # calls to assign_y_...
             for s in p.secondaries:
                 if s not in self.pdg2pref:
                     continue

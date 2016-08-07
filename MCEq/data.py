@@ -307,8 +307,8 @@ class InteractionYields():
         self.dim = 0
         #: (tuple) selection of a band of coeffictients (in xf)
         self.band = None
-
-        
+        #: (tuple) modified particle combination for error prop.
+        self.mod_pprod = None 
 
         # If parameters are provided during object creation,
         # load the tables during object creation.
@@ -316,7 +316,7 @@ class InteractionYields():
             self._load(interaction_model)
             self.set_interaction_model(interaction_model)
         else:
-            self._load_egrid('EPOS-LHC')
+            self._load_egrid('SIBYLL2.1')
 
         if charm_model and interaction_model:
             self.inject_custom_charm_model(charm_model)
@@ -422,15 +422,70 @@ class InteractionYields():
         # self.iam = interaction_model
         self.charm_model = None
 
+    def _init_mod_matrix(self, x_func, *args):
+        """Creates modification matrix using an x-dependent function.
+
+        :math:`x = \\frac{E_{\\rm primary}}{E_{\\rm secondary}}` is the
+        fraction of secondary particle energy. ``x_func`` can be an
+        arbitrary function modifying the :math:`x_\\text{lab}` distribution.
+        Run this method each time you change ``x_func``, or its parameters, 
+        not each time you change modified particle.
+        The ``args`` are passed to the function.
+
+        Args:
+          x_func (object): reference to function
+        """
+
+        if dbg > 0:
+                print (self.__class__.__name__ + 
+                    'init_mod_matrix():'), x_func.__name__, args
+        
+        # if not config['error_propagation_mode']:
+        #     raise Exception(self.__class__.__name__ + 
+        #             'init_mod_matrix(): enable error ' + 
+        #             'propagation mode in config and re-initialize MCEqRun.')
+        
+        if dbg > 1:
+            print (self.__class__.__name__ + 
+                'mod_pprod_matrix(): creating xmat')
+        self.xmat = self.no_interaction
+        for eidx in range(self.dim):
+            xvec = self.e_grid[:eidx+1]/self.e_grid[eidx]
+            self.xmat[:eidx+1,eidx] =xvec
+
+        #select the relevant slice of interaction matrix
+        self.modmat = x_func(self.xmat, *args)
+        #Set lower triangular indices to 0. (should be not necessary)
+        self.modmat[np.tril_indices(self.dim)] = 0.
+
+
+    def _set_mod_pprod(self, prim_pdg, sec_pdg):
+        """Sets combination of projectile/secondary for error propagation.
+
+        The production spectrum of ``sec_pdg`` in interactions of 
+        ``prim_pdg`` is modified according to the function passed to 
+        :func:`InteractionYields.init_mod_matrix`
+
+        Args:
+          prim_pdg (int): interacting (primary) particle PDG ID
+          sec_pdg (int): secondary particle PDG ID
+        """
+        if dbg > 0:
+            print (self.__class__.__name__ + 
+                'set_mod_pprod(): will modify particle production' +
+                ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
+        self.mod_pprod = (prim_pdg, sec_pdg)
+
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
 
         Args:
           interaction_model (str): interaction model name
+          force (bool): forces reloading of data from file
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
-        print interaction_model, self.iam
+
         if not force and interaction_model == self.iam:
             if dbg > 0:
                 print ("InteractionYields:set_interaction_model():: Model " +
@@ -443,8 +498,6 @@ class InteractionYields():
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
 
-        
-
     def set_xf_band(self, xf_low_idx, xf_up_idx):
 
         xf_bins = self.e_bins / self.e_bins[-1]
@@ -456,7 +509,7 @@ class InteractionYields():
 
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
-        ``daughter`` combination
+        ``daughter`` combination (deprecated)
 
         Args:
           projectile (int): PDG ID of projectile particle
@@ -503,8 +556,14 @@ class InteractionYields():
                     'production by', projectile)
             return self.no_interaction
 
+        # The next line creates a copy, to prevent subsequent calls to modify
+        # the original matrices stored in the dictionary.
+        # @debug: probably performance bottleneck during init 
         m = self.yields[(projectile, daughter)].dot(self.weights)
-
+        
+        # For debugging purposes or plotting xlab distributions use this line instead
+        # m = np.copy(self.yields[(projectile, daughter)])
+        
         if config['vetos']['veto_forward_mesons'] and abs(daughter) < 2000 \
             and (projectile,-daughter) in self.yields.keys():
             manti = self.yields[(projectile, -daughter)].dot(self.weights)
@@ -523,6 +582,13 @@ class InteractionYields():
             if dbg > 2:
                 print ('InteractionYields::get_y_matrix(): no meson inversion ' +
                     'in leading particle veto.',projectile, daughter)
+
+        if self.mod_pprod == (projectile,daughter):
+            if dbg > 0: print (
+                'InteractionYields::get_y_matrix(): modifying particle ' +
+                'production for {0}/{1}').format(projectile, daughter)
+            
+            m *= self.modmat
 
         if not self.band:
             return m

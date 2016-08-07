@@ -77,3 +77,5 @@ docs/_build/
 
 # PyBuilder
 target/
+
+calc_part_jacobian.py
