@@ -550,8 +550,7 @@ class InteractionYields():
            ((abs(projectile) > 400 and abs(projectile) < 500) or
             (abs(projectile) > 4000 and abs(projectile) < 5000))):
            
-            print 'veto', projectile
-            if dbg > 1:
+            if dbg > 2:
                 print ('InteractionYields::get_y_matrix(): disabled particle ' +
                     'production by', projectile)
             return self.no_interaction
