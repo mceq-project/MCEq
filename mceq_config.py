@@ -89,11 +89,11 @@ config = {
 # Parameters of numerical integration
 #===========================================================================
 
-# Selection of integrator (euler/odepack)
+# Selection of integrator (euler/odepack)   
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "MKL",
+"kernel_config": "numpy",
 
 #parameters for the odepack integrator. More details at
 #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
@@ -103,13 +103,15 @@ config = {
                'max_step':10.0},
 
 # Use sparse linear algebra (recommended!)
-"use_sparse": True,
+"use_sparse": False,
 
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to
 #memory bandwidth limitations)
-"MKL_threads": 1,
+"MKL_threads": 48,
 
+# Enable experimental Xeon Phi support via MKL automatic offloading
+"MKL_enable_mic": True,
 # CUDA float precision
 "FP_precision": 64,
 

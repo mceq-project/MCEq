@@ -60,6 +60,21 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
+    # Experimental code for Xeon Phi testing
+    if config['MKL_enable_mic']:
+        from ctypes import cdll
+
+        try:
+            mkl = cdll.LoadLibrary(config['MKL_path'])
+        except OSError:
+            raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
+                            "found. Please check path.")
+
+        print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
+        mkl.mkl_mic_enable()
+        mkl.mkl_mic_set_offload_report()
+    
+        config['MKL_enable_mic'] = False
 
     grid_sol = []
     grid_step = 0
@@ -279,6 +294,12 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     except OSError:
         raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
                         "found. Please check path.")
+    
+    # if config['MKL_enable_mic']:
+    #     print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
+    #     mkl.mkl_mic_enable()
+    #     config['MKL_enable_mic'] = False
+    
     gemv = None
     axpy = None
     np_fl = None
@@ -358,4 +379,5 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     # Reset number of threads for MKL
     # mkl.mkl_set_num_threads(byref(c_int(4)))
+    # mkl.mkl_mic_set_offload_report(c_int(1))
     return npphi, grid_sol
