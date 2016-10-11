@@ -60,7 +60,7 @@ config = {
 #=========================================================================
 
 # Use file for caching calculated atmospheric rho(X) splines
-"use_atm_cache": False,
+"use_atm_cache": True,
 
 # Atmospheric model in the format: (model, (arguments))
 "density_model": ('CORSIKA', ('BK_USStd', None)),
@@ -93,7 +93,7 @@ config = {
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA)
-"kernel_config": "numpy",
+"kernel_config": "MKL",
 
 #parameters for the odepack integrator. More details at
 #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
@@ -103,7 +103,7 @@ config = {
                'max_step':10.0},
 
 # Use sparse linear algebra (recommended!)
-"use_sparse": False,
+"use_sparse": True,
 
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is only a few precent due to

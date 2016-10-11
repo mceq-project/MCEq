@@ -243,36 +243,6 @@ class NCEParticle():
 #         i(Ei0)->j(EjN)   .....    i(EiN)->j(EjN)
 
 
-def _decompress(fname):
-    """Decompresses and unpickles dictionaries stored in bz2
-    format.
-
-    Args:
-      fname (str): file name
-
-    Returns:
-      content of decompressed and unpickled file.
-
-    Raises:
-      IOError: if file not found
-
-    """
-    import os
-    import bz2
-    import cPickle as pickle
-    fcompr = os.path.splitext(fname)[0] + '.bz2'
-
-    if not os.path.isfile(fcompr):
-        raise IOError('decompress():: File {0} not found.'.format(fcompr))
-
-    if dbg > 1:
-        print 'Decompressing', fcompr, '.'
-
-    data = pickle.load(bz2.BZ2File(fcompr))
-    pickle.dump(data, open(fname, 'wb'), protocol=-1)
-
-    return data
-
 class InteractionYields():
 
     """Class for managing the dictionary of interaction yield matrices.
@@ -314,44 +284,14 @@ class InteractionYields():
         # load the tables during object creation.
         if interaction_model != None:
             self._load(interaction_model)
-            self.set_interaction_model(interaction_model)
         else:
-            self._load_egrid('SIBYLL2.1')
+            print (self.__class__.__name__ + 
+                '__init__(): Loading SIBYLL 2.1 by default.')
+            self._load('SIBYLL2.1')
 
         if charm_model and interaction_model:
             self.inject_custom_charm_model(charm_model)
 
-
-    def _load_egrid(self,interaction_model):
-        """Un-pickles one dictionary using the path specified as
-        ``yield_fname`` in :mod:`mceq_config`.
-
-        Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`weights`,
-        :attr:`dim` are set here.
-
-        Raises:
-          IOError: if file not found
-        """
-        import cPickle as pickle
-        from os.path import join
-        #Remove dashes and points in the name
-        interaction_model = interaction_model.replace('-','')
-        interaction_model = interaction_model.replace('.','')
-        try:
-            with open(join(config['data_dir'],
-                interaction_model + '_yields.ppd'), 'rb') as f:
-                self.yield_dict = pickle.load(f)
-        except IOError:
-            self.yield_dict = _decompress(join(config['data_dir'],
-                interaction_model + '_yields.ppd'))
-
-        self.e_grid = self.yield_dict.pop('evec')
-        self.e_bins = self.yield_dict.pop('ebins')
-        self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
-        self.dim = self.e_grid.size
-        self.no_interaction = np.zeros(self.dim ** 2).reshape(
-            self.dim, self.dim)
-        del self.yield_dict
 
     def _load(self, interaction_model):
         """Un-pickles the yields dictionary using the path specified as
@@ -369,26 +309,30 @@ class InteractionYields():
         #Remove dashes and points in the name
         interaction_model = interaction_model.replace('-','')
         interaction_model = interaction_model.replace('.','')
+        fname = join(config['data_dir'], interaction_model + '_yields.ppd')
         try:
-            print join(config['data_dir'],
-                interaction_model + '_yields.ppd')
-            with open(join(config['data_dir'],
-                interaction_model + '_yields.ppd'), 'rb') as f:
-                self.yield_dict = pickle.load(f)
+            yield_dict = pickle.load(open(fname, 'rb'))
         except IOError:
-            self.yield_dict = _decompress(join(config['data_dir'],
-                interaction_model + '_yields.ppd'))
+            self._decompress(fname)
+            yield_dict = pickle.load(open(fname, 'rb'))
+            
+        self.e_grid = yield_dict.pop('evec')
+        self.e_bins = yield_dict.pop('ebins')
+        self.weights = yield_dict.pop('weights')
+        self.iam = yield_dict.pop('mname')
 
-        self.e_grid = self.yield_dict.pop('evec')
-        self.e_bins = self.yield_dict.pop('ebins')
-        self.iam = self.yield_dict.pop('mname')
+        self.projectiles = yield_dict.pop('projectiles')
+        self.secondary_dict = yield_dict.pop('secondary_dict')
+        self.nspec = yield_dict.pop('nspec')
 
-        self.weights = np.diag(self.e_bins[1:] - self.e_bins[:-1])
+        self.yields = yield_dict
+
+        #  = np.diag(self.e_bins[1:] - self.e_bins[:-1])
         self.dim = self.e_grid.size
         self.no_interaction = np.zeros(self.dim ** 2).reshape(
             self.dim, self.dim)
 
-        self._gen_index(self.yield_dict)
+        self.charm_model = None
 
     def _gen_index(self, yield_dict):
         """Generates index of mother-daughter relationships.
@@ -403,24 +347,93 @@ class InteractionYields():
 
         if dbg > 1: print 'InteractionYields::_gen_index(): entering..'
         
-        self.projectiles = np.unique(zip(*yield_dict.keys())[0])
-        self.secondary_dict = {}
-        for projectile in self.projectiles:
-            self.secondary_dict[projectile] = []
+        ptemp = np.unique(zip(*yield_dict.keys())[0])
+
+        # Filter out the non numerical strings from this list
+        projectiles = []
+        for proj in ptemp:
+            try:
+                projectiles.append(int(proj))
+            except:
+                continue
+
+        e_bins = yield_dict['ebins']
+        weights = np.diag(e_bins[1:] - e_bins[:-1])
+
+        secondary_dict = {}
+
+        for projectile in projectiles:
+            secondary_dict[projectile] = []
+        
+        # New dictionary to replace yield_dict
+        new_dict = {}
 
         for key, mat in yield_dict.iteritems():
-            proj, sec = key
+            try:
+                proj, sec = key
+            except ValueError:
+                if dbg > 2:
+                    print '_gen_index(): Skip additional info', key
+                # Copy additional items to the new dictionary
+                new_dict[key] = mat
+                continue
+
             # exclude electrons and photons
-            if np.sum(mat) > 0 and abs(sec) not in [11, 22]:
-                assert(sec not in self.secondary_dict[proj]), \
+            if np.sum(mat) > 0:# and abs(sec) not in [11, 22]:
+                # print sec not in secondary_dict[proj]
+                assert(sec not in secondary_dict[proj]), \
                 ("InteractionYields:_gen_index()::" +
                 "Error in construction of index array: {0} -> {1}".format(proj, sec))
-                self.secondary_dict[proj].append(sec)
+                secondary_dict[proj].append(sec)
 
-        self.nspec = len(self.projectiles)
-        self.yields = self.yield_dict
-        # self.iam = interaction_model
-        self.charm_model = None
+                # Multiply by weights (energy bin widths with matrices)
+                new_dict[key] = mat.dot(weights)
+            else:
+                if dbg > 2:
+                    print '_gen_index(): Zero yield matrix for', key 
+
+        new_dict['projectiles'] = projectiles
+        new_dict['secondary_dict'] = secondary_dict
+        new_dict['nspec'] = len(projectiles)
+        new_dict['weights'] = weights
+        
+        return new_dict        
+
+    def _decompress(self, fname):
+        """Decompresses and unpickles dictionaries stored in bz2
+        format.
+
+        Args:
+          fname (str): file name
+
+        Returns:
+          content of decompressed and unpickled file.
+
+        Raises:
+          IOError: if file not found
+
+        """
+        import os
+        import bz2
+        import cPickle as pickle
+        fcompr = os.path.splitext(fname)[0] + '.bz2'
+
+        if not os.path.isfile(fcompr):
+            raise IOError(self.__class__.__name__ + 
+                '::_decompress():: File {0} not found.'.format(fcompr))
+
+        if dbg > 1:
+            print 'Decompressing', fcompr
+
+        # Generate index of primary secondary relations and 
+        # multiply with yields
+        new_dict = self._gen_index(pickle.load(bz2.BZ2File(fcompr)))
+
+        # Dump the file in uncompressed form
+        if dbg > 1:
+            print 'Saving to', fname
+        pickle.dump(new_dict, open(fname, 'wb'), protocol=-1)
+
 
     def _init_mod_matrix(self, x_func, *args):
         """Creates modification matrix using an x-dependent function.
@@ -558,16 +571,19 @@ class InteractionYields():
         # The next line creates a copy, to prevent subsequent calls to modify
         # the original matrices stored in the dictionary.
         # @debug: probably performance bottleneck during init 
-        m = self.yields[(projectile, daughter)].dot(self.weights)
+        m = self.yields[(projectile, daughter)] #.dot(self.weights)
         
         # For debugging purposes or plotting xlab distributions use this line instead
         # m = np.copy(self.yields[(projectile, daughter)])
         
         if config['vetos']['veto_forward_mesons'] and abs(daughter) < 2000 \
             and (projectile,-daughter) in self.yields.keys():
-            manti = self.yields[(projectile, -daughter)].dot(self.weights)
+            manti = self.yields[(projectile, -daughter)] #.dot(self.weights)
             ie = 50
-            print 'sum', (np.sum(m[:,ie - 30:ie]) - np.sum(manti[:,ie - 30:ie]))
+            if dbg > 2:
+                print ('InteractionYields::get_y_matrix(): sum in veto_forward_mesons', 
+                    (np.sum(m[:,ie - 30:ie]) - np.sum(manti[:,ie - 30:ie])))
+
             if (np.sum(m[:,ie - 30:ie]) - np.sum(manti[:,ie - 30:ie])) > 0:
                 if dbg > 1:
                     print ('InteractionYields::get_y_matrix(): inverting meson ' +
@@ -714,10 +730,8 @@ class DecayYields():
       weights (numpy.array): bin widths of energy grid
     """
 
-    def __init__(self, weights):
-        self.weights = weights
+    def __init__(self):
         self._load()
-        self._gen_index()
 
         self.particle_keys = self.mothers
 
@@ -730,51 +744,124 @@ class DecayYields():
         """
         import cPickle as pickle
         from os.path import join
-        try:
-            with open(join(config['data_dir'],
-                           config['decay_fname']), 'rb') as f:
-                self.decay_dict = pickle.load(f)
-        except IOError:
-            self.decay_dict = _decompress(join(config['data_dir'],
-                                            config['decay_fname']))
-            # raise IOError('DecayYields::_load(): Yield file not found.')
 
-    def _gen_index(self):
+        fname = join(config['data_dir'], config['decay_fname'])
+        try:
+            self.decay_dict = pickle.load(open(fname, 'rb'))
+        except IOError:
+            self._decompress(fname)
+            self.decay_dict = pickle.load(open(fname, 'rb'))
+        
+        self.daughter_dict = self.decay_dict.pop('daughter_dict')
+        self.weights = self.decay_dict.pop('weights')
+
+        for mother in config["vetos"]["veto_decays"]:
+            if dbg > 1:
+                print ("DecayYields:_gen_index():: switching off " +
+                    "decays of {0}.").format(mother)
+            self.daughter_dict.pop(mother)
+
+        self.mothers = self.daughter_dict.keys()
+
+    def _gen_index(self, decay_dict):
         """Generates index of mother-daughter relationships.
 
         This function is called once after un-pickling. In future
         versions this index will be part of the pickled dictionary.
         """
-        self.mothers = np.unique(zip(*self.decay_dict.keys())[0])
-        self.daughter_dict = {}
-        for mother in self.mothers:
-            if mother in config["vetos"]["veto_decays"]:
-                if dbg > 1:
-                    print ("DecayYields:_gen_index():: switching off " +
-                        "decays of {0}.").format(mother)
+        temp = np.unique(zip(*decay_dict.keys())[0])
+        # Filter out the non numerical strings from this list
+        mothers = []
+        for mo in temp:
+            try:
+                mothers.append(int(mo))
+            except:
                 continue
-            self.daughter_dict[mother] = []
 
-        for key, mat in self.decay_dict.iteritems():
-            mother, daughter = key
-            if mother in config["vetos"]["veto_decays"]:
+        daughter_dict = {}
+        weights = decay_dict['weights']
+
+        # New dictionary to replace yield_dict
+        new_dict = {}        
+
+        for mother in mothers:
+            daughter_dict[mother] = []
+
+        for key, mat in decay_dict.iteritems():
+            try:
+                mother, daughter = key
+            except ValueError:
+                if dbg > 2:
+                    print (self.__class__.__name__ + 
+                        '_gen_index(): Skip additional info', key)
+                # Copy additional items to the new dictionary
+                new_dict[key] = mat
                 continue
+
             if np.sum(mat) > 0:
-                if daughter not in self.daughter_dict[mother]:
-                    self.daughter_dict[mother].append(daughter)
+                if daughter not in daughter_dict[mother]:
+                    daughter_dict[mother].append(daughter)
+                    # Multiply by weights (energy bin widths with matrices)
+                    new_dict[key] = (mat.T).dot(weights)
 
         # special treatment for muons, which should decay even if they
         # have an alias ID
         # the ID 7313 not included, since it's "a copy of"
         for alias in [7013, 7113, 7213]:
             if 13 not in config["vetos"]["veto_decays"]: 
-                self.daughter_dict[alias] = self.daughter_dict[13]
-                for d in self.daughter_dict[alias]:
-                    self.decay_dict[(alias, d)] = self.decay_dict[(13, d)]
+                daughter_dict[alias] = daughter_dict[13]
+                for d in daughter_dict[alias]:
+                    new_dict[(alias, d)] = new_dict[(13, d)]
             if -13 not in config["vetos"]["veto_decays"]:
-                self.daughter_dict[-alias] = self.daughter_dict[-13]
-                for d in self.daughter_dict[-alias]:
-                    self.decay_dict[(-alias, d)] = self.decay_dict[(-13, d)]
+                daughter_dict[-alias] = daughter_dict[-13]
+                for d in daughter_dict[-alias]:
+                    new_dict[(-alias, d)] = new_dict[(-13, d)]
+
+        new_dict['mothers'] = mothers
+        new_dict['daughter_dict'] = daughter_dict
+
+        return new_dict
+
+    def _decompress(self, fname):
+        """Decompresses and unpickles dictionaries stored in bz2
+        format.
+
+        The method calls :func:`DecayYields._gen_index` to browse
+        through the file, to create an index of mother daughter relations
+        and to carry out some pre-computations. In the end an uncompressed 
+        file is stored including the index as a dictionary.
+
+        Args:
+          fname (str): file name
+
+        Returns:
+          content of decompressed and unpickled file.
+
+        Raises:
+          IOError: if file not found
+
+        """
+        import os
+        import bz2
+        import cPickle as pickle
+        fcompr = os.path.splitext(fname)[0] + '.bz2'
+
+        if not os.path.isfile(fcompr):
+            raise IOError(self.__class__.__name__ + 
+                '::_decompress():: File {0} not found.'.format(fcompr))
+
+        if dbg > 1:
+            print 'Decompressing', fcompr
+
+        # Generate index of mother daughter relations and 
+        # multiply with yields
+        new_dict = self._gen_index(pickle.load(bz2.BZ2File(fcompr)))
+
+        # Dump the file in uncompressed form
+        if dbg > 1:
+            print 'Saving to', fname
+
+        pickle.dump(new_dict, open(fname, 'wb'), protocol=-1)
 
     def get_d_matrix(self, mother, daughter):
         """Returns a ``DIM x DIM`` decay matrix.
@@ -794,7 +881,7 @@ class DecayYields():
             print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
                    "{0} -> {1}").format(mother, daughter)
         # TODO: fix structure of the decay dict
-        return (self.decay_dict[(mother, daughter)].T).dot(self.weights)
+        return self.decay_dict[(mother, daughter)]
 
     def assign_d_idx(self, mother, moidx,
                      daughter, dtridx, dmat):
@@ -894,17 +981,47 @@ class HadAirCrossSections():
         """
         import cPickle as pickle
         from os.path import join
+        fname = join(config['data_dir'], config['cs_fname'])
         try:
-            with open(join(config['data_dir'],
-                           config['cs_fname']), 'rb') as f:
-                self.cs_dict = pickle.load(f)
+            self.cs_dict = pickle.load(open(fname,'rb'))
         except IOError:
-            self.cs_dict = _decompress(join(config['data_dir'],
-                                            config['cs_fname']))
-            # raise IOError('HadAirCrossSections::_load(): ' +
-            #               'Yield file not found.')
+            self._decompress(fname)
+            self.cs_dict = pickle.load(open(fname,'rb'))
 
         self.egrid = self.cs_dict['evec']
+
+    def _decompress(self, fname):
+        """Decompresses and unpickles dictionaries stored in bz2
+        format.
+
+        Args:
+          fname (str): file name
+
+        Returns:
+          content of decompressed and unpickled file.
+
+        Raises:
+          IOError: if file not found
+
+        """
+        import os
+        import bz2
+        import cPickle as pickle
+        fcompr = os.path.splitext(fname)[0] + '.bz2'
+
+        if not os.path.isfile(fcompr):
+            raise IOError(self.__class__.__name__ + 
+                '::_decompress():: File {0} not found.'.format(fcompr))
+
+        if dbg > 1:
+            print 'Decompressing', fcompr
+        
+        new_dict = pickle.load(bz2.BZ2File(fcompr))
+
+        # Dump the file in uncompressed form
+        if dbg > 1:
+            print 'Saving to', fname
+        pickle.dump(new_dict, open(fname, 'wb'), protocol=-1)
 
     def set_interaction_model(self, interaction_model):
         """Selects an interaction model and prepares all internal variables.

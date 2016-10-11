@@ -79,7 +79,7 @@ class MCEqRun():
 
         # Load decay spectra
         # TODO: weights is temporary argument
-        self.ds_params = dict(weights=self.y.weights)
+        self.ds_params = dict()
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
         self.ds = DecayYields(**self.ds_params)
 
@@ -957,7 +957,8 @@ class MCEqRun():
                 if s not in self.pdg2pref:
                     continue
                 if pref[s].is_lepton:
-                    print 'veto leptons', s
+                    if dbg > 2: print (self.__class__.__name__ + 
+                        '_fill_matrices(): veto direct lepton', s)
                     continue
                 if not pref[s].is_resonance:
                     cmat = self._zero_mat()
