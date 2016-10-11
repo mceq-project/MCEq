@@ -7,10 +7,14 @@ Created on Feb 18, 2015
 from ctypes import cdll, Structure, c_long, c_int, \
                    c_double, pointer, byref, \
                    POINTER
+import os.path as path
+base = path.dirname(path.abspath(__file__))
+
 try:
     msis = cdll.LoadLibrary("./msis-00.so")
 except OSError:
-    msis = cdll.LoadLibrary("./c-NRLMSISE-00/msis-00.so")
+    msis = cdll.LoadLibrary(path.join(base,"msis-00.so"))
+
 #===============================================================================
 # nrlmsise_flags
 #===============================================================================
