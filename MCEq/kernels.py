@@ -46,7 +46,9 @@ import numpy as np
 from mceq_config import config
 
 def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
-               phi, grid_idcs, prog_bar=None):
+               phi, grid_idcs, 
+               mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+               prog_bar=None):
     """:mod;`numpy` implementation of forward-euler integration.
     
     Args:
@@ -61,20 +63,20 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
     # Experimental code for Xeon Phi testing
-    if config['MKL_enable_mic']:
-        from ctypes import cdll
+    # if config['MKL_enable_mic']:
+    #     from ctypes import cdll
 
-        try:
-            mkl = cdll.LoadLibrary(config['MKL_path'])
-        except OSError:
-            raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
-                            "found. Please check path.")
+    #     try:
+    #         mkl = cdll.LoadLibrary(config['MKL_path'])
+    #     except OSError:
+    #         raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
+    #                         "found. Please check path.")
 
-        print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
-        mkl.mkl_mic_enable()
-        mkl.mkl_mic_set_offload_report()
+    #     print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
+    #     mkl.mkl_mic_enable()
+    #     mkl.mkl_mic_set_offload_report()
     
-        config['MKL_enable_mic'] = False
+    #     config['MKL_enable_mic'] = False
 
     grid_sol = []
     grid_step = 0
@@ -84,6 +86,14 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
     dxc = dX
     ric = rho_inv
     phc = phi
+
+    enmuloss = config['enable_muon_energy_loss']
+    de = mu_egrid.size
+    muloss_min_step = config['muon_energy_loss_min_step']
+    lidx, nmuspec =  mu_lidx_nsp
+    # Accumulate at least a few g/cm2 for energy loss steps
+    # to avoid numerical errors
+    dXaccum = 0.
 
     if config['FP_precision'] == 32:
         imc = int_m.astype(np.float32)
@@ -97,16 +107,31 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
             prog_bar.update(step)
         phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
         
+        dXaccum += dxc[step]
+        
+        if (enmuloss and 
+            (dXaccum > muloss_min_step or step == nsteps - 1)):
+            for nsp in xrange(nmuspec):
+                phc[lidx + de*nsp: lidx + de*(nsp+1)] = np.interp(
+                    mu_egrid, mu_egrid + mu_dEdX*dXaccum, 
+                    phc[lidx + de*nsp:lidx + de*(nsp+1)])
+
+            dXaccum = 0.
+        
         if (grid_idcs and grid_step < len(grid_idcs) 
             and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
+
+
     return phc, grid_sol
 
 
 def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
-                    phi, grid_idcs, prog_bar=None):
+                    phi, grid_idcs, 
+                    mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+                    prog_bar=None):
     """`NVIDIA CUDA cuBLAS <https://developer.nvidia.com/cublas>`_ implementation 
     of forward-euler integration.
     
@@ -133,12 +158,14 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     else:
         raise Exception("kern_CUDA_dense(): Unknown precision specified.")    
     
+    if config['enable_muon_energy_loss']:
+        raise NotImplementedError('kern_CUDA_dense(): ' + 
+            'Energy loss not imlemented for this solver.')
+
     #=======================================================================
     # Setup GPU stuff and upload data to it
     #=======================================================================
     try:
-        # from numbapro.cudalib.cublas import Blas  # @UnresolvedImport
-        # from numbapro import cuda, float32  # @UnresolvedImport
         from accelerate.cuda.blas import Blas
         from accelerate.cuda import cuda
     except ImportError:
@@ -212,7 +239,9 @@ class CUDASparseContext(object):
         self.cu_delta_phi = self.cuda.device_array_like(phi.astype(self.fl_pr))
 
 def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
-                      phi, grid_idcs, prog_bar=None):
+                      phi, grid_idcs, 
+                      mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+                      prog_bar=None):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation 
     of forward-euler integration.
     
@@ -233,6 +262,11 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
+
+    if config['enable_muon_energy_loss']:
+        raise NotImplementedError('kern_CUDA_dense(): ' + 
+            'Energy loss not imlemented for this solver.')
+
     c= context
     c.set_phi(phi)
 
@@ -267,7 +301,9 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
     return c.cu_curr_phi.copy_to_host(), grid_sol
 
 def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
-                    phi, grid_idcs, prog_bar=None):
+                    phi, grid_idcs, 
+                    mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+                    prog_bar=None):
     """`Intel MKL sparse BLAS <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_ 
     implementation of forward-euler integration.
     
@@ -351,6 +387,14 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     cdone = fl_pr(1.)
     cione = c_int(1)
     
+    enmuloss = config['enable_muon_energy_loss']
+    de = mu_egrid.size
+    muloss_min_step = config['muon_energy_loss_min_step']
+    lidx, nmuspec =  mu_lidx_nsp
+    # Accumulate at least a few g/cm2 for energy loss steps
+    # to avoid numerical errors
+    dXaccum = 0.
+    
     grid_step = 0
     grid_sol = []
     for step in xrange(nsteps):
@@ -371,6 +415,18 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
         axpy(m, fl_pr(dX[step]),
              delta_phi, cione, phi, cione)
         
+        dXaccum += dX[step]
+        
+        if (enmuloss and 
+            (dXaccum > muloss_min_step or step == nsteps - 1)):
+            for nsp in xrange(nmuspec):
+                npphi[lidx + de*nsp: lidx + de*(nsp+1)] = np.interp(
+                    mu_egrid, mu_egrid + mu_dEdX*dXaccum, 
+                    npphi[lidx + de*nsp:lidx + de*(nsp+1)])
+
+            dXaccum = 0.
+
+
         if (grid_idcs and grid_step < len(grid_idcs) 
             and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(npphi))

@@ -91,6 +91,7 @@ class MCEqRun():
         # Save primary model params
         self.pm_params = primary_model
 
+        
         #: instance of :class:`ParticleDataTool.PYTHIAParticleData`: access to
         #: properties of particles, like mass and charge
         self.pd = PYTHIAParticleData()
@@ -160,6 +161,16 @@ class MCEqRun():
                                       self.y.e_bins[:-1]))
 
         self._init_alias_tables()
+
+        # Muon energy loss
+        import cPickle as pickle
+        from os.path import join
+        self.mu_dEdX = pickle.load(
+            open(join(config['data_dir'],
+                'dEdX_mu_air.ppl'),'rb'))*1e-3 #... to GeV
+        # Left index of first muon species and number of
+        # muon species including aliases
+        self.mu_lidx_nsp = (self.pdg2pref[13].lidx(), 10)
 
         def print_in_rows(str_list, n_cols=8):
             l = len(str_list)
@@ -1004,6 +1015,11 @@ class MCEqRun():
         from scipy.integrate import ode
         ri = self.density_model.r_X2rho
 
+        if config['enable_muon_energy_loss']:
+            raise NotImplementedError(self.__class__.__name__ + 
+                '::_odepack(): ' + 
+                'Energy loss not imlemented for this solver.')
+
         # Functional to solve
         def dPhi_dX(X, phi, *args):
             return self.int_m.dot(phi) + self.dec_m.dot(ri(X) * phi)
@@ -1111,24 +1127,32 @@ class MCEqRun():
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
             args = (nsteps, dX, rho_inv, self.int_m, 
-                self.dec_m, phi0, grid_idcs, self.progressBar)
+                self.dec_m, phi0, grid_idcs, 
+                self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                self.progressBar)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == False):
             kernel = kernels.kern_CUDA_dense
-            args = (nsteps, dX, rho_inv, self.int_m, 
-                self.dec_m, phi0, grid_idcs, self.progressBar)
+            args = (nsteps, dX, rho_inv, self.int_m,
+                self.dec_m, phi0, grid_idcs, 
+                self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                self.progressBar)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == True):
             kernel = kernels.kern_CUDA_sparse
             args = (nsteps, dX, rho_inv, self.cuda_context,
-                phi0, grid_idcs, self.progressBar)
+                phi0, grid_idcs, 
+                self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                self.progressBar)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] == True):
             kernel = kernels.kern_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, 
-                self.dec_m, phi0, grid_idcs, self.progressBar)
+                self.dec_m, phi0, grid_idcs, 
+                self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                self.progressBar)
         else:
             raise Exception(
                 ("MCEq::_forward_euler(): " +
@@ -1147,10 +1171,12 @@ class MCEqRun():
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
-        if dbg > 0: print "MCEqRun::_calculate_integration_path():"
+        
 
         if (self.integration_path and np.alltrue(int_grid == self.int_grid) and
             np.alltrue(self.grid_var == grid_var) and not force):
+            if dbg > 1: 
+                print "MCEqRun::_calculate_integration_path(): skipping calculation."
             return
 
         self.int_grid, self.grid_var = int_grid, grid_var
@@ -1161,6 +1187,10 @@ class MCEqRun():
         max_X = self.density_model.max_X
         ri = self.density_model.r_X2rho
         max_ldec = self.max_ldec
+
+        if dbg > 0: 
+            print "MCEqRun::_calculate_integration_path(): X_surface = {}".format(
+                self.max_X)
 
         dX_vec = []
         rho_inv_vec = []
