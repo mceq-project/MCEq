@@ -1190,7 +1190,7 @@ class MCEqRun():
 
         if dbg > 0: 
             print "MCEqRun::_calculate_integration_path(): X_surface = {}".format(
-                self.max_X)
+                max_X)
 
         dX_vec = []
         rho_inv_vec = []
