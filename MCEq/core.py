@@ -517,6 +517,8 @@ class MCEqRun():
         sol = None
         if grid_idx is None:
             sol = self.solution
+        elif grid_idx >= len(self.grid_sol):
+            sol = self.grid_sol[-1]
         else:
             sol = self.grid_sol[grid_idx]
 

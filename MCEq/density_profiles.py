@@ -391,6 +391,9 @@ class EarthAtmosphere():
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
                                         k=2, s=0.0)
+        # print np.log(X_intp), h_intp
+        self.s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1],
+                                        k=2, s=0.0)
 
         print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
                                               self.s_X2rho(X_int))
@@ -948,10 +951,33 @@ class AIRSAtmosphere(EarthAtmosphere):
         self.dates = {}
         dates = data_collection['alti'][0]
 
+        msis = MSIS00Atmosphere('SouthPole','January')
+
         for didx, date in enumerate(dates):
-            self.interp_tab[self._get_y_doy(date)] = (
-                    np.array(data_collection['alti'][2][didx,:]*1e2),
-                    np.array(data_collection['dens'][2][didx,:]))
+            h_vec = np.array(data_collection['alti'][2][didx,:]*1e2)
+            d_vec = np.array(data_collection['dens'][2][didx,:])
+
+            #Extrapolate using msis
+            h_extra = np.linspace(h_vec[-1],config['h_atm']*1e2,25)
+            msis._msis.set_doy(self._get_y_doy(date)[1]-1)
+            msis_extra = np.array([msis.get_density(h) for h in h_extra])
+
+            # Interpolate last few altitude bins
+            ninterp = 5
+
+            for ni in range(ninterp):
+                cl = (1 - np.exp(-ninterp+ni + 1))
+                ch = (1 - np.exp(-ni))
+                norm = 1./(cl + ch)
+                d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm + 
+                                msis.get_density(h_vec[-ni-1])*ch*norm)
+
+            # Merge the two datasets
+            # h_vec = np.hstack([h_vec[:-1], h_extra])
+            # d_vec = np.hstack([d_vec[:-1], msis_extra])
+
+            self.interp_tab[self._get_y_doy(date)] = (h_vec, d_vec)
+
             self.dates[self._get_y_doy(date)] = date
 
         self.IC79_start = self._get_y_doy(dates[IC79_idx_1])
@@ -991,7 +1017,7 @@ class AIRSAtmosphere(EarthAtmosphere):
         Returns:
           float: column depth :math:`\\rho(h_{cm})` in g/cm**3
         """
-        return np.interp(h_cm, self.h, self.dens)
+        return np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
 
 
 class MSIS00IceCubeCentered(MSIS00Atmosphere):
