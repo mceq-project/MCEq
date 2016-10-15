@@ -106,8 +106,7 @@ config = {
 "use_sparse": True,
 
 #Number of MKL threads (for sparse matrix multiplication the performance
-#advantage from using more than 1 thread is only a few precent due to
-#memory bandwidth limitations)
+#advantage from using more than 1 thread is limited by memory bandwidth)
 "MKL_threads": 48,
 
 # Enable experimental Xeon Phi support via MKL automatic offloading
