@@ -123,7 +123,6 @@ config = {
 "hybrid_crossover": 0.05,
 
 # Muon energy loss according to Kokoulin et al.
-# doesn't work with CUDA
 "enable_muon_energy_loss": True,
 
 # Minimal stepsize for muon energy loss steps
