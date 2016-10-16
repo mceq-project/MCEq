@@ -158,6 +158,10 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     else:
         raise Exception("kern_CUDA_dense(): Unknown precision specified.")    
     
+    # if config['enable_muon_energyloss']:
+    #     raise NotImplementedError('kern_CUDA_dense(): ' + 
+    #         'Energy loss not imlemented for this solver.')
+
     if config['enable_muon_energy_loss']:
         raise NotImplementedError('kern_CUDA_dense(): ' + 
             'Energy loss not imlemented for this solver.')
@@ -238,8 +242,7 @@ class CUDASparseContext(object):
         self.cu_curr_phi = self.cuda.to_device(phi.astype(self.fl_pr))
         self.cu_delta_phi = self.cuda.device_array_like(phi.astype(self.fl_pr))
 
-def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
-                      phi, grid_idcs, 
+def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs, 
                       mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
                       prog_bar=None):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation 
@@ -263,12 +266,18 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    if config['enable_muon_energy_loss']:
-        raise NotImplementedError('kern_CUDA_dense(): ' + 
-            'Energy loss not imlemented for this solver.')
-
-    c= context
+    c = context
     c.set_phi(phi)
+
+    enmuloss = config['enable_muon_energy_loss']
+    de = mu_egrid.size
+    mu_egrid = mu_egrid.astype(c.fl_pr)
+    muloss_min_step = config['muon_energy_loss_min_step']
+    lidx, nmuspec =  mu_lidx_nsp
+
+    # Accumulate at least a few g/cm2 for energy loss steps
+    # to avoid numerical errors
+    dXaccum = 0.
 
     grid_step = 0
     grid_sol = []
@@ -293,6 +302,20 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context,
                    x=c.cu_curr_phi, beta=c.fl_pr(1.0), y=c.cu_delta_phi)
         c.cubl.axpy(alpha=c.fl_pr(dX[step]), x=c.cu_delta_phi, y=c.cu_curr_phi)
         
+        dXaccum += dX[step]
+        
+        if (enmuloss and 
+            (dXaccum > muloss_min_step or step == nsteps - 1)):
+            # Download current solution vector to host
+            phc = c.cu_curr_phi.copy_to_host()
+            for nsp in xrange(nmuspec):
+                phc[lidx + de*nsp: lidx + de*(nsp+1)] = np.interp(
+                    mu_egrid, mu_egrid + mu_dEdX*dXaccum, 
+                    phc[lidx + de*nsp:lidx + de*(nsp+1)])
+            # Upload changed vector back..
+            c.cu_curr_phi = c.cuda.to_device(phc)
+            dXaccum = 0.
+
         if (grid_idcs and grid_step < len(grid_idcs) 
             and grid_idcs[grid_step] == step):
             grid_sol.append(c.cu_curr_phi.copy_to_host())

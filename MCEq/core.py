@@ -1189,7 +1189,7 @@ class MCEqRun():
         max_ldec = self.max_ldec
 
         if dbg > 0: 
-            print "MCEqRun::_calculate_integration_path(): X_surface = {}".format(
+            print "MCEqRun::_calculate_integration_path(): X_surface = {0}".format(
                 max_X)
 
         dX_vec = []
