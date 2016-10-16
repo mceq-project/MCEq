@@ -248,11 +248,7 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation 
     of forward-euler integration.
     
-    Function requires a working :mod:`numbapro` installation.
-    
-    Note:
-      Currently some bug in :mod:`numbapro` introduces unnecessary array copies and
-      slows down the execution tremendously. 
+    Function requires a working :mod:`accelerate` installation.
     
     Args:
       nsteps (int): number of integration steps
@@ -380,8 +376,7 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
         raise Exception("kern_MKL_sparse(): Unknown precision specified.")
         
 
-    # Set number of threads to sufficiently small number, since 
-    # matrix-vector multiplication is memory bandwidth limited
+    # Set number of threads
     mkl.mkl_set_num_threads(byref(c_int(config['MKL_threads'])))
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
@@ -458,5 +453,4 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     # Reset number of threads for MKL
     # mkl.mkl_set_num_threads(byref(c_int(4)))
-    # mkl.mkl_mic_set_offload_report(c_int(1))
     return npphi, grid_sol

@@ -436,7 +436,7 @@ class InteractionYields():
 
 
     def _init_mod_matrix(self, x_func, *args):
-        """Creates modification matrix using an x-dependent function.
+        """Creates modification matrix using an (x,E)-dependent function.
 
         :math:`x = \\frac{E_{\\rm primary}}{E_{\\rm secondary}}` is the
         fraction of secondary particle energy. ``x_func`` can be an
@@ -467,7 +467,7 @@ class InteractionYields():
             self.xmat[:eidx+1,eidx] =xvec
 
         #select the relevant slice of interaction matrix
-        self.modmat = x_func(self.xmat, *args)
+        self.modmat = x_func(self.xmat, self.e_grid, *args)
         #Set lower triangular indices to 0. (should be not necessary)
         self.modmat[np.tril_indices(self.dim)] = 0.
 
