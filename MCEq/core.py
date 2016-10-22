@@ -103,8 +103,16 @@ class MCEqRun():
         # Store vetos
         self.vetos = vetos
 
-        #Default GPU device id for CUDA
+        # Default GPU device id for CUDA
         self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
+
+        # Store array precision
+        if config['FP_precision'] == 32:
+            self.fl_pr = np.float32
+        elif config['FP_precision'] == 64:
+            self.fl_pr = np.float64
+        else:
+            raise Exception("MCEqRun(): Unknown float precision specified.")
 
         # Save observer id
         self.set_obs_particles(obs_ids)
@@ -155,7 +163,6 @@ class MCEqRun():
 
         self.dim_states = self.d * self.n_tot_species
 
-        self.I = np.eye(self.dim_states)
         self.e_weight = np.array(self.n_tot_species *
                                  list(self.y.e_bins[1:] -
                                       self.y.e_bins[:-1]))
@@ -167,7 +174,7 @@ class MCEqRun():
         from os.path import join
         self.mu_dEdX = pickle.load(
             open(join(config['data_dir'],
-                'dEdX_mu_air.ppl'),'rb'))*1e-3 #... to GeV
+                'dEdX_mu_air.ppl'),'rb')).astype(self.fl_pr)*1e-3 #... to GeV
         # Left index of first muon species and number of
         # muon species including aliases
         self.mu_lidx_nsp = (self.pdg2pref[13].lidx(), 10)
@@ -380,11 +387,16 @@ class MCEqRun():
         self._fill_matrices()
 
         # interaction part
-        self.int_m = (-self.I + self.C) * self.Lambda_int
-        # decay part
-        self.dec_m = (-self.I + self.D) * self.Lambda_dec
+        # -I + C
+        self.C[np.diag_indices(self.dim_states)] -= 1.
+        self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
+        del self.C
 
-        del self.C, self.D
+        # decay part
+        # -I + C
+        self.D[np.diag_indices(self.dim_states)] -= 1.
+        self.dec_m = (self.D * self.Lambda_dec).astype(self.fl_pr)
+        self.D
 
         nnz_int = np.count_nonzero(self.int_m)
         nnz_dec = np.count_nonzero(self.dec_m)
@@ -665,7 +677,7 @@ class MCEqRun():
              self.pdg2pref[2112].uidx()] = 1e-4 * n_top
 
         # Save initial condition
-        self.phi0 = phi0
+        self.phi0 = phi0.astype(self.fl_pr)
 
     def set_single_primary_particle(self, E, corsika_id):
         """Set type and energy of a single primary nucleus to
@@ -742,7 +754,7 @@ class MCEqRun():
         wE_up = E_up - (E_gr[idx_up] - widths[idx_up] / 2.)
         wE_lo = E_gr[idx_lo] + widths[idx_lo] / 2. - E_lo
 
-        self.phi0 = np.zeros(self.dim_states)
+        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
 
         if dbg > 1:
             print ('MCEqRun::set_single_primary_particle(): \n \t' +
@@ -1220,7 +1232,7 @@ class MCEqRun():
         # Integrate
         self.progressBar.finish()
 
-        dX_vec = np.array(dX_vec, dtype=np.float32)
-        rho_inv_vec = np.array(rho_inv_vec, dtype=np.float32)
+        dX_vec = np.array(dX_vec, dtype=self.fl_pr)
+        rho_inv_vec = np.array(rho_inv_vec, dtype=self.fl_pr)
         self.integration_path = dX_vec.size, dX_vec, \
                                 rho_inv_vec, grid_idcs

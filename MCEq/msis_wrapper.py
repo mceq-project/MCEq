@@ -74,7 +74,7 @@ class pyNRLMSISE00(NRLMSISE00Base):
         if tag not in self.locations.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
         self.input.alt = self.locations[tag][2]
-        self.set_location_coord(*self.locations[tag])
+        self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 
