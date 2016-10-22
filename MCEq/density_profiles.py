@@ -899,10 +899,10 @@ class AIRSAtmosphere(EarthAtmosphere):
         if location != 'SouthPole':
             raise Exception(self.__class__.__name__ + 
                 "(): Only South Pole location supported. " + location)
-        self.init_parameters(location)
+        self.init_parameters(location, **kwargs)
         EarthAtmosphere.__init__(self)
 
-    def init_parameters(self, location):
+    def init_parameters(self, location, **kwargs):
         """Loads tables and prepares interpolation.
 
         Args:
@@ -911,9 +911,12 @@ class AIRSAtmosphere(EarthAtmosphere):
         """
         from matplotlib.dates import strpdate2num, UTC, num2date
         from os import path
+        
         data_path = (join(path.expanduser('~'),
             'work/projects/atmospheric_variations/'))
 
+        if 'table_path' in kwargs:
+            data_path = kwargs['table_path']
 
         files = [
             ('dens','airs_amsu_dens_180_daily.txt'),
@@ -991,6 +994,8 @@ class AIRSAtmosphere(EarthAtmosphere):
     def set_date(self, year,doy):
         self.h, self.dens = self.interp_tab[(year,doy)]
         self.date = self.dates[(year,doy)]
+        # Compatibility with caching
+        self.season = self.date
 
     def set_IC79_day(self, IC79_day):
         import datetime
@@ -1002,6 +1007,8 @@ class AIRSAtmosphere(EarthAtmosphere):
         print 'setting IC79_day', IC79_day
         self.h, self.dens = self.interp_tab[target_day]
         self.date = self.dates[target_day]
+        # Compatibility with caching
+        self.season = self.date
 
     def _get_y_doy(self, date):
         return date.timetuple().tm_year, date.timetuple().tm_yday 

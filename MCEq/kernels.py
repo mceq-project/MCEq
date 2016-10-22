@@ -392,7 +392,7 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     npphi = np.copy(phi).astype(np_fl)
     phi = npphi.ctypes.data_as(POINTER(fl_pr))
-    npdelta_phi = np.zeros_like(npphi, dtype=np_fl)
+    npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
     trans = c_char('n')
@@ -407,12 +407,17 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     
     enmuloss = config['enable_muon_energy_loss']
     de = mu_egrid.size
+    mu_egrid = mu_egrid.astype(np_fl)
+    mu_dEdX = mu_dEdX.astype(np_fl)
     muloss_min_step = config['muon_energy_loss_min_step']
     lidx, nmuspec =  mu_lidx_nsp
     # Accumulate at least a few g/cm2 for energy loss steps
     # to avoid numerical errors
     dXaccum = 0.
     
+    print int_m.data.dtype, dec_m.data.dtype, npphi.dtype, npdelta_phi.dtype
+    print mu_egrid.dtype, mu_dEdX.dtype, dX.dtype
+
     grid_step = 0
     grid_sol = []
     for step in xrange(nsteps):
