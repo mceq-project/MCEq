@@ -92,7 +92,7 @@ config = {
 # Selection of integrator (euler/odepack)   
 "integrator": "euler",
 
-# euler kernel implementation (numpy/MKL/CUDA)
+# euler kernel implementation (numpy/MKL/CUDA).
 "kernel_config": "MKL",
 
 #parameters for the odepack integrator. More details at
@@ -109,9 +109,7 @@ config = {
 #advantage from using more than 1 thread is limited by memory bandwidth)
 "MKL_threads": 48,
 
-# Enable experimental Xeon Phi support via MKL automatic offloading
-"MKL_enable_mic": True,
-# CUDA float precision
+# Float precision (only speed up on CUDA, MKL gets slower?)
 "FP_precision": 64,
 
 #=========================================================================

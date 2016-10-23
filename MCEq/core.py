@@ -1165,6 +1165,13 @@ class MCEqRun():
                 self.dec_m, phi0, grid_idcs, 
                 self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                 self.progressBar)
+        elif (config['kernel_config'] == 'MIC' and
+              config['use_sparse'] == True):
+            kernel = kernels.kern_XeonPHI_sparse
+            args = (nsteps, dX, rho_inv, self.int_m, 
+                self.dec_m, phi0, grid_idcs, 
+                self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                self.progressBar)
         else:
             raise Exception(
                 ("MCEq::_forward_euler(): " +

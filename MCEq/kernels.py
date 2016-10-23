@@ -62,21 +62,6 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
-    # Experimental code for Xeon Phi testing
-    # if config['MKL_enable_mic']:
-    #     from ctypes import cdll
-
-    #     try:
-    #         mkl = cdll.LoadLibrary(config['MKL_path'])
-    #     except OSError:
-    #         raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
-    #                         "found. Please check path.")
-
-    #     print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
-    #     mkl.mkl_mic_enable()
-    #     mkl.mkl_mic_set_offload_report()
-    
-    #     config['MKL_enable_mic'] = False
 
     grid_sol = []
     grid_step = 0
@@ -350,11 +335,6 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
         raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
                         "found. Please check path.")
     
-    # if config['MKL_enable_mic']:
-    #     print ("kern_MKL_sparse(): Automatic Xeon Phi offloading activated.")
-    #     mkl.mkl_mic_enable()
-    #     config['MKL_enable_mic'] = False
-    
     gemv = None
     axpy = None
     np_fl = None
@@ -415,9 +395,6 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     # to avoid numerical errors
     dXaccum = 0.
     
-    print int_m.data.dtype, dec_m.data.dtype, npphi.dtype, npdelta_phi.dtype
-    print mu_egrid.dtype, mu_dEdX.dtype, dX.dtype
-
     grid_step = 0
     grid_sol = []
     for step in xrange(nsteps):
@@ -454,8 +431,69 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
             and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(npphi))
             grid_step += 1
-            
 
-    # Reset number of threads for MKL
-    # mkl.mkl_set_num_threads(byref(c_int(4)))
     return npphi, grid_sol
+
+def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
+                        phi, grid_idcs, 
+                        mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+                        prog_bar=None):
+    """Experimental Xeon Phi support using pyMIC library. 
+    """
+    
+    import pymic as mic
+    import numpy as np
+    import sys
+
+    # load the library with the kernel function (on the target)
+
+    device = mic.devices[0]
+    library = device.load_library("Xeon_Phi/libmceq.so")
+
+    # use the default stream
+
+    stream = device.get_default_stream()
+
+
+
+    from ctypes import cdll, c_int, c_char, POINTER, byref
+
+    try:
+        mkl = cdll.LoadLibrary(config['MKL_path'])
+    except OSError:
+        raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
+                        "found. Please check path.")
+    
+    # Prepare CTYPES pointers for MKL sparse CSR BLAS
+    mic_int_m_data = stream.bind(int_m.data)
+    mic_int_m_ci = stream.bind(int_m.indices)
+    mic_int_m_pb = stream.bind(int_m.indptr[:-1])
+    mic_int_m_pe = stream.bind(int_m.indptr[1:])
+
+    mic_dec_m_data = stream.bind(dec_m.data)
+    mic_dec_m_ci = stream.bind(dec_m.indices)
+    mic_dec_m_pb = stream.bind(dec_m.indptr[:-1])
+    mic_dec_m_pe = stream.bind(dec_m.indptr[1:])
+
+    npphi = np.copy(phi).astype(np_fl)
+    mic_phi = stream.bind(npphi)
+    npdelta_phi = np.zeros_like(npphi)
+    mic_delta_phi = stream.bind(npdelta_phi)
+    mic_dX = stream.bind(dX)
+    mic_rho_inv = stream.bind(rho_inv)
+
+    m = int_m.shape[0]
+
+    stream.invoke(m, nsteps,
+        mic_phi, mic_delta_phi,
+        mic_rho_inv, mic_dX,
+        mic_int_m_data, mic_int_m_ci,
+        mic_int_m_pb, mic_int_m_pe,
+        mic_dec_m_data, mic_dec_m_ci,
+        mic_dec_m_pb, mic_dec_m_pe)
+
+    stream.sync()
+    mic_phi.update_host()
+    stream.sync()
+            
+    return mic_phi.array, []
