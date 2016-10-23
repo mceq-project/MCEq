@@ -441,28 +441,20 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     """Experimental Xeon Phi support using pyMIC library. 
     """
     
+    import sys, os
+    sys.path.append(os.path.join(os.path.expanduser("~"),'work/git/pymic'))
     import pymic as mic
     import numpy as np
-    import sys
 
     # load the library with the kernel function (on the target)
 
-    device = mic.devices[0]
-    library = device.load_library("Xeon_Phi/libmceq.so")
+    device = mic.devices[1]
+    base = os.path.dirname(os.path.abspath(__file__))
+    library = device.load_library(os.path.join(base,"../Xeon_Phi/libmceq.so"))
 
     # use the default stream
 
     stream = device.get_default_stream()
-
-
-
-    from ctypes import cdll, c_int, c_char, POINTER, byref
-
-    try:
-        mkl = cdll.LoadLibrary(config['MKL_path'])
-    except OSError:
-        raise Exception("kern_MKL_sparse(): MKL runtime library not " + 
-                        "found. Please check path.")
     
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     mic_int_m_data = stream.bind(int_m.data)
@@ -475,7 +467,7 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     mic_dec_m_pb = stream.bind(dec_m.indptr[:-1])
     mic_dec_m_pe = stream.bind(dec_m.indptr[1:])
 
-    npphi = np.copy(phi).astype(np_fl)
+    npphi = np.copy(phi)
     mic_phi = stream.bind(npphi)
     npdelta_phi = np.zeros_like(npphi)
     mic_delta_phi = stream.bind(npdelta_phi)
@@ -484,7 +476,8 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     m = int_m.shape[0]
 
-    stream.invoke(m, nsteps,
+    stream.invoke(library.mceq_kernel, 
+        m, nsteps,
         mic_phi, mic_delta_phi,
         mic_rho_inv, mic_dX,
         mic_int_m_data, mic_int_m_ci,

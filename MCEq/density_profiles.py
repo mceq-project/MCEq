@@ -976,8 +976,8 @@ class AIRSAtmosphere(EarthAtmosphere):
                                 msis.get_density(h_vec[-ni-1])*ch*norm)
 
             # Merge the two datasets
-            # h_vec = np.hstack([h_vec[:-1], h_extra])
-            # d_vec = np.hstack([d_vec[:-1], msis_extra])
+            h_vec = np.hstack([h_vec[:-1], h_extra])
+            d_vec = np.hstack([d_vec[:-1], msis_extra])
 
             self.interp_tab[self._get_y_doy(date)] = (h_vec, d_vec)
 
