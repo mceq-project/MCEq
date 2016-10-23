@@ -2,9 +2,8 @@
 #include <mkl.h>
 
 PYMIC_KERNEL
-
-void mceq_kernel(const int *m, int nsteps,
-                 const double *phi, double *delta_phi,
+void mceq_kernel(const int *m, const int *nsteps,
+                 double *phi, double *delta_phi,
                  const double *rho_inv, const double *dX,
                  const double *int_m_data, const int *int_m_ci,
                  const int *int_m_pb, const int *int_m_pe,
@@ -20,7 +19,7 @@ void mceq_kernel(const int *m, int nsteps,
     int ione = 1;
     int step = 0;
 
-    for (step = 0; step < nsteps; ++step) {
+    for (step = 0; step < *nsteps; ++step) {
 
         // delta_phi = int_m.dot(phi)
         mkl_dcsrmv(trans, m, m, &one, matdescra,
@@ -33,7 +32,9 @@ void mceq_kernel(const int *m, int nsteps,
         phi, &one, delta_phi);
 
         // phi = delta_phi * dX + phi
-        cblas_axpy(m, dX[step], delta_phi, &ione, phi, &ione);
-
+        int i = 0;
+	for (i = 0; i < *m; ++i) phi[i] += delta_phi[i]*dX[step];
+        //cblas_daxpy(m, dX[step], delta_phi, &ione, phi, &ione);
+	
         }
 }
