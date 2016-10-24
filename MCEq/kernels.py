@@ -87,6 +87,9 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
         ric = rho_inv.astype(np.float32)
         phc = phi.astype(np.float32)
 
+    from time import time
+    start = time()
+
     for step in xrange(nsteps):
         if prog_bar and (step % 200 == 0):
             prog_bar.update(step)
@@ -108,7 +111,7 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
-
+    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
 
     return phc, grid_sol
 
@@ -167,6 +170,10 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     cu_dec_m = cuda.to_device(dec_m.astype(fl_pr), stream)
     cu_curr_phi = cuda.to_device(phi.astype(fl_pr), stream)
     cu_delta_phi = cuda.device_array(phi.shape, dtype=fl_pr)
+
+    from time import time
+    start = time()
+
     for step in xrange(nsteps):
         if prog_bar:
             prog_bar.update(step)
@@ -175,6 +182,8 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
         cubl.gemv(trans='N', m=m, n=n, alpha=fl_pr(rho_inv[step]),
             A=cu_dec_m, x=cu_curr_phi, beta=fl_pr(1.0), y=cu_delta_phi)
         cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
+
+    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
 
     return cu_curr_phi.copy_to_host(), []
 
@@ -263,6 +272,10 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
     grid_step = 0
     grid_sol = []
     
+
+    from time import time
+    start = time()
+
     for step in xrange(nsteps):
         if prog_bar and (step % 5 == 0):
             prog_bar.update(step)
@@ -285,8 +298,7 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
         
         dXaccum += dX[step]
         
-        if (enmuloss and 
-            (dXaccum > muloss_min_step or step == nsteps - 1)):
+        if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
             # Download current solution vector to host
             phc = c.cu_curr_phi.copy_to_host()
             for nsp in xrange(nmuspec):
@@ -301,6 +313,9 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
             and grid_idcs[grid_step] == step):
             grid_sol.append(c.cu_curr_phi.copy_to_host())
             grid_step += 1
+
+    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+
 
     return c.cu_curr_phi.copy_to_host(), grid_sol
 
@@ -397,6 +412,10 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     
     grid_step = 0
     grid_sol = []
+
+    from time import time
+    start = time()
+
     for step in xrange(nsteps):
         if prog_bar:
             prog_bar.update(step)
@@ -431,6 +450,8 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
             and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(npphi))
             grid_step += 1
+
+    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
 
     return npphi, grid_sol
 
@@ -476,6 +497,9 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     m = int_m.shape[0]
 
+    from time import time
+    start = time()
+
     stream.invoke(library.mceq_kernel, 
         m, nsteps,
         mic_phi, mic_delta_phi,
@@ -486,6 +510,9 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
         mic_dec_m_pb, mic_dec_m_pe)
 
     stream.sync()
+
+    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+
     mic_phi.update_host()
     stream.sync()
             
