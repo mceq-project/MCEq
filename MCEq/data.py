@@ -658,18 +658,19 @@ class InteractionYields():
         if self.charm_model and self.charm_model != model:
             # reload the yields from the main dictionary
             self.set_interaction_model(self.iam, force=True)
-#            raise Exception('InteractionYields:inject_custom_charm_model()::' +
-#                            'changing injected charm model back to ' +
-#                            'default not implemented .')
 
         sib = SibyllParticleTable()
         charm_modids = [sib.modid2pdg[modid] for modid in
                         sib.mod_ids if abs(modid) >= 59]
         del sib
-#        # make a copy of current yields before starting overwriting/injecting
-#        # a charm model on top
-#        from copy import copy
-#        self.yields = copy(self.yields)
+        
+        # Remove the charm interactions from the index
+        new_index = {}
+        for proj, secondaries in self.secondary_dict.iteritems():
+            new_index[proj] = [idx for idx in secondaries
+                               if idx not in charm_modids]
+        
+        self.secondary_dict = new_index
 
         if model == 'MRS':
             # Set charm production to zero
@@ -678,7 +679,9 @@ class InteractionYields():
             for proj in self.projectiles:
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = mrs.get_yield_matrix(
-                        proj, chid)
+                        proj, chid).dot(self.weights)
+                    # Update index
+                    self.secondary_dict[proj].append(chid)
 
         elif model == 'WHR':
 
@@ -689,7 +692,9 @@ class InteractionYields():
                 cs_scale = np.diag(cs_h_p.get_cs(proj) / cs_h_air.get_cs(proj)) * 14.5
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = whr.get_yield_matrix(
-                        proj, chid) * 14.5  #.dot(cs_scale)
+                        proj, chid) * 14.5.dot(self.weights)
+                    # Update index
+                    self.secondary_dict[proj].append(chid)
 
         elif model == 'sibyll23_pl':
             cs_h_air = HadAirCrossSections('SIBYLL2.3')
@@ -701,13 +706,15 @@ class InteractionYields():
                     # that in a later step indeed sigma_{pp,ccbar} is taken
 
                     self.yields[(proj, chid)] = self.yield_dict[
-                        self.iam + '_pl'][(proj, chid)].dot(cs_scale) * 14.5
+                        self.iam + '_pl'][(proj, chid)].dot(
+                            cs_scale).dot(self.weights) * 14.5
+                    # Update index
+                    self.secondary_dict[proj].append(chid)
 
         else:
             raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
                                       ' Unsupported model')
 
-        self._gen_index(self.yields)
         self.charm_model = model
 
     def __repr__(self):

@@ -111,7 +111,7 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
-    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+    print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
     return phc, grid_sol
 
@@ -183,7 +183,7 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
             A=cu_dec_m, x=cu_curr_phi, beta=fl_pr(1.0), y=cu_delta_phi)
         cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
-    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+    print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
     return cu_curr_phi.copy_to_host(), []
 
@@ -314,8 +314,7 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
             grid_sol.append(c.cu_curr_phi.copy_to_host())
             grid_step += 1
 
-    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
-
+    print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
     return c.cu_curr_phi.copy_to_host(), grid_sol
 
@@ -451,7 +450,7 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
-    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+    print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
     return npphi, grid_sol
 
@@ -511,7 +510,7 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
 
     stream.sync()
 
-    print "Performance: {0:4.3f}s/iteration".format((time() - start)/float(nsteps))
+    print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
     mic_phi.update_host()
     stream.sync()
