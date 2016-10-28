@@ -71,7 +71,7 @@ class MCEqRun():
         # Save atmospheric parameters
         self.density_config = density_model
         self.theta_deg = theta_deg
-
+        
         # Save yields class parameters
         self.yields_params = dict(interaction_model=interaction_model)
         #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`

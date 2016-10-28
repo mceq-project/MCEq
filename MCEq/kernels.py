@@ -231,10 +231,119 @@ class CUDASparseContext(object):
         
         self.descr = self.cusp.matdescr()
         self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
-    
+        self.cu_delta_phi = self.cuda.device_array_like(
+            np.zeros(self.m,dtype=self.fl_pr))
+        print np.zeros(self.m,dtype=self.fl_pr).shape
+        
     def set_phi(self, phi):
         self.cu_curr_phi = self.cuda.to_device(phi.astype(self.fl_pr))
-        self.cu_delta_phi = self.cuda.device_array_like(phi.astype(self.fl_pr))
+        
+    def get_phi(self):
+        return self.cu_curr_phi.copy_to_host()
+    
+    def do_step(self, rho_inv, dX):
+
+        self.cusp.csrmv(trans='N', m=self.m, n=self.n, nnz=self.int_m_nnz,
+                   descr=self.descr,
+                   alpha=self.fl_pr(1.0),
+                   csrVal=self.int_m_csrValA,
+                   csrRowPtr=self.int_m_csrRowPtrA,
+                   csrColInd=self.int_m_csrColIndA,
+                   x=self.cu_curr_phi, beta=self.fl_pr(0.0), y=self.cu_delta_phi)
+        # print np.sum(cu_curr_phi.copy_to_host())
+        self.cusp.csrmv(trans='N', m=self.m, n=self.n, nnz=self.dec_m_nnz,
+                   descr=self.descr,
+                   alpha=self.fl_pr(rho_inv),
+                   csrVal=self.dec_m_csrValA,
+                   csrRowPtr=self.dec_m_csrRowPtrA,
+                   csrColInd=self.dec_m_csrColIndA,
+                   x=self.cu_curr_phi, beta=self.fl_pr(1.0), y=self.cu_delta_phi)
+        self.cubl.axpy(alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
+
+# class CUDASparseContextSkcuda(object):
+#
+#     *Doesn't work right now because of crashes and missing wrappers for cuSPARSE
+#
+#     def __init__(self, int_m, dec_m, device_id=0):
+
+#         #=======================================================================
+#         # Setup GPU stuff and upload data to it
+#         #=======================================================================
+#         # try:
+#         import pycuda.autoinit
+#         import pycuda.gpuarray as gpuarray
+#         from skcuda import cusparse, cublas
+            
+#         # except ImportError:
+#         #     raise Exception("kern_CUDA_sparse(): Numbapro CUDA libaries not " + 
+#         #                     "installed.\nCan not use GPU.")
+
+#         # cuda.select_device(0)
+#         self.cusp_handle = cusparse.cusparseCreate()
+#         self.cubl_handle = cublas.cublasCreate()
+#         self.gpua = gpuarray
+                
+#         if config['FP_precision'] == 32:
+#             self.fl_pr = np.float32
+#             self.mv = cusparse._libcusparse.cusparseScsrmv
+#             self.axpy = cublas._libcublas.cublasSaxpy
+#         elif config['FP_precision'] == 64:
+#             self.fl_pr = np.float64
+#             self.mv = cusparse._libcusparse.cusparseDcsrmv
+#             self.axpy = cublas._libcublas.cublasDaxpy
+#         else:
+#             raise Exception("CUDASparseContext(): Unknown precision specified.") 
+            
+#         self.set_matrices(int_m, dec_m)
+            
+#     def set_matrices(self, int_m, dec_m):
+#         from skcuda import cusparse
+        
+#         self.m, self.n = int_m.shape
+#         self.int_m_nnz = int_m.nnz
+#         self.int_m_csrValA = self.gpua.to_gpu(int_m.data.astype(self.fl_pr))
+#         self.int_m_csrRowPtrA = self.gpua.to_gpu(int_m.indptr)
+#         self.int_m_csrColIndA = self.gpua.to_gpu(int_m.indices)
+        
+#         self.dec_m_nnz = dec_m.nnz
+#         self.dec_m_csrValA = self.gpua.to_gpu(dec_m.data.astype(self.fl_pr))
+#         self.dec_m_csrRowPtrA = self.gpua.to_gpu(dec_m.indptr)
+#         self.dec_m_csrColIndA = self.gpua.to_gpu(dec_m.indices)
+        
+#         self.descr = cusparse.cusparseMatDescr()
+#         self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
+#         self.cu_delta_phi = self.gpua.empty(self.m,dtype=self.fl_pr)
+        
+#     def set_phi(self, phi):
+#         self.cu_curr_phi = self.gpua.to_gpu(phi.astype(self.fl_pr))
+        
+#     def get_phi(self):
+#         return self.cu_curr_phi.get()
+    
+#     def do_step(self, rho_inv, dX):
+#         from skcuda import cusparse, cublas
+        
+#         cusparse._libcusparse.cusparseScsrmv(self.cusp_handle, 
+#                    trans='n', m=self.m, n=self.n, nnz=self.int_m_nnz,
+#                    alpha=self.fl_pr(1.0), descrA=self.descr,
+#                    csrVal=self.int_m_csrValA.gpudata,
+#                    csrRowPtr=self.int_m_csrRowPtrA.gpudata,
+#                    csrColInd=self.int_m_csrColIndA.gpudata,
+#                    x=self.cu_curr_phi.gpudata, beta=self.fl_pr(0.0), y=self.cu_delta_phi.gpudata)
+#         # # # print np.sum(cu_curr_phi.copy_to_host())
+#         cusparse._libcusparse.cusparseScsrmv(self.cusp_handle, trans='N', m=self.m, n=self.n, 
+#                 nnz=self.dec_m_nnz,
+#                 descr=self.descr,
+#                 alpha=self.fl_pr(rho_inv),
+#                 csrVal=self.dec_m_csrValA.gpudata,
+#                 csrRowPtr=self.dec_m_csrRowPtrA.gpudata,
+#                 csrColInd=self.dec_m_csrColIndA.gpudata,
+#                 x=self.cu_curr_phi.gpudata, beta=self.fl_pr(1.0), 
+#                 y=self.cu_delta_phi.gpudata)
+#         cublas.cublasSaxpy(self.cubl_handle, self.cu_curr_phi.size, 
+#                            self.fl_pr(dX),
+#                            self.cu_delta_phi.gpudata, 1, self.cu_curr_phi.gpudata, 1)
+    
 
 def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs, 
                       mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
@@ -279,44 +388,30 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
     for step in xrange(nsteps):
         if prog_bar and (step % 5 == 0):
             prog_bar.update(step)
-        c.cusp.csrmv(trans='N', m=c.m, n=c.n, nnz=c.int_m_nnz,
-                   descr=c.descr,
-                   alpha=c.fl_pr(1.0),
-                   csrVal=c.int_m_csrValA,
-                   csrRowPtr=c.int_m_csrRowPtrA,
-                   csrColInd=c.int_m_csrColIndA,
-                   x=c.cu_curr_phi, beta=c.fl_pr(0.0), y=c.cu_delta_phi)
-        # print np.sum(cu_curr_phi.copy_to_host())
-        c.cusp.csrmv(trans='N', m=c.m, n=c.n, nnz=c.dec_m_nnz,
-                   descr=c.descr,
-                   alpha=c.fl_pr(rho_inv[step]),
-                   csrVal=c.dec_m_csrValA,
-                   csrRowPtr=c.dec_m_csrRowPtrA,
-                   csrColInd=c.dec_m_csrColIndA,
-                   x=c.cu_curr_phi, beta=c.fl_pr(1.0), y=c.cu_delta_phi)
-        c.cubl.axpy(alpha=c.fl_pr(dX[step]), x=c.cu_delta_phi, y=c.cu_curr_phi)
+        
+        c.do_step(rho_inv[step],dX[step])
         
         dXaccum += dX[step]
         
         if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
             # Download current solution vector to host
-            phc = c.cu_curr_phi.copy_to_host()
+            phc = c.get_phi()
             for nsp in xrange(nmuspec):
                 phc[lidx + de*nsp: lidx + de*(nsp+1)] = np.interp(
                     mu_egrid, mu_egrid + mu_dEdX*dXaccum, 
                     phc[lidx + de*nsp:lidx + de*(nsp+1)])
             # Upload changed vector back..
-            c.cu_curr_phi = c.cuda.to_device(phc)
+            c.set_phi(phc)
             dXaccum = 0.
 
         if (grid_idcs and grid_step < len(grid_idcs) 
             and grid_idcs[grid_step] == step):
-            grid_sol.append(c.cu_curr_phi.copy_to_host())
+            grid_sol.append(c.get_phi())
             grid_step += 1
 
     print "Performance: {0:6.2f}ms/iteration".format(1e3*(time() - start)/float(nsteps))
 
-    return c.cu_curr_phi.copy_to_host(), grid_sol
+    return c.get_phi(), grid_sol
 
 def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
                     phi, grid_idcs, 
