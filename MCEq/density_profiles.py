@@ -682,33 +682,6 @@ class CorsikaAtmosphere(EarthAtmosphere):
 
         return height
 
-    def height2depth(self, h_cm):
-        """Converts height to column/vertical depth.
-
-        Args:
-          h_cm (float): height in cm
-
-        Returns:
-          float: column depth :math:`X_v` in g/cm**2
-        """
-
-        _aatm, _batm, _catm, _thickl, _hlay = self._atm_param
-
-        height = h_cm
-
-        if height <= _hlay[1]:
-            x_v = _aatm[0] + _batm[0] * np.exp(-height / _catm[0])
-        elif height <= _hlay[2]:
-            x_v = _aatm[1] + _batm[1] * np.exp(-height / _catm[1])
-        elif height <= _hlay[3]:
-            x_v = _aatm[2] + _batm[2] * np.exp(-height / _catm[2])
-        elif height <= _hlay[4]:
-            x_v = _aatm[3] + _batm[3] * np.exp(-height / _catm[3])
-        else:
-            x_v = _aatm[4] - height / _catm[4]
-
-        return x_v
-
     def get_density(self, h_cm):
         """ Returns the density of air in g/cm**3.
 
@@ -718,9 +691,22 @@ class CorsikaAtmosphere(EarthAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: column depth :math:`\\rho(h_{cm})` in g/cm**3
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
         return corsika_get_density_jit(h_cm, self._atm_param)
+
+    def get_mass_overburden(self, h_cm):
+        """ Returns the mass overburden in atmosphere in g/cm**2.
+
+        Uses the optimized module function :func:`corsika_get_m_overburden_jit`.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: column depth :math:`\\T(h_{cm})` in g/cm**2
+        """
+        return corsika_get_m_overburden_jit(h_cm, self._atm_param)
 
     def rho_inv(self, X, cos_theta):
         """Returns reciprocal density in cm**3/g using planar approximation.
@@ -822,6 +808,71 @@ def corsika_get_density_jit(h_cm, param):
 
     return res
 
+@jit(double(double, double[:, :]), target='cpu')
+def corsika_get_m_overburden_jit(h_cm, param):
+    """Optimized calculation of :math:`\\T(h)` in
+    according to CORSIKA type parameterization.
+
+    Args:
+      h_cm (float): height above surface in cm
+      param (numpy.array): 5x5 parameter array from
+                        :class:`CorsikaAtmosphere`
+
+    Returns:
+      float: :math:`\\rho(h)` in g/cm**3
+    """
+    a = param[0]
+    b = param[1]
+    c = param[2]
+    hl = param[4]
+    res = 0.0
+    layer = 0
+
+    for i in xrange(hl.size):
+        if not (h_cm <= hl[i]):
+            layer = i
+
+    if layer == 4:
+        res = a[4] - b[4] / c[4] * h_cm
+    else:
+        l = layer
+        res = a[l] + b[l] * np.exp(-h_cm / c[l])
+
+    return res
+
+class IsothermalAtmosphere(EarthAtmosphere):
+
+    """Isothermal model of the atmosphere.
+
+    This model is widely used in semi-analytical calculations. The isothermal
+    approximation is valid in a certain range of altitudes and usually
+    one adjust the parameters to match a more realistic density profile
+    at altitudes between 10 - 30 km, where the high energy muon production
+    rate peaks. Such parametrizations are given in the book "Cosmic Rays and
+    Particle Physics", Gaisser, Engel and Resconi (2016). The default values are
+    from M. Thunman, G. Ingelman, and P. Gondolo, Astropart. Physics 5, 309 (1996).
+       
+    Args:
+      hiso_km (float): isothermal scale height in km
+      X0 (float): Ground level overburden
+    """
+
+    def __init__(self, hiso_km = 6.3, X0 = 1300.):
+
+        self.hiso_cm = hiso_km
+        
+        EarthAtmosphere.__init__(self)
+
+    def get_density(self, h_cm):
+        """ Returns the density of air in g/cm**3.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
+        """
+        return self.X0/self.hiso_cm*np.exp(-h_cm/self.hiso_cm)
 
 class MSIS00Atmosphere(EarthAtmosphere):
 
@@ -879,7 +930,7 @@ class MSIS00Atmosphere(EarthAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: column depth :math:`\\rho(h_{cm})` in g/cm**3
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
         return self._msis.get_density(h_cm)
 
@@ -1022,7 +1073,7 @@ class AIRSAtmosphere(EarthAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: column depth :math:`\\rho(h_{cm})` in g/cm**3
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
         return np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
 
