@@ -469,7 +469,7 @@ class InteractionYields():
         #select the relevant slice of interaction matrix
         self.modmat = x_func(self.xmat, self.e_grid, *args)
         #Set lower triangular indices to 0. (should be not necessary)
-        self.modmat[np.tril_indices(self.dim)] = 0.
+        self.modmat[np.tril_indices(self.dim,-1)] = 0.
 
 
     def _set_mod_pprod(self, prim_pdg, sec_pdg):
@@ -602,7 +602,7 @@ class InteractionYields():
             if dbg > 0: print (
                 'InteractionYields::get_y_matrix(): modifying particle ' +
                 'production for {0}/{1}').format(projectile, daughter)
-            
+            m = np.copy(m)
             m *= self.modmat
 
         if not self.band:
