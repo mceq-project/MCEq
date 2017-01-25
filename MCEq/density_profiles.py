@@ -371,8 +371,12 @@ class EarthAtmosphere():
         # Calculate integral for each depth point
         # functionality could be more efficient :)
         X_int = np.zeros_like(dl_vec, dtype='float64')
-        for i, dl in enumerate(dl_vec):
-            X_int[i] = quad(vec_rho_l, 0, dl, epsrel=0.01)[0]
+
+        X_int[0] = 0.
+        for i in range(1, len(dl_vec)):
+            X_int[i] = X_int[i - 1] + quad(vec_rho_l, 
+                            dl_vec[i-1], dl_vec[i], 
+                            epsrel=0.01)[0]
 
         print '.. took {0:1.2f}s'.format(time() - now)
 
@@ -853,13 +857,17 @@ class IsothermalAtmosphere(EarthAtmosphere):
     from M. Thunman, G. Ingelman, and P. Gondolo, Astropart. Physics 5, 309 (1996).
        
     Args:
+      location (str): no effect
+      season (str): no effect
       hiso_km (float): isothermal scale height in km
       X0 (float): Ground level overburden
     """
 
-    def __init__(self, hiso_km = 6.3, X0 = 1300.):
-
-        self.hiso_cm = hiso_km
+    def __init__(self, location, season, hiso_km = 6.3, X0 = 1300.):
+        self.hiso_cm = hiso_km * 1e5
+        self.X0 = X0
+        self.location = location
+        self.season = season
         
         EarthAtmosphere.__init__(self)
 
@@ -892,8 +900,6 @@ class MSIS00Atmosphere(EarthAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    _msis = None
-
     def __init__(self, location, season):
         from msis_wrapper import cNRLMSISE00, pyNRLMSISE00
         if config['msis_python'] == 'ctypes':
@@ -902,6 +908,7 @@ class MSIS00Atmosphere(EarthAtmosphere):
             self._msis = pyNRLMSISE00()
 
         self.init_parameters(location, season)
+
         EarthAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
@@ -946,10 +953,24 @@ class AIRSAtmosphere(EarthAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    def __init__(self, location, *args, **kwargs):
+    def __init__(self, location, season, *args, **kwargs):
         if location != 'SouthPole':
             raise Exception(self.__class__.__name__ + 
                 "(): Only South Pole location supported. " + location)
+
+        self.month2doy = {'January':1,
+                          'February':32,
+                          'March':60,
+                          'April':91,
+                          'May':121,
+                          'June':152,
+                          'July':182,
+                          'August':213,
+                          'September':244,
+                          'October':274,
+                          'November':305,
+                          'December':335}
+        self.season = season
         self.init_parameters(location, **kwargs)
         EarthAtmosphere.__init__(self)
 
@@ -1005,7 +1026,7 @@ class AIRSAtmosphere(EarthAtmosphere):
         self.dates = {}
         dates = data_collection['alti'][0]
 
-        msis = MSIS00Atmosphere('SouthPole','January')
+        msis = MSIS00Atmosphere(location,'January')
 
         for didx, date in enumerate(dates):
             h_vec = np.array(data_collection['alti'][2][didx,:]*1e2)
@@ -1038,7 +1059,10 @@ class AIRSAtmosphere(EarthAtmosphere):
         self.IC79_end = self._get_y_doy(dates[IC79_idx_2])
         self.IC79_days = (dates[IC79_idx_2] - dates[IC79_idx_1]).days
         self.location = location
-        self.set_IC79_day(0)
+        if self.season == None:
+            self.set_IC79_day(0)
+        else:
+            self.set_season(self.season)
         # Clear cached value to force spline recalculation
         self.theta_deg = None
 
@@ -1047,6 +1071,15 @@ class AIRSAtmosphere(EarthAtmosphere):
         self.date = self.dates[(year,doy)]
         # Compatibility with caching
         self.season = self.date
+
+    def _set_doy(self, doy, year=2010):
+        self.h, self.dens = self.interp_tab[(year,doy)]
+        self.date = self.dates[(year,doy)]
+
+    def set_season(self, month):
+        self.season = month
+        self._set_doy(self.month2doy[month])
+        self.season = month
 
     def set_IC79_day(self, IC79_day):
         import datetime

@@ -27,7 +27,7 @@ class NRLMSISE00Base():
                           'October':274,
                           'November':305,
                           'December':335}
-
+        # Longitude, latitude, height
         self.locations = {'SouthPole':(0.,-90., 2834.*100.),
                           'Karlsruhe':(8.4, 49., 110. *100.),
                           'Geneva':(6.1, 46.2, 370. *100.),
@@ -78,8 +78,8 @@ class pyNRLMSISE00(NRLMSISE00Base):
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 
-    def set_location_coord(self, latitude, longitude):
-        if abs(latitude) > 180 or abs(longitude) > 90:
+    def set_location_coord(self, longitude, latitude):
+        if abs(latitude) > 90 or abs(longitude) > 180:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid input.")
         self.input.g_lat = latitude
         self.input.g_long = longitude
@@ -126,12 +126,12 @@ class cNRLMSISE00(NRLMSISE00Base):
         if tag not in self.locations.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
         self.input.alt = c_double(self.locations[tag][2])
-        self.set_location_coord(self.locations[tag][1], self.locations[tag][0])
+        self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 
     def set_location_coord(self, longitude, latitude):
-        if abs(longitude) > 180 or abs(latitude) > 90:
+        if abs(latitude) > 90 or abs(longitude) > 180:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid input.")
         self.input.g_lat = c_double(latitude)
         self.input.g_long = c_double(longitude)

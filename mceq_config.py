@@ -107,9 +107,9 @@ config = {
 
 #Number of MKL threads (for sparse matrix multiplication the performance
 #advantage from using more than 1 thread is limited by memory bandwidth)
-"MKL_threads": 48,
+"MKL_threads": 24,
 
-# Float precision (only speed up on CUDA, MKL gets slower?)
+# Float precision (32 only yields speed up with CUDA, MKL gets slower?)
 "FP_precision": 64,
 
 #=========================================================================
@@ -125,6 +125,10 @@ config = {
 
 # Minimal stepsize for muon energy loss steps
 "muon_energy_loss_min_step": 5.,
+
+# First interaction mode 
+# (stop particle production after one interaction length)
+"first_interaction_mode": False,
 
 # Possibilities to control the solver (some options are obsolete/not
 # working)
