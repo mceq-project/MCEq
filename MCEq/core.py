@@ -103,6 +103,9 @@ class MCEqRun():
         # Store vetos
         self.vetos = vetos
 
+        # First interaction mode
+        self.fa_vars = None
+
         # Default GPU device id for CUDA
         self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
 
@@ -388,8 +391,13 @@ class MCEqRun():
 
         # interaction part
         # -I + C
-        self.C[np.diag_indices(self.dim_states)] -= 1.
-        self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
+        if not config['first_interaction_mode']:
+            self.C[np.diag_indices(self.dim_states)] -= 1.
+            self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
+            
+        else:
+            self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
+
         del self.C
 
         # decay part
@@ -797,6 +805,11 @@ class MCEqRun():
             self.density_model = dprof.CorsikaAtmosphere(*model_config)
         elif base_model == 'AIRS':
             self.density_model = dprof.AIRSAtmosphere(*model_config)
+        elif base_model == 'Isothermal':
+            if model_config == None:
+                self.density_model = dprof.IsothermalAtmosphere()
+            else:
+                self.density_model = dprof.IsothermalAtmosphere(*model_config)
         elif base_model == 'GeneralizedTarget':
             self.density_model = dprof.GeneralizedTarget()
         else:
@@ -1135,13 +1148,18 @@ class MCEqRun():
         start = time()
 
         import kernels
+        if (config['first_interaction_mode'] and 
+            config['kernel_config'] != 'numpy'):
+            raise Exception(self.__class__.__name__
+                + "::_forward_euler(): " +
+                + "First interaction mode only works with numpy.")
 
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
             args = (nsteps, dX, rho_inv, self.int_m, 
                 self.dec_m, phi0, grid_idcs, 
                 self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                self.progressBar)
+                self.progressBar, self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] == False):
             kernel = kernels.kern_CUDA_dense
@@ -1173,9 +1191,9 @@ class MCEqRun():
                 self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                 self.progressBar)
         else:
-            raise Exception(
-                ("MCEq::_forward_euler(): " +
-                "Unsupported integrator settings '{0}/{1}'."
+            raise Exception(self.__class__.__name__ + 
+                ("::_forward_euler(): " +
+                 "Unsupported integrator settings '{0}/{1}'."
                  ).format(
                 'sparse' if config['use_sparse'] else 'dense',
                 config['kernel_config']))
@@ -1218,6 +1236,29 @@ class MCEqRun():
         step = 0
         grid_step = 0
         grid_idcs = []
+        fa_vars = {}
+        if config['first_interaction_mode']:
+            # Create variables for first interaction mode
+            
+            old_err_state = np.seterr(divide='ignore')
+            fa_vars['Lambda_int'] = self.Lambda_int
+            fa_vars['lint'] = 1/self.Lambda_int
+            np.seterr(**old_err_state)
+
+            fa_vars['ipl'] = self.pname2pref['p'].lidx()
+            fa_vars['ipu'] = self.pname2pref['p'].uidx()
+            fa_vars['inl'] = self.pname2pref['n'].lidx()
+            fa_vars['inu'] = self.pname2pref['n'].uidx()
+
+            fa_vars['pint'] = 1/self.Lambda_int[
+                fa_vars['ipl']:fa_vars['ipu']]
+            fa_vars['nint'] = 1/self.Lambda_int[
+                fa_vars['inl']:fa_vars['inu']]
+            # Where to terminate the switch vector 
+            # (after all particle prod. for all species is disabled)
+            fa_vars['max_step'] = 0
+
+            fa_vars['fi_switch'] = []
 
         self._init_progress_bar(max_X)
         self.progressBar.start()
@@ -1233,6 +1274,24 @@ class MCEqRun():
                 grid_step += 1
             dX_vec.append(dX)
             rho_inv_vec.append(ri_x)
+
+            if config['first_interaction_mode'] and fa_vars['max_step'] == 0:
+                # Only protons and neutrons can produce particles
+                # Disable all interactions
+                fa_vars['fi_switch'].append(np.zeros(self.dim_states, dtype='double'))
+                # Switch on particle production only for X < 1 x lambda_int
+                fa_vars['fi_switch'][-1][
+                    fa_vars['ipl']:fa_vars['ipu']][
+                    fa_vars['pint'] > X] = 1.
+                fa_vars['fi_switch'][-1][
+                    fa_vars['inl']:fa_vars['inu']][
+                    fa_vars['nint'] > X] = 1.
+                # Save step value after which no particles are produced anymore
+                if not np.sum(fa_vars['fi_switch'][-1]) > 0:
+                    fa_vars['max_step'] = step
+                # Promote fa_vars to class attribute
+                self.fa_vars = fa_vars
+
             X = X + dX
             step += 1
 

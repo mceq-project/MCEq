@@ -48,7 +48,7 @@ from mceq_config import config
 def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
                phi, grid_idcs, 
                mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
-               prog_bar=None):
+               prog_bar=None, fa_vars=None):
     """:mod;`numpy` implementation of forward-euler integration.
     
     Args:
@@ -59,6 +59,7 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)` 
       prog_bar (object,optional): handle to :class:`ProgressBar` object
+      fa_vars (dict,optional): contains variables for first interaction mode 
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -89,11 +90,29 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
 
     from time import time
     start = time()
+    stepper = None
+
+    # Implmentation of first interaction mode
+    if config['first_interaction_mode']:
+        def stepper(step):
+            if step <= fa_vars['max_step']:
+                return (- fa_vars['Lambda_int']*phc 
+                        + imc.dot(fa_vars['fi_switch'][step]*phc) 
+                        + dmc.dot(ric[step] * phc)) * dxc[step]
+            else:
+                # Equivalent of setting interaction matrix to 0
+                return (- fa_vars['Lambda_int']*phc 
+                        + dmc.dot(ric[step] * phc)) * dxc[step]
+    else:
+        def stepper(step):
+            return (  imc.dot(phc)  
+                    + dmc.dot(ric[step] * phc)) * dxc[step]
+
 
     for step in xrange(nsteps):
         if prog_bar and (step % 200 == 0):
             prog_bar.update(step)
-        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+        phc += stepper(step)
         
         dXaccum += dxc[step]
         
