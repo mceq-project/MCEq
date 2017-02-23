@@ -429,6 +429,7 @@ class InteractionYields():
         # multiply with yields
         new_dict = self._gen_index(pickle.load(bz2.BZ2File(fcompr)))
 
+        if not fname.endswith('.ppd'): fname += '.ppd'
         # Dump the file in uncompressed form
         if dbg > 1:
             print 'Saving to', fname
@@ -507,6 +508,7 @@ class InteractionYields():
         else:
             self._load(interaction_model)
         if interaction_model != self.iam:
+            print self.iam
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
