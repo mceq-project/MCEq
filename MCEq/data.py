@@ -199,7 +199,8 @@ class NCEParticle():
         lint = np.ones(d) / inv_intlen
         d_tilde = 1 / self.inverse_decay_length(e_grid)
 
-        # multiply with typical air density at the surface
+        # multiply with maximal density encountered along the 
+        # integration path
         ldec = d_tilde * max_density
 
         criterium = ldec / lint
