@@ -139,14 +139,14 @@ class NCEParticle():
             return np.ones(self.d) * np.inf
 
     def inverse_interaction_length(self, cs=None):
-        """Returns inverse interaction length in Air.
+        """Returns inverse interaction length for A_target given by config.
 
         Returns:
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
         """
 
-        m_air = 14.5 * 1.672621 * 1e-24  # <A> * m_proton [g]
-        return np.ones(self.d) * self.cs.get_cs(self.pdgid) / m_air
+        m_target = config['A_target'] * 1.672621 * 1e-24  # <A> * m_proton [g]
+        return np.ones(self.d) * self.cs.get_cs(self.pdgid) / m_target
 
     def critical_energy(self):
         """Returns critical energy where decay and interaction
