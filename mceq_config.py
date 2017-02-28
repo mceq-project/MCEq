@@ -75,6 +75,9 @@ config = {
 # in the 'obs_' category
 "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
+# Average mass of target (for cross section calculations)
+"A_target" : 14.5, # <A> = 14.5 for air
+
 #parameters for EarthGeometry
 "r_E": 6391.e3,  # Earth radius in m
 "h_obs": 0.,  # observation level in m
