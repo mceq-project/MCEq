@@ -76,6 +76,9 @@ config = {
 "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
 # Average mass of target (for cross section calculations)
+# Change parameter only in combination with interaction model setting.
+# By default all inclusive cross sections are calculated for air targets
+# expect those with '_pp' suffix. 
 "A_target" : 14.5, # <A> = 14.5 for air
 
 #parameters for EarthGeometry

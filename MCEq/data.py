@@ -291,7 +291,7 @@ class InteractionYields():
             self._load('SIBYLL2.1')
 
         if charm_model and interaction_model:
-            self.inject_custom_charm_model(charm_model)
+            self._inject_custom_charm_model(charm_model)
 
 
     def _load(self, interaction_model):
@@ -636,7 +636,7 @@ class InteractionYields():
             self.get_y_matrix(projectile, daughter)[dtridx[0]:dtridx[1],
                                                     projidx[0]:projidx[1]]
 
-    def inject_custom_charm_model(self, model='MRS'):
+    def _inject_custom_charm_model(self, model='MRS'):
         """Overwrites the charm production yields of the yield
         dictionary for the current interaction model with yields from
         a custom model.
@@ -684,6 +684,10 @@ class InteractionYields():
                     self.yields[(proj, chid)] = mrs.get_yield_matrix(
                         proj, chid).dot(self.weights)
                     # Update index
+                    if np.sum(mrs.get_yield_matrix(
+                        proj, chid).dot(self.weights)) > 0:
+                        print proj, chid, mrs.get_yield_matrix(
+                            proj, chid).dot(self.weights)
                     self.secondary_dict[proj].append(chid)
 
         elif model == 'WHR':
@@ -715,7 +719,7 @@ class InteractionYields():
                     self.secondary_dict[proj].append(chid)
 
         else:
-            raise NotImplementedError('InteractionYields:inject_custom_charm_model()::' +
+            raise NotImplementedError('InteractionYields:_inject_custom_charm_model()::' +
                                       ' Unsupported model')
 
         self.charm_model = model
