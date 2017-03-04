@@ -620,7 +620,7 @@ class MCEqRun():
         self.yields_params['charm_model'] = charm_model
 
         self.y.set_interaction_model(interaction_model)
-        self.y.inject_custom_charm_model(charm_model)
+        self.y._inject_custom_charm_model(charm_model)
 
         self.cs_params['interaction_model'] = interaction_model
         self.cs.set_interaction_model(interaction_model)

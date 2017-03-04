@@ -218,7 +218,7 @@ class MRS_charm(CharmModel):
         if dbg > 1:
             print ('MRS_charm::get_yield_matrix({0},{1}): ' +
                    'returning matrix').format(proj, sec)
-
+        
         return m_out
 
     def test(self):
