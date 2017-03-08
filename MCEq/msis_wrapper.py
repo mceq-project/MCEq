@@ -31,7 +31,7 @@ class NRLMSISE00Base():
         self.locations = {'SouthPole':(0.,-90., 2834.*100.),
                           'Karlsruhe':(8.4, 49., 110. *100.),
                           'Geneva':(6.1, 46.2, 370. *100.),
-			  'Tokyo':(35., 139., 5.*100.)}
+			              'Tokyo':(139., 35., 5.*100.)}
 
         self.daytimes = {'day':43200.,
                          'night':0.}
