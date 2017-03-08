@@ -170,6 +170,8 @@ class MCEqRun():
                                  list(self.y.e_bins[1:] -
                                       self.y.e_bins[:-1]))
 
+        self.solution = np.zeros(self.dim_states)
+
         self._init_alias_tables()
 
         # Muon energy loss
@@ -401,10 +403,11 @@ class MCEqRun():
         del self.C
 
         # decay part
-        # -I + C
+        # -I + D
         self.D[np.diag_indices(self.dim_states)] -= 1.
         self.dec_m = (self.D * self.Lambda_dec).astype(self.fl_pr)
-        self.D
+        
+        del self.D
 
         nnz_int = np.count_nonzero(self.int_m)
         nnz_dec = np.count_nonzero(self.dec_m)
@@ -902,6 +905,11 @@ class MCEqRun():
                 'unset_mod_pprod(): modifications removed')
 
         self.y.mod_pprod = None
+        # Need to regenerate matrices completely
+        self._init_default_matrices()
+
+        self.prev_pprod_call = 4*[None]
+
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid. 
