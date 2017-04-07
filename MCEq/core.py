@@ -998,7 +998,7 @@ class MCEqRun():
             if (not p.is_projectile or 
                 (config["vetos"]["allowed_projectiles"] and 
                     abs(p.pdgid) not in config["vetos"]["allowed_projectiles"])):
-                if dbg > 0 and p.is_projectile: 
+                if dbg > 1 and p.is_projectile: 
                     print (self.__class__.__name__ + 
                         '_fill_matrices(): Particle production by {0} ' +
                         'explicitly disabled').format(p.pdgid)
