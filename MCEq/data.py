@@ -190,7 +190,8 @@ class NCEParticle():
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length(e_grid)
 
-        if not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.):
+        if (not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.)
+            or abs(self.pdgid) in config["vetos"]["exclude_from_mixing"]):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -203,15 +204,15 @@ class NCEParticle():
         # integration path
         ldec = d_tilde * max_density
 
-        criterium = ldec / lint
+        threshold = ldec / lint
 
-        if np.max(criterium) < cross_over:
+        if np.max(threshold) < cross_over:
             self.mix_idx = d - 1
             self.E_mix = e_grid[self.mix_idx]
             self.is_mixed = False
             self.is_resonance = True
 
-        elif np.min(criterium) > cross_over or no_mix:
+        elif np.min(threshold) > cross_over or no_mix:
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -279,7 +280,7 @@ class InteractionYields():
         #: (tuple) selection of a band of coeffictients (in xf)
         self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = None 
+        self.mod_pprod = {}
 
         # If parameters are provided during object creation,
         # load the tables during object creation.
@@ -292,7 +293,6 @@ class InteractionYields():
 
         if charm_model and interaction_model:
             self._inject_custom_charm_model(charm_model)
-
 
     def _load(self, interaction_model):
         """Un-pickles the yields dictionary using the path specified as
@@ -334,6 +334,8 @@ class InteractionYields():
             self.dim, self.dim)
 
         self.charm_model = None
+
+        self._gen_particle_list()
 
     def _gen_index(self, yield_dict):
         """Generates index of mother-daughter relationships.
@@ -400,6 +402,17 @@ class InteractionYields():
         
         return new_dict        
 
+    def _gen_particle_list(self):
+        """Saves a list of all particles handled by selected model.
+        """
+
+        # Look up all particle species that a supported by selected model
+        self.particle_list = []
+        for p, l in self.secondary_dict.iteritems():
+            self.particle_list += [p]
+            self.particle_list += l
+        self.particle_list = list(set(self.particle_list))
+
     def _decompress(self, fname):
         """Decompresses and unpickles dictionaries stored in bz2
         format.
@@ -437,7 +450,7 @@ class InteractionYields():
         pickle.dump(new_dict, open(fname, 'wb'), protocol=-1)
 
 
-    def _init_mod_matrix(self, x_func, *args):
+    def _gen_mod_matrix(self, x_func, *args):
         """Creates modification matrix using an (x,E)-dependent function.
 
         :math:`x = \\frac{E_{\\rm primary}}{E_{\\rm secondary}}` is the
@@ -449,6 +462,10 @@ class InteractionYields():
 
         Args:
           x_func (object): reference to function
+          args (tuple): arguments of `x_func`
+
+        Returns:
+          (array): modification matrix
         """
 
         if dbg > 0:
@@ -469,12 +486,13 @@ class InteractionYields():
             self.xmat[:eidx+1,eidx] =xvec
 
         #select the relevant slice of interaction matrix
-        self.modmat = x_func(self.xmat, self.e_grid, *args)
+        modmat = x_func(self.xmat, self.e_grid, *args)
         #Set lower triangular indices to 0. (should be not necessary)
-        self.modmat[np.tril_indices(self.dim,-1)] = 0.
+        modmat[np.tril_indices(self.dim,-1)] = 0.
 
+        return modmat
 
-    def _set_mod_pprod(self, prim_pdg, sec_pdg):
+    def _set_mod_pprod(self, prim_pdg, sec_pdg, x_func, args):
         """Sets combination of projectile/secondary for error propagation.
 
         The production spectrum of ``sec_pdg`` in interactions of 
@@ -485,11 +503,24 @@ class InteractionYields():
           prim_pdg (int): interacting (primary) particle PDG ID
           sec_pdg (int): secondary particle PDG ID
         """
-        if dbg > 0:
-            print (self.__class__.__name__ + 
+        
+        if ((prim_pdg, sec_pdg) not in self.mod_pprod.keys() or
+            self.mod_pprod[(prim_pdg, sec_pdg)][:2] != (x_func, args)):
+            if dbg > 0:
+                print (self.__class__.__name__ + 
                 'set_mod_pprod(): will modify particle production' +
                 ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
-        self.mod_pprod = (prim_pdg, sec_pdg)
+            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func, args, 
+                _gen_mod_matrix(x_func, *args))
+            # Tell MCEqRun to regenerate the matrices if something has changed
+            return True
+        else:
+            if dbg > 0:
+                print (self.__class__.__name__ + 
+                'set_mod_pprod(): no changes to particle production' +
+                ' modification matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
+            return False
+
 
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
@@ -505,14 +536,16 @@ class InteractionYields():
             if dbg > 0:
                 print ("InteractionYields:set_interaction_model():: Model " +
                     self.iam + " already loaded.")
-            return
+            return False
         else:
             self._load(interaction_model)
+            
         if interaction_model != self.iam:
             print self.iam
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
+        return True
 
     def set_xf_band(self, xf_low_idx, xf_up_idx):
 
@@ -601,12 +634,12 @@ class InteractionYields():
                 print ('InteractionYields::get_y_matrix(): no meson inversion ' +
                     'in leading particle veto.',projectile, daughter)
 
-        if self.mod_pprod == (projectile,daughter):
+        if (projectile,daughter) in self.mod_pprod.keys():
             if dbg > 0: print (
-                'InteractionYields::get_y_matrix(): modifying particle ' +
+                'InteractionYields::get_y_matrix(): using modified particle ' +
                 'production for {0}/{1}').format(projectile, daughter)
             m = np.copy(m)
-            m *= self.modmat
+            m *= self.mod_pprod[(projectile,daughter)][2]
 
         if not self.band:
             return m
@@ -684,10 +717,6 @@ class InteractionYields():
                     self.yields[(proj, chid)] = mrs.get_yield_matrix(
                         proj, chid).dot(self.weights)
                     # Update index
-                    if np.sum(mrs.get_yield_matrix(
-                        proj, chid).dot(self.weights)) > 0:
-                        print proj, chid, mrs.get_yield_matrix(
-                            proj, chid).dot(self.weights)
                     self.secondary_dict[proj].append(chid)
 
         elif model == 'WHR':
@@ -724,6 +753,8 @@ class InteractionYields():
 
         self.charm_model = model
 
+        self._gen_particle_list()
+
     def __repr__(self):
         a_string = 'Possible (projectile,secondary) configurations:\n'
         for key in sorted(self.yields.keys()):
@@ -741,15 +772,16 @@ class DecayYields():
     Monte Carlo.
 
     Args:
-      weights (numpy.array): bin widths of energy grid
+      mother_list (list, optional): list of particle mothers from 
+                                    interaction model
     """
 
-    def __init__(self):
-        self._load()
+    def __init__(self, mother_list=None, weights=None, fname=None):
+        self._load(mother_list, weights, fname)
 
         self.particle_keys = self.mothers
 
-    def _load(self):
+    def _load(self, mother_list, weights, fname):
         """Un-pickles the yields dictionary using the path specified as
         ``decay_fname`` in :mod:`mceq_config`.
 
@@ -759,25 +791,54 @@ class DecayYields():
         import cPickle as pickle
         from os.path import join
 
-        fname = join(config['data_dir'], config['decay_fname'])
+        if fname == None:
+            fname = join(config['data_dir'], config['decay_fname'])
+        else:
+            fname = join(config['data_dir'], fname)
+
         try:
             self.decay_dict = pickle.load(open(fname, 'rb'))
         except IOError:
-            self._decompress(fname)
+            self._decompress(fname, weights)
             self.decay_dict = pickle.load(open(fname, 'rb'))
         
         self.daughter_dict = self.decay_dict.pop('daughter_dict')
-        self.weights = self.decay_dict.pop('weights')
+        # self.weights = self.decay_dict.pop('weights')
 
         for mother in config["vetos"]["veto_decays"]:
             if dbg > 1:
                 print ("DecayYields:_gen_index():: switching off " +
                     "decays of {0}.").format(mother)
             self.daughter_dict.pop(mother)
+        
+        # Restrict accessible decay yields to mother particles from mother_list
+        if mother_list == None:
+            self.mothers = self.daughter_dict.keys()
+        else:
+            for m in mother_list:
+                if (m not in self.daughter_dict.keys() and abs(m) > 22 
+                    and m not in [2212, -2212]):
+                    print ("DecayYields::_load(): Warning: no decay " + 
+                        "distributions for {0} found.").format(m)
+            # for m in self.daughter_dict.keys():
+            #     if m not in mother_list and abs(m) < 7000:
+            #         _ = self.daughter_dict.pop(m)
+            self.mothers = self.daughter_dict.keys()
 
-        self.mothers = self.daughter_dict.keys()
+        self._gen_particle_list()
 
-    def _gen_index(self, decay_dict):
+    def _gen_particle_list(self):
+        """Saves a list of all particles handled by selected model.
+        """
+
+        # Look up all particle species that a supported by selected model
+        self.particle_list = []
+        for p, l in self.daughter_dict.iteritems():
+            self.particle_list += [p]
+            self.particle_list += l
+        self.particle_list = list(set(self.particle_list))
+
+    def _gen_index(self, decay_dict, weights):
         """Generates index of mother-daughter relationships.
 
         This function is called once after un-pickling. In future
@@ -793,10 +854,11 @@ class DecayYields():
                 continue
 
         daughter_dict = {}
-        weights = decay_dict['weights']
+        # weights = decay_dict['weights']
 
         # New dictionary to replace yield_dict
-        new_dict = {}        
+        new_dict = {} 
+        new_dict['weights'] = weights
 
         for mother in mothers:
             daughter_dict[mother] = []
@@ -836,7 +898,7 @@ class DecayYields():
 
         return new_dict
 
-    def _decompress(self, fname):
+    def _decompress(self, fname, weights):
         """Decompresses and unpickles dictionaries stored in bz2
         format.
 
@@ -869,7 +931,7 @@ class DecayYields():
 
         # Generate index of mother daughter relations and 
         # multiply with yields
-        new_dict = self._gen_index(pickle.load(bz2.BZ2File(fcompr)))
+        new_dict = self._gen_index(pickle.load(bz2.BZ2File(fcompr)),weights)
 
         # Dump the file in uncompressed form
         if dbg > 1:
@@ -891,7 +953,7 @@ class DecayYields():
           bin widths. In later versions they will be stored with the multiplication
           carried out.
         """
-        if dbg > 1 and not self.is_daughter(mother, daughter):
+        if dbg > 0 and not self.is_daughter(mother, daughter):
             print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
                    "{0} -> {1}").format(mother, daughter)
         # TODO: fix structure of the decay dict
@@ -1046,6 +1108,12 @@ class HadAirCrossSections():
           Exception: if invalid name specified in argument ``interaction_model``
         """
 
+        # Remove the _fast suffix, since this does not affect cross sections
+        if dbg > 2: 
+            print ("InteractionYields:set_interaction_model()::Using cross " +
+                "sections of original model in fast mode")
+        interaction_model = interaction_model.split('_fast')[0]
+
         if interaction_model == self.iam and dbg > 0:
             print ("InteractionYields:set_interaction_model():: Model " +
                    self.iam + " already loaded.")
@@ -1057,6 +1125,7 @@ class HadAirCrossSections():
             print "Available interaction models: ", self.cs_dict.keys()
             raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
                             "interaction model {0} available.".format(interaction_model))
+
         self.cs = self.cs_dict[self.iam]
 
     def get_cs(self, projectile, mbarn=False):
@@ -1080,28 +1149,23 @@ class HadAirCrossSections():
         if abs(projectile) in self.cs.keys():
             return scale * self.cs[projectile]
         elif abs(projectile) in [411, 421, 431, 15]:
-            if dbg > 2:
-                print message_templ.format('D', 'K+-')
+            if dbg > 2: print message_templ.format('D', 'K+-')
             return scale * self.cs[321]
         elif abs(projectile) in [4332, 4232, 4132]:
-            if dbg > 2:
-                print message_templ.format('charmed baryon', 'nucleon')
+            if dbg > 2: print message_templ.format('charmed baryon', 'nucleon')
             return scale * self.cs[2212]
         elif abs(projectile) == 22:
-            if dbg > 2:
-                print message_templ.format('photon', 'pion')
+            if dbg > 2: print message_templ.format('photon', 'pion')
             return scale * self.cs[211]
         elif abs(projectile) > 2000 and abs(projectile) < 5000:
-            if dbg > 2:
-                print message_templ.format(projectile, 'nucleon')
+            if dbg > 2: print message_templ.format(projectile, 'nucleon')
             return scale * self.cs[2212]
         elif 10 < abs(projectile) < 17 or 7000 < abs(projectile) < 7500:
-            if dbg > 2:
+            if dbg > 2: 
                 print 'HadAirCrossSections(): returning 0 cross-section for lepton', projectile
             return 0.
         else:
-            if dbg > 2:
-                print message_templ.format(projectile, 'pion')
+            if dbg > 2: print message_templ.format(projectile, 'pion')
             return scale * self.cs[211]
 
     def __repr__(self):
