@@ -8,6 +8,19 @@ import numpy as np
 from mceq_config import dbg
 
 
+
+def print_in_rows(str_list, n_cols=8):
+    l = len(str_list)
+    n_full_length = int(l / n_cols)
+    n_rest = l % n_cols
+    print_str = '\n'
+    for i in range(n_full_length):
+        print_str += ('"{:}", ' * n_cols).format(*str_list[i * n_cols:(i + 1)
+                                                 * n_cols]) + '\n'
+    print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
+
+    print print_str.strip()[:-1]
+
 def set_ticks(n_divs=5):
     from matplotlib.pyplot import gca
     from matplotlib.ticker import AutoMinorLocator

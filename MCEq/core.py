@@ -26,7 +26,7 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
 import numpy as np
 from time import time
 from mceq_config import dbg, config
-
+from misc import print_in_rows
 
 class MCEqRun():
     """Main class for handling the calculation.
@@ -72,14 +72,24 @@ class MCEqRun():
         self.density_config = density_model
         self.theta_deg = theta_deg
         
-        # Save yields class parameters
+        # Load particle production yields
         self.yields_params = dict(interaction_model=interaction_model)
         #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`
         self.y = InteractionYields(**self.yields_params)
+        # Interaction matrices initialization flag
+        self.iam_mat_initialized = False
 
         # Load decay spectra
-        # TODO: weights is temporary argument
-        self.ds_params = dict()
+        self.ds_params = dict(
+            mother_list=self.y.particle_list,
+            weights=self.y.weights,
+            fname=config['decay_fname']
+            )
+        # If fast-mode interaction model selected, use the fast mode dictionary
+        if (interaction_model.endswith('_fast') and 
+            not self.ds_params['fname'].endswith('_fast.ppd')):
+            self.ds_params['fname'] = self.ds_params['fname'].split('.ppd')[0] + '_fast.ppd'
+            
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
         self.ds = DecayYields(**self.ds_params)
 
@@ -117,9 +127,6 @@ class MCEqRun():
         else:
             raise Exception("MCEqRun(): Unknown float precision specified.")
 
-        # Save observer id
-        self.set_obs_particles(obs_ids)
-
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
         #: (np.array) energy grid (bin centers)
@@ -129,11 +136,39 @@ class MCEqRun():
 
         self.e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
-        # Hadron species include the everything excluding pure resonances
+        # Hadron species include everything apart from resonances
         if 'particle_list' not in kwargs:
             kwargs['particle_list'] = None
+
+        # Set id of particles in observer category
+        self.set_obs_particles(obs_ids)
+
+        self._init_dimensions_and_particle_tables(kwargs['particle_list'])
+        
+        
+        # Set interaction model and compute grids and matrices
+        if interaction_model is not None:
+            self.delay_pmod_init = False
+            self.set_interaction_model(interaction_model)
+        else:
+            self.delay_pmod_init = True
+
+        # Set atmosphere and geometry
+        if density_model is not None:
+            self.set_density_model(self.density_config)
+
+        # Set initial flux condition
+        if primary_model is not None:
+            self.set_primary_model(*self.pm_params)
+
+    def _init_dimensions_and_particle_tables(self, particle_list=None):
+
+
+        if particle_list == None:
+            particle_list = self.y.particle_list + self.ds.particle_list
+
         self.particle_species, self.cascade_particles, self.resonances = \
-            self._gen_list_of_particles(custom_list=kwargs['particle_list'])
+            self._gen_list_of_particles(custom_list=particle_list)
 
         # Particle index shortcuts
         #: (dict) Converts PDG ID to index in state vector
@@ -173,77 +208,30 @@ class MCEqRun():
         self.solution = np.zeros(self.dim_states)
 
         self._init_alias_tables()
+        self._init_muon_energy_loss()
 
+        if dbg > 0: self.print_particle_tables(True if dbg > 2 else False)
+
+
+    def _init_muon_energy_loss(self):
         # Muon energy loss
         import cPickle as pickle
         from os.path import join
         self.mu_dEdX = pickle.load(
             open(join(config['data_dir'],
-                'dEdX_mu_air.ppl'),'rb')).astype(self.fl_pr)*1e-3 #... to GeV
+                config['mu_eloss_fname']),'rb')).astype(self.fl_pr)*1e-3 #... to GeV
         # Left index of first muon species and number of
         # muon species including aliases
-        self.mu_lidx_nsp = (self.pdg2pref[13].lidx(), 10)
+        # Find first muon species in the list 
+        #(muons have inices next to each other but may start from a different category)
+        min_id = 100000
 
-        def print_in_rows(str_list, n_cols=8):
-            l = len(str_list)
-            n_full_length = int(l / n_cols)
-            n_rest = l % n_cols
-            print_str = '\n'
-            for i in range(n_full_length):
-                print_str += ('"{:}", ' * n_cols).format(*str_list[i * n_cols:(i + 1)
-                                                         * n_cols]) + '\n'
-            print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
+        min_id_pl = min([self.pdg2pref[mu_id].lidx() 
+            for mu_id in [13, 7013, 7113, 7213, 7313]])
+        min_id_mi = min([self.pdg2pref[-mu_id].lidx() 
+            for mu_id in [13, 7013, 7113, 7213, 7313]]) 
 
-            print print_str.strip()[:-1]
-
-        if dbg > 0:
-            print "\nHadrons:\n"
-            print_in_rows([p.name for p in self.particle_species if p.is_hadron
-                           and not p.is_resonance and not p.is_mixed])
-
-            print "\nMixed:\n"
-            print_in_rows(
-                [p.name for p in self.particle_species if p.is_mixed])
-
-            print "\nResonances:\n"
-            print_in_rows(
-                [p.name for p in self.particle_species if p.is_resonance])
-
-            print "\nLeptons:\n"
-            print_in_rows([p.name for p in self.particle_species if p.is_lepton
-                           and not p.is_alias])
-            print "\nAliases:\n",
-            print_in_rows(
-                [p.name for p in self.particle_species if p.is_alias])
-
-            print "\nTotal number of species:", self.n_tot_species
-
-        # list particle indices
-        self.part_str_vec = []
-        if dbg > 3:
-            print "Particle matrix indices:"
-            some_index = 0
-            for p in self.cascade_particles:
-                for i in xrange(self.d):
-                    self.part_str_vec.append(p.name + '_' + str(i))
-                    some_index += 1
-                    if (dbg):
-                        print p.name + '_' + str(i), some_index
-
-        # Set interaction model and compute grids and matrices
-        if interaction_model is not None:
-            self.delay_pmod_init = False
-            self.set_interaction_model(interaction_model)
-        else:
-            self.delay_pmod_init = True
-
-        # Set atmosphere and geometry
-        if density_model is not None:
-            self.set_density_model(self.density_config)
-
-        # Set initial flux condition
-        if primary_model is not None:
-            self.set_primary_model(*self.pm_params)
+        self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
 
     def _gen_list_of_particles(self, custom_list=None, max_density=1.240e-03):
         """Determines the list of particles for calculation and
@@ -268,15 +256,28 @@ class MCEqRun():
         particles = None
         
         if custom_list:
-            particles = [self.modtab.modname2pdg[pname] for pname in custom_list]
+            try:
+                # Assume that particle list contains particle names
+                particles = [self.modtab.modname2pdg[pname] for pname in custom_list]
+            except KeyError:
+                # assume pdg indices
+                particles = custom_list
+            except:
+                raise Exception(self.cname + "::_gen_list_of_particles():" +
+                   "custom particle list not understood:" + ','.join(particle_list))
+
             particles += self.modtab.leptons
         else:
             particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
-            
+        
+        # Remove duplicates
+        particles = list(set(particles))
+
         particle_list = [NCEParticle(h, self.modtab, self.pd,
                                      self.cs, self.d) for h in particles]
 
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
+
 
         for p in particle_list:
             p.calculate_mixing_energy(self.e_grid,
@@ -352,19 +353,25 @@ class MCEqRun():
                                      for p in self.cascade_particles])
         self.max_ldec = np.max(self.Lambda_dec)
 
-    def _convert_to_sparse(self):
+    def _convert_to_sparse(self, skip_D_matrix):
         """Converts interaction and decay matrix into sparse format using
         :class:`scipy.sparse.csr_matrix`.
-        """
 
-        from scipy.sparse import csr_matrix
+        Args:
+          skip_D_matrix (bool): Don't convert D matrix if not needed
+        """
+        try: csr_matrix
+        except: from scipy.sparse import csr_matrix
+
         from kernels import CUDASparseContext
         if dbg > 0:
             print (self.cname + "::_convert_to_sparse():" +
                    "Converting to sparse (CSR) matrix format.")
 
         self.int_m = csr_matrix(self.int_m)
-        self.dec_m = csr_matrix(self.dec_m)
+
+        if not self.iam_mat_initialized or not skip_D_matrix:
+            self.dec_m = csr_matrix(self.dec_m)
 
         if config['kernel_config'] == 'CUDA':
             try:
@@ -375,7 +382,7 @@ class MCEqRun():
                     self.int_m, self.dec_m,
                     device_id=self.cuda_device)
 
-    def _init_default_matrices(self):
+    def _init_default_matrices(self, skip_D_matrix=False):
         """Constructs the matrices for calculation.
 
         These are:
@@ -386,10 +393,20 @@ class MCEqRun():
         For ``dbg > 0`` some general information about matrix shape and the number of
         non-zero elements is printed. The intermediate matrices :math:`\\boldsymbol{C}` and
         :math:`\\boldsymbol{D}` are deleted afterwards to save memory.
-        """
-        print self.cname + "::_init_default_matrices():Start filling matrices."
 
-        self._fill_matrices()
+        Set the ``skip_D_matrix`` flag to avoid recreating the decay matrix. This is not necessary
+        if, for example, particle production is modified, or the interaction model is changed.
+
+        Args:
+          skip_D_matrix (bool): Omit re-creating D matrix
+
+        """
+        print (self.cname + 
+            "::_init_default_matrices():Start filling matrices. Skip_D_matrix = {0}").format(
+            skip_D_matrix if self.iam_mat_initialized else False)
+
+        self._fill_matrices(skip_D_matrix=skip_D_matrix if 
+            self.iam_mat_initialized else False)
 
         # interaction part
         # -I + C
@@ -402,23 +419,21 @@ class MCEqRun():
 
         del self.C
 
-        # decay part
-        # -I + D
-        self.D[np.diag_indices(self.dim_states)] -= 1.
-        self.dec_m = (self.D * self.Lambda_dec).astype(self.fl_pr)
-        
-        del self.D
-
-        nnz_int = np.count_nonzero(self.int_m)
-        nnz_dec = np.count_nonzero(self.dec_m)
+        if not self.iam_mat_initialized or not skip_D_matrix:
+            # decay part
+            # -I + D
+            self.D[np.diag_indices(self.dim_states)] -= 1.
+            self.dec_m = (self.D * self.Lambda_dec).astype(self.fl_pr)
+            
+            del self.D
 
         if config['use_sparse']:
-            self._convert_to_sparse()
+            self._convert_to_sparse(skip_D_matrix)
 
         if dbg > 0:
-            int_m_density = (float(nnz_int) /
+            int_m_density = (float(self.int_m.nnz) /
                              float(np.prod(self.int_m.shape)))
-            dec_m_density = (float(nnz_dec) /
+            dec_m_density = (float(self.dec_m.nnz) /
                              float(np.prod(self.dec_m.shape)))
             print "C Matrix info:"
             print "    density    : {0:3.2%}".format(int_m_density)
@@ -603,10 +618,10 @@ class MCEqRun():
                 ', '.join([str(oid) for oid in obs_ids]) + \
                 '\nto: ' + ', '.join([str(oid) for oid in self.obs_ids])
 
-        self._init_alias_tables()
-        self._init_default_matrices()
+        if self.iam_mat_initialized:
+            self._init_default_matrices(skip_D_matrix=False)
 
-    def set_interaction_model(self, interaction_model, charm_model=None):
+    def set_interaction_model(self, interaction_model, charm_model=None, force=False):
         """Sets interaction model and/or an external charm model for calculation.
 
         Decay and interaction matrix will be regenerated automatically
@@ -615,9 +630,18 @@ class MCEqRun():
         Args:
           interaction_model (str): name of interaction model
           charm_model (str, optional): name of charm model
+          force (bool): force loading interaction model
         """
         if dbg:
             print 'MCEqRun::set_interaction_model(): ', interaction_model
+
+        if self.iam_mat_initialized and not force and (
+            (self.yields_params['interaction_model'],self.yields_params['charm_model'])
+              == (interaction_model, charm_model)):
+            print ('MCEqRun::set_interaction_model(): Skipping, since ' +
+                'current model identical to ' + interaction_model +
+                '/' + str(charm_model) + '.')
+            return
 
         self.yields_params['interaction_model'] = interaction_model
         self.yields_params['charm_model'] = charm_model
@@ -644,9 +668,9 @@ class MCEqRun():
                 p.is_projectile = False
 
         # initialize matrices
-        self._init_default_matrices()
+        self._init_default_matrices(skip_D_matrix=True)
 
-        self.iamodel_name = interaction_model
+        self.iam_mat_initialized = True
 
         if self.delay_pmod_init:
             self.delay_pmod_init = False
@@ -853,7 +877,8 @@ class MCEqRun():
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
 
-    def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, *x_func_args):
+    def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args, 
+        delay_init = False):
         """Sets combination of projectile/secondary for error propagation.
 
         The production spectrum of ``sec_pdg`` in interactions of 
@@ -865,37 +890,19 @@ class MCEqRun():
           sec_pdg (int): secondary particle PDG ID
           x_func (object): reference to function
           x_func_args (tuple): arguments passed to ``x_func``
+          delay_init (bool): Prevent init of mceq matrices if you are 
+                             planning to add more modifications
         """
         
         if dbg > 0:
                 print (self.__class__.__name__ + 
                     'set_mod_pprod():{0}/{1}, {2}, {3}').format(
                     prim_pdg, sec_pdg, x_func.__name__, str(x_func_args))
-        try:
-            if self.prev_pprod_call == (prim_pdg, sec_pdg, 
-                x_func.__name__, x_func_args):
-                print (self.__class__.__name__ + 
-                    'set_mod_pprod(): No changes.. call does nothing.')
-                return
-        except:
-            self.prev_pprod_call = (None, None, None, None)
 
-
-        #If something changed to modifying function, regenerate xmatrix
-        #in yields
-        if (x_func != self.prev_pprod_call[2] or 
-            x_func_args != self.prev_pprod_call[3]): 
-            self.y._init_mod_matrix(x_func, *x_func_args)
-
-        if (prim_pdg != self.prev_pprod_call[0] or
-            sec_pdg != self.prev_pprod_call[1]):
-            self.y._set_mod_pprod(prim_pdg, sec_pdg)
+        init = self.y._set_mod_pprod(prim_pdg, sec_pdg, x_func, *x_func_args)
 
         # Need to regenerate matrices completely
-        self._init_default_matrices()
-
-        self.prev_pprod_call = (prim_pdg, sec_pdg, 
-                              x_func.__name__, x_func_args)
+        if init and not delay_init : self._init_default_matrices(skip_D_matrix=True)
 
     def unset_mod_pprod(self):
         """Removed modifications from :func:`MCEqRun.set_mod_pprod`.
@@ -904,12 +911,9 @@ class MCEqRun():
             print (self.__class__.__name__ + 
                 'unset_mod_pprod(): modifications removed')
 
-        self.y.mod_pprod = None
+        self.y.mod_pprod = {}
         # Need to regenerate matrices completely
-        self._init_default_matrices()
-
-        self.prev_pprod_call = 4*[None]
-
+        self._init_default_matrices(skip_D_matrix=True)
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid. 
@@ -971,24 +975,33 @@ class MCEqRun():
                     print reclev * '\t', '\t terminating at', r[d].name
 
     # @profile
-    def _fill_matrices(self):
+    def _fill_matrices(self, skip_D_matrix=False):
         """Generates the C and D matrix from scratch.
         """
-        # Initialize empty matrices
-        self.C = np.zeros((self.dim_states, self.dim_states))
-        self.D = np.zeros((self.dim_states, self.dim_states))
 
         pref = self.pdg2pref
 
-        for p in self.cascade_particles:
-            # Fill parts of the D matrix related to p as mother
-            if self.ds.daughters(p.pdgid):
-                self._follow_chains(p.pdgid, np.diag(np.ones((self.d))),
-                                    p.pdgid, p.hadridx(),
-                                    self.D, reclev=0)
+        if not skip_D_matrix:
+            # Initialize empty D matrix
+            self.D = np.zeros((self.dim_states, self.dim_states))
+            for p in self.cascade_particles:
+                # Fill parts of the D matrix related to p as mother
+                if self.ds.daughters(p.pdgid):
+                    self._follow_chains(p.pdgid, np.diag(np.ones((self.d))),
+                                        p.pdgid, p.hadridx(),
+                                        self.D, reclev=0)
 
+        # Initialize empty C matrix
+        self.C = np.zeros((self.dim_states, self.dim_states))
+        for p in self.cascade_particles:
             # if p doesn't interact, skip interaction matrices
-            if not p.is_projectile:
+            if (not p.is_projectile or 
+                (config["vetos"]["allowed_projectiles"] and 
+                    abs(p.pdgid) not in config["vetos"]["allowed_projectiles"])):
+                if dbg > 0 and p.is_projectile: 
+                    print (self.__class__.__name__ + 
+                        '_fill_matrices(): Particle production by {0} ' +
+                        'explicitly disabled').format(p.pdgid)
                 continue
             elif self.vetos['veto_sec_interactions'] and p.pdgid not in [2212, 2112]:
                 if dbg > 2: print (self.__class__.__name__ + 
@@ -1002,7 +1015,7 @@ class MCEqRun():
             for s in p.secondaries:
                 if s not in self.pdg2pref:
                     continue
-                if pref[s].is_lepton:
+                if self.vetos['veto_direct_leptons'] and pref[s].is_lepton:
                     if dbg > 2: print (self.__class__.__name__ + 
                         '_fill_matrices(): veto direct lepton', s)
                     continue
@@ -1310,3 +1323,38 @@ class MCEqRun():
         rho_inv_vec = np.array(rho_inv_vec, dtype=self.fl_pr)
         self.integration_path = dX_vec.size, dX_vec, \
                                 rho_inv_vec, grid_idcs
+
+    def print_particle_tables(self, print_indices=False):
+
+        print "\nHadrons and stable particles:\n"
+        print_in_rows([p.name for p in self.particle_species if p.is_hadron
+                       and not p.is_resonance and not p.is_mixed])
+
+        print "\nMixed:\n"
+        print_in_rows(
+            [p.name for p in self.particle_species if p.is_mixed])
+
+        print "\nResonances:\n"
+        print_in_rows(
+            [p.name for p in self.particle_species if p.is_resonance])
+
+        print "\nLeptons:\n"
+        print_in_rows([p.name for p in self.particle_species if p.is_lepton
+                       and not p.is_alias])
+        print "\nAliases:\n",
+        print_in_rows(
+            [p.name for p in self.particle_species if p.is_alias])
+
+        print "\nTotal number of species:", self.n_tot_species
+
+        # list particle indices
+        self.part_str_vec = []
+        if print_indices:
+            print "Particle matrix indices:"
+            some_index = 0
+            for p in self.cascade_particles:
+                for i in xrange(self.d):
+                    self.part_str_vec.append(p.name + '_' + str(i))
+                    if (dbg):
+                        print p.name + '_' + str(i), some_index
+                    some_index += 1
