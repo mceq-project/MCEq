@@ -894,15 +894,19 @@ class MCEqRun():
                              planning to add more modifications
         """
         
-        if dbg > 0:
+        if dbg > 1:
                 print (self.__class__.__name__ + 
                     'set_mod_pprod():{0}/{1}, {2}, {3}').format(
                     prim_pdg, sec_pdg, x_func.__name__, str(x_func_args))
 
-        init = self.y._set_mod_pprod(prim_pdg, sec_pdg, x_func, *x_func_args)
+        init = self.y._set_mod_pprod(prim_pdg, sec_pdg, x_func, x_func_args)
 
         # Need to regenerate matrices completely
-        if init and not delay_init : self._init_default_matrices(skip_D_matrix=True)
+        return int(init)
+
+        if init and not delay_init: 
+            self._init_default_matrices(skip_D_matrix=True)
+            return 0
 
     def unset_mod_pprod(self):
         """Removed modifications from :func:`MCEqRun.set_mod_pprod`.
