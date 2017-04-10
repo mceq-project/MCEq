@@ -470,7 +470,7 @@ class InteractionYields():
 
         if dbg > 0:
                 print (self.__class__.__name__ + 
-                    'init_mod_matrix():'), x_func.__name__, args
+                    '::init_mod_matrix():'), x_func.__name__, args
         
         # if not config['error_propagation_mode']:
         #     raise Exception(self.__class__.__name__ + 
@@ -479,11 +479,14 @@ class InteractionYields():
         
         if dbg > 1:
             print (self.__class__.__name__ + 
-                'mod_pprod_matrix(): creating xmat')
-        self.xmat = self.no_interaction
-        for eidx in range(self.dim):
-            xvec = self.e_grid[:eidx+1]/self.e_grid[eidx]
-            self.xmat[:eidx+1,eidx] =xvec
+                '::mod_pprod_matrix(): creating xmat')
+        try:
+            self.xmat
+        except:
+            self.xmat = self.no_interaction
+            for eidx in range(self.dim):
+                xvec = self.e_grid[:eidx+1]/self.e_grid[eidx]
+                self.xmat[:eidx+1,eidx] =xvec
 
         #select the relevant slice of interaction matrix
         modmat = x_func(self.xmat, self.e_grid, *args)
@@ -503,24 +506,70 @@ class InteractionYields():
           prim_pdg (int): interacting (primary) particle PDG ID
           sec_pdg (int): secondary particle PDG ID
         """
-        
+
         if ((prim_pdg, sec_pdg) not in self.mod_pprod.keys() or
-            self.mod_pprod[(prim_pdg, sec_pdg)][:2] != (x_func, args)):
+            self.mod_pprod[(prim_pdg, sec_pdg)][:2] != (
+                x_func.__name__, args)):
             if dbg > 0:
                 print (self.__class__.__name__ + 
-                'set_mod_pprod(): will modify particle production' +
+                '::set_mod_pprod(): modifying modify particle production' +
                 ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
-            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func, args, 
-                _gen_mod_matrix(x_func, *args))
+            kmat = self._gen_mod_matrix(x_func, *args)
+            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func.__name__, args, 
+                kmat)
+            print np.sum(kmat)/np.count_nonzero(kmat,dtype=np.float)
+
+            if config['use_isospin_sym'] and prim_pdg == 2212:
+                
+                # p->pi+ = n-> pi-, p->pi- = n-> pi+ 
+                if abs(sec_pdg) == 211:
+                    self.mod_pprod[(2112, -sec_pdg)] = ('isospin', args, 
+                        kmat)
+                
+                # Charged and neutral kaons
+                elif abs(sec_pdg) == 321:
+                    #approx.: p->K+ ~ n-> K+, p->K- ~ n-> K- 
+                    self.mod_pprod[(2112, sec_pdg)] = ('isospin', args, 
+                        kmat)
+
+                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
+                    k0arg = list(args)
+                    if (2212, -sec_pdg) in self.mod_pprod:
+                        # Compute average of K+ and K- modification matrices
+                        # Save the 'average' argument
+                        for i in range(len(args)):
+                            k0arg[i] = 0.5*(k0arg[i] + 
+                            self.mod_pprod[(2212, -sec_pdg)][1][i])
+                    k0arg = tuple(k0arg)
+                    kmat = self._gen_mod_matrix(x_func, *k0arg)
+                    
+                    # modify K0L/S
+                    for t in [(2212, 310), (2212, 130),
+                              (2112, 310), (2112, 130)]:
+                        self.mod_pprod[t] = ('isospin', k0arg, 
+                            kmat)
+                elif abs(sec_pdg) == 2212:
+                    self.mod_pprod[(2112, 2112)] = ('isospin', args, 
+                        self.mod_pprod[(prim_pdg, sec_pdg)][2])
+
             # Tell MCEqRun to regenerate the matrices if something has changed
             return True
         else:
-            if dbg > 0:
+            if dbg > 1:
                 print (self.__class__.__name__ + 
-                'set_mod_pprod(): no changes to particle production' +
+                '::set_mod_pprod(): no changes to particle production' +
                 ' modification matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
             return False
 
+    def print_mod_pprod(self):
+        """Prints the active particle production modification.
+        """
+
+        for i, (prim_pdg, sec_pdg) in enumerate(sorted(self.mod_pprod)):
+
+            print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(i,
+                prim_pdg, sec_pdg, self.mod_pprod[(prim_pdg, sec_pdg)][0],
+                str(self.mod_pprod[(prim_pdg, sec_pdg)][1]))
 
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
@@ -593,8 +642,6 @@ class InteractionYields():
         """
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
-        # TODO: modify yields to include the bin size
-        # print config['vetos']['veto_charm_pprod']
         if (config['vetos']['veto_charm_pprod'] and
            ((abs(projectile) > 400 and abs(projectile) < 500) or
             (abs(projectile) > 4000 and abs(projectile) < 5000))):
@@ -635,7 +682,7 @@ class InteractionYields():
                     'in leading particle veto.',projectile, daughter)
 
         if (projectile,daughter) in self.mod_pprod.keys():
-            if dbg > 0: print (
+            if dbg > 1: print (
                 'InteractionYields::get_y_matrix(): using modified particle ' +
                 'production for {0}/{1}').format(projectile, daughter)
             m = np.copy(m)

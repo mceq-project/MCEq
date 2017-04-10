@@ -141,6 +141,11 @@ config = {
 # (stop particle production after one interaction length)
 "first_interaction_mode": False,
 
+# When using modified particle production matrices use
+# isospin symmetry to determine the modification to neutrons
+# and K0L/K0S
+"use_isospin_sym": True,
+
 # Possibilities to control the solver (some options are obsolete/not
 # working)
 "vetos": {
@@ -154,7 +159,10 @@ config = {
 
     # Allow only those particles to be projectiles (incl. anti-particles)
     # Faster initialization, 
+    # For inclusive lepton flux computations: 
     # precision loss ~ 1%, for SIBYLL2.3.X with charm 5% above 10^7 GeV
+    # Might be different for yields (set_single_primary_particle)
+    # For full precision or if in doubt, use []
     "allowed_projectiles": [2212, 2112, 211, 321, 130],
 
     # Disable leptons coming from decays inside the interaction models
