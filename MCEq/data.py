@@ -517,7 +517,9 @@ class InteractionYields():
             kmat = self._gen_mod_matrix(x_func, *args)
             self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func.__name__, args, 
                 kmat)
-            print np.sum(kmat)/np.count_nonzero(kmat,dtype=np.float)
+            if dbg > 1:
+                print ('::set_mod_pprod(): modification "strength"',  
+                    np.sum(kmat)/np.count_nonzero(kmat,dtype=np.float))
 
             if config['use_isospin_sym'] and prim_pdg == 2212:
                 
