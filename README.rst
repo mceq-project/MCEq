@@ -110,6 +110,7 @@ Troubleshoting
 --------------
 You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_  if you have previous 
 Python installations. A workaround is to set the environement variable
+	
 	.. code-block:: bash
 
 	   $ export PYTHONNOUSERSITE=1
