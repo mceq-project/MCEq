@@ -1,7 +1,7 @@
 MCEq - Matrix cascade equation
 ==============================
 
-This scientific package might be useful fo all who deal with high-energy inclusive atmospheric fluxes of muons and neutrinos. In particular it might be useful for experiments, for example  `IceCube <https://icecube.wisc.edu>`_ or `MINOS <http://www-numi.fnal.gov/PublicInfo/index.html>`_, for calculations of systematic uncertainties and atmospheric backgrounds.
+This scientific package might be useful to all who deal with high-energy inclusive atmospheric fluxes of muons and neutrinos. In particular it might be useful for experiments, for example  `IceCube <https://icecube.wisc.edu>`_ or `MINOS <http://www-numi.fnal.gov/PublicInfo/index.html>`_, for calculations of systematic uncertainties and atmospheric backgrounds.
 
 Status
 ------
@@ -11,7 +11,7 @@ The current development status is **alpha**. Although the numerical part of the 
 `Documentation <http://mceq.readthedocs.org/en/latest/>`_
 ---------------------------------------------------------
 
-As mentioned above the project is development. The current state of the documentation is more suited for developers rather than end-users. Mostly it is auto-generated `sphinx`-docs. Check it out before touching the code.  The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
+As mentioned above the project is in development. The current state of the documentation is more suited for developers rather than end-users. Mostly it is auto-generated `sphinx`-docs. Check it out before touching the code.  The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
 
 System requirements
 -------------------
@@ -39,7 +39,7 @@ Dependencies:
 
 Installation
 ------------
-The installation simplest method relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ by `Continuum Analytics <http://www.continuum.io>`_. It doesn't just improve your life, but also provides most of the scientific computing packages by default. It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, is to add this directory to your system `$PATH` variable. To un-install just delete this directory.
+The simplest method of installation relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ by `Continuum Analytics <http://www.continuum.io>`_. It not only improves your life, but also provides most of the scientific computing packages by default. It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, is to add this directory to your system `$PATH` variable. To un-install just delete this directory.
 
 #. Download one of the installers for your system architecture from here:
 
@@ -62,7 +62,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	   $ git clone --recursive https://github.com/afedynitch/MCEq.git
 
 	It will clone this github repository into a folder called `MCEq` and download all files.
-	Enter this directory. 
+	Enter this directory.
 
 #. To install all dependencies into you new conda environment
 
@@ -70,7 +70,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	   $ conda install --file conda_req.txt
 
-	This will ask conda to download and install all needed packages into its default environment. 
+	This will ask conda to download and install all needed packages into its default environment.
 
 #. (**Optional**) If you know what a `virtualenv` is, the corresponding commands to download and install all packages in a newly created environment `mceq_env` are
 
@@ -104,24 +104,24 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 Troubleshooting
 --------------
-You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_ if you have previous 
+You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_ if you have previous
 Python installations. A workaround is to set the environment variable
 	.. code-block:: bash
 
 	   $ export PYTHONNOUSERSITE=1
-	   
+
 Thanks to F.C. Penha for pointing this out.
 
 Citation
 --------
-If you are using this code in your scientific work, please cite 
+If you are using this code in your scientific work, please cite
 
    | *Calculation of conventional and prompt lepton fluxes at very high energy*
    | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-Please, also cite or footnote this Github site and revisit this page from time to time, 
-to get the most up2date information.
+Please, also cite or footnote this Github site and revisit this page from time to time,
+to get the most up-to-date information.
 
 The models inside this code need to be cited separately. Please
 `see the documentation <http://mceq.readthedocs.org/en/latest/citations.html>`_ for the complete list of references.
