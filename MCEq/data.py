@@ -175,7 +175,7 @@ class NCEParticle(object):
         :attr:`is_resonance` are calculated here.
 
         Args:
-          e_grid (np.array): energy grid of size :attr:`d`
+          e_grid (numpy.array): energy grid of size :attr:`d`
           no_mix (bool): if True, mixing is disabled and all particles
                          have either hadron or resonances behavior.
           max_density (float): maximum density on the integration path (largest
@@ -473,7 +473,7 @@ class InteractionYields(object):
           args (tuple): arguments of `x_func`
 
         Returns:
-          (array): modification matrix
+          (numpy.array): modification matrix
         """
 
         if dbg > 0:
@@ -605,15 +605,15 @@ class InteractionYields(object):
         return True
 
     def set_xf_band(self, xl_low_idx, xl_up_idx):
-        """Limits interactions to certain range in :math:`x_{\rm lab}`.
+        """Limits interactions to certain range in :math:`x_{\\rm lab}`.
 
-        Limit particle production to a range in :math:`x_{\rm lab}` given
+        Limit particle production to a range in :math:`x_{\\rm lab}` given
         by lower index, below which no particles are produced and an upper
         index, respectively. (Needs more clarification).
 
         Args:
-          xl_low_idx (int): lower index of `x_{\rm lab}` value
-          xl_up_idx (int): upper index of `x_{\rm lab}` value
+          xl_low_idx (int): lower index of :math:`x_{\\rm lab}` value
+          xl_up_idx (int): upper index of :math:`x_{\\rm lab}` value
         """
 
         if xl_low_idx >= 0 and xl_up_idx > 0:
