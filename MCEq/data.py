@@ -668,8 +668,8 @@ class InteractionYields(object):
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
         if (config['vetos']['veto_charm_pprod'] and
-            ((abs(projectile) > 400 and abs(projectile) < 500) or
-             (abs(projectile) > 4000 and abs(projectile) < 5000))):
+                ((abs(projectile) > 400 and abs(projectile) < 500) or
+                 (abs(projectile) > 4000 and abs(projectile) < 5000))):
 
             if dbg > 2:
                 print ('InteractionYields::get_y_matrix(): disabled particle ' +
