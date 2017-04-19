@@ -710,7 +710,7 @@ class CorsikaAtmosphere(EarthAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: column depth :math:`\\T(h_{cm})` in g/cm**2
+          float: column depth :math:`T(h_{cm})` in g/cm**2
         """
         return corsika_get_m_overburden_jit(h_cm, self._atm_param)
 

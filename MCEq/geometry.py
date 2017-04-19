@@ -37,12 +37,13 @@ class EarthGeometry(object):
         from MCEq.geometry import *
         from MCEq.misc import theta_rad
 
+        g = EarthGeometry()
         theta_list = np.linspace(0, 90, 500)
-        h_vec = np.linspace(0, h_atm, 500)
+        h_vec = np.linspace(0, g.h_atm, 500)
         th_list_rad = theta_rad(theta_list)
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
-        plt.plot(theta_list, l(th_list_rad) / 1e5,
+        plt.plot(theta_list, g.l(th_list_rad) / 1e5,
                  lw=2)
         plt.xlabel(r'zenith $\\theta$ at detector')
         plt.ylabel(r'path length $l(\\theta)$ in km')
@@ -54,7 +55,7 @@ class EarthGeometry(object):
 
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
-        plt.plot(theta_list, np.arccos(cos_th_star(th_list_rad)) / np.pi * 180.,
+        plt.plot(theta_list, np.arccos(g.cos_th_star(th_list_rad)) / np.pi * 180.,
                  lw=2)
         plt.xlabel(r'zenith $\\theta$ at detector')
         plt.ylabel(r'$\\theta^*$ at top of the atm.')
@@ -67,7 +68,7 @@ class EarthGeometry(object):
 
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
-        plt.plot(h_vec / 1e5, delta_l(h_vec, theta_rad(85.)) / 1e5,
+        plt.plot(h_vec / 1e5, g.delta_l(h_vec, theta_rad(85.)) / 1e5,
                  lw=2)
         plt.ylabel(r'Path length $\Delta l(h)$ in km')
         plt.xlabel(r'atm. height $h_{atm}$ in km')
@@ -81,8 +82,8 @@ class EarthGeometry(object):
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
         for theta in [30., 60., 70., 80., 85., 90.]:
             theta_path = theta_rad(theta)
-            delta_l_vec = np.linspace(0, l(theta_path), 1000)
-            plt.plot(delta_l_vec / 1e5, h(delta_l_vec, theta_path) / 1e5,
+            delta_l_vec = np.linspace(0, g.l(theta_path), 1000)
+            plt.plot(delta_l_vec / 1e5, g.h(delta_l_vec, theta_path) / 1e5,
                      label=r'${0}^o$'.format(theta), lw=2)
         plt.legend()
         plt.xlabel(r'path length $\\Delta l$ [km]')
@@ -113,8 +114,8 @@ class EarthGeometry(object):
         self.h_obs = config['h_obs'] * 1e2  # cm
         self.h_atm = config['h_atm'] * 1e2  # cm
         self.r_E = config['r_E'] * 1e2  # cm
-        self.r_top = r_E + h_atm
-        self.r_obs = r_E + h_obs
+        self.r_top = self.r_E + self.h_atm
+        self.r_obs = self.r_E + self.h_obs
 
     def _A_1(self, theta):
         """Segment length :math:`A1(\\theta)` in cm.
