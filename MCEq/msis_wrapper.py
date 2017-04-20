@@ -7,34 +7,36 @@ else:
     from nrlmsise_00_header import *
     from nrlmsise_00 import gtd7
 
-#===============================================================================
+#=========================================================================
 # NRLMSISE00
-#===============================================================================
-class NRLMSISE00Base():
+#=========================================================================
+
+
+class NRLMSISE00Base(object):
     def __init__(self):
         self.input = nrlmsise_input()
         self.output = nrlmsise_output()
         self.flags = nrlmsise_flags()
-        self.month2doy = {'January':1,
-                          'February':32,
-                          'March':60,
-                          'April':91,
-                          'May':121,
-                          'June':152,
-                          'July':182,
-                          'August':213,
-                          'September':244,
-                          'October':274,
-                          'November':305,
-                          'December':335}
+        self.month2doy = {'January': 1,
+                          'February': 32,
+                          'March': 60,
+                          'April': 91,
+                          'May': 121,
+                          'June': 152,
+                          'July': 182,
+                          'August': 213,
+                          'September': 244,
+                          'October': 274,
+                          'November': 305,
+                          'December': 335}
         # Longitude, latitude, height
-        self.locations = {'SouthPole':(0.,-90., 2834.*100.),
-                          'Karlsruhe':(8.4, 49., 110. *100.),
-                          'Geneva':(6.1, 46.2, 370. *100.),
-			              'Tokyo':(139., 35., 5.*100.)}
+        self.locations = {'SouthPole': (0., -90., 2834. * 100.),
+                          'Karlsruhe': (8.4, 49., 110. * 100.),
+                          'Geneva': (6.1, 46.2, 370. * 100.),
+                          'Tokyo': (139., 35., 5. * 100.)}
 
-        self.daytimes = {'day':43200.,
-                         'night':0.}
+        self.daytimes = {'day': 43200.,
+                         'night': 0.}
         self.current_location = 'SouthPole'
         self.init_default_values()
 
@@ -48,6 +50,7 @@ class NRLMSISE00Base():
         return quad(self.get_density, altitude_cm, 112.8 * 1e5,
                     epsrel=0.001)[0]
 
+
 class pyNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
@@ -58,7 +61,7 @@ class pyNRLMSISE00(NRLMSISE00Base):
         self.input.g_lat = self.locations[self.current_location][1]
         self.input.g_long = self.locations[self.current_location][0]
         self.input.lst = self.input.sec / 3600. + \
-                                  self.input.g_long / 15.
+            self.input.g_long / 15.
         # Do not touch this except you know what you are doing
         self.input.f107A = 150.
         self.input.f107 = 150.
@@ -72,7 +75,8 @@ class pyNRLMSISE00(NRLMSISE00Base):
 
     def set_location(self, tag):
         if tag not in self.locations.keys():
-            raise Exception("NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
+            raise Exception(
+                "NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
         self.input.alt = self.locations[tag][2]
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
@@ -109,7 +113,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.input.alt = c_double(self.locations[self.current_location][2])
         self.input.g_lat = c_double(self.locations[self.current_location][1])
         self.input.g_long = c_double(self.locations[self.current_location][0])
-        self.input.lst = c_double(self.input.sec.value / 3600. + \
+        self.input.lst = c_double(self.input.sec.value / 3600. +
                                   self.input.g_long.value / 15.)
         # Do not touch this except you know what you are doing
         self.input.f107A = c_double(150.)
@@ -118,13 +122,14 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.input.ap_a = pointer(ap_array())
         self.alt_surface = self.locations[self.current_location][2]
 
-        self.flags.switches[0] =c_int(0)
+        self.flags.switches[0] = c_int(0)
         for i in range(1, 24):
             self.flags.switches[i] = c_int(1)
 
     def set_location(self, tag):
         if tag not in self.locations.keys():
-            raise Exception("NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
+            raise Exception(
+                "NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
         self.input.alt = c_double(self.locations[tag][2])
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
@@ -209,6 +214,7 @@ def test():
     plt.xlabel(r'Atmospheric height $h$ [km]')
     plt.subplots_adjust(left=0.15, bottom=0.11)
     plt.show()
+
 
 if __name__ == '__main__':
     test()
