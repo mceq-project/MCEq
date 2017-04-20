@@ -882,6 +882,17 @@ class IsothermalAtmosphere(EarthAtmosphere):
         """
         return self.X0/self.hiso_cm*np.exp(-h_cm/self.hiso_cm)
 
+    def get_mass_overburden(self, h_cm):
+        """ Returns the mass overburden in atmosphere in g/cm**2.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: column depth :math:`\\T(h_{cm})` in g/cm**2
+        """
+        return self.X0*np.exp(-h_cm/self.hiso_cm)
+
 class MSIS00Atmosphere(EarthAtmosphere):
 
     """Wrapper class for a python interface to the NRLMSISE-00 model.
@@ -953,10 +964,12 @@ class AIRSAtmosphere(EarthAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    def __init__(self, location, season, *args, **kwargs):
+    def __init__(self, location, season, extrapolate=True, *args, **kwargs):
         if location != 'SouthPole':
             raise Exception(self.__class__.__name__ + 
                 "(): Only South Pole location supported. " + location)
+        
+        self.extrapolate = extrapolate
 
         self.month2doy = {'January':1,
                           'February':32,
@@ -1027,29 +1040,29 @@ class AIRSAtmosphere(EarthAtmosphere):
         dates = data_collection['alti'][0]
 
         msis = MSIS00Atmosphere(location,'January')
-
         for didx, date in enumerate(dates):
             h_vec = np.array(data_collection['alti'][2][didx,:]*1e2)
             d_vec = np.array(data_collection['dens'][2][didx,:])
+            if self.extrapolate:
+                #Extrapolate using msis
+                h_extra = np.linspace(h_vec[-1],config['h_atm']*1e2,250)
+                msis._msis.set_doy(self._get_y_doy(date)[1]-1)
+                msis_extra = np.array([msis.get_density(h) for h in h_extra])
 
-            #Extrapolate using msis
-            h_extra = np.linspace(h_vec[-1],config['h_atm']*1e2,25)
-            msis._msis.set_doy(self._get_y_doy(date)[1]-1)
-            msis_extra = np.array([msis.get_density(h) for h in h_extra])
+                # Interpolate last few altitude bins
+                ninterp = 5
 
-            # Interpolate last few altitude bins
-            ninterp = 5
+                for ni in range(ninterp):
+                    cl = (1 - np.exp(-ninterp+ni + 1))
+                    ch = (1 - np.exp(-ni))
+                    norm = 1./(cl + ch)
+                    d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm + 
+                                    msis.get_density(h_vec[-ni-1])*ch*norm)
 
-            for ni in range(ninterp):
-                cl = (1 - np.exp(-ninterp+ni + 1))
-                ch = (1 - np.exp(-ni))
-                norm = 1./(cl + ch)
-                d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm + 
-                                msis.get_density(h_vec[-ni-1])*ch*norm)
-
-            # Merge the two datasets
-            h_vec = np.hstack([h_vec[:-1], h_extra])
-            d_vec = np.hstack([d_vec[:-1], msis_extra])
+                # Merge the two datasets
+                h_vec = np.hstack([h_vec[:-1], h_extra])
+                d_vec = np.hstack([d_vec[:-1], msis_extra])
+                        
 
             self.interp_tab[self._get_y_doy(date)] = (h_vec, d_vec)
 
@@ -1108,7 +1121,12 @@ class AIRSAtmosphere(EarthAtmosphere):
         Returns:
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
-        return np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
+        ret = np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
+        try:
+            ret[h_cm > self.h[-1]] = np.nan
+        except TypeError:
+            if h_cm > self.h[-1]: return np.nan
+        return ret
 
 
 class MSIS00IceCubeCentered(MSIS00Atmosphere):
