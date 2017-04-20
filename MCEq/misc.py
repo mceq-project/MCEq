@@ -7,7 +7,15 @@ Created on 06.01.2014
 import numpy as np
 from mceq_config import dbg
 
+def theta_deg(cos_theta):
+    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees.
+    """
+    return np.arccos(cos_theta) * 180. / np.pi
 
+def theta_rad(theta):
+    """Converts :math:`\\theta` from rad to degrees.
+    """
+    return theta / 180. * np.pi
 
 def print_in_rows(str_list, n_cols=8):
     l = len(str_list)

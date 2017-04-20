@@ -22,11 +22,12 @@ prototyping
 
 # Not licensed
 
-# eclipse stuff
+# Editor/IDE stuff
 .p*
 .e*
 .settings
 .DS*
+.vs*
 
 # C extensions
 *.so
