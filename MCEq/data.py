@@ -1253,3 +1253,161 @@ class HadAirCrossSections(object):
         for key in sorted(self.cs.keys()):
             a_string += str(key) + '\n'
         return a_string
+
+def convert_to_compact(fname):
+    """Converts an interaction model dictionary to "compact" mode.
+
+    This function takes a yield file, where all secondaries stable are
+    were considered stable, and converts it to a new file with only a
+    subset of longer lived hadrons, which are important for air-shower
+    and inclusive lepton calculations.
+
+    In the "compact" mode file, the production of short lived particles and
+    resonances is convolved with their decay distributions, resulting a
+    feed-down corretion to a longer lived particle. For example
+    :math:`p + A \to \rho + X \to \pi + \pi + X`. The new interaction yield 
+    file obtains the suffix `_compact` and it contains only these relevant 
+    secondary particles:
+    
+    .. math::
+
+        \pi^+, K^+, K^0_{S,L}, p, n, \bar{p}, \bar{n}, \Lambda^0, \bar{\Lambda^0},
+        \eta, \phi, \omega, D^0, D^+, D^+_s + {\rm c.c.} + {\rm leptons}
+
+    The compact mode has the advantage, that the production spectra stored in
+    this dictionary are directly comparable to what accelerators consider as
+    stable particles, defined by a minimal life-time requirement. Using the 
+    compact mode is recommended for most applications, which use
+    :func:`MCEq.core.MCEqRun.set_mod_pprod` to modify the spectrum of secondary
+    hadrons.
+
+    For some interaction models, the performance advantage can be up to 50\%.
+    The precision loss is negligible at energies below 100 TeV, but can increase
+    up to a few \% at higher energies where prompt leptons dominate. This is
+    because also very short-lived charmed mesons and baryons with small branching
+    ratios into leptons can interact with the atmosphere and loose energy. 
+
+    For `QGSJET`, compact and normal mode are identical, since the model does not
+    produce resonances or rare mesons by design.    
+
+
+    Args:
+      fname (str): name of compressed yield (.bz2) file
+
+    Returns:
+      numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
+    """
+
+    import os
+    import cPickle as pickle
+    from bz2 import BZ2File
+    import ParticleDataTool
+
+    if not os.isfile(fname):
+        fname = os.path.join(config["data_dir"],fname)
+
+    # Load the yield dictionary (without multiplication with bin widths)
+    mdi = pickle.load(BZ2File(fname))
+
+    # Load the decay dictionary (with bin widths and index)
+    ddi = pickle.load(open(os.path.join(config["data_dir"], 'decays_v1.ppd')))
+
+    # Define a list of "stable" particles
+    # Particles having an anti-partner
+    standard_particles = [11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 
+                          411, 421, 431, 22]
+    standard_particles += [-pid for pid in standard_particles]
+
+    #unflavored particles
+    standard_particles += [111, 130, 310, 221, 223, 333]
+
+    import ParticleDataTool as pd
+    part_d = pd.PYTHIAParticleData()
+    ctau_pr = part_d.ctau(411)
+
+    def create_secondary_dict(yield_dict, dbg):
+        """This is a replica of function 
+        :func:`MCEq.data.InteractionYields._gen_index`."""
+        dbgstr = 'convert_to_compact::create_secondary_dict(): '
+        if dbg > 2: print dbgstr + 'entering...'
+
+        secondary_dict = {}
+        for key, mat in sorted(yield_dict.iteritems()):
+            try:
+                proj, sec = key
+            except ValueError:
+                if dbg > 2:
+                    print (dbgstr + 'Skip additional info', key)
+                continue
+
+            if proj not in secondary_dict:
+                secondary_dict[proj] = []
+                if dbg > 2: print dbgstr, proj, 'added.'
+            
+            if np.sum(mat) > 0:
+                assert(sec not in secondary_dict[proj]), (dbgstr + 
+                    "Error in construction of index array: {0} -> {1}".format(proj, sec))
+                secondary_dict[proj].append(sec)
+            else:
+                if dbg > 2: print dbgstr + 'Zeros for', proj, sec
+        
+        return secondary_dict
+
+    def follow_chained_decay(real_mother, mat, interm_mothers, reclev):
+        """Follows the chain of decays down to the list of stable particles.
+
+        The function follows the list of daughters of an unstable parrticle
+        and computes the feed-down contribution by evaluating the convolution
+        of production spectrum and decay spectrum using the formula
+
+        ..math::
+            \mathbf{C}^M^p = D^\rho \cdot \ 
+        :func:`MCEq.data.InteractionYields._gen_index`."""
+
+        dbgstr = 'convert_to_compact::follow_chained_decay(): '
+        tab = 3*reclev*'--' + '>'
+
+        if dbg > 1 and reclev == 0:
+            print dbgstr, 'start recursion with', real_mother, interm_mothers, np.sum(mat) 
+        elif dbg > 2: 
+            print tab, 'enter with', real_mother, interm_mothers, np.sum(mat)
+
+        if np.sum(mat) < 1e-30:
+            if dbg > 2: print tab ,'zero matrix for', real_mother, interm_mothers 
+        if interm_mothers[-1] not in dec_di or interm_mothers[-1] in standard_particles:
+            if dbg > 2: print tab ,'no further decays of', interm_mothers
+            return
+
+        for d in dec_di[interm_mothers[-1]]:
+            
+            dmat = np.copy(ddi[(interm_mothers[-1],d)])
+            mprod = np.copy(dmat.dot(mat))
+
+            if np.sum(mprod) < 1e-40:
+                if dbg > 2:
+                    print tab, 'cancel recursion in', real_mother, interm_mothers, d, \
+                    'since matrix is zero', np.sum(mat), np.sum(dmat), np.sum(mprod)
+                continue
+
+            if d not in standard_particles:
+                if dbg > 1: 
+                    print tab, 'call rec', real_mother, interm_mothers, d, np.sum(mat)
+                follow_chained_decay(real_mother, mprod, 
+                                     interm_mothers + [d], reclev + 1)
+            else:
+                # Track prompt leptons in prompt category
+                if d in [12, 13, 14, 16] and part_d.ctau(interm_mothers[0]) <= ctau_pr:
+                    d = np.sign(d)*(7000 + abs(d))
+                if dbg > 0: print tab,'contribute to', real_mother, interm_mothers, d
+                if dbg > 1: print tab, np.sum(mat), np.sum(dmat)
+                if (real_mother, d) in fast_di.keys():
+                    if dbg > 1: print tab ,'+=',(real_mother,d), np.sum(mprod)
+                    fast_di[(real_mother,d)] += mprod
+                    if dbg > 1: tab ,'after',np.sum(fast_di[(real_mother,d)])
+                else:
+                    if dbg > 0: print tab,'new', (real_mother, d), interm_mothers
+                    fast_di[(real_mother,d)] = mprod
+                
+        return
+    
+
