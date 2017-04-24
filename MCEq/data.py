@@ -12,7 +12,7 @@ validating data structures:
   sampling PYTHIA8 Monte Carlo
 - :class:`HadAirCrossSections` keeps information about the inelastic,
   cross-section of hadrons with air. Typically obtained from Monte Carlo.
-- :class:`NCEParticle` bundles different particle properties for simpler
+- :class:`MCEqParticle` bundles different particle properties for simpler
   usage in :class:`MCEqRun`
 - :class:`EdepZFactos` calculates energy-dependent spectrum weighted
   moments (Z-Factors)
@@ -23,7 +23,7 @@ import numpy as np
 from mceq_config import config, dbg
 
 
-class NCEParticle(object):
+class MCEqParticle(object):
 
     """Bundles different particle properties for simplified
     availability of particle properties in :class:`MCEq.core.MCEqRun`.
@@ -285,7 +285,7 @@ class InteractionYields(object):
         #: (tuple) modified particle combination for error prop.
         self.mod_pprod = {}
         #: (numpy.array) Matrix of x_lab values
-        self.xmat = {}
+        self.xmat = None
         #: (list) List of particles supported by interaction model
         self.particle_list = []
 
@@ -316,12 +316,12 @@ class InteractionYields(object):
         if dbg > 1:
             print 'InteractionYields::_load(): entering..'
         # Remove dashes and points in the name
-        interaction_model = interaction_model.replace('-', '')
-        interaction_model = interaction_model.replace('.', '')
+        interaction_model = interaction_model.translate(None, "-.").upper()
+
         fname = join(config['data_dir'], interaction_model + '_yields.ppd')
 
         if config['compact_mode']:
-            fname = fname.replace('yields.ppd','compact_yields.ppd')
+            fname = fname.replace('.ppd','_compact.ppd')
 
         try:
             yield_dict = pickle.load(open(fname, 'rb'))
@@ -493,7 +493,6 @@ class InteractionYields(object):
         if dbg > 1:
             print (self.__class__.__name__ +
                    '::mod_pprod_matrix(): creating xmat')
-
         if self.xmat is None:
             self.xmat = self.no_interaction
             for eidx in range(self.dim):
@@ -909,13 +908,10 @@ class DecayYields(object):
                            "distributions for {0} found.").format(m)
 
             # Remove unused particle species from index in compact mode
-            # if config["compact_mode"]:
-            #     dclean = {}
-            #     for p, l in self.daughter_dict.iteritems():
-            #         if abs(p) not in mother_list:
-            #             continue
-            #         dclean[p] = l #[d for d in l if abs(d) in mother_list]
-            #     self.daughter_dict = dclean
+            if config["compact_mode"]:
+                for p in self.daughter_dict.keys():
+                    if abs(p) not in mother_list:
+                        _ = self.daughter_dict.pop(p)
 
             self.mothers = self.daughter_dict.keys()
 
@@ -1284,14 +1280,15 @@ def convert_to_compact(fname):
     In the "compact" mode file, the production of short lived particles and
     resonances is convolved with their decay distributions, resulting a
     feed-down corretion to a longer lived particle. For example
-    :math:`p + A \to \rho + X \to \pi + \pi + X`. The new interaction yield 
+    :math:`p + A \\to \\rho + X \\to \\pi + \\pi + X`. The new interaction yield 
     file obtains the suffix `_compact` and it contains only these relevant 
     secondary particles:
     
     .. math::
 
-        \pi^+, K^+, K^0_{S,L}, p, n, \bar{p}, \bar{n}, \Lambda^0, \bar{\Lambda^0},
-        \eta, \phi, \omega, D^0, D^+, D^+_s + {\rm c.c.} + {\rm leptons}
+        \pi^+, K^+, K^0_{S,L}, p, n, \\bar{p}, \\bar{n}, \\Lambda^0, 
+        \\bar{\Lambda^0}, \\eta, \\phi, \\omega, D^0, D^+, D^+_s + 
+        {\\rm c.c.} + {\\rm leptons}
 
     The compact mode has the advantage, that the production spectra stored in
     this dictionary are directly comparable to what accelerators consider as
@@ -1345,7 +1342,7 @@ def convert_to_compact(fname):
 
     # unflavored particles
     # append 221, 223, 333, if eta, omega and phi needed directly
-    standard_particles += [130, 310, 221, 223, 333]
+    standard_particles += [130, 310] #, 221, 223, 333]
 
     # projectiles
     allowed_projectiles = [2212, 2112, 211, 321, 130, 3122]
@@ -1391,7 +1388,7 @@ def convert_to_compact(fname):
 
         The function follows the list of daughters of an unstable parrticle
         and computes the feed-down contribution by evaluating the convolution
-        of production spectrum and decay spectrum using the formula
+        of production spectrum and decay spectrum using the formula (24)
 
         ..math::
             \mathbf{C}^M^p = D^\rho \cdot \ 
@@ -1432,15 +1429,16 @@ def convert_to_compact(fname):
                                      interm_mothers + [d], reclev + 1)
             else:
                 # Track prompt leptons in prompt category
-                if d in [12, 13, 14, 16]:
-                    # is_prompt = bool(np.sum([(part_d.ctau(mo) <= ctau_pr or 
-                    #     4000 < abs(mo) < 7000 or 400 < abs(mo) < 500) 
-                    #     for mo in interm_mothers]))
-                    is_prompt = bool(np.sum([(part_d.ctau(mo) < ctau_pr)]))
+                if abs(d) in [12, 13, 14, 16]:
+                    is_prompt = bool(np.sum([(part_d.ctau(mo) <= ctau_pr or 
+                        4000 < abs(mo) < 7000 or 400 < abs(mo) < 500) 
+                        for mo in interm_mothers]))
+                    # is_prompt = bool(np.sum([(part_d.ctau(mo) < ctau_pr)]))
                     if is_prompt:
                         d = np.sign(d)*(7000 + abs(d))
 
-                if dbg > 2: print tab, 'contribute to', real_mother, interm_mothers, d
+                if dbg > 2: 
+                    print tab, 'contribute to', real_mother, interm_mothers, d
 
                 if (real_mother, d) in compact_di.keys():
                     if dbg > 3: print tab, '+=', (real_mother, d), np.sum(mprod)
@@ -1488,7 +1486,7 @@ def convert_to_compact(fname):
 
     # Save in new dictionary with suffix compact
     fnsave = os.path.join(config['data_dir'],
-        fname.split('_yields.bz2')[0] + '_compact_yields.bz2')
+        fname.split('.bz2')[0] + '_compact.bz2')
 
     pickle.dump(compact_di, 
         BZ2File(fnsave,'wb'), protocol=-1)

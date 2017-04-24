@@ -88,6 +88,7 @@ class MCEqRun():
         )
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
+        print 'particle_list before decays', self.y.particle_list
         self.ds = DecayYields(**self.ds_params)
 
         # Load cross-section handling
