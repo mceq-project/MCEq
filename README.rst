@@ -67,7 +67,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	   $ git clone --recursive https://github.com/afedynitch/MCEq.git
 
 	It will clone this github repository into a folder called `MCEq` and download all files.
-	Enter this directory. 
+	Enter this directory.
 
 #. To install all dependencies into you new conda environment
 
@@ -75,7 +75,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	   $ conda install --file conda_req.txt
 
-	This will ask conda to download and install all needed packages into its default environment. 
+	This will ask conda to download and install all needed packages into its default environment.
 
 #. (**Optional**) If you know what a `virtualenv` is, the corresponding commands to download and install all packages in a newly created environment `mceq_env` are
 
@@ -106,26 +106,25 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
-Troubleshoting
---------------
-You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_  if you have previous 
-Python installations. A workaround is to set the environement variable
-	
+Troubleshooting
+---------------
+You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_  if you have previous Python installations. A workaround is to set the environement variable
+
 	.. code-block:: bash
 
 	   $ export PYTHONNOUSERSITE=1
-	   
+
 Thanks to F.C. Penha for pointing this out.
 
 Citation
 --------
-If you are using this code in your scientific work, please cite 
+If you are using this code in your scientific work, please cite
 
    | *Calculation of conventional and prompt lepton fluxes at very high energy*
    | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-Please, also cite or footnote this Github site and revisit this page from time to time, 
+Please, also cite or footnote this Github site and revisit this page from time to time,
 to get the most up2date information.
 
 The models inside this code need to be cited separately. Please
