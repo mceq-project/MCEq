@@ -317,7 +317,7 @@ class EarthAtmosphere():
     __metaclass__ = ABCMeta
 
     def __init__(self, *args, **kwargs):
-        self.geom = geometry.EarthGeometry()
+        self.geom = MCEq.geometry.EarthGeometry()
         self.thrad = None
         self.theta_deg = None
         self.max_X = None
@@ -969,7 +969,6 @@ class AIRSAtmosphere(EarthAtmosphere):
 
     def __init__(self, location, season, extrapolate=True, *args, **kwargs):
         if location != 'SouthPole':
-<<<<<<< HEAD
             raise Exception(self.__class__.__name__ + 
                 "(): Only South Pole location supported. " + location)
         
@@ -987,23 +986,7 @@ class AIRSAtmosphere(EarthAtmosphere):
                           'October':274,
                           'November':305,
                           'December':335}
-=======
-            raise Exception(self.__class__.__name__ +
-                            "(): Only South Pole location supported. " + location)
 
-        self.month2doy = {'January': 1,
-                          'February': 32,
-                          'March': 60,
-                          'April': 91,
-                          'May': 121,
-                          'June': 152,
-                          'July': 182,
-                          'August': 213,
-                          'September': 244,
-                          'October': 274,
-                          'November': 305,
-                          'December': 335}
->>>>>>> faf77b05dce20dda8ada597a4ed89c0b53888179
         self.season = season
         self.init_parameters(location, **kwargs)
         EarthAtmosphere.__init__(self)

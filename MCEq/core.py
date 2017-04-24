@@ -57,13 +57,13 @@ class MCEqRun():
         :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
-      vetos (dict): different controls, see :mod:`mceq_config`
+      adv_set (dict): advanced settings, see :mod:`mceq_config`
       obs_ids (list): list of particle name strings. Those lepton decay
         products will be scored in the special ``obs_`` categories
     """
 
     def __init__(self, interaction_model, density_model, primary_model,
-                 theta_deg, vetos, obs_ids, *args, **kwargs):
+                 theta_deg, adv_set, obs_ids, *args, **kwargs):
 
         from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
@@ -80,18 +80,12 @@ class MCEqRun():
         self.y = InteractionYields(**self.yields_params)
         # Interaction matrices initialization flag
         self.iam_mat_initialized = False
-
         # Load decay spectra
         self.ds_params = dict(
             mother_list=self.y.particle_list,
             weights=self.y.weights,
             fname=config['decay_fname']
         )
-        # If fast-mode interaction model selected, use the fast mode dictionary
-        if (interaction_model.endswith('_fast') and
-                not self.ds_params['fname'].endswith('_fast.ppd')):
-            self.ds_params['fname'] = self.ds_params['fname'].split('.ppd')[
-                0] + '_fast.ppd'
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
         self.ds = DecayYields(**self.ds_params)
@@ -112,8 +106,8 @@ class MCEqRun():
         #: properties lists of particles, index translation etc.
         self.modtab = SibyllParticleTable()
 
-        # Store vetos
-        self.vetos = vetos
+        # Store adv_set
+        self.adv_set = adv_set
 
         # First interaction mode
         self.fa_vars = None
@@ -281,7 +275,7 @@ class MCEqRun():
 
         for p in particle_list:
             p.calculate_mixing_energy(self.e_grid,
-                                      self.vetos['no_mixing'],
+                                      self.adv_set['no_mixing'],
                                       max_density=max_density)
 
         cascade_particles = [p for p in particle_list if not p.is_resonance]
@@ -1007,14 +1001,14 @@ class MCEqRun():
         for p in self.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if (not p.is_projectile or
-                (config["vetos"]["allowed_projectiles"] and
-                    abs(p.pdgid) not in config["vetos"]["allowed_projectiles"])):
+                (config["adv_set"]["allowed_projectiles"] and
+                    abs(p.pdgid) not in config["adv_set"]["allowed_projectiles"])):
                 if dbg > 1 and p.is_projectile:
                     print (self.__class__.__name__ +
                            '_fill_matrices(): Particle production by {0} ' +
                            'explicitly disabled').format(p.pdgid)
                 continue
-            elif self.vetos['veto_sec_interactions'] and p.pdgid not in [2212, 2112]:
+            elif self.adv_set['veto_sec_interactions'] and p.pdgid not in [2212, 2112]:
                 if dbg > 2:
                     print (self.__class__.__name__ +
                            '_fill_matrices(): Veto secodary interaction of' +
@@ -1027,7 +1021,7 @@ class MCEqRun():
             for s in p.secondaries:
                 if s not in self.pdg2pref:
                     continue
-                if self.vetos['veto_direct_leptons'] and pref[s].is_lepton:
+                if self.adv_set['veto_direct_leptons'] and pref[s].is_lepton:
                     if dbg > 2:
                         print (self.__class__.__name__ +
                                '_fill_matrices(): veto direct lepton', s)
