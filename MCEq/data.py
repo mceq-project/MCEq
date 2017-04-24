@@ -69,7 +69,7 @@ class NCEParticle(object):
 
         self.particle_db = particle_db
         self.pythia_db = pythia_db
-        if pdgid in config["vetos"]["veto_decays"]:
+        if pdgid in config["adv_set"]["veto_decays"]:
             pythia_db.force_stable(self.pdgid)
         self.cs = cs_db
         self.d = d
@@ -194,7 +194,7 @@ class NCEParticle(object):
         inv_declen = self.inverse_decay_length(e_grid)
 
         if (not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.)
-                or abs(self.pdgid) in config["vetos"]["exclude_from_mixing"]):
+                or abs(self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -319,9 +319,15 @@ class InteractionYields(object):
         interaction_model = interaction_model.replace('-', '')
         interaction_model = interaction_model.replace('.', '')
         fname = join(config['data_dir'], interaction_model + '_yields.ppd')
+
+        if config['compact_mode']:
+            fname = fname.replace('yields.ppd','compact_yields.ppd')
+
         try:
             yield_dict = pickle.load(open(fname, 'rb'))
         except IOError:
+            if config['compact_mode']:
+                convert_to_compact(fname)
             self._decompress(fname)
             yield_dict = pickle.load(open(fname, 'rb'))
 
@@ -329,7 +335,6 @@ class InteractionYields(object):
         self.e_bins = yield_dict.pop('ebins')
         self.weights = yield_dict.pop('weights')
         self.iam = yield_dict.pop('mname')
-
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')
         self.nspec = yield_dict.pop('nspec')
@@ -598,7 +603,6 @@ class InteractionYields(object):
             self._load(interaction_model)
 
         if interaction_model != self.iam:
-            print self.iam
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
@@ -667,7 +671,7 @@ class InteractionYields(object):
         """
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
-        if (config['vetos']['veto_charm_pprod'] and
+        if (config['adv_set']['veto_charm_pprod'] and
                 ((abs(projectile) > 400 and abs(projectile) < 500) or
                  (abs(projectile) > 4000 and abs(projectile) < 5000))):
 
@@ -684,7 +688,7 @@ class InteractionYields(object):
         # For debugging purposes or plotting xlab distributions use this line instead
         # m = np.copy(self.yields[(projectile, daughter)])
 
-        if config['vetos']['veto_forward_mesons'] and abs(daughter) < 2000 \
+        if config['adv_set']['veto_forward_mesons'] and abs(daughter) < 2000 \
                 and (projectile, -daughter) in self.yields.keys():
             manti = self.yields[(projectile, -daughter)]  # .dot(self.weights)
             ie = 50
@@ -851,12 +855,14 @@ class DecayYields(object):
     """
 
     def __init__(self, mother_list=None, weights=None, fname=None):
+        #: (list) List of particles in the decay matrices
+        self.particle_list = []
+
         self._load(mother_list, weights, fname)
 
         self.particle_keys = self.mothers
 
-        #: (list) List of particles in the decay matrices
-        self.particle_list = []
+        
 
     def _load(self, mother_list, weights, fname):
         """Un-pickles the yields dictionary using the path specified as
@@ -873,6 +879,10 @@ class DecayYields(object):
         else:
             fname = join(config['data_dir'], fname)
 
+        # Take the compact dictionary if enabled
+        if config['compact_mode']:
+            fname = fname.replace('.ppd','_compact.ppd')
+
         try:
             self.decay_dict = pickle.load(open(fname, 'rb'))
         except IOError:
@@ -882,7 +892,7 @@ class DecayYields(object):
         self.daughter_dict = self.decay_dict.pop('daughter_dict')
         # self.weights = self.decay_dict.pop('weights')
 
-        for mother in config["vetos"]["veto_decays"]:
+        for mother in config["adv_set"]["veto_decays"]:
             if dbg > 1:
                 print ("DecayYields:_gen_index():: switching off " +
                        "decays of {0}.").format(mother)
@@ -893,22 +903,31 @@ class DecayYields(object):
             self.mothers = self.daughter_dict.keys()
         else:
             for m in mother_list:
-                if (m not in self.daughter_dict.keys() and abs(m) > 22
-                        and m not in [2212, -2212]):
+                if (m not in self.daughter_dict.keys()
+                        and abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
                     print ("DecayYields::_load(): Warning: no decay " +
                            "distributions for {0} found.").format(m)
-            # for m in self.daughter_dict.keys():
-            #     if m not in mother_list and abs(m) < 7000:
-            #         _ = self.daughter_dict.pop(m)
+
+            # Remove unused particle species from index in compact mode
+            # if config["compact_mode"]:
+            #     dclean = {}
+            #     for p, l in self.daughter_dict.iteritems():
+            #         if abs(p) not in mother_list:
+            #             continue
+            #         dclean[p] = l #[d for d in l if abs(d) in mother_list]
+            #     self.daughter_dict = dclean
+
             self.mothers = self.daughter_dict.keys()
 
-        self._gen_particle_list()
+        self._gen_particle_list(mother_list)
 
-    def _gen_particle_list(self):
+    def _gen_particle_list(self, mother_list):
         """Saves a list of all particle species in the decay dictionary.
+
         """
 
         # Look up all particle species that a supported by selected model
+
         for p, l in self.daughter_dict.iteritems():
             self.particle_list += [p]
             self.particle_list += l
@@ -960,11 +979,11 @@ class DecayYields(object):
         # have an alias ID
         # the ID 7313 not included, since it's "a copy of"
         for alias in [7013, 7113, 7213]:
-            if 13 not in config["vetos"]["veto_decays"]:
+            if 13 not in config["adv_set"]["veto_decays"]:
                 daughter_dict[alias] = daughter_dict[13]
                 for d in daughter_dict[alias]:
                     new_dict[(alias, d)] = new_dict[(13, d)]
-            if -13 not in config["vetos"]["veto_decays"]:
+            if -13 not in config["adv_set"]["veto_decays"]:
                 daughter_dict[-alias] = daughter_dict[-13]
                 for d in daughter_dict[-alias]:
                     new_dict[(-alias, d)] = new_dict[(-13, d)]
@@ -1183,11 +1202,11 @@ class HadAirCrossSections(object):
           Exception: if invalid name specified in argument ``interaction_model``
         """
 
-        # Remove the _fast suffix, since this does not affect cross sections
+        # Remove the _compact suffix, since this does not affect cross sections
         if dbg > 2:
             print ("InteractionYields:set_interaction_model()::Using cross " +
-                   "sections of original model in fast mode")
-        interaction_model = interaction_model.split('_fast')[0]
+                   "sections of original model in compact mode")
+        interaction_model = interaction_model.split('_compact')[0]
 
         if interaction_model == self.iam and dbg > 0:
             print ("InteractionYields:set_interaction_model():: Model " +
@@ -1303,8 +1322,14 @@ def convert_to_compact(fname):
     from bz2 import BZ2File
     import ParticleDataTool
 
-    if not os.isfile(fname):
-        fname = os.path.join(config["data_dir"],fname)
+    # If file name is supplied as ppd or with compact including, modify to
+    # expected format
+    fname = fname.replace('.ppd','.bz2')
+    fname = fname.replace('_compact','')
+    if not os.path.isfile(fname):
+        fname = os.path.join(config["data_dir"], fname)
+
+    if dbg > 0: print "convert_to_compact(): Attempting conversion of", fname
 
     # Load the yield dictionary (without multiplication with bin widths)
     mdi = pickle.load(BZ2File(fname))
@@ -1314,18 +1339,26 @@ def convert_to_compact(fname):
 
     # Define a list of "stable" particles
     # Particles having an anti-partner
-    standard_particles = [11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 
-                          411, 421, 431, 22]
+    standard_particles = [12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 
+                          411, 421, 431] #for EM cascade add 11, 22
     standard_particles += [-pid for pid in standard_particles]
 
-    #unflavored particles
-    standard_particles += [111, 130, 310, 221, 223, 333]
+    # unflavored particles
+    # append 221, 223, 333, if eta, omega and phi needed directly
+    standard_particles += [130, 310, 221, 223, 333]
+
+    # projectiles
+    allowed_projectiles = [2212, 2112, 211, 321, 130, 3122]
+
 
     import ParticleDataTool as pd
     part_d = pd.PYTHIAParticleData()
-    ctau_pr = part_d.ctau(411)
+    ctau_pr = part_d.ctau(310)
 
-    def create_secondary_dict(yield_dict, dbg):
+    # Create new dictionary for the compact model version
+    compact_di = {}
+
+    def create_secondary_dict(yield_dict):
         """This is a replica of function 
         :func:`MCEq.data.InteractionYields._gen_index`."""
         dbgstr = 'convert_to_compact::create_secondary_dict(): '
@@ -1336,20 +1369,20 @@ def convert_to_compact(fname):
             try:
                 proj, sec = key
             except ValueError:
-                if dbg > 2:
+                if dbg > 3:
                     print (dbgstr + 'Skip additional info', key)
                 continue
 
             if proj not in secondary_dict:
                 secondary_dict[proj] = []
-                if dbg > 2: print dbgstr, proj, 'added.'
+                if dbg > 3: print dbgstr, proj, 'added.'
             
             if np.sum(mat) > 0:
                 assert(sec not in secondary_dict[proj]), (dbgstr + 
                     "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 secondary_dict[proj].append(sec)
             else:
-                if dbg > 2: print dbgstr + 'Zeros for', proj, sec
+                if dbg > 3: print dbgstr + 'Zeros for', proj, sec
         
         return secondary_dict
 
@@ -1365,49 +1398,102 @@ def convert_to_compact(fname):
         :func:`MCEq.data.InteractionYields._gen_index`."""
 
         dbgstr = 'convert_to_compact::follow_chained_decay(): '
-        tab = 3*reclev*'--' + '>'
+        tab = 3*reclev*'--' + '> '
 
         if dbg > 1 and reclev == 0:
-            print dbgstr, 'start recursion with', real_mother, interm_mothers, np.sum(mat) 
+            print dbgstr, 'start recursion with', real_mother, interm_mothers, np.sum(mat)
         elif dbg > 2: 
             print tab, 'enter with', real_mother, interm_mothers, np.sum(mat)
 
         if np.sum(mat) < 1e-30:
-            if dbg > 2: print tab ,'zero matrix for', real_mother, interm_mothers 
+            if dbg > 3: print tab, 'zero matrix for', real_mother, interm_mothers
         if interm_mothers[-1] not in dec_di or interm_mothers[-1] in standard_particles:
-            if dbg > 2: print tab ,'no further decays of', interm_mothers
+            if dbg > 3: print tab ,'no further decays of', interm_mothers
             return
 
+
         for d in dec_di[interm_mothers[-1]]:
-            
-            dmat = np.copy(ddi[(interm_mothers[-1],d)])
-            mprod = np.copy(dmat.dot(mat))
+            # Decay matrix
+            dmat = ddi[(interm_mothers[-1], d)]
+            # Matrix product D x C from the left (convolution)
+            mprod = dmat.dot(mat)
 
             if np.sum(mprod) < 1e-40:
-                if dbg > 2:
+                if dbg > 3:
                     print tab, 'cancel recursion in', real_mother, interm_mothers, d, \
                     'since matrix is zero', np.sum(mat), np.sum(dmat), np.sum(mprod)
                 continue
 
             if d not in standard_particles:
-                if dbg > 1: 
-                    print tab, 'call rec', real_mother, interm_mothers, d, np.sum(mat)
-                follow_chained_decay(real_mother, mprod, 
+                if dbg > 1:
+                    print tab, 'Recurse', real_mother, interm_mothers, d, np.sum(mat)
+
+                follow_chained_decay(real_mother, mprod,
                                      interm_mothers + [d], reclev + 1)
             else:
                 # Track prompt leptons in prompt category
-                if d in [12, 13, 14, 16] and part_d.ctau(interm_mothers[0]) <= ctau_pr:
-                    d = np.sign(d)*(7000 + abs(d))
-                if dbg > 0: print tab,'contribute to', real_mother, interm_mothers, d
-                if dbg > 1: print tab, np.sum(mat), np.sum(dmat)
-                if (real_mother, d) in fast_di.keys():
-                    if dbg > 1: print tab ,'+=',(real_mother,d), np.sum(mprod)
-                    fast_di[(real_mother,d)] += mprod
-                    if dbg > 1: tab ,'after',np.sum(fast_di[(real_mother,d)])
+                if d in [12, 13, 14, 16]:
+                    # is_prompt = bool(np.sum([(part_d.ctau(mo) <= ctau_pr or 
+                    #     4000 < abs(mo) < 7000 or 400 < abs(mo) < 500) 
+                    #     for mo in interm_mothers]))
+                    is_prompt = bool(np.sum([(part_d.ctau(mo) < ctau_pr)]))
+                    if is_prompt:
+                        d = np.sign(d)*(7000 + abs(d))
+
+                if dbg > 2: print tab, 'contribute to', real_mother, interm_mothers, d
+
+                if (real_mother, d) in compact_di.keys():
+                    if dbg > 3: print tab, '+=', (real_mother, d), np.sum(mprod)
+                    compact_di[(real_mother, d)] += mprod
                 else:
-                    if dbg > 0: print tab,'new', (real_mother, d), interm_mothers
-                    fast_di[(real_mother,d)] = mprod
-                
+                    if dbg > 3: print tab, 'new', (real_mother, d), interm_mothers
+                    compact_di[(real_mother, d)] = mprod
+
         return
-    
+
+    # Create index of entries
+    pprod_di = create_secondary_dict(mdi)
+    dec_di = create_secondary_dict(ddi)
+
+    if dbg > 2:
+        print 'Int   dict:\n', sorted(pprod_di)
+        print 'Decay dict:\n', sorted(dec_di)
+
+
+    for proj, lsecs in sorted(pprod_di.iteritems()):
+        
+        if abs(proj) not in allowed_projectiles:
+            continue
+
+        for sec in lsecs:
+            # Copy all direct production in first iteration
+            if sec in standard_particles:
+                compact_di[(proj,sec)] = np.copy(mdi[(proj,sec)])
+
+                if dbg > 2: print 'copied', proj, '->', sec
+
+        for sec in lsecs:
+            #Iterate over all remaining secondaries
+            if sec in standard_particles:
+                continue
+                
+            if dbg > 3: proj, '->', sec, '->', dec_di[sec]
+            #Enter recursion and calculate contribution from decay
+            follow_chained_decay(proj, mdi[(proj,sec)], [sec], 0)
+
+    # Copy metadata
+    compact_di['ebins'] = np.copy(mdi['ebins'])
+    compact_di['evec'] = np.copy(mdi['evec'])
+    compact_di['mname'] = mdi['mname']
+
+    # Save in new dictionary with suffix compact
+    fnsave = os.path.join(config['data_dir'],
+        fname.split('_yields.bz2')[0] + '_compact_yields.bz2')
+
+    pickle.dump(compact_di, 
+        BZ2File(fnsave,'wb'), protocol=-1)
+
+    # Delete cached version if it exists 
+    if os.path.isfile(fnsave.split('.bz2')[0] + '.ppd'):
+        os.unlink(fnsave.split('.bz2')[0] + '.ppd')
 

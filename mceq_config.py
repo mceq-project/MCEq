@@ -41,7 +41,7 @@ config = {
     #=========================================================================
 
     # Directory where the data files for the calculation are stored
-    "data_dir": base+'/data',
+    "data_dir": base + '/data',
 
     # File name of particle decay spectra
     "decay_fname": "decays_v1.ppd",
@@ -104,13 +104,6 @@ config = {
     # With serious nVidia GPUs CUDA a few times faster than MKL
     "kernel_config": "MKL",
 
-    #parameters for the odepack integrator. More details at
-    #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
-    "ode_params": {'name':'vode',
-                   'method':'adams',
-                   'nsteps':10000,
-                   'max_step':10.0},
-
     # Use sparse linear algebra (recommended!)
     "use_sparse": True,
 
@@ -122,9 +115,29 @@ config = {
     # Do not use with MKL, it can result in false results and slow down.
     "FP_precision": 64,
 
+    #parameters for the odepack integrator. More details at
+    #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
+    "ode_params": {'name':'vode',
+                   'method':'adams',
+                   'nsteps':10000,
+                   'max_step':10.0},
+
     #=========================================================================
     # Advanced settings
     #=========================================================================
+
+    # Compact mode: Create and use a compact version of the secondary particle
+    # production, where most of the the exotic particles are integrated out, such
+    # that only pions, kaons, nucleons, lambdas, lightest charm and leading
+    # unflavored particles remain in the coupled system. Decay chains, for
+    # example via rho -> pi pi are inlcuded in the p-> pi distribution by 
+    # analytical integration.
+    # While the performace gain can be significant, with mostly very small
+    # precision loss < 1% at low energies ~5% above PeV, the main purpose
+    # is to have a clean interpretation definition of secondary particle
+    # production, consitent with stable particle definitions of accelerator
+    # experiments. Here, ctau => 2.5 cm (K0S).
+    "compact_mode": False,    
 
     # Ratio of decay_length/interaction_length where particle interactions
     # are neglected and the resonance approximation is used
@@ -148,9 +161,8 @@ config = {
     # and K0L/K0S
     "use_isospin_sym": True,
 
-    # Possibilities to control the solver (some options are obsolete/not
-    # working)
-    "vetos": {
+    # Advanced settings (some options might be obsolete/not working)
+    "adv_set": {
         # inhibit coupling/secondary production of mesons
         "veto_sec_interactions": False,
         # Disable resonance/prompt contribution
