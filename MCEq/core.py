@@ -26,7 +26,7 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
 import numpy as np
 from time import time
 from mceq_config import dbg, config
-from misc import print_in_rows
+from misc import print_in_rows, normalize_hadronic_model_name
 
 
 class MCEqRun():
@@ -68,6 +68,7 @@ class MCEqRun():
         from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
 
+        interaction_model = normalize_hadronic_model_name(interaction_model)
         self.cname = self.__class__.__name__
 
         # Save atmospheric parameters
@@ -628,6 +629,8 @@ class MCEqRun():
           charm_model (str, optional): name of charm model
           force (bool): force loading interaction model
         """
+        interaction_model = normalize_hadronic_model_name(interaction_model)
+
         if dbg:
             print 'MCEqRun::set_interaction_model(): ', interaction_model
 
