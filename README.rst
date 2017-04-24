@@ -6,7 +6,12 @@ This scientific package might be useful to all who deal with high-energy inclusi
 Status
 ------
 
-The current development status is **alpha**. Although the numerical part of the program is rather stable, the parts related to user interaction, installation etc. are not finished, yet. Check `the wiki <https://github.com/afedynitch/MCEq/wiki>`_ for further items on the *ToDo-list*. Also feel free to open issues.
+This **dev** branch is a pre-release of the first stable version. It has several new features
+including:
+- extended energy range (10 GeV - 10^11 GeV)
+- new interaction models, SIBYLL 2.3 final and EPOS-LHC
+- particle production from interactions of charmed hadrons (SIBYLL 2.3 only)
+- a generalized target mode, with arbitrary density profiles of target material (instead of air in Earths atmosphere)
 
 `Documentation <http://mceq.readthedocs.org/en/latest/>`_
 ---------------------------------------------------------
@@ -35,7 +40,6 @@ Dependencies:
 * ipython + notebook (optional, but needed for examples)
 * numba
 * progressbar
-
 
 Installation
 ------------
@@ -101,11 +105,9 @@ The simplest method of installation relies on the Python package manager `Anacon
 
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
-
 Troubleshooting
---------------
-You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_ if you have previous
-Python installations. A workaround is to set the environment variable
+---------------
+You might run into `problems with Anaconda <https://github.com/conda/conda/issues/394>`_ if you have previous Python installations. A workaround is to set the environment variable
 	.. code-block:: bash
 
 	   $ export PYTHONNOUSERSITE=1
@@ -125,7 +127,6 @@ to get the most up-to-date information.
 
 The models inside this code need to be cited separately. Please
 `see the documentation <http://mceq.readthedocs.org/en/latest/citations.html>`_ for the complete list of references.
-
 
 Contributers
 ------------
