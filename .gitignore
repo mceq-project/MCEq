@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*.o
 
 # pickled or decompressed files
 *.ppd
@@ -8,16 +9,25 @@ __pycache__/
 examples/.ipynb_*
 # Dev stuff
 prototyping/
-c-NRLM*
+profile_mceq.py
+tests/
+*.pic
 
-# Tables from other scietific publication
-references*
+# Tables from other publications
+/references/
 
-# eclipse stuff
+# Prototype scripts
+prototyping
+*.bak
+
+# Not licensed
+
+# Editor/IDE stuff
 .p*
 .e*
 .settings
 .DS*
+.vs*
 
 # C extensions
 *.so
@@ -69,3 +79,5 @@ docs/_build/
 
 # PyBuilder
 target/
+
+calc_part_jacobian.py
