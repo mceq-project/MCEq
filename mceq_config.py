@@ -78,7 +78,7 @@ config = {
 # Average mass of target (for cross section calculations)
 # Change parameter only in combination with interaction model setting.
 # By default all inclusive cross sections are calculated for air targets
-# expect those with '_pp' suffix. 
+# expect those with '_pp' suffix.
 "A_target" : 14.5, # <A> = 14.5 for air
 
 #parameters for EarthGeometry
@@ -95,11 +95,11 @@ config = {
 # Parameters of numerical integration
 #===========================================================================
 
-# Selection of integrator (euler/odepack)   
+# Selection of integrator (euler/odepack)
 "integrator": "euler",
 
 # euler kernel implementation (numpy/MKL/CUDA).
-# With serious nVidia GPUs CUDA a few times faster than MKL 
+# With serious nVidia GPUs CUDA a few times faster than MKL
 "kernel_config": "MKL",
 
 #parameters for the odepack integrator. More details at
@@ -116,7 +116,7 @@ config = {
 #advantage from using more than 1 thread is limited by memory bandwidth)
 "MKL_threads": 24,
 
-# Floating point precision: 32-bit results in speed-up with CUDA. 
+# Floating point precision: 32-bit results in speed-up with CUDA.
 # Do not use with MKL, it can result in false results and slow down.
 "FP_precision": 64,
 
@@ -128,7 +128,7 @@ config = {
 # are neglected and the resonance approximation is used
 # 0.5 ~ precision loss <+3% speed gain ~ factor 10
 # If smoothness and shape accuracy for prompt flux is crucial, use smaller
-# values around 0.1 or 0.05 
+# values around 0.1 or 0.05
 "hybrid_crossover": 0.5,
 
 # Muon energy loss according to Kokoulin et al.
@@ -137,7 +137,7 @@ config = {
 # Minimal stepsize for muon energy loss steps in g/cm2
 "muon_energy_loss_min_step": 5.,
 
-# First interaction mode 
+# First interaction mode
 # (stop particle production after one interaction length)
 "first_interaction_mode": False,
 
@@ -158,8 +158,8 @@ config = {
     "allow_resonances": [],
 
     # Allow only those particles to be projectiles (incl. anti-particles)
-    # Faster initialization, 
-    # For inclusive lepton flux computations: 
+    # Faster initialization,
+    # For inclusive lepton flux computations:
     # precision loss ~ 1%, for SIBYLL2.3.X with charm 5% above 10^7 GeV
     # Might be different for yields (set_single_primary_particle)
     # For full precision or if in doubt, use []
@@ -170,16 +170,16 @@ config = {
 
     # Difficult to explain parameter
     'veto_forward_mesons':False,
-    
+
     # Do not apply mixing to these particles
     "exclude_from_mixing": [],
-    
+
     # Switch off decays. E.g., disable muon decay with [13,-13]
     "veto_decays": [],
-    
+
     # Switch off particle production by charm projectiles
     "veto_charm_pprod": False,
-    
+
     # Disable mixing between resonance approx. and full propagation
     "no_mixing": False
     }
