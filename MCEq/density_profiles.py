@@ -424,7 +424,8 @@ class EarthAtmosphere():
             self.thrad = theta_rad(theta_deg)
             self.theta_deg = theta_deg
             self.calculate_density_spline()
-            cache[key][theta_deg] = (self.max_X, self.s_h2X, self.s_X2rho, self.s_lX2h)
+            cache[key][theta_deg] = (self.max_X, self.s_h2X, 
+                self.s_X2rho, self.s_lX2h)
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg and not force_spline_calc:
