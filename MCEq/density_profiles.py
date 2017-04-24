@@ -422,7 +422,7 @@ class EarthAtmosphere():
             self.thrad = self.geom._theta_rad(theta_deg)
             self.theta_deg = theta_deg
             self.calculate_density_spline()
-            cache[key][theta_deg] = (self.max_X, self.s_X2rho)
+            cache[key][theta_deg] = (self.max_X, self.s_h2X, self.s_X2rho, self.s_lX2h)
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg and not force_spline_calc:
@@ -441,7 +441,7 @@ class EarthAtmosphere():
                     if abs(closest - theta_deg) < 1.:
                         self.thrad = self.geom._theta_rad(closest)
                         self.theta_deg = closest
-                        self.max_X, self.s_X2rho = cache[key][closest]
+                        self.max_X, self.s_h2X, self.s_X2rho, self.s_lX2h = cache[key][closest]
                     else:
                         calculate_and_store(key, cache)
                 except:
