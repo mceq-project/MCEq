@@ -84,8 +84,6 @@ class MCEqRun():
         # Load decay spectra
         self.ds_params = dict(
             mother_list=self.y.particle_list,
-            weights=self.y.weights,
-            fname=config['decay_fname']
         )
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
@@ -170,13 +168,13 @@ class MCEqRun():
         self.pdg2nceidx = {}
         #: (dict) Converts particle name to index in state vector
         self.pname2nceidx = {}
-        #: (dict) Converts PDG ID to reference of :class:`data.NCEParticle`
+        #: (dict) Converts PDG ID to reference of :class:`data.MCEqParticle`
         self.pdg2pref = {}
-        #: (dict) Converts particle name to reference of :class:`data.NCEParticle`
+        #: (dict) Converts particle name to reference of :class:`data.MCEqParticle`
         self.pname2pref = {}
         #: (dict) Converts index in state vector to PDG ID
         self.nceidx2pdg = {}
-        #: (dict) Converts index in state vector to reference of :class:`data.NCEParticle`
+        #: (dict) Converts index in state vector to reference of :class:`data.MCEqParticle`
         self.nceidx2pname = {}
 
         for p in self.particle_species:
@@ -230,7 +228,7 @@ class MCEqRun():
 
     def _gen_list_of_particles(self, custom_list=None, max_density=1.240e-03):
         """Determines the list of particles for calculation and
-        returns lists of instances of :class:`data.NCEParticle` .
+        returns lists of instances of :class:`data.MCEqParticle` .
 
         The particles which enter this list are those, which have a
         defined index in the SIBYLL 2.3 interaction model. Included are
@@ -239,10 +237,10 @@ class MCEqRun():
         be found in :mod:`ParticleDataTool`.
 
         Returns:
-          (tuple of lists of :class:`data.NCEParticle`): (all particles,
+          (tuple of lists of :class:`data.MCEqParticle`): (all particles,
           cascade particles, resonances)
         """
-        from MCEq.data import NCEParticle
+        from MCEq.data import MCEqParticle
 
         if dbg > 1:
             print (self.cname + "::_gen_list_of_particles():" +
@@ -269,7 +267,7 @@ class MCEqRun():
         # Remove duplicates
         particles = list(set(particles))
 
-        particle_list = [NCEParticle(h, self.modtab, self.pd,
+        particle_list = [MCEqParticle(h, self.modtab, self.pd,
                                      self.cs, self.d) for h in particles]
 
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
@@ -1011,7 +1009,7 @@ class MCEqRun():
                            '_fill_matrices(): Particle production by {0} ' +
                            'explicitly disabled').format(p.pdgid)
                 continue
-            elif self.adv_set['veto_sec_interactions'] and p.pdgid not in [2212, 2112]:
+            elif self.adv_set['disable_sec_interactions'] and p.pdgid not in [2212, 2112]:
                 if dbg > 2:
                     print (self.__class__.__name__ +
                            '_fill_matrices(): Veto secodary interaction of' +
@@ -1024,7 +1022,7 @@ class MCEqRun():
             for s in p.secondaries:
                 if s not in self.pdg2pref:
                     continue
-                if self.adv_set['veto_direct_leptons'] and pref[s].is_lepton:
+                if self.adv_set['disable_direct_leptons'] and pref[s].is_lepton:
                     if dbg > 2:
                         print (self.__class__.__name__ +
                                '_fill_matrices(): veto direct lepton', s)

@@ -1,4 +1,4 @@
-
+"""MCEq config file version 1.0"""
 
 import sys
 import platform
@@ -9,11 +9,8 @@ sys.path.append(base+"/CRFluxModels")
 sys.path.append(base+"/ParticleDataTool")
 sys.path.append(base+"/Python-NRLMSISE-00")
 sys.path.append(base+"/c-NRLMSISE-00")
-#commented out since projects are far from beeing ready for prime time.
-#sys.path.append("../Fedynitch2012")
-#sys.path.append("../AnalyticalApproximation")
 
-#detrmine shared library extension and MKL path
+# determine shared library extension and MKL path
 lib_ext = None
 mkl_default = path.join(sys.prefix, 'lib', 'libmkl_rt')
 
@@ -137,7 +134,7 @@ config = {
     # is to have a clean interpretation definition of secondary particle
     # production, consitent with stable particle definitions of accelerator
     # experiments. Here, ctau => 2.5 cm (K0S).
-    "compact_mode": False,    
+    "compact_mode": True,    
 
     # Ratio of decay_length/interaction_length where particle interactions
     # are neglected and the resonance approximation is used
@@ -149,7 +146,7 @@ config = {
     # Muon energy loss according to Kokoulin et al.
     "enable_muon_energy_loss": True,
 
-    # Minimal stepsize for muon energy loss steps in g/cm2
+    # Minimal step size for muon energy loss steps in g/cm2
     "muon_energy_loss_min_step": 5.,
 
     # First interaction mode
@@ -157,18 +154,47 @@ config = {
     "first_interaction_mode": False,
 
     # When using modified particle production matrices use
-    # isospin symmetry to determine the modification to neutrons
-    # and K0L/K0S
+    # isospin symmetries to determine the corresponding 
+    # modification for neutrons and K0L/K0S
     "use_isospin_sym": True,
+
+    # All of the hadronic interaction models can simulate nucleon-air
+    # interactions down to ~60 GeV (lab frame). This limits the
+    # physically valid range of MCEq to E_lepton ~> 30 GeV. To fill this
+    # gap, one shall extend the high energy model with a low energy model.
+    # Currently the only choice is DPMJET-III-2017.1.
+    # Around the transition energy, MCEq linearly interpolates between 
+    # neighboring energy bins of the two models, using the a number of 
+    # bins specified below. 
+    "low_energy_extension": {
+        "enabled": False,
+        "le_model":'DPMJET-III',
+        "he_le_transition": 80, # GeV (not recommended to go below 80)
+        "nbins_interp": 3,
+        # This flag controls what to do with processes, which are not
+        # included in DPMJET, such as re-interactions of rare baryons
+        # or charm particles. If set to true these processes will be
+        # included in the merged model, but they will not be extended
+        # in the low energy range. If False, these processes will be
+        # simply ignored. In all normal cases there will be no 
+        # difference. In particular in combination with the compact
+        # mode, this case doesn't even occur and output is identical. 
+        "use_unknown_cs": True,
+    },
 
     # Advanced settings (some options might be obsolete/not working)
     "adv_set": {
-        # inhibit coupling/secondary production of mesons
-        "veto_sec_interactions": False,
-        # Disable resonance/prompt contribution
-        "veto_resonance_decay": False,
-        "veto_hadrons": [],
-        "veto_resonances": [],
+        # Disable particle production by all hadrons, except nucleons
+        "disable_sec_interactions": False,
+
+        # Disable particle production by charm projectiles (interactions)
+        "disable_charm_pprod": False,
+
+        # Disable resonance/prompt contribution (this group of options
+        # is either obsolete or needs maintenance.)
+        "disable_resonance_decay": False,
+        "disable_hadrons": [],
+        "disable_resonances": [],
         "allow_resonances": [],
 
         # Allow only those particles to be projectiles (incl. anti-particles)
@@ -179,20 +205,17 @@ config = {
         # For full precision or if in doubt, use []
         "allowed_projectiles": [2212, 2112, 211, 321, 130],
 
-        # Disable leptons coming from decays inside the interaction models
-        "veto_direct_leptons":False,
+        # Disable leptons coming from prompt hadron decays at the vertex
+        "disable_direct_leptons":False,
 
         # Difficult to explain parameter
-        'veto_forward_mesons':False,
+        'disable_leading_mesons':False,
 
         # Do not apply mixing to these particles
         "exclude_from_mixing": [],
 
         # Switch off decays. E.g., disable muon decay with [13,-13]
-        "veto_decays": [],
-
-        # Switch off particle production by charm projectiles
-        "veto_charm_pprod": False,
+        "disable_decays": [],
 
         # Disable mixing between resonance approx. and full propagation
         "no_mixing": False
