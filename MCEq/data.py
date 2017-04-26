@@ -21,6 +21,7 @@ validating data structures:
 
 import numpy as np
 from mceq_config import config, dbg
+from misc import normalize_hadronic_model_name
 
 
 class MCEqParticle(object):
@@ -291,6 +292,7 @@ class InteractionYields(object):
 
         # If parameters are provided during object creation,
         # load the tables during object creation.
+        interaction_model = normalize_hadronic_model_name(interaction_model)
         if interaction_model != None:
             self._load(interaction_model)
         else:
@@ -316,8 +318,9 @@ class InteractionYields(object):
         from MCEq.data_utils import convert_to_compact, extend_to_low_energies
         if dbg > 1:
             print 'InteractionYields::_load(): entering..'
+
         # Remove dashes and points in the name
-        iamstr = interaction_model.translate(None, "-.").upper()
+        iamstr = normalize_hadronic_model_name(interaction_model)
 
         fname = join(config['data_dir'], iamstr + '_yields.bz2')
 
@@ -329,7 +332,7 @@ class InteractionYields(object):
             fname = fname.replace('.bz2','_ledpm.bz2')
         elif config['compact_mode']:
             fname = fname.replace('.bz2','_compact.bz2')
-        print "compact_mode", config['compact_mode']
+            
         yield_dict = None
         if dbg > 0: print 'InteractionYields::_load(): Looking for', fname
         if not isfile(fname):
@@ -350,7 +353,7 @@ class InteractionYields(object):
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
         self.weights = yield_dict.pop('weights')
-        self.iam = yield_dict.pop('mname')
+        self.iam = normalize_hadronic_model_name(yield_dict.pop('mname'))
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')
         self.nspec = yield_dict.pop('nspec')
@@ -610,6 +613,8 @@ class InteractionYields(object):
         Raises:
           Exception: if invalid name specified in argument ``interaction_model``
         """
+
+        interaction_model = normalize_hadronic_model_name(interaction_model)
 
         if not force and interaction_model == self.iam:
             if dbg > 0:
@@ -879,7 +884,6 @@ class DecayYields(object):
 
         self.particle_keys = self.mothers
 
-        
 
     def _load(self, mother_list, fname):
         """Un-pickles the yields dictionary using the path specified as
@@ -1153,6 +1157,7 @@ class HadAirCrossSections(object):
 
         self._load()
 
+        interaction_model = normalize_hadronic_model_name(interaction_model)
         if interaction_model != None:
             self.set_interaction_model(interaction_model)
         else:
@@ -1174,6 +1179,12 @@ class HadAirCrossSections(object):
         except IOError:
             self._decompress(fname)
             self.cs_dict = pickle.load(open(fname, 'rb'))
+
+        # normalise hadronic model names
+        old_keys = [k for k in self.cs_dict if k != "evec"]
+        for old_key in old_keys:
+            new_key = normalize_hadronic_model_name(old_key)
+            self.cs_dict[new_key] = self.cs_dict.pop(old_key)
 
         self.egrid = self.cs_dict['evec']
 
@@ -1223,6 +1234,7 @@ class HadAirCrossSections(object):
         if dbg > 2:
             print ("InteractionYields:set_interaction_model()::Using cross " +
                    "sections of original model in compact mode")
+        interaction_model = normalize_hadronic_model_name(interaction_model)
         interaction_model = interaction_model.split('_compact')[0]
 
         if interaction_model == self.iam and dbg > 0:
