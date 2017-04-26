@@ -11,5 +11,10 @@ Core functionality
 
 ----------
 
+.. automodule:: MCEq.data_utils
+   :members:
+
+----------
+
 .. automodule:: MCEq.kernels
    :members:
