@@ -7,6 +7,12 @@ Created on 06.01.2014
 import numpy as np
 from mceq_config import dbg
 
+
+def normalize_hadronic_model_name(name):
+    """Converts hadronic model name into standard form"""
+    return name.translate(None, ".-").upper()
+
+
 def theta_deg(cos_theta):
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees.
     """
