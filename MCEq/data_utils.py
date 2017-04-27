@@ -19,17 +19,22 @@ from mceq_config import config, dbg
 def convert_to_compact(fname):
     """Converts an interaction model dictionary to "compact" mode.
 
-    This function takes a yield file, where all secondaries stable are
-    were considered stable, and converts it to a new file with only a
-    subset of longer lived hadrons, which are important for air-shower
-    and inclusive lepton calculations.
+    This function takes a compressed yield file, where all secondary 
+    particle types known to the particular model are expected to be 
+    final state particles (set stable in the MC), and converts it
+    to a new compressed yield file which contains only production channels
+    to the most important particles (for air-shower and inclusive lepton 
+    calculations).
 
-    In the "compact" mode file, the production of short lived particles and
-    resonances is convolved with their decay distributions, resulting a
-    feed-down corretion to a longer lived particle. For example
-    :math:`p + A \\to \\rho + X \\to \\pi + \\pi + X`. The new interaction yield 
-    file obtains the suffix `_compact` and it contains only these relevant 
-    secondary particles:
+    The production of short lived particles and resonances is taken into
+    account by executing the convolution with their decay distributions into
+    more stable particles, until only final state particles are left. The list
+    of "important" particles is defined in the standard_particles variable below.
+    This results in a feed-down corretion, for example the process (chain)
+    :math:`p + A \\to \\rho + X \\to \\pi + \\pi + X` becomes simply
+    :math:`p + A \\to \\pi + \\pi + X`.
+    The new interaction yield file obtains the suffix `_compact` and it 
+    contains only those final state secondary particles:
     
     .. math::
 
@@ -44,21 +49,19 @@ def convert_to_compact(fname):
     :func:`MCEq.core.MCEqRun.set_mod_pprod` to modify the spectrum of secondary
     hadrons.
 
-    For some interaction models, the performance advantage can be up to 50\%.
+    For some interaction models, the performance advantage can be around 50\%.
     The precision loss is negligible at energies below 100 TeV, but can increase
     up to a few \% at higher energies where prompt leptons dominate. This is
     because also very short-lived charmed mesons and baryons with small branching
-    ratios into leptons can interact with the atmosphere and loose energy. 
+    ratios into leptons can interact with the atmosphere and lose energy before
+    decay. 
 
     For `QGSJET`, compact and normal mode are identical, since the model does not
-    produce resonances or rare mesons by design.    
+    produce resonances or rare mesons by design.
 
 
     Args:
       fname (str): name of compressed yield (.bz2) file
-
-    Returns:
-      numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
     """
 
     import os
@@ -270,13 +273,28 @@ def convert_to_compact(fname):
 
 
 def extend_to_low_energies(he_di=None, le_di=None, fname=None):
+    """Interpolates between a high-energy and a low-energy interaction model.
 
+    Theis function takes either two yield dictionaries or a file name
+    of the high energy model and interpolates the matrices at the energy
+    specified in `:mod:mceq_config` in the low_energy_extension section.
+    The interpolation is linear in energy grid index.
+
+    In 'compact' mode all particles should be supported by the low energy
+    model. However if you don't use compact mode, some rare or exotic
+    secondaries might be not supported by the low energy model. In this
+    case the config option "use_unknown_cs" decides if only the high energy
+    part is used or if to raise an excption.
+
+    Args:
+      he_di (dict,optional): yield dictionary of high-energy model
+      le_di (dict,optional): yield dictionary of low-energy model
+      fname (str,optional): file name of high-energy model yields
+    """
 
     import cPickle as pickle
     from bz2 import BZ2File
     import os
-
-    print "extend_to_low_energies(): entering with", bool(he_di), bool(le_di), fname
 
     if (he_di and le_di) and fname:
         raise Exception("extend_to_low_energies(): either dictionaries or a file name " +
@@ -315,7 +333,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
     intp_array = np.ones((len(egr),len(intp_scales)))
     he_int_array = intp_scales*intp_array
     le_int_array = intp_scales[::-1]*intp_array
-    if dbg > 0:
+    if dbg > 2:
         print "extend_to_low_energies(): int. arrays", intp_scales, \
             intp_indices, egr[intp_indices]
 
@@ -325,25 +343,39 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
         if type(k) is not tuple:
             ext_di[k] = he_di[k]
             continue
+
         he_mat = np.copy(he_di[k])
-        le_mat = np.copy(le_di[k])
-        
+    
         new_mat = he_mat
         
-        try:
-            new_mat[:,:intp_indices[0]] *= 0.
-            new_mat[:,intp_indices] *= he_int_array
-            le_mat[:,intp_indices[-1]:] *= 0
-            le_mat[:,intp_indices] *= le_int_array
-        except IndexError:
-            print k, intp_indices, 
-            print he_mat
-            print le_mat 
+        if k not in le_di:
+            # Use only he model cross sections if le model doesn't
+            # know the process
+            if config["low_energy_extension"]["use_unknown_cs"]:
+                if dbg > 1:
+                    print "extend_to_low_energies(): skipping particle", k
+                ext_di[k] = new_mat
+                continue
+            else:
+                raise Exception('extend_to_low_energies(): High energy model' +
+                    ' contains ')
+        else:
+            le_mat = np.copy(le_di[k])
+            try:
+                new_mat[:,:intp_indices[0]] *= 0.
+                new_mat[:,intp_indices] *= he_int_array
+                le_mat[:,intp_indices[-1]:] *= 0
+                le_mat[:,intp_indices] *= le_int_array
+
+            except IndexError:
+                print "extend_to_low_energies(): problems indexing model transition"
+                print k, intp_indices, 
+                print he_mat
+                print le_mat
         
-        
-        new_mat += le_mat
-        
-        ext_di[k] = new_mat
+            new_mat += le_mat
+            
+            ext_di[k] = new_mat
 
     ext_di['le_ext'] = config["low_energy_extension"]
     

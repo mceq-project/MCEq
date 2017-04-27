@@ -895,7 +895,7 @@ class IsothermalAtmosphere(EarthAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: column depth :math:`\\T(h_{cm})` in g/cm**2
+          float: column depth :math:`T(h_{cm})` in g/cm**2
         """
         return self.X0*np.exp(-h_cm/self.hiso_cm)
 

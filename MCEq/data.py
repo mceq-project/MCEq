@@ -929,7 +929,7 @@ class DecayYields(object):
             # Remove unused particle species from index in compact mode
             if config["compact_mode"]:
                 for p in self.daughter_dict.keys():
-                    if abs(p) not in mother_list:
+                    if abs(p) not in mother_list and abs(p) not in [7113, 7213]:
                         _ = self.daughter_dict.pop(p)
 
             self.mothers = self.daughter_dict.keys()
@@ -1068,6 +1068,7 @@ class DecayYields(object):
         if dbg > 0 and not self.is_daughter(mother, daughter):
             print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
                    "{0} -> {1}").format(mother, daughter)
+
         return self.decay_dict[(mother, daughter)]
 
     def assign_d_idx(self, mother, moidx,
@@ -1084,6 +1085,7 @@ class DecayYields(object):
                             to the daughters's energy grid
           dmat (numpy.array): array reference to the decay matrix
         """
+
         dmat[dtridx[0]:dtridx[1], moidx[0]:moidx[1]] = \
             self.get_d_matrix(mother, daughter)[dtridx[0]:dtridx[1],
                                                 moidx[0]:moidx[1]]
