@@ -13,6 +13,10 @@ profile_mceq.py
 tests/
 *.pic
 
+# Temporary data files
+*_ledpm.bz2
+*_compact.bz2
+
 # Tables from other publications
 /references/
 

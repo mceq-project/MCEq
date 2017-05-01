@@ -325,30 +325,30 @@ class InteractionYields(object):
         fname = join(config['data_dir'], iamstr + '_yields.bz2')
 
         if config['compact_mode'] and config["low_energy_extension"]["enabled"] \
-            and 'DPMJET' not in iamstr:
-            fname = fname.replace('.bz2','_compact_ledpm.bz2')
+                and 'DPMJET' not in iamstr:
+            fname = fname.replace('.bz2', '_compact_ledpm.bz2')
         elif not config['compact_mode'] and config["low_energy_extension"]["enabled"] \
-            and 'DPMJET' not in iamstr:
-            fname = fname.replace('.bz2','_ledpm.bz2')
+                and ('DPMJET' not in iamstr):
+            fname = fname.replace('.bz2', '_ledpm.bz2')
         elif config['compact_mode']:
-            fname = fname.replace('.bz2','_compact.bz2')
-            
+            fname = fname.replace('.bz2', '_compact.bz2')
+
         yield_dict = None
-        if dbg > 0: print 'InteractionYields::_load(): Looking for', fname
+        if dbg > 0:
+            print 'InteractionYields::_load(): Looking for', fname
         if not isfile(fname):
             if config['compact_mode']:
                 convert_to_compact(fname)
             elif 'ledpm' in fname:
                 extend_to_low_energies(fname=fname)
             else:
-                raise Exception('InteractionYields::_load(): no model file found for' + 
-                    interaction_model)
+                raise Exception('InteractionYields::_load(): no model file found for'
+                                + interaction_model)
 
-        if not isfile(fname.replace('.bz2','.ppd')):
+        if not isfile(fname.replace('.bz2', '.ppd')):
             self._decompress(fname)
 
-        yield_dict = pickle.load(open(fname.replace('.bz2','.ppd'), 'rb'))
-
+        yield_dict = pickle.load(open(fname.replace('.bz2', '.ppd'), 'rb'))
 
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
@@ -480,9 +480,9 @@ class InteractionYields(object):
 
         # Dump the file uncompressed
         if dbg > 1:
-            print 'Saving to', fname.replace('.bz2','.ppd')
-        pickle.dump(new_dict, 
-            open(fname.replace('.bz2','.ppd'), 'wb'), protocol=-1)
+            print 'Saving to', fname.replace('.bz2', '.ppd')
+            pickle.dump(new_dict,
+                        open(fname.replace('.bz2', '.ppd'), 'wb'), protocol=-1)
 
     def _gen_mod_matrix(self, x_func, *args):
         """Creates modification matrix using an (x,E)-dependent function.
@@ -884,7 +884,6 @@ class DecayYields(object):
 
         self.particle_keys = self.mothers
 
-
     def _load(self, mother_list, fname):
         """Un-pickles the yields dictionary using the path specified as
         ``decay_fname`` in :mod:`mceq_config`.
@@ -903,8 +902,9 @@ class DecayYields(object):
             # Take the compact dictionary if "enabled" and no
             # file name forced
             if config['compact_mode']:
-                fname = fname.replace('.ppd','_compact.ppd')
-        if dbg > 0: print "DecayYields:_load():: Loading file", fname
+                fname = fname.replace('.ppd', '_compact.ppd')
+        if dbg > 0:
+            print "DecayYields:_load():: Loading file", fname
         try:
             self.decay_dict = pickle.load(open(fname, 'rb'))
         except IOError:
@@ -933,7 +933,7 @@ class DecayYields(object):
             # Remove unused particle species from index in compact mode
             if config["compact_mode"]:
                 for p in self.daughter_dict.keys():
-                    if abs(p) not in mother_list and abs(p) not in [7113, 7213]:
+                    if abs(p) not in mother_list and abs(p) not in [7113, 7213, 7313]:
                         _ = self.daughter_dict.pop(p)
 
             self.mothers = self.daughter_dict.keys()
@@ -967,7 +967,7 @@ class DecayYields(object):
             except ValueError:
                 continue
 
-        weights =  decay_dict.pop('weights')
+        weights = decay_dict.pop('weights')
 
         # This will be the dictionary for the index
         daughter_dict = {}
@@ -998,15 +998,15 @@ class DecayYields(object):
         # special treatment for muons, which should decay even if they
         # have an alias ID
         # the ID 7313 not included, since it's "a copy of"
-        for alias in [7013, 7113, 7213]:
-            if 13 not in config["adv_set"]["disable_decays"]:
-                daughter_dict[alias] = daughter_dict[13]
-                for d in daughter_dict[alias]:
-                    new_dict[(alias, d)] = new_dict[(13, d)]
-            if -13 not in config["adv_set"]["disable_decays"]:
-                daughter_dict[-alias] = daughter_dict[-13]
-                for d in daughter_dict[-alias]:
-                    new_dict[(-alias, d)] = new_dict[(-13, d)]
+        for alias in [7013, 7113, 7213, 7313]:
+            # if 13 not in config["adv_set"]["disable_decays"]:
+            daughter_dict[alias] = daughter_dict[13]
+            for d in daughter_dict[alias]:
+                new_dict[(alias, d)] = new_dict[(13, d)]
+            # if -13 not in config["adv_set"]["disable_decays"]:
+            daughter_dict[-alias] = daughter_dict[-13]
+            for d in daughter_dict[-alias]:
+                new_dict[(-alias, d)] = new_dict[(-13, d)]
 
         new_dict['mothers'] = mothers
         new_dict['weights'] = weights
