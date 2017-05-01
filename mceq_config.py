@@ -1,4 +1,4 @@
-"""MCEq config file version 1.0"""
+"""MCEq RC1 config file """
 
 import sys
 import platform
@@ -127,14 +127,14 @@ config = {
     # production, where most of the the exotic particles are integrated out, such
     # that only pions, kaons, nucleons, lambdas, lightest charm and leading
     # unflavored particles remain in the coupled system. Decay chains, for
-    # example via rho -> pi pi are inlcuded in the p-> pi distribution by 
+    # example via rho -> pi pi are inlcuded in the p-> pi distribution by
     # analytical integration.
     # While the performace gain can be significant, with mostly very small
     # precision loss < 1% at low energies ~5% above PeV, the main purpose
     # is to have a clean interpretation definition of secondary particle
     # production, consitent with stable particle definitions of accelerator
     # experiments. Here, ctau => 2.5 cm (K0S).
-    "compact_mode": True,    
+    "compact_mode": True,
 
     # Ratio of decay_length/interaction_length where particle interactions
     # are neglected and the resonance approximation is used
@@ -154,7 +154,7 @@ config = {
     "first_interaction_mode": False,
 
     # When using modified particle production matrices use
-    # isospin symmetries to determine the corresponding 
+    # isospin symmetries to determine the corresponding
     # modification for neutrons and K0L/K0S
     "use_isospin_sym": True,
 
@@ -163,9 +163,9 @@ config = {
     # physically valid range of MCEq to E_lepton ~> 30 GeV. To fill this
     # gap, one shall extend the high energy model with a low energy model.
     # Currently the only choice is DPMJET-III-2017.1.
-    # Around the transition energy, MCEq linearly interpolates between 
-    # neighboring energy bins of the two models, using the a number of 
-    # bins specified below. 
+    # Around the transition energy, MCEq linearly interpolates between
+    # neighboring energy bins of the two models, using the a number of
+    # bins specified below.
     "low_energy_extension": {
         "enabled": False,
         "le_model":'DPMJET-III',
@@ -176,9 +176,9 @@ config = {
         # or charm particles. If set to true these processes will be
         # included in the merged model, but they will not be extended
         # in the low energy range. If False, these processes will be
-        # simply ignored. In all normal cases there will be no 
+        # simply ignored. In all normal cases there will be no
         # difference. In particular in combination with the compact
-        # mode, this case doesn't even occur and output is identical. 
+        # mode, this case doesn't even occur and output is identical.
         "use_unknown_cs": True,
     },
 
