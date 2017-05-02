@@ -167,7 +167,7 @@ config = {
     # neighboring energy bins of the two models, using the a number of
     # bins specified below.
     "low_energy_extension": {
-        "enabled": False,
+        "enabled": True,
         "le_model":'DPMJET-III',
         "he_le_transition": 80, # GeV (not recommended to go below 80)
         "nbins_interp": 3,
