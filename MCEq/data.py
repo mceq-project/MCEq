@@ -573,8 +573,13 @@ class InteractionYields(object):
                         # Compute average of K+ and K- modification matrices
                         # Save the 'average' argument
                         for i in range(len(args)):
-                            k0arg[i] = 0.5 * (k0arg[i] +
-                                              self.mod_pprod[(2212, -sec_pdg)][1][i])
+                        	try:
++                                k0arg[i] = 0.5 * (k0arg[i] +
+                                               self.mod_pprod[(2212, -sec_pdg)][1][i])
++                            except TypeError:
++                                if dbg > 2:
++                                    print '::set_mod_pprod(): Can not average arg',k0arg
+
                     kmat = self._gen_mod_matrix(x_func, *k0arg)
 
                     # modify K0L/S
