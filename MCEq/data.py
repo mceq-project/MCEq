@@ -472,7 +472,8 @@ class InteractionYields(object):
                           '::_decompress():: File {0} not found.'.format(fcompr))
 
         if dbg > 1:
-            print 'Decompressing', fcompr
+            print(self.__class__.__name__ + '::_decompress():: ' +
+                  'Decompressing ', fcompr)
 
         # Generate index of primary secondary relations and
         # multiply with yields
@@ -480,9 +481,10 @@ class InteractionYields(object):
 
         # Dump the file uncompressed
         if dbg > 1:
-            print 'Saving to', fname.replace('.bz2', '.ppd')
-            pickle.dump(new_dict,
-                        open(fname.replace('.bz2', '.ppd'), 'wb'), protocol=-1)
+            print(self.__class__.__name__ + '::_decompress():: ' +
+                  'Saving to ', fname.replace('.bz2', '.ppd'))
+        pickle.dump(new_dict,
+                    open(fname.replace('.bz2', '.ppd'), 'wb'), protocol=-1)
 
     def _gen_mod_matrix(self, x_func, *args):
         """Creates modification matrix using an (x,E)-dependent function.
