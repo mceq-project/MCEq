@@ -457,18 +457,20 @@ class MCEqRun(object):
         Raises:
           ImportError: if package not available
         """
-        try:
-            from progressbar import ProgressBar, Percentage, Bar, ETA
-        except ImportError:
-            print "Failed to import 'progressbar' progress indicator."
-            print "Install the module with 'easy_install progressbar', or",
-            print "get it from http://qubit.ic.unicamp.br/~nilton"
-            raise ImportError("It's easy do do this...")
+
         if config['prog_bar']:
-            self.progressBar = ProgressBar(maxval=maximum,
-                                           widgets=[Percentage(), ' ',
-                                                    Bar(), ' ',
-                                                    ETA()])
+            try:
+                from progressbar import ProgressBar, Percentage, Bar, ETA
+            except ImportError:
+                print "Failed to import 'progressbar' progress indicator."
+                print "Install the module with 'easy_install progressbar', or",
+                print "get it from http://qubit.ic.unicamp.br/~nilton"
+                raise ImportError("It's easy do do this...")
+
+            self.progress_bar = ProgressBar(maxval=maximum,
+                                            widgets=[Percentage(), ' ',
+                                                     Bar(), ' ',
+                                                     ETA()])
         else:
             class FakeProg:
                 def start(self):
@@ -480,7 +482,7 @@ class MCEqRun(object):
                 def finish(self):
                     pass
 
-            self.progressBar = FakeProg()
+            self.progress_bar = FakeProg()
 
     def _alias(self, mother, daughter):
         """Returns pair of alias indices, if ``mother``/``daughter`` combination
@@ -1121,12 +1123,12 @@ class MCEqRun(object):
 
         self._init_progress_bar(max_X)
 
-        self.progressBar.start()
+        self.progress_bar.start()
         start = time()
         if int_grid is None:
             i = 0
             while r.successful() and (r.t + dXstep) < max_X:
-                self.progressBar.update(r.t)
+                self.progress_bar.update(r.t)
                 if (i % 5000) == 0:
                     print "Solving at depth X =", r.t
                 r.integrate(r.t + dXstep)
@@ -1143,7 +1145,7 @@ class MCEqRun(object):
                     print '_odepack(): integrating at X =', Xi
 
                 while r.successful() and (r.t + dXstep) < Xi:
-                    self.progressBar.update(r.t)
+                    self.progress_bar.update(r.t)
                     # print '1: dXi = ',r.t + dXstep
                     r.integrate(r.t + dXstep)
 
@@ -1152,7 +1154,7 @@ class MCEqRun(object):
                 # Store the solution on grid
                 grid_sol.append(r.y)
 
-        self.progressBar.finish()
+        self.progress_bar.finish()
 
         if dbg > 0:
             print ("\n{0}::vode(): time elapsed during " +
@@ -1175,7 +1177,7 @@ class MCEqRun(object):
                    "integration steps.").format(self.cname, nsteps)
 
         self._init_progress_bar(nsteps)
-        self.progressBar.start()
+        self.progress_bar.start()
 
         start = time()
 
@@ -1191,14 +1193,14 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m,
                     self.dec_m, phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                    self.progressBar, self.fa_vars)
+                    self.progress_bar, self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
             kernel = kernels.kern_CUDA_dense
             args = (nsteps, dX, rho_inv, self.int_m,
                     self.dec_m, phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                    self.progressBar)
+                    self.progress_bar)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is True):
@@ -1206,7 +1208,7 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.cuda_context,
                     phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                    self.progressBar)
+                    self.progress_bar)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] is True):
@@ -1214,14 +1216,14 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m,
                     self.dec_m, phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                    self.progressBar)
+                    self.progress_bar)
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
             kernel = kernels.kern_XeonPHI_sparse
             args = (nsteps, dX, rho_inv, self.int_m,
                     self.dec_m, phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
-                    self.progressBar)
+                    self.progress_bar)
         else:
             raise Exception(self.__class__.__name__ +
                             ("::_forward_euler(): " +
@@ -1231,7 +1233,7 @@ class MCEqRun(object):
 
         self.solution, self.grid_sol = kernel(*args)
 
-        self.progressBar.finish()
+        self.progress_bar.finish()
 
         if dbg > 0:
             print ("\n{0}::_forward_euler(): time elapsed during " +
@@ -1291,10 +1293,10 @@ class MCEqRun(object):
             fa_vars['fi_switch'] = []
 
         self._init_progress_bar(max_X)
-        self.progressBar.start()
+        self.progress_bar.start()
 
         while X < max_X:
-            self.progressBar.update(X)
+            self.progress_bar.update(X)
             ri_x = ri(X)
             dX = 1. / (max_ldec * ri_x)
             if (np.any(int_grid) and (grid_step < int_grid.size)
@@ -1327,7 +1329,7 @@ class MCEqRun(object):
             step += 1
 
         # Integrate
-        self.progressBar.finish()
+        self.progress_bar.finish()
 
         dX_vec = np.array(dX_vec, dtype=self.fl_pr)
         rho_inv_vec = np.array(rho_inv_vec, dtype=self.fl_pr)

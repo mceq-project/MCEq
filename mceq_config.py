@@ -3,26 +3,26 @@
 import sys
 import platform
 import os.path as path
-base = path.dirname(path.abspath(__file__))
-sys.path.append(base)
-sys.path.append(base+"/CRFluxModels")
-sys.path.append(base+"/ParticleDataTool")
-sys.path.append(base+"/Python-NRLMSISE-00")
-sys.path.append(base+"/c-NRLMSISE-00")
+base_path = path.dirname(path.abspath(__file__))
+sys.path.append(base_path)
+sys.path.append(base_path+"/CRFluxModels")
+sys.path.append(base_path+"/ParticleDataTool")
+sys.path.append(base_path+"/Python-NRLMSISE-00")
+sys.path.append(base_path+"/c-NRLMSISE-00")
 
 # determine shared library extension and MKL path
-lib_ext = None
+libext = None
 mkl_default = path.join(sys.prefix, 'lib', 'libmkl_rt')
 
 if platform.platform().find('Linux') != -1:
-    lib_ext = '.so'
+    libext = '.so'
 elif platform.platform().find('Darwin') != -1:
-    lib_ext = '.dylib'
+    libext = '.dylib'
 else:
     #Windows case
     mkl_default = path.join(sys.prefix, 'pkgs', 'mkl-11.3.3-1',
                             'Library', 'bin', 'mkl_rt')
-    lib_ext = '.dll'
+    libext = '.dll'
 
 config = {
 
@@ -38,7 +38,7 @@ config = {
     #=========================================================================
 
     # Directory where the data files for the calculation are stored
-    "data_dir": base + '/data',
+    "data_dir": path.join(base_path, 'data'),
 
     # File name of particle decay spectra
     "decay_fname": "decays_v1.ppd",
@@ -53,7 +53,7 @@ config = {
     'atm_cache_file':'atm_cache.ppd',
 
     # full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
-    "MKL_path": mkl_default + lib_ext,
+    "MKL_path": mkl_default + libext,
     #=========================================================================
     # Atmosphere and geometry settings
     #=========================================================================
