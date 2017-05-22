@@ -339,7 +339,7 @@ class EarthAtmosphere():
         raise NotImplementedError("EarthAtmosphere::get_density(): " +
                                   "Base class called.")
 
-    def calculate_density_spline(self, n_steps=1000):
+    def calculate_density_spline(self, n_steps=2000):
         """Calculates and stores a spline of :math:`\\rho(X)`.
 
         Args:
@@ -349,7 +349,7 @@ class EarthAtmosphere():
         Raises:
             Exception: if :func:`set_theta` was not called before.
         """
-        from scipy.integrate import quad
+        from scipy.integrate import quad, cumtrapz
         from time import time
         from scipy.interpolate import UnivariateSpline
 
@@ -370,15 +370,21 @@ class EarthAtmosphere():
         dl_vec = np.linspace(0, path_length, n_steps)
 
         now = time()
-        # Calculate integral for each depth point
-        # functionality could be more efficient :)
-        X_int = np.zeros_like(dl_vec, dtype='float64')
+        # TODO: Remove the caching functionality and all this stuff related
+        # to quad integration. Cumptrapz is so fast, that caching is nonsense.
+        # One possible thing is to substitute the integral to use some log
+        # features of the integrand and reduce further the number of steps
 
-        X_int[0] = 0.
-        for i in range(1, len(dl_vec)):
-            X_int[i] = X_int[i - 1] + quad(vec_rho_l,
-                                           dl_vec[i - 1], dl_vec[i],
-                                           epsrel=0.01)[0]
+        # Calculate integral for each depth point
+        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)# 
+        dl_vec = dl_vec[1:]
+        # X_int = np.zeros_like(dl_vec, dtype='float64')
+        # X_int[0] = 0.
+        # for i in range(1, len(dl_vec)):
+
+        #     X_int[i] = X_int[i - 1] + quad(vec_rho_l,
+        #                                    dl_vec[i - 1], dl_vec[i],
+        #                                    epsrel=0.01)[0]
 
         print '.. took {0:1.2f}s'.format(time() - now)
 
@@ -401,8 +407,8 @@ class EarthAtmosphere():
         self.s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1],
                                        k=2, s=0.0)
 
-        print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
-                                              self.s_X2rho(X_int))
+        # print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
+        #                                       self.s_X2rho(X_int))
 
     def set_theta(self, theta_deg, force_spline_calc=False):
         """Configures geometry and initiates spline calculation for
