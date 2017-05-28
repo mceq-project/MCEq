@@ -25,7 +25,6 @@ from misc import normalize_hadronic_model_name
 
 
 class MCEqParticle(object):
-
     """Bundles different particle properties for simplified
     availability of particle properties in :class:`MCEq.core.MCEqRun`.
 
@@ -37,8 +36,13 @@ class MCEqParticle(object):
       d (int): dimension of the energy grid
     """
 
-    def __init__(self, pdgid, particle_db,
-                 pythia_db, cs_db, d, max_density=1.240e-03):
+    def __init__(self,
+                 pdgid,
+                 particle_db,
+                 pythia_db,
+                 cs_db,
+                 d,
+                 max_density=1.240e-03):
 
         #: (float) mixing energy, transition between hadron and resonance behavior
         self.E_mix = 0
@@ -167,7 +171,9 @@ class MCEqParticle(object):
         except ZeroDivisionError:
             return np.inf
 
-    def calculate_mixing_energy(self, e_grid, no_mix=False,
+    def calculate_mixing_energy(self,
+                                e_grid,
+                                no_mix=False,
                                 max_density=1.240e-03):
         """Calculates interaction/decay length in Air and decides if
         the particle has resonance and/or hadron behavior.
@@ -194,8 +200,8 @@ class MCEqParticle(object):
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length(e_grid)
 
-        if (not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.)
-                or abs(self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
+        if (not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.) or
+                abs(self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -227,8 +233,7 @@ class MCEqParticle(object):
             self.is_resonance = False
 
     def __repr__(self):
-        a_string = (
-            """
+        a_string = ("""
         {0}:
         is_hadron   : {1}
         is_mixed    : {2}
@@ -236,10 +241,10 @@ class MCEqParticle(object):
         is_lepton   : {4}
         is_alias    : {5}
         E_mix       : {6:2.1e}\n""").format(
-            self.name, self.is_hadron, self.is_mixed,
-            self.is_resonance, self.is_lepton,
-            self.is_alias, self.E_mix)
+            self.name, self.is_hadron, self.is_mixed, self.is_resonance,
+            self.is_lepton, self.is_alias, self.E_mix)
         return a_string
+
 
 #         i(Ei0)->j(Ej0)    ...     i(EiN)->j(Ej0)
 #         i(Ei0)->j(Ej1)    ...     i(EiN)->j(Ej1)
@@ -250,7 +255,6 @@ class MCEqParticle(object):
 
 
 class InteractionYields(object):
-
     """Class for managing the dictionary of interaction yield matrices.
 
     The class unpickles a dictionary, which contains the energy grid
@@ -296,8 +300,8 @@ class InteractionYields(object):
         if interaction_model != None:
             self._load(interaction_model)
         else:
-            print (self.__class__.__name__ +
-                   '__init__(): Loading SIBYLL 2.1 by default.')
+            print(self.__class__.__name__ +
+                  '__init__(): Loading SIBYLL 2.1 by default.')
             self._load('SIBYLL2.1')
 
         if charm_model and interaction_model:
@@ -342,8 +346,9 @@ class InteractionYields(object):
             elif 'ledpm' in fname:
                 extend_to_low_energies(fname=fname)
             else:
-                raise Exception('InteractionYields::_load(): no model file found for'
-                                + interaction_model)
+                raise Exception(
+                    'InteractionYields::_load(): no model file found for' +
+                    interaction_model)
 
         if not isfile(fname.replace('.bz2', '.ppd')):
             self._decompress(fname)
@@ -362,8 +367,7 @@ class InteractionYields(object):
 
         #  = np.diag(self.e_bins[1:] - self.e_bins[:-1])
         self.dim = self.e_grid.size
-        self.no_interaction = np.zeros(self.dim ** 2).reshape(
-            self.dim, self.dim)
+        self.no_interaction = np.zeros(self.dim**2).reshape(self.dim, self.dim)
 
         self.charm_model = None
 
@@ -468,8 +472,9 @@ class InteractionYields(object):
         fcompr = os.path.splitext(fname)[0] + '.bz2'
 
         if not os.path.isfile(fcompr):
-            raise IOError(self.__class__.__name__ +
-                          '::_decompress():: File {0} not found.'.format(fcompr))
+            raise IOError(
+                self.__class__.__name__ +
+                '::_decompress():: File {0} not found.'.format(fcompr))
 
         if dbg > 1:
             print(self.__class__.__name__ + '::_decompress():: ' +
@@ -481,10 +486,11 @@ class InteractionYields(object):
 
         # Dump the file uncompressed
         if dbg > 1:
-            print(self.__class__.__name__ + '::_decompress():: ' +
-                  'Saving to ', fname.replace('.bz2', '.ppd'))
-        pickle.dump(new_dict,
-                    open(fname.replace('.bz2', '.ppd'), 'wb'), protocol=-1)
+            print(
+                self.__class__.__name__ + '::_decompress():: ' + 'Saving to ',
+                fname.replace('.bz2', '.ppd'))
+        pickle.dump(
+            new_dict, open(fname.replace('.bz2', '.ppd'), 'wb'), protocol=-1)
 
     def _gen_mod_matrix(self, x_func, *args):
         """Creates modification matrix using an (x,E)-dependent function.
@@ -505,8 +511,8 @@ class InteractionYields(object):
         """
 
         if dbg > 0:
-            print (self.__class__.__name__ +
-                   '::init_mod_matrix():'), x_func.__name__, args
+            print(self.__class__.__name__ +
+                  '::init_mod_matrix():'), x_func.__name__, args
 
         # if not config['error_propagation_mode']:
         #     raise Exception(self.__class__.__name__ +
@@ -514,8 +520,8 @@ class InteractionYields(object):
         #             'propagation mode in config and re-initialize MCEqRun.')
 
         if dbg > 1:
-            print (self.__class__.__name__ +
-                   '::mod_pprod_matrix(): creating xmat')
+            print(self.__class__.__name__ +
+                  '::mod_pprod_matrix(): creating xmat')
         if self.xmat is None:
             self.xmat = self.no_interaction
             for eidx in range(self.dim):
@@ -542,62 +548,62 @@ class InteractionYields(object):
         """
 
         if ((prim_pdg, sec_pdg) not in self.mod_pprod.keys() or
-                self.mod_pprod[(prim_pdg, sec_pdg)][:2] != (x_func.__name__, args)):
+                self.mod_pprod[(prim_pdg, sec_pdg)][:2] !=
+            (x_func.__name__, args)):
             if dbg > 0:
-                print (self.__class__.__name__ +
-                       '::set_mod_pprod(): modifying modify particle production' +
-                       ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
+                print(self.__class__.__name__ +
+                      '::set_mod_pprod(): modifying modify particle production'
+                      + ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
             kmat = self._gen_mod_matrix(x_func, *args)
-            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func.__name__, args,
-                                                   kmat)
+            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func.__name__, args, kmat)
             if dbg > 1:
-                print ('::set_mod_pprod(): modification "strength"',
-                       np.sum(kmat) / np.count_nonzero(kmat, dtype=np.float))
+                print('::set_mod_pprod(): modification "strength"',
+                      np.sum(kmat) / np.count_nonzero(kmat, dtype=np.float))
 
             if config['use_isospin_sym'] and prim_pdg == 2212:
 
                 # p->pi+ = n-> pi-, p->pi- = n-> pi+
                 if abs(sec_pdg) == 211:
-                    self.mod_pprod[(2112, -sec_pdg)] = ('isospin', args,
-                                                        kmat)
+                    self.mod_pprod[(2112, -sec_pdg)] = ('isospin', args, kmat)
 
                 # Charged and neutral kaons
                 elif abs(sec_pdg) == 321:
                     # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
-                    self.mod_pprod[(2112, sec_pdg)] = ('isospin', args,
-                                                       kmat)
+                    self.mod_pprod[(2112, sec_pdg)] = ('isospin', args, kmat)
 
-                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
+                    #     #approx.: K0L/S ~ 0.5*(K+ + K-)
                     k0arg = list(args)
                     if (2212, -sec_pdg) in self.mod_pprod:
                         # Compute average of K+ and K- modification matrices
                         # Save the 'average' argument
                         for i in range(len(args)):
                             try:
-                                k0arg[i] = 0.5 * (k0arg[i] + 
-                                    self.mod_pprod[(2212, -sec_pdg)][1][i])
+                                k0arg[i] = 0.5 * (k0arg[i] + self.mod_pprod[(
+                                    2212, -sec_pdg)][1][i])
                             except TypeError:
                                 if dbg > 2:
-                                    print '::set_mod_pprod(): Can not average arg',k0arg
+                                    print '::set_mod_pprod(): Can not average arg', k0arg
 
                     kmat = self._gen_mod_matrix(x_func, *k0arg)
 
                     # modify K0L/S
-                    for t in [(2212, 310), (2212, 130),
-                              (2112, 310), (2112, 130)]:
-                        self.mod_pprod[t] = ('isospin', tuple(k0arg),
-                                             kmat)
+                    for t in [(2212, 310), (2212, 130), (2112, 310), (2112,
+                                                                      130)]:
+                        self.mod_pprod[t] = ('isospin', tuple(k0arg), kmat)
                 elif abs(sec_pdg) == 2212:
-                    self.mod_pprod[(2112, 2112)] = ('isospin', args,
-                                                    self.mod_pprod[(prim_pdg, sec_pdg)][2])
+                    self.mod_pprod[(2112,
+                                    2112)] = ('isospin', args,
+                                              self.mod_pprod[(prim_pdg,
+                                                              sec_pdg)][2])
 
             # Tell MCEqRun to regenerate the matrices if something has changed
             return True
         else:
             if dbg > 1:
-                print (self.__class__.__name__ +
-                       '::set_mod_pprod(): no changes to particle production' +
-                       ' modification matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
+                print(self.__class__.__name__ +
+                      '::set_mod_pprod(): no changes to particle production' +
+                      ' modification matrix of {0}/{1}.').format(
+                          prim_pdg, sec_pdg)
             return False
 
     def print_mod_pprod(self):
@@ -607,8 +613,7 @@ class InteractionYields(object):
         for i, (prim_pdg, sec_pdg) in enumerate(sorted(self.mod_pprod)):
 
             print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
-                i, prim_pdg, sec_pdg,
-                self.mod_pprod[(prim_pdg, sec_pdg)][0],
+                i, prim_pdg, sec_pdg, self.mod_pprod[(prim_pdg, sec_pdg)][0],
                 str(self.mod_pprod[(prim_pdg, sec_pdg)][1]))
 
     def set_interaction_model(self, interaction_model, force=False):
@@ -625,8 +630,8 @@ class InteractionYields(object):
 
         if not force and interaction_model == self.iam:
             if dbg > 0:
-                print ("InteractionYields:set_interaction_model():: Model " +
-                       self.iam + " already loaded.")
+                print("InteractionYields:set_interaction_model():: Model " +
+                      self.iam + " already loaded.")
             return False
         else:
             self._load(interaction_model)
@@ -653,15 +658,15 @@ class InteractionYields(object):
             self.band = (xl_low_idx, xl_up_idx)
         else:
             self.band = None
-            print (self.__class__.__name__ + '::set_xf_band():' +
-                   'reset selection of x_lab band')
+            print(self.__class__.__name__ + '::set_xf_band():' +
+                  'reset selection of x_lab band')
             return
 
         if dbg > 0:
             xl_bins = self.e_bins / self.e_bins[-1]
-            print (self.__class__.__name__ + '::set_xf_band(): limiting '
-                   'Feynman x range to: {0:5.2e} - {1:5.2e}').format(xl_bins[self.band[0]],
-                                                                     xl_bins[self.band[1]])
+            print(self.__class__.__name__ + '::set_xf_band(): limiting '
+                  'Feynman x range to: {0:5.2e} - {1:5.2e}').format(
+                      xl_bins[self.band[0]], xl_bins[self.band[1]])
 
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
@@ -678,8 +683,9 @@ class InteractionYields(object):
             return True
         else:
             if dbg > 1:
-                print ('InteractionYields::is_yield(): no interaction matrix ' +
-                       "for {0}, {1}->{2}".format(self.iam, projectile, daughter))
+                print(
+                    'InteractionYields::is_yield(): no interaction matrix ' +
+                    "for {0}, {1}->{2}".format(self.iam, projectile, daughter))
             return False
 
         return True
@@ -701,12 +707,12 @@ class InteractionYields(object):
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
         if (config['adv_set']['disable_charm_pprod'] and
-                ((abs(projectile) > 400 and abs(projectile) < 500) or
-                 (abs(projectile) > 4000 and abs(projectile) < 5000))):
+            ((abs(projectile) > 400 and abs(projectile) < 500) or
+             (abs(projectile) > 4000 and abs(projectile) < 5000))):
 
             if dbg > 2:
-                print ('InteractionYields::get_y_matrix(): disabled particle ' +
-                       'production by', projectile)
+                print('InteractionYields::get_y_matrix(): disabled particle ' +
+                      'production by', projectile)
             return self.no_interaction
 
         # The next line creates a copy, to prevent subsequent calls to modify
@@ -722,28 +728,31 @@ class InteractionYields(object):
             manti = self.yields[(projectile, -daughter)]  # .dot(self.weights)
             ie = 50
             if dbg > 2:
-                print ('InteractionYields::get_y_matrix(): sum in disable_leading_mesons',
-                       (np.sum(m[:, ie - 30:ie]) - np.sum(manti[:, ie - 30:ie])))
+                print(
+                    'InteractionYields::get_y_matrix(): sum in disable_leading_mesons',
+                    (np.sum(m[:, ie - 30:ie]) - np.sum(manti[:, ie - 30:ie])))
 
             if (np.sum(m[:, ie - 30:ie]) - np.sum(manti[:, ie - 30:ie])) > 0:
                 if dbg > 1:
-                    print ('InteractionYields::get_y_matrix(): inverting meson ' +
-                           'due to leading particle veto.', daughter, '->', -daughter)
+                    print('InteractionYields::get_y_matrix(): inverting meson '
+                          + 'due to leading particle veto.', daughter, '->',
+                          -daughter)
                 m = manti
             else:
                 if dbg > 1:
-                    print ('InteractionYields::get_y_matrix(): no inversion since ' +
-                           'daughter not leading', daughter)
+                    print(
+                        'InteractionYields::get_y_matrix(): no inversion since '
+                        + 'daughter not leading', daughter)
         else:
             if dbg > 2:
-                print ('InteractionYields::get_y_matrix(): no meson inversion ' +
-                       'in leading particle veto.', projectile, daughter)
+                print('InteractionYields::get_y_matrix(): no meson inversion '
+                      + 'in leading particle veto.', projectile, daughter)
 
         if (projectile, daughter) in self.mod_pprod.keys():
             if dbg > 1:
-                print (
-                    'InteractionYields::get_y_matrix(): using modified particle ' +
-                    'production for {0}/{1}').format(projectile, daughter)
+                print(
+                    'InteractionYields::get_y_matrix(): using modified particle '
+                    + 'production for {0}/{1}').format(projectile, daughter)
             m = np.copy(m)
             m *= self.mod_pprod[(projectile, daughter)][2]
 
@@ -757,8 +766,7 @@ class InteractionYields(object):
             m[np.triu_indices(self.dim, self.dim - self.band[0])] = 0.
             return m
 
-    def assign_yield_idx(self, projectile, projidx,
-                         daughter, dtridx, cmat):
+    def assign_yield_idx(self, projectile, projidx, daughter, dtridx, cmat):
         """Copies a subset, defined in tuples ``projidx`` and ``dtridx`` from
         the ``yield_matrix(projectile,daughter)`` into ``cmat``
 
@@ -802,15 +810,17 @@ class InteractionYields(object):
             self.set_interaction_model(self.iam, force=True)
 
         sib = SibyllParticleTable()
-        charm_modids = [sib.modid2pdg[modid] for modid in
-                        sib.mod_ids if abs(modid) >= 59]
+        charm_modids = [
+            sib.modid2pdg[modid] for modid in sib.mod_ids if abs(modid) >= 59
+        ]
         del sib
 
         # Remove the charm interactions from the index
         new_index = {}
         for proj, secondaries in self.secondary_dict.iteritems():
-            new_index[proj] = [idx for idx in secondaries
-                               if idx not in charm_modids]
+            new_index[proj] = [
+                idx for idx in secondaries if idx not in charm_modids
+            ]
 
         self.secondary_dict = new_index
 
@@ -831,8 +841,8 @@ class InteractionYields(object):
             cs_h_p = HadAirCrossSections('SIBYLL2.3_pp')
             whr = WHR_charm(self.e_grid, cs_h_air)
             for proj in self.projectiles:
-                cs_scale = np.diag(cs_h_p.get_cs(proj) /
-                                   cs_h_air.get_cs(proj)) * 14.5
+                cs_scale = np.diag(
+                    cs_h_p.get_cs(proj) / cs_h_air.get_cs(proj)) * 14.5
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = whr.get_yield_matrix(
                         proj, chid).dot(self.weights) * 14.5
@@ -848,15 +858,16 @@ class InteractionYields(object):
                     # rescale yields with sigma_pp/sigma_air to ensure
                     # that in a later step indeed sigma_{pp,ccbar} is taken
 
-                    self.yields[(proj, chid)] = self.yield_dict[
-                        self.iam + '_pl'][(proj, chid)].dot(
-                            cs_scale).dot(self.weights) * 14.5
+                    self.yields[(
+                        proj, chid)] = self.yield_dict[self.iam + '_pl'][(
+                            proj, chid)].dot(cs_scale).dot(self.weights) * 14.5
                     # Update index
                     self.secondary_dict[proj].append(chid)
 
         else:
-            raise NotImplementedError('InteractionYields:_inject_custom_charm_model()::' +
-                                      ' Unsupported model')
+            raise NotImplementedError(
+                'InteractionYields:_inject_custom_charm_model()::' +
+                ' Unsupported model')
 
         self.charm_model = model
 
@@ -871,7 +882,6 @@ class InteractionYields(object):
 
 
 class DecayYields(object):
-
     """Class for managing the dictionary of decay yield matrices.
 
     The class un-pickles a dictionary, which contains :math:`x`
@@ -923,8 +933,8 @@ class DecayYields(object):
 
         for mother in config["adv_set"]["disable_decays"]:
             if dbg > 1:
-                print ("DecayYields:_load():: switching off " +
-                       "decays of {0}.").format(mother)
+                print("DecayYields:_load():: switching off " +
+                      "decays of {0}.").format(mother)
             self.daughter_dict.pop(mother)
 
         # Restrict accessible decay yields to mother particles from mother_list
@@ -932,15 +942,17 @@ class DecayYields(object):
             self.mothers = self.daughter_dict.keys()
         else:
             for m in mother_list:
-                if (m not in self.daughter_dict.keys()
-                        and abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
-                    print ("DecayYields::_load(): Warning: no decay " +
-                           "distributions for {0} found.").format(m)
+                if (m not in self.daughter_dict.keys() and
+                        abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
+                    print("DecayYields::_load(): Warning: no decay " +
+                          "distributions for {0} found.").format(m)
 
             # Remove unused particle species from index in compact mode
             if config["compact_mode"]:
                 for p in self.daughter_dict.keys():
-                    if abs(p) not in mother_list and abs(p) not in [7113, 7213, 7313]:
+                    if abs(p) not in mother_list and abs(p) not in [
+                            7113, 7213, 7313
+                    ]:
                         _ = self.daughter_dict.pop(p)
 
             self.mothers = self.daughter_dict.keys()
@@ -990,8 +1002,8 @@ class DecayYields(object):
                 mother, daughter = key
             except ValueError:
                 if dbg > 2:
-                    print (self.__class__.__name__ +
-                           '_gen_index(): Skip additional info', key)
+                    print(self.__class__.__name__ +
+                          '_gen_index(): Skip additional info', key)
                 # Copy additional items to the new dictionary
                 new_dict[key] = mat
                 continue
@@ -1046,8 +1058,9 @@ class DecayYields(object):
         fcompr = os.path.splitext(fname)[0] + '.bz2'
 
         if not os.path.isfile(fcompr):
-            raise IOError(self.__class__.__name__ +
-                          '::_decompress():: File {0} not found.'.format(fcompr))
+            raise IOError(
+                self.__class__.__name__ +
+                '::_decompress():: File {0} not found.'.format(fcompr))
 
         if dbg > 1:
             print 'Decompressing', fcompr
@@ -1077,13 +1090,12 @@ class DecayYields(object):
           carried out.
         """
         if dbg > 0 and not self.is_daughter(mother, daughter):
-            print ("DecayYields:get_d_matrix():: trying to get empty matrix" +
-                   "{0} -> {1}").format(mother, daughter)
+            print("DecayYields:get_d_matrix():: trying to get empty matrix" +
+                  "{0} -> {1}").format(mother, daughter)
 
         return self.decay_dict[(mother, daughter)]
 
-    def assign_d_idx(self, mother, moidx,
-                     daughter, dtridx, dmat):
+    def assign_d_idx(self, mother, moidx, daughter, dtridx, dmat):
         """Copies a subset, defined in tuples ``moidx`` and ``dtridx`` from
         the ``decay_matrix(mother,daughter)`` into ``dmat``
 
@@ -1139,7 +1151,6 @@ class DecayYields(object):
 
 
 class HadAirCrossSections(object):
-
     """Class for managing the dictionary of hadron-air cross-sections.
 
     The class unpickles a dictionary, which contains proton-air,
@@ -1154,9 +1165,9 @@ class HadAirCrossSections(object):
     #: unit - :math:`\text{GeV} \cdot \text{cm}`
     GeVcm = GeVfm * 1e-13
     #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
-    GeV2mbarn = 10.0 * GeVfm ** 2
+    GeV2mbarn = 10.0 * GeVfm**2
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
-    mbarn2cm2 = GeVcm ** 2 / GeV2mbarn
+    mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
     def __init__(self, interaction_model):
         #: current interaction model name
@@ -1217,8 +1228,9 @@ class HadAirCrossSections(object):
         fcompr = os.path.splitext(fname)[0] + '.bz2'
 
         if not os.path.isfile(fcompr):
-            raise IOError(self.__class__.__name__ +
-                          '::_decompress():: File {0} not found.'.format(fcompr))
+            raise IOError(
+                self.__class__.__name__ +
+                '::_decompress():: File {0} not found.'.format(fcompr))
 
         if dbg > 1:
             print 'Decompressing', fcompr
@@ -1241,22 +1253,23 @@ class HadAirCrossSections(object):
 
         # Remove the _compact suffix, since this does not affect cross sections
         if dbg > 2:
-            print ("InteractionYields:set_interaction_model()::Using cross " +
-                   "sections of original model in compact mode")
+            print("InteractionYields:set_interaction_model()::Using cross " +
+                  "sections of original model in compact mode")
         interaction_model = normalize_hadronic_model_name(interaction_model)
         interaction_model = interaction_model.split('_compact')[0]
 
         if interaction_model == self.iam and dbg > 0:
-            print ("InteractionYields:set_interaction_model():: Model " +
-                   self.iam + " already loaded.")
+            print("InteractionYields:set_interaction_model():: Model " +
+                  self.iam + " already loaded.")
             return
         if interaction_model in self.cs_dict.keys():
             self.iam = interaction_model
 
         else:
             print "Available interaction models: ", self.cs_dict.keys()
-            raise Exception("HadAirCrossSections(): No cross-sections for the desired " +
-                            "interaction model {0} available.".format(interaction_model))
+            raise Exception(
+                "HadAirCrossSections(): No cross-sections for the desired " +
+                "interaction model {0} available.".format(interaction_model))
 
         self.cs = self.cs_dict[self.iam]
 

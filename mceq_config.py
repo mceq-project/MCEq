@@ -5,10 +5,10 @@ import platform
 import os.path as path
 base_path = path.dirname(path.abspath(__file__))
 sys.path.append(base_path)
-sys.path.append(base_path+"/CRFluxModels")
-sys.path.append(base_path+"/ParticleDataTool")
-sys.path.append(base_path+"/Python-NRLMSISE-00")
-sys.path.append(base_path+"/c-NRLMSISE-00")
+sys.path.append(base_path + "/CRFluxModels")
+sys.path.append(base_path + "/ParticleDataTool")
+sys.path.append(base_path + "/Python-NRLMSISE-00")
+sys.path.append(base_path + "/c-NRLMSISE-00")
 
 # determine shared library extension and MKL path
 libext = None
@@ -20,18 +20,16 @@ elif platform.platform().find('Darwin') != -1:
     libext = '.dylib'
 else:
     #Windows case
-    mkl_default = path.join(sys.prefix, 'pkgs', 'mkl-11.3.3-1',
-                            'Library', 'bin', 'mkl_rt')
+    mkl_default = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt')
     libext = '.dll'
 
 config = {
 
     # Debug flag for verbose printing, 0 = minimum
-    "debug_level": 1,
+    "debug_level": 2,
 
     # Use progress_bars
     "prog_bar": False,
-
 
     #=========================================================================
     # Paths and library locations
@@ -50,7 +48,7 @@ config = {
     "mu_eloss_fname": "dEdX_mu_air.ppl",
 
     # File where to cache interpolating splines of the atmosphere module
-    'atm_cache_file':'atm_cache.ppd',
+    'atm_cache_file': 'atm_cache.ppd',
 
     # full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
     "MKL_path": mkl_default + libext,
@@ -66,7 +64,6 @@ config = {
     # "density_model": ('MSIS00_IC',('SouthPole','January')),
     # "density_model": ('GeneralizedTarget', None),
 
-
     # Version of NRLMSISE-00 python library (ctypes, native)
     "msis_python": "ctypes",
 
@@ -78,7 +75,7 @@ config = {
     # Change parameter only in combination with interaction model setting.
     # By default all inclusive cross sections are calculated for air targets
     # expect those with '_pp' suffix.
-    "A_target" : 14.5, # <A> = 14.5 for air
+    "A_target": 14.5,  # <A> = 14.5 for air
 
     #parameters for EarthGeometry
     "r_E": 6391.e3,  # Earth radius in m
@@ -86,8 +83,8 @@ config = {
     "h_atm": 112.8e3,  # top of the atmosphere in m
 
     #Default parameters for GeneralizedTarget
-    "len_target": 1000., # Total length of the target [m]
-    "env_density": 0.001225, # density of default material in g/cm^3
+    "len_target": 1000.,  # Total length of the target [m]
+    "env_density": 0.001225,  # density of default material in g/cm^3
     "env_name": "air",
 
     #===========================================================================
@@ -114,10 +111,12 @@ config = {
 
     #parameters for the odepack integrator. More details at
     #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
-    "ode_params": {'name':'vode',
-                   'method':'adams',
-                   'nsteps':10000,
-                   'max_step':10.0},
+    "ode_params": {
+        'name': 'vode',
+        'method': 'adams',
+        'nsteps': 10000,
+        'max_step': 10.0
+    },
 
     #=========================================================================
     # Advanced settings
@@ -168,8 +167,8 @@ config = {
     # bins specified below.
     "low_energy_extension": {
         "enabled": True,
-        "le_model":'DPMJET-III',
-        "he_le_transition": 80, # GeV (not recommended to go below 80)
+        "le_model": 'DPMJET-III',
+        "he_le_transition": 80,  # GeV (not recommended to go below 80)
         "nbins_interp": 3,
         # This flag controls what to do with processes, which are not
         # included in DPMJET, such as re-interactions of rare baryons
@@ -206,10 +205,10 @@ config = {
         "allowed_projectiles": [2212, 2112, 211, 321, 130],
 
         # Disable leptons coming from prompt hadron decays at the vertex
-        "disable_direct_leptons":False,
+        "disable_direct_leptons": False,
 
         # Difficult to explain parameter
-        'disable_leading_mesons':False,
+        'disable_leading_mesons': False,
 
         # Do not apply mixing to these particles
         "exclude_from_mixing": [],
@@ -219,12 +218,11 @@ config = {
 
         # Disable mixing between resonance approx. and full propagation
         "no_mixing": False
-        }
+    }
 }
 
-
-
 dbg = config['debug_level']
+
 
 def mceq_config_without(key_list):
     r = dict(config)  # make a copy
