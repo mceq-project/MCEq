@@ -565,6 +565,31 @@ class InteractionYields(object):
                 # p->pi+ = n-> pi-, p->pi- = n-> pi+
                 if abs(sec_pdg) == 211:
                     self.mod_pprod[(2112, -sec_pdg)] = ('isospin', args, kmat)
+                    #     #approx.: K0L/S ~ 0.5*(K+ + K-)
+
+                    unflv_arg = list(args)
+                    has_unflv = bool(
+                        np.sum(
+                            [p in self.projectiles for p in [221, 223, 333]]))
+                    if has_unflv:
+                        if (2212, -sec_pdg) in self.mod_pprod:
+                            # Compute average of K+ and K- modification matrices
+                            # Save the 'average' argument
+                            for i in range(len(args)):
+                                try:
+                                    unflv_arg[i] = 0.5 * (
+                                        unflv_arg[i] + self.mod_pprod[(
+                                            2212, -sec_pdg)][1][i])
+                                except TypeError:
+                                    if dbg > 2:
+                                        print '::set_mod_pprod(): Can not average arg', unflv_arg
+                        unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
+
+                        # modify eta, omega, phi, 221, 223, 333
+                        for t in [(2212, 221), (2212, 223), (2212, 333),
+                                  (2112, 221), (2112, 223), (2112, 333)]:
+                            self.mod_pprod[t] = ('isospin', tuple(unflv_arg),
+                                                 unflmat)
 
                 # Charged and neutral kaons
                 elif abs(sec_pdg) == 321:
@@ -590,6 +615,7 @@ class InteractionYields(object):
                     for t in [(2212, 310), (2212, 130), (2112, 310), (2112,
                                                                       130)]:
                         self.mod_pprod[t] = ('isospin', tuple(k0arg), kmat)
+
                 elif abs(sec_pdg) == 2212:
                     self.mod_pprod[(2112,
                                     2112)] = ('isospin', args,
