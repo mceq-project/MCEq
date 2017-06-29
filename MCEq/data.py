@@ -560,67 +560,101 @@ class InteractionYields(object):
                 print('::set_mod_pprod(): modification "strength"',
                       np.sum(kmat) / np.count_nonzero(kmat, dtype=np.float))
 
-            if config['use_isospin_sym'] and prim_pdg == 2212:
+            if not config['use_isospin_sym']:
+                return True
+            else:
+                if prim_pdg not in [2212, 2112]:
+                    raise Exception(
+                        self.__class__.__name__ +
+                        'Unsupported primary for isospin symmetries')
 
-                # p->pi+ = n-> pi-, p->pi- = n-> pi+
-                if abs(sec_pdg) == 211:
-                    self.mod_pprod[(2112, -sec_pdg)] = ('isospin', args, kmat)
-                    #     #approx.: K0L/S ~ 0.5*(K+ + K-)
+            prim_pdg, mirror_pdg = 2212, 2112
+            if prim_pdg == 2112:
+                prim_pdg = 2112
+                mirror_pdg = 2212
 
-                    unflv_arg = list(args)
-                    has_unflv = bool(
-                        np.sum(
-                            [p in self.projectiles for p in [221, 223, 333]]))
-                    if has_unflv:
-                        if (2212, -sec_pdg) in self.mod_pprod:
-                            # Compute average of K+ and K- modification matrices
-                            # Save the 'average' argument
-                            for i in range(len(args)):
-                                try:
-                                    unflv_arg[i] = 0.5 * (
-                                        unflv_arg[i] + self.mod_pprod[(
-                                            2212, -sec_pdg)][1][i])
-                                except TypeError:
-                                    if dbg > 2:
-                                        print '::set_mod_pprod(): Can not average arg', unflv_arg
-                        unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
+            # p->pi+ = n-> pi-, p->pi- = n-> pi+
+            if abs(sec_pdg) == 211:
+                self.mod_pprod[(mirror_pdg, -sec_pdg)] = ('isospin', args,
+                                                          kmat)
+                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
 
-                        # modify eta, omega, phi, 221, 223, 333
-                        for t in [(2212, 221), (2212, 223), (2212, 333),
-                                  (2112, 221), (2112, 223), (2112, 333)]:
-                            self.mod_pprod[t] = ('isospin', tuple(unflv_arg),
-                                                 unflmat)
-
-                # Charged and neutral kaons
-                elif abs(sec_pdg) == 321:
-                    # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
-                    self.mod_pprod[(2112, sec_pdg)] = ('isospin', args, kmat)
-
-                    #     #approx.: K0L/S ~ 0.5*(K+ + K-)
-                    k0arg = list(args)
+                unflv_arg = list(args)
+                has_unflv = bool(
+                    np.sum([p in self.projectiles for p in [221, 223, 333]]))
+                if has_unflv:
                     if (2212, -sec_pdg) in self.mod_pprod:
                         # Compute average of K+ and K- modification matrices
                         # Save the 'average' argument
                         for i in range(len(args)):
                             try:
-                                k0arg[i] = 0.5 * (k0arg[i] + self.mod_pprod[(
-                                    2212, -sec_pdg)][1][i])
+                                unflv_arg[i] = 0.5 * (
+                                    unflv_arg[i] + self.mod_pprod[(
+                                        prim_pdg, -sec_pdg)][1][i])
                             except TypeError:
                                 if dbg > 2:
-                                    print '::set_mod_pprod(): Can not average arg', k0arg
+                                    print '::set_mod_pprod(): Can not average arg', unflv_arg
+                    unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
 
-                    kmat = self._gen_mod_matrix(x_func, *k0arg)
+                    # modify eta, omega, phi, 221, 223, 333
+                    for t in [(prim_pdg, 221), (prim_pdg, 223),
+                              (prim_pdg, 333), (mirror_pdg, 221),
+                              (mirror_pdg, 223), (mirror_pdg, 333)]:
+                        self.mod_pprod[t] = ('isospin', tuple(unflv_arg),
+                                             unflmat)
 
-                    # modify K0L/S
-                    for t in [(2212, 310), (2212, 130), (2112, 310), (2112,
-                                                                      130)]:
-                        self.mod_pprod[t] = ('isospin', tuple(k0arg), kmat)
+            # Charged and neutral kaons
+            elif abs(sec_pdg) == 321:
+                # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
+                self.mod_pprod[(mirror_pdg, sec_pdg)] = ('isospin', args, kmat)
 
-                elif abs(sec_pdg) == 2212:
-                    self.mod_pprod[(2112,
-                                    2112)] = ('isospin', args,
+                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
+                k0arg = list(args)
+                if (prim_pdg, -sec_pdg) in self.mod_pprod:
+                    # Compute average of K+ and K- modification matrices
+                    # Save the 'average' argument
+                    for i in range(len(args)):
+                        try:
+                            k0arg[i] = 0.5 * (k0arg[i] + self.mod_pprod[(
+                                prim_pdg, -sec_pdg)][1][i])
+                        except TypeError:
+                            if dbg > 2:
+                                print '::set_mod_pprod(): Can not average arg', k0arg
+
+                kmat = self._gen_mod_matrix(x_func, *k0arg)
+
+                # modify K0L/S
+                for t in [(prim_pdg, 310), (prim_pdg, 130), (mirror_pdg, 310),
+                          (mirror_pdg, 130)]:
+                    self.mod_pprod[t] = ('isospin', tuple(k0arg), kmat)
+
+            elif abs(sec_pdg) == 411:
+                ssec = np.sign(sec_pdg)
+                self.mod_pprod[(prim_pdg, ssec * 421)] = ('isospin', args,
+                                                          kmat)
+                self.mod_pprod[(prim_pdg, ssec * 431)] = ('isospin', args,
+                                                          kmat)
+                self.mod_pprod[(mirror_pdg, sec_pdg)] = ('isospin', args, kmat)
+                self.mod_pprod[(mirror_pdg, ssec * 421)] = ('isospin', args,
+                                                            kmat)
+                self.mod_pprod[(mirror_pdg, ssec * 431)] = ('isospin', args,
+                                                            kmat)
+
+            # Leading particles
+            elif abs(sec_pdg) == prim_pdg:
+
+                self.mod_pprod[(mirror_pdg,
+                                mirror_pdg)] = ('isospin', args,
+                                                self.mod_pprod[(prim_pdg,
+                                                                sec_pdg)][2])
+            elif abs(sec_pdg) == mirror_pdg:
+                self.mod_pprod[(mirror_pdg,
+                                prim_pdg)] = ('isospin', args,
                                               self.mod_pprod[(prim_pdg,
                                                               sec_pdg)][2])
+            else:
+                raise Exception('No isospin relation found for secondary' +
+                                str(sec_pdg))
 
             # Tell MCEqRun to regenerate the matrices if something has changed
             return True
@@ -663,6 +697,7 @@ class InteractionYields(object):
             self._load(interaction_model)
 
         if interaction_model != self.iam:
+            print interaction_model, self.iam
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
@@ -1227,12 +1262,12 @@ class HadAirCrossSections(object):
             self.cs_dict = pickle.load(open(fname, 'rb'))
 
         # normalise hadronic model names
-        old_keys = [k for k in self.cs_dict if k != "evec"]
+        old_keys = [k for k in self.cs_dict if k != "EVEC"]
         for old_key in old_keys:
             new_key = normalize_hadronic_model_name(old_key)
             self.cs_dict[new_key] = self.cs_dict.pop(old_key)
 
-        self.egrid = self.cs_dict['evec']
+        self.egrid = self.cs_dict['EVEC']
 
     def _decompress(self, fname):
         """Decompresses and unpickles dictionaries stored in bz2
@@ -1273,7 +1308,7 @@ class HadAirCrossSections(object):
 
         Args:
           interaction_model (str): interaction model name
-        Raises:
+        Raises: 
           Exception: if invalid name specified in argument ``interaction_model``
         """
 
