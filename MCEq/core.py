@@ -83,8 +83,7 @@ class MCEqRun(object):
         self.iam_mat_initialized = False
         # Load decay spectra
         self.ds_params = dict(
-            mother_list=self.y.particle_list,
-        )
+            mother_list=self.y.particle_list, )
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
         self.ds = DecayYields(**self.ds_params)
@@ -194,11 +193,13 @@ class MCEqRun(object):
 
         self.dim_states = self.d * self.n_tot_species
 
-        self.e_weight = np.array(self.n_tot_species *
-                                 list(self.y.e_bins[1:] -
-                                      self.y.e_bins[:-1]))
+        self.e_weight = np.array(
+            self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
 
         self.solution = np.zeros(self.dim_states)
+
+        # Initialize empty state (particle density) vector
+        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
 
         self._init_alias_tables()
         self._init_muon_energy_loss()
@@ -211,18 +212,22 @@ class MCEqRun(object):
         import cPickle as pickle
         from os.path import join
         self.mu_dEdX = pickle.load(
-            open(join(config['data_dir'],
-                      config['mu_eloss_fname']), 'rb')).astype(self.fl_pr) * 1e-3  # ... to GeV
+            open(join(config['data_dir'], config['mu_eloss_fname']),
+                 'rb')).astype(self.fl_pr) * 1e-3  # ... to GeV
         # Left index of first muon species and number of
         # muon species including aliases
         # Find first muon species in the list
         #(muons have inices next to each other but may start from a different category)
         min_id = 100000
 
-        min_id_pl = min([self.pdg2pref[mu_id].lidx()
-                         for mu_id in [13, 7013, 7113, 7213, 7313]])
-        min_id_mi = min([self.pdg2pref[-mu_id].lidx()
-                         for mu_id in [13, 7013, 7113, 7213, 7313]])
+        min_id_pl = min([
+            self.pdg2pref[mu_id].lidx()
+            for mu_id in [13, 7013, 7113, 7213, 7313]
+        ])
+        min_id_mi = min([
+            self.pdg2pref[-mu_id].lidx()
+            for mu_id in [13, 7013, 7113, 7213, 7313]
+        ])
 
         self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
 
@@ -243,22 +248,24 @@ class MCEqRun(object):
         from MCEq.data import MCEqParticle
 
         if dbg > 1:
-            print (self.cname + "::_gen_list_of_particles():" +
-                   "Generating particle list.")
+            print(self.cname + "::_gen_list_of_particles():" +
+                  "Generating particle list.")
 
         particles = None
 
         if custom_list:
             try:
                 # Assume that particle list contains particle names
-                particles = [self.modtab.modname2pdg[pname]
-                             for pname in custom_list]
+                particles = [
+                    self.modtab.modname2pdg[pname] for pname in custom_list
+                ]
             except KeyError:
                 # assume pdg indices
                 particles = custom_list
             except:
                 raise Exception(self.cname + "::_gen_list_of_particles():" +
-                                "custom particle list not understood:" + ','.join(particle_list))
+                                "custom particle list not understood:" +
+                                ','.join(particle_list))
 
             particles += self.modtab.leptons
         else:
@@ -267,15 +274,18 @@ class MCEqRun(object):
         # Remove duplicates
         particles = list(set(particles))
 
-        particle_list = [MCEqParticle(h, self.modtab, self.pd,
-                                     self.cs, self.d) for h in particles]
+        particle_list = [
+            MCEqParticle(h, self.modtab, self.pd, self.cs, self.d)
+            for h in particles
+        ]
 
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
 
         for p in particle_list:
-            p.calculate_mixing_energy(self.e_grid,
-                                      self.adv_set['no_mixing'],
-                                      max_density=max_density)
+            p.calculate_mixing_energy(
+                self.e_grid,
+                self.adv_set['no_mixing'],
+                max_density=max_density)
 
         cascade_particles = [p for p in particle_list if not p.is_resonance]
         resonances = [p for p in particle_list if p.is_resonance]
@@ -299,8 +309,8 @@ class MCEqRun(object):
         The aliases for the special ``obs_`` category are also initialized here.
         """
         if dbg > 1:
-            print (self.cname + "::_init_alias_tables():" +
-                   "Initializing links to alias IDs.")
+            print(self.cname + "::_init_alias_tables():" +
+                  "Initializing links to alias IDs.")
         self.alias_table = {}
         prompt_ids = []
         for p in self.particle_species:
@@ -324,7 +334,8 @@ class MCEqRun(object):
                         (obs_id, 12): 7312,
                         (obs_id, 13): 7313,
                         (obs_id, 14): 7314,
-                        (obs_id, 16): 7316})
+                        (obs_id, 16): 7316
+                    })
 
     def _init_Lambda_int(self):
         """Initializes the interaction length vector according to the order
@@ -332,8 +343,8 @@ class MCEqRun(object):
 
         :math:`\\boldsymbol{\\Lambda_{int}} = (1/\\lambda_{int,0},...,1/\\lambda_{int,N})`
         """
-        self.Lambda_int = np.hstack([p.inverse_interaction_length()
-                                     for p in self.cascade_particles])
+        self.Lambda_int = np.hstack(
+            [p.inverse_interaction_length() for p in self.cascade_particles])
 
     def _init_Lambda_dec(self):
         """Initializes the decay length vector according to the order
@@ -342,8 +353,9 @@ class MCEqRun(object):
 
         :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
         """
-        self.Lambda_dec = np.hstack([p.inverse_decay_length(self.e_grid)
-                                     for p in self.cascade_particles])
+        self.Lambda_dec = np.hstack([
+            p.inverse_decay_length(self.e_grid) for p in self.cascade_particles
+        ])
         self.max_ldec = np.max(self.Lambda_dec)
 
     def _convert_to_sparse(self, skip_D_matrix):
@@ -360,8 +372,8 @@ class MCEqRun(object):
 
         from MCEq.kernels import CUDASparseContext
         if dbg > 0:
-            print (self.cname + "::_convert_to_sparse():" +
-                   "Converting to sparse (CSR) matrix format.")
+            print(self.cname + "::_convert_to_sparse():" +
+                  "Converting to sparse (CSR) matrix format.")
 
         self.int_m = csr_matrix(self.int_m)
 
@@ -370,12 +382,10 @@ class MCEqRun(object):
 
         if config['kernel_config'] == 'CUDA':
             try:
-                self.cuda_context.set_matrices(self.int_m,
-                                               self.dec_m)
+                self.cuda_context.set_matrices(self.int_m, self.dec_m)
             except AttributeError:
                 self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m,
-                    device_id=self.cuda_device)
+                    self.int_m, self.dec_m, device_id=self.cuda_device)
 
     def _init_default_matrices(self, skip_D_matrix=False):
         """Constructs the matrices for calculation.
@@ -396,12 +406,13 @@ class MCEqRun(object):
           skip_D_matrix (bool): Omit re-creating D matrix
 
         """
-        print (self.cname +
-               "::_init_default_matrices():Start filling matrices. Skip_D_matrix = {0}").format(
-                   skip_D_matrix if self.iam_mat_initialized else False)
+        print(
+            self.cname +
+            "::_init_default_matrices():Start filling matrices. Skip_D_matrix = {0}"
+        ).format(skip_D_matrix if self.iam_mat_initialized else False)
 
-        self._fill_matrices(skip_D_matrix=skip_D_matrix if
-                            self.iam_mat_initialized else False)
+        self._fill_matrices(skip_D_matrix=skip_D_matrix
+                            if self.iam_mat_initialized else False)
 
         # interaction part
         # -I + C
@@ -426,10 +437,10 @@ class MCEqRun(object):
             self._convert_to_sparse(skip_D_matrix)
 
         if dbg > 0:
-            int_m_density = (float(self.int_m.nnz) /
-                             float(np.prod(self.int_m.shape)))
-            dec_m_density = (float(self.dec_m.nnz) /
-                             float(np.prod(self.dec_m.shape)))
+            int_m_density = (
+                float(self.int_m.nnz) / float(np.prod(self.int_m.shape)))
+            dec_m_density = (
+                float(self.dec_m.nnz) / float(np.prod(self.dec_m.shape)))
             print "C Matrix info:"
             print "    density    : {0:3.2%}".format(int_m_density)
             print "    shape      : {0} x {1}".format(*self.int_m.shape)
@@ -467,11 +478,12 @@ class MCEqRun(object):
                 print "get it from http://qubit.ic.unicamp.br/~nilton"
                 raise ImportError("It's easy do do this...")
 
-            self.progress_bar = ProgressBar(maxval=maximum,
-                                            widgets=[Percentage(), ' ',
-                                                     Bar(), ' ',
-                                                     ETA()])
+            self.progress_bar = ProgressBar(
+                maxval=maximum, widgets=[Percentage(), ' ',
+                                         Bar(), ' ',
+                                         ETA()])
         else:
+
             class FakeProg:
                 def start(self):
                     pass
@@ -518,7 +530,7 @@ class MCEqRun(object):
 
         if dbg > 2:
             print self.__class__.__name__ + '::_alternate_score():', mother, daughter
-        
+
         ref = self.pdg2pref
         abs_mo = np.abs(mother)
         abs_d = np.abs(daughter)
@@ -529,7 +541,10 @@ class MCEqRun(object):
         else:
             return None
 
-    def get_solution(self, particle_name, mag=0., grid_idx=None,
+    def get_solution(self,
+                     particle_name,
+                     mag=0.,
+                     grid_idx=None,
                      integrate=False):
         """Retrieves solution of the calculation on the energy grid.
 
@@ -561,6 +576,8 @@ class MCEqRun(object):
         Returns:
           (numpy.array): flux of particles on energy grid :attr:`e_grid`
         """
+        # Account for the
+
         res = np.zeros(self.d)
         ref = self.pname2pref
         sol = None
@@ -621,7 +638,10 @@ class MCEqRun(object):
         self._init_alias_tables()
         self._init_default_matrices(skip_D_matrix=False)
 
-    def set_interaction_model(self, interaction_model, charm_model=None, force=False):
+    def set_interaction_model(self,
+                              interaction_model,
+                              charm_model=None,
+                              force=False):
         """Sets interaction model and/or an external charm model for calculation.
 
         Decay and interaction matrix will be regenerated automatically
@@ -639,11 +659,11 @@ class MCEqRun(object):
 
         if self.iam_mat_initialized and not force and (
             (self.yields_params['interaction_model'],
-             self.yields_params['charm_model'])
-                == (interaction_model, charm_model)):
-            print ('MCEqRun::set_interaction_model(): Skipping, since ' +
-                   'current model identical to ' + interaction_model +
-                   '/' + str(charm_model) + '.')
+             self.yields_params['charm_model']) == (interaction_model,
+                                                    charm_model)):
+            print('MCEqRun::set_interaction_model(): Skipping, since ' +
+                  'current model identical to ' + interaction_model + '/' +
+                  str(charm_model) + '.')
             return
 
         self.yields_params['interaction_model'] = interaction_model
@@ -706,16 +726,13 @@ class MCEqRun(object):
         except:
             self.finalize_pmodel = True
 
-        # Initial condition
-        phi0 = np.zeros(self.dim_states)
-        p_top, n_top = self.get_nucleon_spectrum(self.e_grid)[1:]
-        phi0[self.pdg2pref[2212].lidx():
-             self.pdg2pref[2212].uidx()] = 1e-4 * p_top
-        phi0[self.pdg2pref[2112].lidx():
-             self.pdg2pref[2112].uidx()] = 1e-4 * n_top
-
         # Save initial condition
-        self.phi0 = phi0.astype(self.fl_pr)
+        self.phi0 *= 0
+        p_top, n_top = self.get_nucleon_spectrum(self.e_grid)[1:]
+        self.phi0[self.pdg2pref[2212].lidx():self.pdg2pref[2212]
+                  .uidx()] = 1e-4 * p_top
+        self.phi0[self.pdg2pref[2112].lidx():self.pdg2pref[2112]
+                  .uidx()] = 1e-4 * n_top
 
     def set_single_primary_particle(self, E, corsika_id):
         """Set type and energy of a single primary nucleus to
@@ -739,8 +756,8 @@ class MCEqRun(object):
                 print 'MCEqRun::set_single_primary_particle(): Initialization delayed..'
             return
         if dbg > 0:
-            print ('MCEqRun::set_single_primary_particle(): corsika_id={0}, ' +
-                   'particle energy={1:5.3g} GeV').format(corsika_id, E)
+            print('MCEqRun::set_single_primary_particle(): corsika_id={0}, ' +
+                  'particle energy={1:5.3g} GeV').format(corsika_id, E)
 
         try:
             self.dim_states
@@ -770,9 +787,10 @@ class MCEqRun(object):
                                 str(corsika_id))
 
         if dbg > 1:
-            print ('MCEqRun::set_single_primary_particle(): superposition:' +
-                   'n_protons={0}, n_neutrons={1}, ' +
-                   'energy per nucleon={2:5.3g} GeV').format(n_protons, n_neutrons, E)
+            print('MCEqRun::set_single_primary_particle(): superposition:' +
+                  'n_protons={0}, n_neutrons={1}, ' +
+                  'energy per nucleon={2:5.3g} GeV').format(
+                      n_protons, n_neutrons, E)
 
         # find energy grid index closest to E
         idx_min = np.argmin(abs(E - E_gr))
@@ -795,11 +813,13 @@ class MCEqRun(object):
         self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
 
         if dbg > 1:
-            print ('MCEqRun::set_single_primary_particle(): \n \t' +
-                   'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t' +
-                   'fractional contribution for upper bin @ E={2:5.3g} GeV: {3:5.3}').format(
-                       E_gr[idx_lo], wE_lo / widths[idx_lo],
-                       E_gr[idx_up], wE_up / widths[idx_up])
+            print(
+                'MCEqRun::set_single_primary_particle(): \n \t' +
+                'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t'
+                +
+                'fractional contribution for upper bin @ E={2:5.3g} GeV: {3:5.3}'
+            ).format(E_gr[idx_lo], wE_lo / widths[idx_lo], E_gr[idx_up],
+                     wE_up / widths[idx_up])
 
         self.phi0[self.pdg2pref[2212].lidx() + idx_lo] = n_protons * \
             wE_lo / widths[idx_lo] ** 2
@@ -849,7 +869,8 @@ class MCEqRun(object):
             self.density_model = dprof.GeneralizedTarget()
         else:
             raise Exception(
-                'MCEqRun::set_density_model(): Unknown atmospheric base model.')
+                'MCEqRun::set_density_model(): Unknown atmospheric base model.'
+            )
         self.density_config = density_config
 
         if self.theta_deg is not None and base_model != 'GeneralizedTarget':
@@ -885,7 +906,11 @@ class MCEqRun(object):
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
 
-    def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args,
+    def set_mod_pprod(self,
+                      prim_pdg,
+                      sec_pdg,
+                      x_func,
+                      x_func_args,
                       delay_init=False):
         """Sets combination of projectile/secondary for error propagation.
 
@@ -903,9 +928,9 @@ class MCEqRun(object):
         """
 
         if dbg > 1:
-            print (self.__class__.__name__ +
-                   'set_mod_pprod():{0}/{1}, {2}, {3}').format(
-                    prim_pdg, sec_pdg, x_func.__name__, str(x_func_args))
+            print(self.__class__.__name__ +
+                  'set_mod_pprod():{0}/{1}, {2}, {3}').format(
+                      prim_pdg, sec_pdg, x_func.__name__, str(x_func_args))
 
         init = self.y._set_mod_pprod(prim_pdg, sec_pdg, x_func, x_func_args)
 
@@ -920,8 +945,8 @@ class MCEqRun(object):
         """Removed modifications from :func:`MCEqRun.set_mod_pprod`.
         """
         if dbg > 0:
-            print (self.__class__.__name__ +
-                   'unset_mod_pprod(): modifications removed')
+            print(self.__class__.__name__ +
+                  'unset_mod_pprod(): modifications removed')
 
         self.y.mod_pprod = {}
         # Need to regenerate matrices completely
@@ -932,8 +957,7 @@ class MCEqRun(object):
         """
         return np.zeros((self.d, self.d))
 
-    def _follow_chains(self, p, pprod_mat, p_orig, idcs,
-                       propmat, reclev=0):
+    def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
         r = self.pdg2pref
 
         if dbg > 2:
@@ -944,24 +968,23 @@ class MCEqRun(object):
                 print reclev * '\t', 'following to', r[d].name
 
             dprop = self._zero_mat()
-            self.ds.assign_d_idx(r[p].pdgid, idcs,
-                                 r[d].pdgid, r[d].hadridx(),
+            self.ds.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid, r[d].hadridx(),
                                  dprop)
             alias = self._alias(p, d)
 
             # Check if combination of mother and daughter has a special alias
             # assigned and the index has not be replaced (i.e. pi, K, prompt)
             if not alias:
-                propmat[r[d].lidx():r[d].uidx(),
-                        r[p_orig].lidx():r[p_orig].uidx()] += dprop.dot(pprod_mat)
+                propmat[r[d].lidx():r[d].uidx(), r[p_orig].lidx():r[p_orig]
+                        .uidx()] += dprop.dot(pprod_mat)
             else:
-                propmat[alias[0]:alias[1],
-                        r[p_orig].lidx():r[p_orig].uidx()] += dprop.dot(pprod_mat)
+                propmat[alias[0]:alias[1], r[p_orig].lidx():r[p_orig]
+                        .uidx()] += dprop.dot(pprod_mat)
 
             alt_score = self._alternate_score(p, d)
             if alt_score:
-                propmat[alt_score[0]:alt_score[1],
-                        r[p_orig].lidx():r[p_orig].uidx()] += dprop.dot(pprod_mat)
+                propmat[alt_score[0]:alt_score[1], r[p_orig].lidx():r[p_orig]
+                        .uidx()] += dprop.dot(pprod_mat)
 
             if dbg > 2:
                 pstr = 'res'
@@ -969,19 +992,19 @@ class MCEqRun(object):
                 if idcs == r[p].hadridx():
                     pstr = 'prop'
                     dstr = 'Mprop'
-                print (reclev * '\t' +
-                       'setting {0}[({1},{3})->({2},{4})]').format(
-                           dstr, r[p_orig].name, r[d].name, pstr, 'prop')
+                print(reclev * '\t' +
+                      'setting {0}[({1},{3})->({2},{4})]').format(
+                          dstr, r[p_orig].name, r[d].name, pstr, 'prop')
                 print r[p].name
 
             if r[d].is_mixed:
                 dres = self._zero_mat()
-                self.ds.assign_d_idx(r[p].pdgid, idcs,
-                                     r[d].pdgid, r[d].residx(),
-                                     dres)
+                self.ds.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid,
+                                     r[d].residx(), dres)
                 reclev += 1
-                self._follow_chains(d, dres.dot(pprod_mat),
-                                    p_orig, r[d].residx(), propmat, reclev)
+                self._follow_chains(d,
+                                    dres.dot(pprod_mat), p_orig, r[d].residx(),
+                                    propmat, reclev)
             else:
                 if dbg > 2:
                     print reclev * '\t', '\t terminating at', r[d].name
@@ -999,27 +1022,34 @@ class MCEqRun(object):
             for p in self.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if self.ds.daughters(p.pdgid):
-                    self._follow_chains(p.pdgid, np.diag(np.ones((self.d))),
-                                        p.pdgid, p.hadridx(),
-                                        self.D, reclev=0)
+                    self._follow_chains(
+                        p.pdgid,
+                        np.diag(np.ones((self.d))),
+                        p.pdgid,
+                        p.hadridx(),
+                        self.D,
+                        reclev=0)
 
         # Initialize empty C matrix
         self.C = np.zeros((self.dim_states, self.dim_states))
         for p in self.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if (not p.is_projectile or
-                    (config["adv_set"]["allowed_projectiles"] and
-                     abs(p.pdgid) not in config["adv_set"]["allowed_projectiles"])):
+                (config["adv_set"]["allowed_projectiles"] and
+                 abs(p.pdgid) not in config["adv_set"]["allowed_projectiles"]
+                 )):
                 if dbg > 1 and p.is_projectile:
-                    print (self.__class__.__name__ +
-                           '_fill_matrices(): Particle production by {0} ' +
-                           'explicitly disabled').format(p.pdgid)
+                    print(self.__class__.__name__ +
+                          '_fill_matrices(): Particle production by {0} ' +
+                          'explicitly disabled').format(p.pdgid)
                 continue
-            elif self.adv_set['disable_sec_interactions'] and p.pdgid not in [2212, 2112]:
+            elif self.adv_set['disable_sec_interactions'] and p.pdgid not in [
+                    2212, 2112
+            ]:
                 if dbg > 2:
-                    print (self.__class__.__name__ +
-                           '_fill_matrices(): Veto secodary interaction of' +
-                           p.pdgid)
+                    print(self.__class__.__name__ +
+                          '_fill_matrices(): Veto secodary interaction of' +
+                          p.pdgid)
                 continue
 
             # go through all secondaries
@@ -1030,35 +1060,35 @@ class MCEqRun(object):
                     continue
                 if self.adv_set['disable_direct_leptons'] and pref[s].is_lepton:
                     if dbg > 2:
-                        print (self.__class__.__name__ +
-                               '_fill_matrices(): veto direct lepton', s)
+                        print(self.__class__.__name__ +
+                              '_fill_matrices(): veto direct lepton', s)
                     continue
                 if not pref[s].is_resonance:
                     cmat = self._zero_mat()
                     self.y.assign_yield_idx(p.pdgid,
-                                            p.hadridx(),
-                                            pref[s].pdgid,
-                                            pref[s].hadridx(),
-                                            cmat)
+                                            p.hadridx(), pref[s].pdgid,
+                                            pref[s].hadridx(), cmat)
                     self.C[pref[s].lidx():pref[s].uidx(),
                            p.lidx():p.uidx()] += cmat
 
                 cmat = self._zero_mat()
                 self.y.assign_yield_idx(p.pdgid,
-                                        p.hadridx(),
-                                        pref[s].pdgid,
-                                        pref[s].residx(),
-                                        cmat)
-                self._follow_chains(pref[s].pdgid, cmat,
-                                    p.pdgid, pref[s].residx(),
-                                    self.C, reclev=1)
+                                        p.hadridx(), pref[s].pdgid,
+                                        pref[s].residx(), cmat)
+                self._follow_chains(
+                    pref[s].pdgid,
+                    cmat,
+                    p.pdgid,
+                    pref[s].residx(),
+                    self.C,
+                    reclev=1)
 
     def solve(self, **kwargs):
 
         if dbg > 1:
-            print (self.cname + "::solve(): " +
-                   "solver={0} and sparse={1}").format(config['integrator'],
-                                                       config['use_sparse'])
+            print(self.cname + "::solve(): "
+                  + "solver={0} and sparse={1}").format(
+                      config['integrator'], config['use_sparse'])
 
         if config['integrator'] != "odepack":
             self._forward_euler(**kwargs)
@@ -1067,18 +1097,23 @@ class MCEqRun(object):
         else:
             raise Exception(
                 ("MCEq::solve(): Unknown integrator selection '{0}'."
-                ).format(config['integrator']))
+                 ).format(config['integrator']))
 
-    def _odepack(self, dXstep=1., initial_depth=0.0,
-                 int_grid=None, grid_var='X', *args, **kwargs):
+    def _odepack(self,
+                 dXstep=1.,
+                 initial_depth=0.0,
+                 int_grid=None,
+                 grid_var='X',
+                 *args,
+                 **kwargs):
 
         from scipy.integrate import ode
         ri = self.density_model.r_X2rho
 
         if config['enable_muon_energy_loss']:
-            raise NotImplementedError(self.__class__.__name__ +
-                                      '::_odepack(): ' +
-                                      'Energy loss not imlemented for this solver.')
+            raise NotImplementedError(
+                self.__class__.__name__ + '::_odepack(): ' +
+                'Energy loss not imlemented for this solver.')
 
         # Functional to solve
         def dPhi_dX(X, phi, *args):
@@ -1109,8 +1144,8 @@ class MCEqRun(object):
             if dbg > 0 and max_X < self.density_model.max_X:
                 print '_odepack(): your X-grid is shorter then the material'
             elif dbg > 0 and max_X > self.density_model.max_X:
-                print ('_odepack(): your X-grid exceeds the dimentsions ' +
-                       'of the material')
+                print('_odepack(): your X-grid exceeds the dimentsions ' +
+                      'of the material')
         else:
             max_X = self.density_model.max_X
 
@@ -1118,8 +1153,8 @@ class MCEqRun(object):
         r.set_initial_value(phi0, initial_depth)
 
         if dbg > 1:
-            print ('_odepack(): initial depth: {0:3.2e}, ' +
-                   'maximal depth {1:}').format(initial_depth, max_X)
+            print('_odepack(): initial depth: {0:3.2e}, ' +
+                  'maximal depth {1:}').format(initial_depth, max_X)
 
         self._init_progress_bar(max_X)
 
@@ -1157,9 +1192,8 @@ class MCEqRun(object):
         self.progress_bar.finish()
 
         if dbg > 0:
-            print ("\n{0}::vode(): time elapsed during " +
-                   "integration: {1} sec").format(
-                self.cname, time() - start)
+            print("\n{0}::vode(): time elapsed during " +
+                  "integration: {1} sec").format(self.cname, time() - start)
 
         self.solution = r.y
         self.grid_sol = grid_sol
@@ -1173,8 +1207,8 @@ class MCEqRun(object):
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         if dbg > 0:
-            print ("{0}::_forward_euler(): Solver will perform {1} " +
-                   "integration steps.").format(self.cname, nsteps)
+            print("{0}::_forward_euler(): Solver will perform {1} " +
+                  "integration steps.").format(self.cname, nsteps)
 
         self._init_progress_bar(nsteps)
         self.progress_bar.start()
@@ -1184,60 +1218,54 @@ class MCEqRun(object):
         import kernels
         if (config['first_interaction_mode'] and
                 config['kernel_config'] != 'numpy'):
-            raise Exception(self.__class__.__name__
-                            + "::_forward_euler(): " +
+            raise Exception(self.__class__.__name__ + "::_forward_euler(): " +
                             + "First interaction mode only works with numpy.")
 
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
-            args = (nsteps, dX, rho_inv, self.int_m,
-                    self.dec_m, phi0, grid_idcs,
-                    self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar, self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
             kernel = kernels.kern_CUDA_dense
-            args = (nsteps, dX, rho_inv, self.int_m,
-                    self.dec_m, phi0, grid_idcs,
-                    self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is True):
             kernel = kernels.kern_CUDA_sparse
-            args = (nsteps, dX, rho_inv, self.cuda_context,
-                    phi0, grid_idcs,
+            args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
                     self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] is True):
             kernel = kernels.kern_MKL_sparse
-            args = (nsteps, dX, rho_inv, self.int_m,
-                    self.dec_m, phi0, grid_idcs,
-                    self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
             kernel = kernels.kern_XeonPHI_sparse
-            args = (nsteps, dX, rho_inv, self.int_m,
-                    self.dec_m, phi0, grid_idcs,
-                    self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
         else:
-            raise Exception(self.__class__.__name__ +
-                            ("::_forward_euler(): " +
-                             "Unsupported integrator settings '{0}/{1}'."
-                            ).format('sparse' if config['use_sparse'] else 'dense',
-                                     config['kernel_config']))
+            raise Exception(self.__class__.__name__ + (
+                "::_forward_euler(): " +
+                "Unsupported integrator settings '{0}/{1}'.").format(
+                    'sparse' if config['use_sparse'] else 'dense',
+                    config['kernel_config']))
 
         self.solution, self.grid_sol = kernel(*args)
 
         self.progress_bar.finish()
 
         if dbg > 0:
-            print ("\n{0}::_forward_euler(): time elapsed during " +
-                   "integration: {1} sec").format(self.cname, time() - start)
+            print("\n{0}::_forward_euler(): time elapsed during " +
+                  "integration: {1} sec").format(self.cname, time() - start)
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
@@ -1251,7 +1279,8 @@ class MCEqRun(object):
         if grid_var != 'X':
             raise NotImplementedError(
                 'MCEqRun::_calculate_integration_path():' +
-                'choice of grid variable other than the depth X are not possible, yet.')
+                'choice of grid variable other than the depth X are not possible, yet.'
+            )
 
         max_X = self.density_model.max_X
         ri = self.density_model.r_X2rho
@@ -1282,10 +1311,10 @@ class MCEqRun(object):
             fa_vars['inl'] = self.pname2pref['n'].lidx()
             fa_vars['inu'] = self.pname2pref['n'].uidx()
 
-            fa_vars['pint'] = 1 / self.Lambda_int[
-                fa_vars['ipl']:fa_vars['ipu']]
-            fa_vars['nint'] = 1 / self.Lambda_int[
-                fa_vars['inl']:fa_vars['inu']]
+            fa_vars['pint'] = 1 / self.Lambda_int[fa_vars['ipl']:fa_vars[
+                'ipu']]
+            fa_vars['nint'] = 1 / self.Lambda_int[fa_vars['inl']:fa_vars[
+                'inu']]
             # Where to terminate the switch vector
             # (after all particle prod. for all species is disabled)
             fa_vars['max_step'] = 0
@@ -1299,8 +1328,8 @@ class MCEqRun(object):
             self.progress_bar.update(X)
             ri_x = ri(X)
             dX = 1. / (max_ldec * ri_x)
-            if (np.any(int_grid) and (grid_step < int_grid.size)
-                    and (X + dX >= int_grid[grid_step])):
+            if (np.any(int_grid) and (grid_step < int_grid.size) and
+                (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
                 grid_idcs.append(step)
                 grid_step += 1
@@ -1313,12 +1342,10 @@ class MCEqRun(object):
                 fa_vars['fi_switch'].append(
                     np.zeros(self.dim_states, dtype='double'))
                 # Switch on particle production only for X < 1 x lambda_int
-                fa_vars['fi_switch'][-1][
-                    fa_vars['ipl']:fa_vars['ipu']][
-                        fa_vars['pint'] > X] = 1.
-                fa_vars['fi_switch'][-1][
-                    fa_vars['inl']:fa_vars['inu']][
-                        fa_vars['nint'] > X] = 1.
+                fa_vars['fi_switch'][-1][fa_vars['ipl']:fa_vars['ipu']][
+                    fa_vars['pint'] > X] = 1.
+                fa_vars['fi_switch'][-1][fa_vars['inl']:fa_vars['inu']][
+                    fa_vars['nint'] > X] = 1.
                 # Save step value after which no particles are produced anymore
                 if not np.sum(fa_vars['fi_switch'][-1]) > 0:
                     fa_vars['max_step'] = step
@@ -1339,23 +1366,25 @@ class MCEqRun(object):
     def print_particle_tables(self, print_indices=False):
 
         print "\nHadrons and stable particles:\n"
-        print_in_rows([p.name for p in self.particle_species if p.is_hadron
-                       and not p.is_resonance and not p.is_mixed])
+        print_in_rows([
+            p.name for p in self.particle_species
+            if p.is_hadron and not p.is_resonance and not p.is_mixed
+        ])
 
         print "\nMixed:\n"
-        print_in_rows(
-            [p.name for p in self.particle_species if p.is_mixed])
+        print_in_rows([p.name for p in self.particle_species if p.is_mixed])
 
         print "\nResonances:\n"
         print_in_rows(
             [p.name for p in self.particle_species if p.is_resonance])
 
         print "\nLeptons:\n"
-        print_in_rows([p.name for p in self.particle_species if p.is_lepton
-                       and not p.is_alias])
+        print_in_rows([
+            p.name for p in self.particle_species
+            if p.is_lepton and not p.is_alias
+        ])
         print "\nAliases:\n",
-        print_in_rows(
-            [p.name for p in self.particle_species if p.is_alias])
+        print_in_rows([p.name for p in self.particle_species if p.is_alias])
 
         print "\nTotal number of species:", self.n_tot_species
 
