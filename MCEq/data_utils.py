@@ -19,11 +19,11 @@ from mceq_config import config, dbg
 def convert_to_compact(fname):
     """Converts an interaction model dictionary to "compact" mode.
 
-    This function takes a compressed yield file, where all secondary 
-    particle types known to the particular model are expected to be 
+    This function takes a compressed yield file, where all secondary
+    particle types known to the particular model are expected to be
     final state particles (set stable in the MC), and converts it
     to a new compressed yield file which contains only production channels
-    to the most important particles (for air-shower and inclusive lepton 
+    to the most important particles (for air-shower and inclusive lepton
     calculations).
 
     The production of short lived particles and resonances is taken into
@@ -33,18 +33,18 @@ def convert_to_compact(fname):
     This results in a feed-down corretion, for example the process (chain)
     :math:`p + A \\to \\rho + X \\to \\pi + \\pi + X` becomes simply
     :math:`p + A \\to \\pi + \\pi + X`.
-    The new interaction yield file obtains the suffix `_compact` and it 
+    The new interaction yield file obtains the suffix `_compact` and it
     contains only those final state secondary particles:
-    
+
     .. math::
 
-        \pi^+, K^+, K^0_{S,L}, p, n, \\bar{p}, \\bar{n}, \\Lambda^0, 
-        \\bar{\Lambda^0}, \\eta, \\phi, \\omega, D^0, D^+, D^+_s + 
+        \pi^+, K^+, K^0_{S,L}, p, n, \\bar{p}, \\bar{n}, \\Lambda^0,
+        \\bar{\Lambda^0}, \\eta, \\phi, \\omega, D^0, D^+, D^+_s +
         {\\rm c.c.} + {\\rm leptons}
 
     The compact mode has the advantage, that the production spectra stored in
     this dictionary are directly comparable to what accelerators consider as
-    stable particles, defined by a minimal life-time requirement. Using the 
+    stable particles, defined by a minimal life-time requirement. Using the
     compact mode is recommended for most applications, which use
     :func:`MCEq.core.MCEqRun.set_mod_pprod` to modify the spectrum of secondary
     hadrons.
@@ -54,7 +54,7 @@ def convert_to_compact(fname):
     up to a few \% at higher energies where prompt leptons dominate. This is
     because also very short-lived charmed mesons and baryons with small branching
     ratios into leptons can interact with the atmosphere and lose energy before
-    decay. 
+    decay.
 
     For `QGSJET`, compact and normal mode are identical, since the model does not
     produce resonances or rare mesons by design.
@@ -80,7 +80,8 @@ def convert_to_compact(fname):
             config['low_energy_extension']['le_model'].translate(
                 None, "-.").upper() + '_yields_compact.bz2')
 
-        if dbg > 2: print "convert_to_compact(): looking for file", dpmpath
+        if dbg > 2: 
+            print "convert_to_compact(): looking for file", dpmpath
 
         if not os.path.isfile(dpmpath):
             convert_to_compact(dpmpath)
@@ -98,7 +99,8 @@ def convert_to_compact(fname):
     if not os.path.isfile(fn_he):
         fn_he = os.path.join(config["data_dir"], fn_he)
 
-    if dbg > 0: print "convert_to_compact(): Attempting conversion of", fn_he
+    if dbg > 0: 
+        print "convert_to_compact(): Attempting conversion of", fn_he
 
     # Load the yield dictionary (without multiplication with bin widths)
     mdi = pickle.load(BZ2File(fn_he))
@@ -136,10 +138,11 @@ def convert_to_compact(fname):
     compact_di = {}
 
     def create_secondary_dict(yield_dict):
-        """This is a replica of function 
+        """This is a replica of function
         :func:`MCEq.data.InteractionYields._gen_index`."""
         dbgstr = 'convert_to_compact::create_secondary_dict(): '
-        if dbg > 2: print dbgstr + 'entering...'
+        if dbg > 2: 
+            print dbgstr + 'entering...'
 
         secondary_dict = {}
         for key, mat in sorted(yield_dict.iteritems()):
@@ -152,7 +155,8 @@ def convert_to_compact(fname):
 
             if proj not in secondary_dict:
                 secondary_dict[proj] = []
-                if dbg > 3: print dbgstr, proj, 'added.'
+                if dbg > 3: 
+                    print dbgstr, proj, 'added.'
 
             if np.sum(mat) > 0:
                 assert (sec not in secondary_dict[proj]), (
@@ -161,7 +165,8 @@ def convert_to_compact(fname):
                         proj, sec))
                 secondary_dict[proj].append(sec)
             else:
-                if dbg > 3: print dbgstr + 'Zeros for', proj, sec
+                if dbg > 3:
+                    print dbgstr + 'Zeros for', proj, sec
 
         return secondary_dict
 
@@ -179,17 +184,18 @@ def convert_to_compact(fname):
         dbgstr = 'convert_to_compact::follow_chained_decay(): '
         tab = 3 * reclev * '--' + '> '
 
-        if dbg > 1 and reclev == 0:
+        if dbg > 5 and reclev == 0:
             print dbgstr, 'start recursion with', real_mother, interm_mothers, np.sum(
                 mat)
-        elif dbg > 2:
+        elif dbg > 10:
             print tab, 'enter with', real_mother, interm_mothers, np.sum(mat)
 
         if np.sum(mat) < 1e-30:
-            if dbg > 3:
+            if dbg > 10:
                 print tab, 'zero matrix for', real_mother, interm_mothers
         if interm_mothers[-1] not in dec_di or interm_mothers[-1] in standard_particles:
-            if dbg > 3: print tab, 'no further decays of', interm_mothers
+            if dbg > 10:
+                print tab, 'no further decays of', interm_mothers
             return
 
         for d in dec_di[interm_mothers[-1]]:
@@ -199,13 +205,13 @@ def convert_to_compact(fname):
             mprod = dmat.dot(mat)
 
             if np.sum(mprod) < 1e-40:
-                if dbg > 3:
+                if dbg > 10:
                     print tab, 'cancel recursion in', real_mother, interm_mothers, d, \
                     'since matrix is zero', np.sum(mat), np.sum(dmat), np.sum(mprod)
                 continue
 
             if d not in standard_particles:
-                if dbg > 1:
+                if dbg > 5:
                     print tab, 'Recurse', real_mother, interm_mothers, d, np.sum(
                         mat)
 
@@ -223,15 +229,15 @@ def convert_to_compact(fname):
                     if is_prompt:
                         d = np.sign(d) * (7000 + abs(d))
 
-                if dbg > 2:
+                if dbg > 5:
                     print tab, 'contribute to', real_mother, interm_mothers, d
 
                 if (real_mother, d) in compact_di.keys():
-                    if dbg > 3:
+                    if dbg > 10:
                         print tab, '+=', (real_mother, d), np.sum(mprod)
                     compact_di[(real_mother, d)] += mprod
                 else:
-                    if dbg > 3:
+                    if dbg > 10:
                         print tab, 'new', (real_mother, d), interm_mothers
                     compact_di[(real_mother, d)] = mprod
 
@@ -241,7 +247,7 @@ def convert_to_compact(fname):
     pprod_di = create_secondary_dict(mdi)
     dec_di = create_secondary_dict(ddi)
 
-    if dbg > 2:
+    if dbg > 5:
         print 'Int   dict:\n', sorted(pprod_di)
         print 'Decay dict:\n', sorted(dec_di)
 
@@ -332,7 +338,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
 
     # Find the index of transition in the energy grid
     transition_idx = np.count_nonzero(egr < he_le_trasition)
-    if dbg > 0:
+    if dbg > 1:
         print "extend_to_low_energies(): transition_idx={0}, transition_energy={1}".format(
             transition_idx, egr[transition_idx])
 
@@ -365,7 +371,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
             # Use only he model cross sections if le model doesn't
             # know the process
             if config["low_energy_extension"]["use_unknown_cs"]:
-                if dbg > 1:
+                if dbg > 3:
                     print "extend_to_low_energies(): skipping particle", k
                 ext_di[k] = new_mat
                 continue
@@ -393,7 +399,8 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
     ext_di['le_ext'] = config["low_energy_extension"]
 
     if fname:
-        if dbg > 0: print "extend_to_low_energies(): Saving", fname
+        if dbg > 0: 
+            print "extend_to_low_energies(): Saving", fname
         pickle.dump(ext_di, BZ2File(fname, 'wb'), protocol=-1)
 
     return ext_di
