@@ -26,7 +26,7 @@ else:
 config = {
 
     # Debug flag for verbose printing, 0 = minimum
-    "debug_level": 2,
+    "debug_level": 1,
 
     # Use progress_bars
     "prog_bar": False,
@@ -113,9 +113,10 @@ config = {
     #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
     "ode_params": {
         'name': 'vode',
-        'method': 'adams',
+        'method': 'bdf',
         'nsteps': 10000,
-        'max_step': 10.0
+        'max_step': 10.0,
+        'rtol': 0.05
     },
 
     #=========================================================================
@@ -167,7 +168,7 @@ config = {
     # bins specified below.
     "low_energy_extension": {
         "enabled": True,
-        "le_model": 'DPMJET-III',
+        "le_model": 'DPMJET-III-2017.1',
         "he_le_transition": 80,  # GeV (not recommended to go below 80)
         "nbins_interp": 3,
         # This flag controls what to do with processes, which are not

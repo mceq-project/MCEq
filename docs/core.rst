@@ -18,3 +18,13 @@ Core functionality
 
 .. automodule:: MCEq.kernels
    :members:
+
+----------
+
+.. automodule:: MCEq.misc
+   :members:
+
+----------
+
+.. automodule:: MCEq.msis_wrapper
+   :members:

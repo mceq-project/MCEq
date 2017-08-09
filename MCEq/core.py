@@ -14,7 +14,7 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
     from MCEq.core import MCEqRun
     import CRFluxModels as pm
 
-    mceq_run = MCEqRun(interaction_model='SIBYLL2.1',
+    mceq_run = MCEqRun(interaction_model='SIBYLL2.3c',
                        primary_model=(pm.HillasGaisser2012, "H3a"),
                        **config)
 
@@ -942,7 +942,7 @@ class MCEqRun(object):
             return 0
 
     def unset_mod_pprod(self):
-        """Removed modifications from :func:`MCEqRun.set_mod_pprod`.
+        """Removes modifications from :func:`MCEqRun.set_mod_pprod`.
         """
         if dbg > 0:
             print(self.__class__.__name__ +
@@ -958,6 +958,8 @@ class MCEqRun(object):
         return np.zeros((self.d, self.d))
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
+        """Some recursive magic.
+        """
         r = self.pdg2pref
 
         if dbg > 2:
@@ -1009,7 +1011,6 @@ class MCEqRun(object):
                 if dbg > 2:
                     print reclev * '\t', '\t terminating at', r[d].name
 
-    # @profile
     def _fill_matrices(self, skip_D_matrix=False):
         """Generates the C and D matrix from scratch.
         """
@@ -1084,7 +1085,17 @@ class MCEqRun(object):
                     reclev=1)
 
     def solve(self, **kwargs):
+        """Launches the solver.
 
+        The setting `integrator` in the config file decides which solver
+        to launch, either the simple but accelerated explicit Euler solvers, 
+        :func:`MCEqRun._forward_euler` or, solvers from ODEPACK
+        :func:`MCEqRun._odepack`.
+
+        Args:
+          kwargs (dict): Arguments are passed directly to the solver methods.
+
+        """
         if dbg > 1:
             print(self.cname + "::solve(): "
                   + "solver={0} and sparse={1}").format(
@@ -1106,7 +1117,15 @@ class MCEqRun(object):
                  grid_var='X',
                  *args,
                  **kwargs):
+        """Solves the transport equations with solvers from ODEPACK.
 
+        Args:
+          dXstep (float): external step size (adaptive sovlers make more steps internally)
+          initial_depth (float): starting depth in g/cm**2
+          int_grid (list): list of depths at which results are recorded
+          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+
+        """
         from scipy.integrate import ode
         ri = self.density_model.r_X2rho
 
@@ -1181,7 +1200,6 @@ class MCEqRun(object):
 
                 while r.successful() and (r.t + dXstep) < Xi:
                     self.progress_bar.update(r.t)
-                    # print '1: dXi = ',r.t + dXstep
                     r.integrate(r.t + dXstep)
 
                 # Make sure the integrator arrives at requested step
@@ -1199,6 +1217,13 @@ class MCEqRun(object):
         self.grid_sol = grid_sol
 
     def _forward_euler(self, int_grid=None, grid_var='X'):
+        """Solves the transport equations with solvers from :mod:`MCEq.kernels`.
+
+        Args:
+          int_grid (list): list of depths at which results are recorded
+          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+
+        """
 
         # Calculate integration path if not yet happened
         self._calculate_integration_path(int_grid, grid_var)

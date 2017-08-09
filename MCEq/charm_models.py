@@ -19,6 +19,7 @@ import numpy as np
 from mceq_config import dbg
 from abc import ABCMeta, abstractmethod
 
+
 class CharmModel():
     """Abstract class, from which implemeted charm models can inherit.
 
@@ -45,6 +46,7 @@ class CharmModel():
         """
         raise NotImplementedError("CharmModel::get_yield_matrix(): " +
                                   "Base class called.")
+
 
 class MRS_charm(CharmModel):
     """Martin-Ryskin-Stasto charm model.
@@ -83,8 +85,7 @@ class MRS_charm(CharmModel):
     """
 
     #: fractions of cross-section wrt to D0 cross-section
-    cs_scales = {421:1., 411:0.5,
-                 431:0.15, 4122:0.45}
+    cs_scales = {421: 1., 411: 0.5, 431: 0.15, 4122: 0.45}
     #: D0 cross-section wrt to the ccbar cross-section
     D0_scale = 1. / 2.1
 
@@ -102,8 +103,7 @@ class MRS_charm(CharmModel):
 
         self.e_grid = e_grid
         self.d = e_grid.size
-        self.no_prod = np.zeros(self.d ** 2).reshape(self.d,
-                                                     self.d)
+        self.no_prod = np.zeros(self.d**2).reshape(self.d, self.d)
         self.siginel = csm.get_cs(2212, mbarn=True)
 
     def sigma_cc(self, E):
@@ -117,7 +117,7 @@ class MRS_charm(CharmModel):
         E = np.asarray(E)
         if E.size > 1:
             return 2 * np.array(
-                [quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E ])
+                [quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E])
         else:
             return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
 
@@ -141,16 +141,16 @@ class MRS_charm(CharmModel):
             return 0.
         elif E >= 1e4 and E < 1e8:
             n = 7.6 + 0.025 * np.log(E / 1e4)
-            A = 140 + (11.*np.log(E / 1e2)) ** 1.65
+            A = 140 + (11. * np.log(E / 1e2))**1.65
         elif E >= 1e8 and E <= 1e11:
             n = 7.6 + 0.012 * np.log(E / 1e4)
-            A = 4100. + 245.*np.log(E / 1e8)
+            A = 4100. + 245. * np.log(E / 1e8)
         else:
             raise Exception("MRS_charm()::out of range")
         res = np.zeros_like(x)
         ran = (x > 0.01) & (x < 0.7)
-        res[ran] = np.array(A * x[ran] ** (beta - 1.) *
-                            (1 - x[ran] ** 1.2) ** n / 1e3)
+        res[ran] = np.array(A * x[ran]**(beta - 1.) *
+                            (1 - x[ran]**1.2)**n / 1e3)
         return res
 
     def D_dist(self, x, E, mes):
@@ -196,7 +196,8 @@ class MRS_charm(CharmModel):
         """
         # TODO: Make this function a member of the base class!
 
-        if (proj not in self.allowed_proj) or (abs(sec) not in self.allowed_sec):
+        if (proj not in self.allowed_proj) or (
+                abs(sec) not in self.allowed_sec):
             return self.no_prod
 
         self.xdist = None
@@ -216,16 +217,16 @@ class MRS_charm(CharmModel):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
 
         if dbg > 1:
-            print ('MRS_charm::get_yield_matrix({0},{1}): ' +
-                   'returning matrix').format(proj, sec)
-        
+            print('MRS_charm::get_yield_matrix({0},{1}): ' +
+                  'returning matrix').format(proj, sec)
+
         return m_out
 
     def test(self):
         """Plots the meson, baryon and charm quark distribution as shown in
         the plot below.
 
-        .. figure:: graphics/MRS_test.pdf
+        .. figure:: graphics/MRS_test.png
             :scale: 50 %
             :alt: output of test function
 
@@ -239,24 +240,42 @@ class MRS_charm(CharmModel):
 
         plt.figure(figsize=(8.5, 4))
         plt.subplot(121)
-        plt.semilogy(xvec, xvec * self.dsig_dx(xvec, eprobe),
-                     lw=1.5, label=r'$c$-quark')
-        plt.semilogy(xvec, xvec * self.D_dist(xvec, eprobe, 421),
-                     lw=1.5, label=r'$D^0$')
-        plt.semilogy(xvec, xvec * self.D_dist(xvec, eprobe, 411),
-                     lw=1.5, label=r'$D^+$')
-        plt.semilogy(xvec, xvec * self.D_dist(xvec, eprobe, 431),
-                     lw=1.5, label=r'$Ds^+$')
-        plt.semilogy(xvec, xvec * self.LambdaC_dist(xvec, 1e4),
-                     lw=1.5, label=r'$\Lambda_C^+$')
+        plt.semilogy(
+            xvec,
+            xvec * self.dsig_dx(xvec, eprobe),
+            lw=1.5,
+            label=r'$c$-quark')
+        plt.semilogy(
+            xvec,
+            xvec * self.D_dist(xvec, eprobe, 421),
+            lw=1.5,
+            label=r'$D^0$')
+        plt.semilogy(
+            xvec,
+            xvec * self.D_dist(xvec, eprobe, 411),
+            lw=1.5,
+            label=r'$D^+$')
+        plt.semilogy(
+            xvec,
+            xvec * self.D_dist(xvec, eprobe, 431),
+            lw=1.5,
+            label=r'$Ds^+$')
+        plt.semilogy(
+            xvec,
+            xvec * self.LambdaC_dist(xvec, 1e4),
+            lw=1.5,
+            label=r'$\Lambda_C^+$')
         plt.legend()
         plt.xlabel(r'$x_F$')
         plt.ylabel(r'inclusive $\sigma$ [mb]')
 
         plt.subplot(122)
         evec = np.logspace(4, 11, 100)
-        plt.loglog(np.sqrt(evec), self.sigma_cc(evec),
-                   lw=1.5, label=r'$\sigma_{c\bar{c}}$')
+        plt.loglog(
+            np.sqrt(evec),
+            self.sigma_cc(evec),
+            lw=1.5,
+            label=r'$\sigma_{c\bar{c}}$')
         plt.legend()
         plt.xlabel(r'$\sqrt{s}$ [GeV]')
         plt.ylabel(r'$\sigma_{c\bar{c}}$ [mb]')
@@ -301,14 +320,12 @@ class WHR_charm(MRS_charm):
     def __init__(self, e_grid, csm):
         import cPickle as pickle
 
-        self.sig_table = pickle.load(
-            open('references/logan_charm.ppl', 'rb'))
+        self.sig_table = pickle.load(open('references/logan_charm.ppl', 'rb'))
         self.e_idcs = {}
         for i, e in enumerate(e_grid):
             self.e_idcs[e] = i
 
         MRS_charm.__init__(self, e_grid, csm)
-
 
     def dsig_dx(self, x, E):
         """Returns the Feynman-:math:`x_F` distribution
@@ -321,6 +338,6 @@ class WHR_charm(MRS_charm):
         Returns:
           float: :math:`\\sigma_{c\\bar{c}}` in mb
         """
-        res = self.sig_table[self.e_idcs[E]](x) * 1e-3 #mub -> mb
+        res = self.sig_table[self.e_idcs[E]](x) * 1e-3  #mub -> mb
         res[res < 0] = 0.
         return res
