@@ -16,7 +16,7 @@ is possible but additional extensions.
 At very high energies, i.e. beyond 100 TeV, the decays of very short-lived particles
 become an important contribution to the flux. However, heavy-flavor production at these
 energies is not well known and it can not be consitently predicted within theoretical
-frameworks. Some of the default interaction models (``SIBYLL-2.3`` or ``DPMJET-II``)
+frameworks. Some of the default interaction models (``SIBYLL-2.3`` or ``SIBYLL-2.3c``)
 contain models of charmed particle production but they represent only hypotheses based
 on experimental data and phenomenology. Other :mod:`MCEq.charm_models` exist, such as 
 the :class:`MCEq.charm_models.MRS_charm`, which can be coupled with any other interaction

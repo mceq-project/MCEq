@@ -1,50 +1,73 @@
-MCEq - Matrix cascade equation
-==============================
+MCEq - Matrix cascade equation (Release Candidate 1)
+====================================================
 
-This scientific package might be useful fo all who deal with high-energy inclusive atmospheric fluxes of muons and neutrinos. In particular it might be useful for experiments, for example  `IceCube <https://icecube.wisc.edu>`_ or `MINOS <http://www-numi.fnal.gov/PublicInfo/index.html>`_, for calculations of systematic uncertainties and atmospheric backgrounds.
+This version was previously known as 'dev' branch.
 
-Status
+This scientific package might be useful fo all who deal with high-energy inclusive atmospheric fluxes of muons and neutrinos. 
+In particular it might be useful for astroparticle physics experiments, for example  `IceCube <https://icecube.wisc.edu>`_ or 
+`MINOS <http://www-numi.fnal.gov/PublicInfo/index.html>`_, for calculations of systematic uncertainties and atmospheric backgrounds.
+
+Status (Updated)
 ------
 
-This **dev** branch is a pre-release of the first stable version. It has several new features
-including:
-- extended energy range (10 GeV - 10^11 GeV)
-- new interaction models, SIBYLL 2.3 final and EPOS-LHC
-- particle production from interactions of charmed hadrons (SIBYLL 2.3 only)
-- a generalized target mode, with arbitrary density profiles of target material (instead of air in Earths atmosphere)
+This is release candiate of the final version 1.0. It has several new features including:
+- extended energy range (1 GeV - 10^11 GeV)
+- new interaction models, SIBYLL 2.3 + 2.3c, EPOS-LHC and DPMJET-III 17.1
+- compact (=very fast) mode
+- low-energy extension (with DPMJET-III) of high-energy interaction models
+- computation of hadron and lepton yields along an air-shower trajectory (average air-shower)
+- energy loss for muons
+- a generalized target mode, with arbitrary density profiles of target material (experimental and physics is not yet accurate)
 
-`Documentation <http://mceq.readthedocs.org/en/latest/>`_
----------------------------------------------------------
+`Documentation (updated) <http://mceq.readthedocs.org/en/latest/>`_
+--------------------------------------------------------------------
 
-As mentioned above the project is development. The current state of the documentation is more suited for developers rather than end-users. Mostly it is auogenerated `sphinx`-docs. Check it out before touching the code.  The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
+The latest version of the documentation can be found `here <http://mceq.readthedocs.org/en/latest/>`_.
+
+Please cite our work
+--------------------
+
+If you are using this code in your scientific work, please cite the code **AND** the
+physical models. A complete list of references can be found in the 
+`Citations section of the docs <http://mceq.readthedocs.org/en/latest/citations.html>`_.
 
 System requirements
 -------------------
 
-- Some kind of modern CPU (Core2Duo++)
-- 4GB (currently 8GB of RAM is stongly recommended. The solver is not optimzed for memory usage, however there's lots of room for improvement)
-- ~1GB of disk space
-- a recent Linux or Mac OS X operating system. Windows might be suitable, but was not checked.
+- Some kind of modern CPU with FPU unit
+- 2GB (8GB of RAM is recommended)
+- ~2GB of disk space
+- OS: Linux, Mac or Windows 10
 
 Software requirements
 ---------------------
 
-The majority of the code consists of pure Python modules. Some functions are accelerated through Just-In-Time (JIT) compilation using `numba <http://numba.pydata.org>`_, which requires the `llvmlite` package.
+The majority of the code is pure Python. Some functions are accelerated through Just-In-Time (JIT) compilation 
+using `numba <http://numba.pydata.org>`_, which requires the `llvmlite` package.
 
 Dependencies:
 
-* python-2.7 (Python 3 not compatible yet)
+* python-2.7
 * numpy
 * scipy
-* matplotlib
-* ipython + notebook (optional, but needed for examples)
 * numba
+* matplotlib
+* jupyter notebook (optional, but needed for examples)
 * progressbar
 
+Additional dependencies are required for the C implementation of the NRLMSISE-00 atmosphere:
+
+* a C compiler (GNU gcc, for example)
+* make
+* ctypes
 
 Installation
 ------------
-The installation simplest method relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ by `Continuum Analytics <http://www.continuum.io>`_. It doesn't just improve your life, but also provides most of the scientific computing packages by default. It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, is to add this directory to your system `$PATH` variable. To uninstall just delete this directory.
+The installation simplest method relies on the Python package manager `Anaconda/Miniconda <https://store.continuum.io/cshop/anaconda/>`_ 
+by `Continuum Analytics <http://www.continuum.io>`_. It doesn't just improve your life, but also provides most of the scientific computing 
+packages by default. It also distributes a numpy version integrated with `Intel's Math Kernel Library <https://software.intel.com/en-us/intel-mkl>`_ (MKL).
+It will not spoil your system Python paths and will install itself into a specified directory. The only action which is needed for activation, 
+is to add this directory to your system `$PATH` variable. To uninstall just delete this directory.
 
 #. Download one of the installers for your system architecure from here:
 
@@ -60,7 +83,7 @@ The installation simplest method relies on the Python package manager `Anaconda/
 	Open a new terminal window to reload your new `$PATH` variable.
 
 
-#. `Cd` to you desired working directory. And clone this project including submodules:
+#. `Cd` to you desired working directory. And clone (*note the `--recursive`*) this project including submodules:
 
 	.. code-block:: bash
 
@@ -90,19 +113,11 @@ The installation simplest method relies on the Python package manager `Anaconda/
 
 	   $ deactivate
 
-#. (**Optional**) Acceleration of the integration routines can be achieved using `Intel Math Kernel Library <https://software.intel.com/en-us/intel-mkl>`_ (MKL). Anaconda offers MKL-linked numpy binaries free for academic use. It is necessary to register using your *.edu* mail adress to receive a license. The demo period is 30 days. If you want to give it a try
-
-	.. code-block:: bash
-
-		   $ conda install mkl
-
-	Change in `mceq_config.py` the `kernel` entry to 'MKL'.
-
 #. Run some example
 
 	.. code-block:: bash
 
-	   $ ipython notebook
+	   $ jupyter notebook
 
 	click on the examples directory and select `basic_flux.ipynb`. Click through the blocks and see what happens.
 
@@ -116,21 +131,6 @@ You might run into `problems with Anaconda <https://github.com/conda/conda/issue
 
 Thanks to F.C. Penha for pointing this out.
 
-Citation
---------
-If you are using this code in your scientific work, please cite
-
-   | *Calculation of conventional and prompt lepton fluxes at very high energy*
-   | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
-   | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
-
-Please, also cite or footnote this Github site and revisit this page from time to time,
-to get the most up2date information.
-
-The models inside this code need to be cited separately. Please
-`see the documentation <http://mceq.readthedocs.org/en/latest/citations.html>`_ for the complete list of references.
-
-
 Contributers
 ------------
 
@@ -138,4 +138,4 @@ Contributers
 
 Copyright and license
 ---------------------
-Code and documentation copyright 2014-2015 Anatoli Fedynitch. Code released under `the MIT license <https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
+Code and documentation copyright 2014-2017 Anatoli Fedynitch. Code released under `the MIT license <https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
