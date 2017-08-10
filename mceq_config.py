@@ -57,6 +57,9 @@ config = {
     #=========================================================================
 
     # Use file for caching calculated atmospheric rho(X) splines
+    # This feature is kind of obsolete, since change of the integrator reduced
+    # the profile computation to ~30ms. If this is a constraint for you, contact
+    # me.
     "use_atm_cache": False,
 
     # Atmospheric model in the format: (model, (arguments))
