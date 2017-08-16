@@ -273,6 +273,8 @@ class InteractionYields(object):
     """
 
     def __init__(self, interaction_model, charm_model=None):
+        from collections import defaultdict
+
         #: (str) InterAction Model name
         self.iam = None
         #: (str) charm model name
@@ -288,7 +290,7 @@ class InteractionYields(object):
         #: (tuple) selection of a band of coeffictients (in xf)
         self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = {}
+        self.mod_pprod = defaultdict(lambda:{})
         #: (numpy.array) Matrix of x_lab values
         self.xmat = None
         #: (list) List of particles supported by interaction model
@@ -510,7 +512,7 @@ class InteractionYields(object):
           (numpy.array): modification matrix
         """
 
-        if dbg > 0:
+        if dbg > 1:
             print(self.__class__.__name__ +
                   '::init_mod_matrix():'), x_func.__name__, args
 
@@ -547,134 +549,126 @@ class InteractionYields(object):
           sec_pdg (int): secondary particle PDG ID
         """
 
-        if ((prim_pdg, sec_pdg) not in self.mod_pprod.keys() or
-                self.mod_pprod[(prim_pdg, sec_pdg)][:2] !=
-            (x_func.__name__, args)):
+        # Short cut for the pprod list
+        mpli = self.mod_pprod
+        pstup = (prim_pdg, sec_pdg)
+
+        if config['use_isospin_sym'] and prim_pdg not in [2212, 2112]:
+            raise Exception(self.__class__.__name__ +
+                            'Unsupported primary for isospin symmetries.')
+
+        # if pstup not in mpli.keys():
+        #     mpli[(pstup)] = {}
+
+        if (x_func.__name__, args) in mpli[(pstup)]:
             if dbg > 0:
                 print(self.__class__.__name__ +
-                      '::set_mod_pprod(): modifying modify particle production'
-                      + ' matrix of {0}/{1}.').format(prim_pdg, sec_pdg)
-            kmat = self._gen_mod_matrix(x_func, *args)
-            self.mod_pprod[(prim_pdg, sec_pdg)] = (x_func.__name__, args, kmat)
-            if dbg > 1:
-                print('::set_mod_pprod(): modification "strength"',
-                      np.sum(kmat) / np.count_nonzero(kmat, dtype=np.float))
-
-            if not config['use_isospin_sym']:
-                return True
-            else:
-                if prim_pdg not in [2212, 2112]:
-                    raise Exception(
-                        self.__class__.__name__ +
-                        'Unsupported primary for isospin symmetries')
-
-            prim_pdg, mirror_pdg = 2212, 2112
-            if prim_pdg == 2112:
-                prim_pdg = 2112
-                mirror_pdg = 2212
-
-            # p->pi+ = n-> pi-, p->pi- = n-> pi+
-            if abs(sec_pdg) == 211:
-                self.mod_pprod[(mirror_pdg, -sec_pdg)] = ('isospin', args,
-                                                          kmat)
-                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
-
-                unflv_arg = list(args)
-                has_unflv = bool(
-                    np.sum([p in self.projectiles for p in [221, 223, 333]]))
-                if has_unflv:
-                    if (2212, -sec_pdg) in self.mod_pprod:
-                        # Compute average of K+ and K- modification matrices
-                        # Save the 'average' argument
-                        for i in range(len(args)):
-                            try:
-                                unflv_arg[i] = 0.5 * (
-                                    unflv_arg[i] + self.mod_pprod[(
-                                        prim_pdg, -sec_pdg)][1][i])
-                            except TypeError:
-                                if dbg > 2:
-                                    print '::set_mod_pprod(): Can not average arg', unflv_arg
-                    unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
-
-                    # modify eta, omega, phi, 221, 223, 333
-                    for t in [(prim_pdg, 221), (prim_pdg, 223),
-                              (prim_pdg, 333), (mirror_pdg, 221),
-                              (mirror_pdg, 223), (mirror_pdg, 333)]:
-                        self.mod_pprod[t] = ('isospin', tuple(unflv_arg),
-                                             unflmat)
-
-            # Charged and neutral kaons
-            elif abs(sec_pdg) == 321:
-                # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
-                self.mod_pprod[(mirror_pdg, sec_pdg)] = ('isospin', args, kmat)
-
-                #     #approx.: K0L/S ~ 0.5*(K+ + K-)
-                k0arg = list(args)
-                if (prim_pdg, -sec_pdg) in self.mod_pprod:
-                    # Compute average of K+ and K- modification matrices
-                    # Save the 'average' argument
-                    for i in range(len(args)):
-                        try:
-                            k0arg[i] = 0.5 * (k0arg[i] + self.mod_pprod[(
-                                prim_pdg, -sec_pdg)][1][i])
-                        except TypeError:
-                            if dbg > 2:
-                                print '::set_mod_pprod(): Can not average arg', k0arg
-
-                kmat = self._gen_mod_matrix(x_func, *k0arg)
-
-                # modify K0L/S
-                for t in [(prim_pdg, 310), (prim_pdg, 130), (mirror_pdg, 310),
-                          (mirror_pdg, 130)]:
-                    self.mod_pprod[t] = ('isospin', tuple(k0arg), kmat)
-
-            elif abs(sec_pdg) == 411:
-                ssec = np.sign(sec_pdg)
-                self.mod_pprod[(prim_pdg, ssec * 421)] = ('isospin', args,
-                                                          kmat)
-                self.mod_pprod[(prim_pdg, ssec * 431)] = ('isospin', args,
-                                                          kmat)
-                self.mod_pprod[(mirror_pdg, sec_pdg)] = ('isospin', args, kmat)
-                self.mod_pprod[(mirror_pdg, ssec * 421)] = ('isospin', args,
-                                                            kmat)
-                self.mod_pprod[(mirror_pdg, ssec * 431)] = ('isospin', args,
-                                                            kmat)
-
-            # Leading particles
-            elif abs(sec_pdg) == prim_pdg:
-
-                self.mod_pprod[(mirror_pdg,
-                                mirror_pdg)] = ('isospin', args,
-                                                self.mod_pprod[(prim_pdg,
-                                                                sec_pdg)][2])
-            elif abs(sec_pdg) == mirror_pdg:
-                self.mod_pprod[(mirror_pdg,
-                                prim_pdg)] = ('isospin', args,
-                                              self.mod_pprod[(prim_pdg,
-                                                              sec_pdg)][2])
-            else:
-                raise Exception('No isospin relation found for secondary' +
-                                str(sec_pdg))
-
-            # Tell MCEqRun to regenerate the matrices if something has changed
-            return True
-        else:
-            if dbg > 1:
-                print(self.__class__.__name__ +
                       '::set_mod_pprod(): no changes to particle production' +
-                      ' modification matrix of {0}/{1}.').format(
-                          prim_pdg, sec_pdg)
+                      ' modification matrix of {0}/{1} for {2},{3}').format(
+                          prim_pdg, sec_pdg, x_func.__name__, args)
             return False
+
+
+        if dbg > 0:
+            print (self.__class__.__name__ +
+                  '::set_mod_pprod(): modifying modify particle production'
+                  + ' matrix of {0}/{1} for {2},{3}').format(
+                          prim_pdg, sec_pdg, x_func.__name__, args)
+
+        kmat = self._gen_mod_matrix(x_func, *args)
+        mpli[pstup][(x_func.__name__, args)] = kmat
+
+        if dbg > 1:
+            print('::set_mod_pprod(): modification "strength"',
+                  np.sum(kmat) / np.count_nonzero(kmat, dtype=np.float))
+
+        if not config['use_isospin_sym']:
+            return True
+
+        prim_pdg, symm_pdg = 2212, 2112
+        if prim_pdg == 2112:
+            prim_pdg = 2112
+            symm_pdg = 2212
+
+        # p->pi+ = n-> pi-, p->pi- = n-> pi+
+        if abs(sec_pdg) == 211:
+            # Add the same mod to the isospin symmetric particle combination
+            mpli[(symm_pdg, -sec_pdg)][('isospin', args)] = kmat
+
+            # Assumption: Unflavored production coupled to the average
+            # of pi+ and pi- production
+
+            if np.any([p in self.projectiles for p in [221, 223, 333]]):
+
+                unflv_arg = None
+                if (prim_pdg, -sec_pdg) not in mpli:
+                    # Only pi+ or pi- (not both) have been modified
+                    unflv_arg = (args[0], 0.5*args[1])
+
+                if (prim_pdg, -sec_pdg) in mpli:
+                    # Compute average of pi+ and pi- modification matrices
+                    # Save the 'average' argument (just for meaningful printout)
+                    for arg_name, arg_val in mpli[(prim_pdg, -sec_pdg)]:
+                        if arg_name == args[0]:
+                            unflv_arg = (args[0], 0.5* (args[1] + arg_val))
+
+                unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
+
+                # modify eta, omega, phi, 221, 223, 333
+                for t in [(prim_pdg, 221), (prim_pdg, 223),
+                          (prim_pdg, 333), (symm_pdg, 221),
+                          (symm_pdg, 223), (symm_pdg, 333)]:
+                    mpli[t][('isospin', unflv_arg)] = unflmat
+
+        # Charged and neutral kaons
+        elif abs(sec_pdg) == 321:
+            # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
+            mpli[(symm_pdg, -sec_pdg)][('isospin', args)] = kmat
+
+            k0_arg = (args[0], 0.5*args[1])
+            if (prim_pdg, -sec_pdg) in mpli:
+                # Compute average of K+ and K- modification matrices
+                # Save the 'average' argument (just for meaningful printout)
+                for arg_name, arg_val in mpli[(prim_pdg, -sec_pdg)]:
+                    if arg_name == args[0]:
+                        k0_arg = (args[0], 0.5* (args[1] + arg_val))
+
+            k0mat = self._gen_mod_matrix(x_func, *k0_arg)
+
+            # modify K0L/S
+            for t in [(prim_pdg, 310), (prim_pdg, 130), 
+                      (symm_pdg, 310), (symm_pdg, 130)]:
+                mpli[t][('isospin', k0_arg)] = k0mat
+
+        elif abs(sec_pdg) == 411:
+            ssec = np.sign(sec_pdg)
+            mpli[(prim_pdg, ssec * 421)][('isospin', args)] = kmat
+            mpli[(prim_pdg, ssec * 431)][('isospin', args)] = kmat
+            mpli[(symm_pdg, sec_pdg)][('isospin', args)] = kmat
+            mpli[(symm_pdg, ssec * 421)][('isospin', args)] = kmat
+            mpli[(symm_pdg, ssec * 431)][('isospin', args)] = kmat
+
+        # Leading particles
+        elif abs(sec_pdg) == prim_pdg:
+            mpli[(symm_pdg, symm_pdg)][('isospin', args)] = kmat
+        elif abs(sec_pdg) == symm_pdg:
+            mpli[(symm_pdg, prim_pdg)][('isospin', args)] = kmat
+        else:
+            raise Exception('No isospin relation found for secondary' +
+                            str(sec_pdg))
+
+        # Tell MCEqRun to regenerate the matrices if something has changed
+        return True
+
 
     def print_mod_pprod(self):
         """Prints the active particle production modification.
         """
 
         for i, (prim_pdg, sec_pdg) in enumerate(sorted(self.mod_pprod)):
-
-            print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
-                i, prim_pdg, sec_pdg, self.mod_pprod[(prim_pdg, sec_pdg)][0],
-                str(self.mod_pprod[(prim_pdg, sec_pdg)][1]))
+            for j, (argname, argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
+                print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
+                    i + j, prim_pdg, sec_pdg, argname, argv)
 
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
@@ -815,7 +809,11 @@ class InteractionYields(object):
                     'InteractionYields::get_y_matrix(): using modified particle '
                     + 'production for {0}/{1}').format(projectile, daughter)
             m = np.copy(m)
-            m *= self.mod_pprod[(projectile, daughter)][2]
+            i = 0
+            for args, mmat in self.mod_pprod[(projectile, daughter)].items():
+                print i, (projectile, daughter), args, np.sum(mmat), np.sum(m)
+                i += 1
+                m *= mmat
 
         if not self.band:
             return m
