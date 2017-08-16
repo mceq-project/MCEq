@@ -944,11 +944,12 @@ class MCEqRun(object):
     def unset_mod_pprod(self):
         """Removes modifications from :func:`MCEqRun.set_mod_pprod`.
         """
+        from collections import defaultdict
         if dbg > 0:
             print(self.__class__.__name__ +
                   'unset_mod_pprod(): modifications removed')
 
-        self.y.mod_pprod = {}
+        self.y.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         self._init_default_matrices(skip_D_matrix=True)
 
