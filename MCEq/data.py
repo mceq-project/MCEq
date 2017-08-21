@@ -811,7 +811,7 @@ class InteractionYields(object):
             m = np.copy(m)
             i = 0
             for args, mmat in self.mod_pprod[(projectile, daughter)].items():
-                print i, (projectile, daughter), args, np.sum(mmat), np.sum(m)
+                if dbg > 5: i, (projectile, daughter), args, np.sum(mmat), np.sum(m)
                 i += 1
                 m *= mmat
 
