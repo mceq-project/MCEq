@@ -941,8 +941,12 @@ class MCEqRun(object):
             self._init_default_matrices(skip_D_matrix=True)
             return 0
 
-    def unset_mod_pprod(self):
+    def unset_mod_pprod(self, dont_fill=False):
         """Removes modifications from :func:`MCEqRun.set_mod_pprod`.
+
+        Args:
+          skip_fill (bool): If `true` do not regenerate matrices 
+          (has to be done at a later step by hand)
         """
         from collections import defaultdict
         if dbg > 0:
@@ -951,7 +955,8 @@ class MCEqRun(object):
 
         self.y.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
-        self._init_default_matrices(skip_D_matrix=True)
+        if not dont_fill:
+            self._init_default_matrices(skip_D_matrix=True)
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
