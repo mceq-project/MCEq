@@ -567,7 +567,15 @@ class InteractionYields(object):
                       ' modification matrix of {0}/{1} for {2},{3}').format(
                           prim_pdg, sec_pdg, x_func.__name__, args)
             return False
-
+        
+        # Check function with same mode but different parameter is supplied
+        for (xf_name, fargs) in mpli[pstup].keys():
+            if (xf_name == x_func.__name__) and (fargs[0] == args[0]):
+                if dbg > 0:
+                    print ('Warning. If you modify only the value of a function,',
+                    'unset and re-apply all changes')
+                return False
+        
 
         if dbg > 0:
             print (self.__class__.__name__ +
