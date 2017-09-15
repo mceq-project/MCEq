@@ -631,7 +631,7 @@ class InteractionYields(object):
         # Charged and neutral kaons
         elif abs(sec_pdg) == 321:
             # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
-            mpli[(symm_pdg, -sec_pdg)][('isospin', args)] = kmat
+            mpli[(symm_pdg, sec_pdg)][('isospin', args)] = kmat
 
             k0_arg = (args[0], 0.5*args[1])
             if (prim_pdg, -sec_pdg) in mpli:
