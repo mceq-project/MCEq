@@ -290,7 +290,7 @@ class InteractionYields(object):
         #: (tuple) selection of a band of coeffictients (in xf)
         self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = defaultdict(lambda:{})
+        self.mod_pprod = defaultdict(lambda: {})
         #: (numpy.array) Matrix of x_lab values
         self.xmat = None
         #: (list) List of particles supported by interaction model
@@ -302,8 +302,9 @@ class InteractionYields(object):
         if interaction_model != None:
             self._load(interaction_model)
         else:
-            print(self.__class__.__name__ +
-                  '__init__(): Loading SIBYLL 2.1 by default.')
+            if dbg:
+                print(self.__class__.__name__ +
+                      '__init__(): Loading SIBYLL 2.1 by default.')
             self._load('SIBYLL2.1')
 
         if charm_model and interaction_model:
@@ -567,21 +568,21 @@ class InteractionYields(object):
                       ' modification matrix of {0}/{1} for {2},{3}').format(
                           prim_pdg, sec_pdg, x_func.__name__, args)
             return False
-        
+
         # Check function with same mode but different parameter is supplied
         for (xf_name, fargs) in mpli[pstup].keys():
             if (xf_name == x_func.__name__) and (fargs[0] == args[0]):
                 if dbg > 0:
-                    print ('Warning. If you modify only the value of a function,',
-                    'unset and re-apply all changes')
+                    print(
+                        'Warning. If you modify only the value of a function,',
+                        'unset and re-apply all changes')
                 return False
-        
 
         if dbg > 0:
-            print (self.__class__.__name__ +
-                  '::set_mod_pprod(): modifying modify particle production'
-                  + ' matrix of {0}/{1} for {2},{3}').format(
-                          prim_pdg, sec_pdg, x_func.__name__, args)
+            print(self.__class__.__name__ +
+                  '::set_mod_pprod(): modifying modify particle production' +
+                  ' matrix of {0}/{1} for {2},{3}').format(
+                      prim_pdg, sec_pdg, x_func.__name__, args)
 
         kmat = self._gen_mod_matrix(x_func, *args)
         mpli[pstup][(x_func.__name__, args)] = kmat
@@ -611,21 +612,20 @@ class InteractionYields(object):
                 unflv_arg = None
                 if (prim_pdg, -sec_pdg) not in mpli:
                     # Only pi+ or pi- (not both) have been modified
-                    unflv_arg = (args[0], 0.5*args[1])
+                    unflv_arg = (args[0], 0.5 * args[1])
 
                 if (prim_pdg, -sec_pdg) in mpli:
                     # Compute average of pi+ and pi- modification matrices
                     # Save the 'average' argument (just for meaningful printout)
                     for arg_name, arg_val in mpli[(prim_pdg, -sec_pdg)]:
                         if arg_name == args[0]:
-                            unflv_arg = (args[0], 0.5* (args[1] + arg_val))
+                            unflv_arg = (args[0], 0.5 * (args[1] + arg_val))
 
                 unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
 
                 # modify eta, omega, phi, 221, 223, 333
-                for t in [(prim_pdg, 221), (prim_pdg, 223),
-                          (prim_pdg, 333), (symm_pdg, 221),
-                          (symm_pdg, 223), (symm_pdg, 333)]:
+                for t in [(prim_pdg, 221), (prim_pdg, 223), (prim_pdg, 333),
+                          (symm_pdg, 221), (symm_pdg, 223), (symm_pdg, 333)]:
                     mpli[t][('isospin', unflv_arg)] = unflmat
 
         # Charged and neutral kaons
@@ -633,19 +633,19 @@ class InteractionYields(object):
             # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
             mpli[(symm_pdg, sec_pdg)][('isospin', args)] = kmat
 
-            k0_arg = (args[0], 0.5*args[1])
+            k0_arg = (args[0], 0.5 * args[1])
             if (prim_pdg, -sec_pdg) in mpli:
                 # Compute average of K+ and K- modification matrices
                 # Save the 'average' argument (just for meaningful printout)
                 for arg_name, arg_val in mpli[(prim_pdg, -sec_pdg)]:
                     if arg_name == args[0]:
-                        k0_arg = (args[0], 0.5* (args[1] + arg_val))
+                        k0_arg = (args[0], 0.5 * (args[1] + arg_val))
 
             k0mat = self._gen_mod_matrix(x_func, *k0_arg)
 
             # modify K0L/S
-            for t in [(prim_pdg, 310), (prim_pdg, 130), 
-                      (symm_pdg, 310), (symm_pdg, 130)]:
+            for t in [(prim_pdg, 310), (prim_pdg, 130), (symm_pdg, 310),
+                      (symm_pdg, 130)]:
                 mpli[t][('isospin', k0_arg)] = k0mat
 
         elif abs(sec_pdg) == 411:
@@ -668,13 +668,13 @@ class InteractionYields(object):
         # Tell MCEqRun to regenerate the matrices if something has changed
         return True
 
-
     def print_mod_pprod(self):
         """Prints the active particle production modification.
         """
 
         for i, (prim_pdg, sec_pdg) in enumerate(sorted(self.mod_pprod)):
-            for j, (argname, argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
+            for j, (argname,
+                    argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
                 print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
                     i + j, prim_pdg, sec_pdg, argname, argv)
 
@@ -699,7 +699,6 @@ class InteractionYields(object):
             self._load(interaction_model)
 
         if interaction_model != self.iam:
-            print interaction_model, self.iam
             raise Exception("InteractionYields(): No coupling matrices " +
                             "available for the selected interaction " +
                             "model: {0}.".format(interaction_model))
@@ -721,15 +720,17 @@ class InteractionYields(object):
             self.band = (xl_low_idx, xl_up_idx)
         else:
             self.band = None
-            print(self.__class__.__name__ + '::set_xf_band():' +
-                  'reset selection of x_lab band')
+            if dbg:
+                print(self.__class__.__name__ + '::set_xf_band():' +
+                      'reset selection of x_lab band')
             return
 
         if dbg > 0:
             xl_bins = self.e_bins / self.e_bins[-1]
-            print(self.__class__.__name__ + '::set_xf_band(): limiting '
-                  'Feynman x range to: {0:5.2e} - {1:5.2e}').format(
-                      xl_bins[self.band[0]], xl_bins[self.band[1]])
+            if dbg:
+                print(self.__class__.__name__ + '::set_xf_band(): limiting '
+                      'Feynman x range to: {0:5.2e} - {1:5.2e}').format(
+                          xl_bins[self.band[0]], xl_bins[self.band[1]])
 
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
@@ -819,7 +820,8 @@ class InteractionYields(object):
             m = np.copy(m)
             i = 0
             for args, mmat in self.mod_pprod[(projectile, daughter)].items():
-                if dbg > 5: i, (projectile, daughter), args, np.sum(mmat), np.sum(m)
+                if dbg > 5:
+                    i, (projectile, daughter), args, np.sum(mmat), np.sum(m)
                 i += 1
                 m *= mmat
 
@@ -1011,8 +1013,9 @@ class DecayYields(object):
             for m in mother_list:
                 if (m not in self.daughter_dict.keys() and
                         abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
-                    print("DecayYields::_load(): Warning: no decay " +
-                          "distributions for {0} found.").format(m)
+                    if dbg:
+                        print("DecayYields::_load(): Warning: no decay " +
+                              "distributions for {0} found.").format(m)
 
             # Remove unused particle species from index in compact mode
             if config["compact_mode"]:
@@ -1326,8 +1329,9 @@ class HadAirCrossSections(object):
         interaction_model = interaction_model.split('_compact')[0]
 
         if interaction_model == self.iam and dbg > 0:
-            print("InteractionYields:set_interaction_model():: Model " +
-                  self.iam + " already loaded.")
+            if dbg:
+                print("InteractionYields:set_interaction_model():: Model " +
+                      self.iam + " already loaded.")
             return
         if interaction_model in self.cs_dict.keys():
             self.iam = interaction_model

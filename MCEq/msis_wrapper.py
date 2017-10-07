@@ -43,7 +43,6 @@ class NRLMSISE00Base(object):
     def surface_vert_depth(self, loc='SouthPole', month='June'):
         self.set_location('SouthPole')
         self.set_season('June')
-        print loc, month, self.height2depth(self.alt_surface)
 
     def height2depth(self, altitude_cm):
         from scipy.integrate import quad
