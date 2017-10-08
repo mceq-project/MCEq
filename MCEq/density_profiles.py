@@ -184,12 +184,6 @@ class EarthsAtmosphere():
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
 
-<<<<<<< .merge_file_IU4mI0
-        #        print  splrep(np.array(h_intp),
-        #                      np.log(X_intp),
-        #                      k=2, s=0.0)
-=======
->>>>>>> .merge_file_mzikLt
         self.s_h2X = UnivariateSpline(h_intp, np.log(X_intp),
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
