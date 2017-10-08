@@ -43,13 +43,21 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 
 """
 import numpy as np
-from mceq_config import config
+from mceq_config import config, dbg
 
 
-def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
-               phi, grid_idcs,
-               mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
-               prog_bar=None, fa_vars=None):
+def kern_numpy(nsteps,
+               dX,
+               rho_inv,
+               int_m,
+               dec_m,
+               phi,
+               grid_idcs,
+               mu_egrid=None,
+               mu_dEdX=None,
+               mu_lidx_nsp=None,
+               prog_bar=None,
+               fa_vars=None):
     """:mod;`numpy` implementation of forward-euler integration.
 
     Args:
@@ -95,19 +103,21 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
 
     # Implmentation of first interaction mode
     if config['first_interaction_mode']:
+
         def stepper(step):
             if step <= fa_vars['max_step']:
-                return (- fa_vars['Lambda_int'] * phc
-                        + imc.dot(fa_vars['fi_switch'][step] * phc)
-                        + dmc.dot(ric[step] * phc)) * dxc[step]
+                return (-fa_vars['Lambda_int'] * phc + imc.dot(
+                    fa_vars['fi_switch'][step] * phc) + dmc.dot(
+                        ric[step] * phc)) * dxc[step]
             else:
                 # Equivalent of setting interaction matrix to 0
-                return (- fa_vars['Lambda_int'] * phc
-                        + dmc.dot(ric[step] * phc)) * dxc[step]
+                return (
+                    -fa_vars['Lambda_int'] * phc + dmc.dot(ric[step] * phc)
+                ) * dxc[step]
     else:
+
         def stepper(step):
-            return (imc.dot(phc)
-                    + dmc.dot(ric[step] * phc)) * dxc[step]
+            return (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
 
     for step in xrange(nsteps):
         if prog_bar and (step % 200 == 0):
@@ -116,28 +126,36 @@ def kern_numpy(nsteps, dX, rho_inv, int_m, dec_m,
 
         dXaccum += dxc[step]
 
-        if (enmuloss and
-                (dXaccum > muloss_min_step or step == nsteps - 1)):
+        if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
             for nsp in xrange(nmuspec):
-                phc[lidx + de * nsp: lidx + de * (nsp + 1)] = np.interp(
+                phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
                     mu_egrid, mu_egrid + mu_dEdX * dXaccum,
                     phc[lidx + de * nsp:lidx + de * (nsp + 1)])
 
             dXaccum = 0.
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs) and
+                grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
-    print "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) / float(nsteps))
+    if dbg:
+        print "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps))
 
     return phc, grid_sol
 
 
-def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
-                    phi, grid_idcs,
-                    mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+def kern_CUDA_dense(nsteps,
+                    dX,
+                    rho_inv,
+                    int_m,
+                    dec_m,
+                    phi,
+                    grid_idcs,
+                    mu_egrid=None,
+                    mu_dEdX=None,
+                    mu_lidx_nsp=None,
                     prog_bar=None):
     """`NVIDIA CUDA cuBLAS <https://developer.nvidia.com/cublas>`_ implementation
     of forward-euler integration.
@@ -170,8 +188,9 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     #         'Energy loss not imlemented for this solver.')
 
     if config['enable_muon_energy_loss']:
-        raise NotImplementedError('kern_CUDA_dense(): ' +
-                                  'Energy loss not imlemented for this solver.')
+        raise NotImplementedError(
+            'kern_CUDA_dense(): ' +
+            'Energy loss not imlemented for this solver.')
 
     #=======================================================================
     # Setup GPU stuff and upload data to it
@@ -196,13 +215,28 @@ def kern_CUDA_dense(nsteps, dX, rho_inv, int_m, dec_m,
     for step in xrange(nsteps):
         if prog_bar:
             prog_bar.update(step)
-        cubl.gemv(trans='N', m=m, n=n, alpha=fl_pr(1.0), A=cu_int_m,
-                  x=cu_curr_phi, beta=fl_pr(0.0), y=cu_delta_phi)
-        cubl.gemv(trans='N', m=m, n=n, alpha=fl_pr(rho_inv[step]),
-                  A=cu_dec_m, x=cu_curr_phi, beta=fl_pr(1.0), y=cu_delta_phi)
+        cubl.gemv(
+            trans='N',
+            m=m,
+            n=n,
+            alpha=fl_pr(1.0),
+            A=cu_int_m,
+            x=cu_curr_phi,
+            beta=fl_pr(0.0),
+            y=cu_delta_phi)
+        cubl.gemv(
+            trans='N',
+            m=m,
+            n=n,
+            alpha=fl_pr(rho_inv[step]),
+            A=cu_dec_m,
+            x=cu_curr_phi,
+            beta=fl_pr(1.0),
+            y=cu_delta_phi)
         cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
-    print "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) / float(nsteps))
+    print "Performance: {0:6.2f}ms/iteration".format(
+        1e3 * (time() - start) / float(nsteps))
 
     return cu_curr_phi.copy_to_host(), []
 
@@ -263,23 +297,36 @@ class CUDASparseContext(object):
 
     def do_step(self, rho_inv, dX):
 
-        self.cusp.csrmv(trans='N', m=self.m, n=self.n, nnz=self.int_m_nnz,
-                        descr=self.descr,
-                        alpha=self.fl_pr(1.0),
-                        csrVal=self.int_m_csrValA,
-                        csrRowPtr=self.int_m_csrRowPtrA,
-                        csrColInd=self.int_m_csrColIndA,
-                        x=self.cu_curr_phi, beta=self.fl_pr(0.0), y=self.cu_delta_phi)
+        self.cusp.csrmv(
+            trans='N',
+            m=self.m,
+            n=self.n,
+            nnz=self.int_m_nnz,
+            descr=self.descr,
+            alpha=self.fl_pr(1.0),
+            csrVal=self.int_m_csrValA,
+            csrRowPtr=self.int_m_csrRowPtrA,
+            csrColInd=self.int_m_csrColIndA,
+            x=self.cu_curr_phi,
+            beta=self.fl_pr(0.0),
+            y=self.cu_delta_phi)
         # print np.sum(cu_curr_phi.copy_to_host())
-        self.cusp.csrmv(trans='N', m=self.m, n=self.n, nnz=self.dec_m_nnz,
-                        descr=self.descr,
-                        alpha=self.fl_pr(rho_inv),
-                        csrVal=self.dec_m_csrValA,
-                        csrRowPtr=self.dec_m_csrRowPtrA,
-                        csrColInd=self.dec_m_csrColIndA,
-                        x=self.cu_curr_phi, beta=self.fl_pr(1.0), y=self.cu_delta_phi)
-        self.cubl.axpy(alpha=self.fl_pr(
-            dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
+        self.cusp.csrmv(
+            trans='N',
+            m=self.m,
+            n=self.n,
+            nnz=self.dec_m_nnz,
+            descr=self.descr,
+            alpha=self.fl_pr(rho_inv),
+            csrVal=self.dec_m_csrValA,
+            csrRowPtr=self.dec_m_csrRowPtrA,
+            csrColInd=self.dec_m_csrColIndA,
+            x=self.cu_curr_phi,
+            beta=self.fl_pr(1.0),
+            y=self.cu_delta_phi)
+        self.cubl.axpy(
+            alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
+
 
 # class CUDASparseContextSkcuda(object):
 #
@@ -366,8 +413,15 @@ class CUDASparseContext(object):
 # self.cu_delta_phi.gpudata, 1, self.cu_curr_phi.gpudata, 1)
 
 
-def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
-                     mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+def kern_CUDA_sparse(nsteps,
+                     dX,
+                     rho_inv,
+                     context,
+                     phi,
+                     grid_idcs,
+                     mu_egrid=None,
+                     mu_dEdX=None,
+                     mu_lidx_nsp=None,
                      prog_bar=None):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation
     of forward-euler integration.
@@ -417,26 +471,35 @@ def kern_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs,
             # Download current solution vector to host
             phc = c.get_phi()
             for nsp in xrange(nmuspec):
-                phc[lidx + de * nsp: lidx + de * (nsp + 1)] = np.interp(
+                phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
                     mu_egrid, mu_egrid + mu_dEdX * dXaccum,
                     phc[lidx + de * nsp:lidx + de * (nsp + 1)])
             # Upload changed vector back..
             c.set_phi(phc)
             dXaccum = 0.
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs) and
+                grid_idcs[grid_step] == step):
             grid_sol.append(c.get_phi())
             grid_step += 1
 
-    print "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) / float(nsteps))
+    if dbg:
+        print "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps))
 
     return c.get_phi(), grid_sol
 
 
-def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
-                    phi, grid_idcs,
-                    mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+def kern_MKL_sparse(nsteps,
+                    dX,
+                    rho_inv,
+                    int_m,
+                    dec_m,
+                    phi,
+                    grid_idcs,
+                    mu_egrid=None,
+                    mu_dEdX=None,
+                    mu_lidx_nsp=None,
                     prog_bar=None):
     """`Intel MKL sparse BLAS
     <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_
@@ -536,43 +599,54 @@ def kern_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m,
             prog_bar.update(step)
 
         # delta_phi = int_m.dot(phi)
-        gemv(byref(trans), byref(m), byref(m),
-             byref(cdone), matdsc,
-             int_m_data, int_m_ci, int_m_pb, int_m_pe,
-             phi, byref(cdzero), delta_phi)
+        gemv(
+            byref(trans),
+            byref(m),
+            byref(m),
+            byref(cdone), matdsc, int_m_data, int_m_ci, int_m_pb, int_m_pe,
+            phi, byref(cdzero), delta_phi)
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(byref(trans), byref(m), byref(m),
-             byref(fl_pr(rho_inv[step])), matdsc,
-             dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe,
-             phi, byref(cdone), delta_phi)
+        gemv(
+            byref(trans),
+            byref(m),
+            byref(m),
+            byref(fl_pr(rho_inv[step])), matdsc, dec_m_data, dec_m_ci,
+            dec_m_pb, dec_m_pe, phi, byref(cdone), delta_phi)
         # phi = delta_phi * dX + phi
-        axpy(m, fl_pr(dX[step]),
-             delta_phi, cione, phi, cione)
+        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
         dXaccum += dX[step]
 
-        if (enmuloss and
-                (dXaccum > muloss_min_step or step == nsteps - 1)):
+        if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
             for nsp in xrange(nmuspec):
-                npphi[lidx + de * nsp: lidx + de * (nsp + 1)] = np.interp(
+                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
                     mu_egrid, mu_egrid + mu_dEdX * dXaccum,
                     npphi[lidx + de * nsp:lidx + de * (nsp + 1)])
 
             dXaccum = 0.
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs) and
+                grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
-    print "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) / float(nsteps))
+    if dbg:
+        print "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps))
 
     return npphi, grid_sol
 
 
-def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
-                        phi, grid_idcs,
-                        mu_egrid=None, mu_dEdX=None, mu_lidx_nsp=None,
+def kern_XeonPHI_sparse(nsteps,
+                        dX,
+                        rho_inv,
+                        int_m,
+                        dec_m,
+                        phi,
+                        grid_idcs,
+                        mu_egrid=None,
+                        mu_dEdX=None,
+                        mu_lidx_nsp=None,
                         prog_bar=None):
     """Experimental Xeon Phi support using pyMIC library.
     """
@@ -615,18 +689,16 @@ def kern_XeonPHI_sparse(nsteps, dX, rho_inv, int_m, dec_m,
     from time import time
     start = time()
 
-    stream.invoke(library.mceq_kernel,
-                  m, nsteps,
-                  mic_phi, mic_delta_phi,
-                  mic_rho_inv, mic_dX,
-                  mic_int_m_data, mic_int_m_ci,
-                  mic_int_m_pb, mic_int_m_pe,
-                  mic_dec_m_data, mic_dec_m_ci,
+    stream.invoke(library.mceq_kernel, m, nsteps, mic_phi, mic_delta_phi,
+                  mic_rho_inv, mic_dX, mic_int_m_data, mic_int_m_ci,
+                  mic_int_m_pb, mic_int_m_pe, mic_dec_m_data, mic_dec_m_ci,
                   mic_dec_m_pb, mic_dec_m_pe)
 
     stream.sync()
 
-    print "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) / float(nsteps))
+    if dbg:
+        print "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps))
 
     mic_phi.update_host()
     stream.sync()

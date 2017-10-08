@@ -78,7 +78,6 @@ def _dump_cache(cache):
         print "density_profiles::_dump_cache() dumping cache."
     fname = join(config['data_dir'],
                  config['atm_cache_file'])
-    print fname
     try:
         pickle.dump(cache, open(fname, 'wb'), protocol=-1)
     except IOError:
@@ -145,7 +144,8 @@ class EarthsAtmosphere():
                              'zenith angle not set').format(
                                  self.__class__.__name__))
         else:
-            print ('{0}::calculate_density_spline(): ' +
+            if dbg:
+                print ('{0}::calculate_density_spline(): ' +
                    'Calculating spline of rho(X) for zenith ' +
                    '{1} degrees.').format(self.__class__.__name__,
                                           self.theta_deg)
@@ -173,7 +173,8 @@ class EarthsAtmosphere():
         #                                    dl_vec[i - 1], dl_vec[i],
         #                                    epsrel=0.01)[0]
 
-        print '.. took {0:1.2f}s'.format(time() - now)
+        if dbg:
+            print '.. took {0:1.2f}s'.format(time() - now)
 
         # Save depth value at h_obs
         self.max_X = X_int[-1]
@@ -183,19 +184,18 @@ class EarthsAtmosphere():
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
 
+<<<<<<< .merge_file_IU4mI0
         #        print  splrep(np.array(h_intp),
         #                      np.log(X_intp),
         #                      k=2, s=0.0)
+=======
+>>>>>>> .merge_file_mzikLt
         self.s_h2X = UnivariateSpline(h_intp, np.log(X_intp),
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
                                         k=2, s=0.0)
-        # print np.log(X_intp), h_intp
         self.s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1],
                                        k=2, s=0.0)
-
-        # print 'Average spline error:', np.std(vec_rho_l(dl_vec) /
-        #                                       self.s_X2rho(X_int))
 
     def set_theta(self, theta_deg, force_spline_calc=False):
         """Configures geometry and initiates spline calculation for
@@ -222,7 +222,8 @@ class EarthsAtmosphere():
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg and not force_spline_calc:
-            print (self.__class__.__name__ +
+            if dbg:
+                print (self.__class__.__name__ +
                    '::set_theta(): Using previous' +
                    'density spline.')
             return
@@ -558,7 +559,8 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         for h in self._atm_param[4]:
             thickl.append('{0:4.6f}'.format(quad(self.get_density, h,
                                                  112.8e5, epsrel=1e-4)[0]))
-        print '_thickl = np.array([' + ', '.join(thickl) + '])'
+        if dbg:
+            print '_thickl = np.array([' + ', '.join(thickl) + '])'
 
 
 @jit(double(double, double, double[:, :]), target='cpu')
@@ -915,7 +917,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
                             "::set_IC79_day(): IC79_day above range.")
         target_day = self._get_y_doy(self.dates[self.IC79_start] +
                                      datetime.timedelta(days=IC79_day))
-        print 'setting IC79_day', IC79_day
+        if dbg:
+            print 'setting IC79_day', IC79_day
         self.h, self.dens = self.interp_tab[target_day]
         self.date = self.dates[target_day]
         # Compatibility with caching
@@ -1225,7 +1228,8 @@ class GeneralizedTarget(object):
         axes.set_ylim(0., ymax)
         axes.set_xlabel('distance in target [m]')
         axes.set_ylabel(r'depth [g/cm$^2$]')
-        self.print_table()
+        if dbg:
+            self.print_table()
 
     def print_table(self):
         """Prints table of materials to standard output.

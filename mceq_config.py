@@ -25,7 +25,7 @@ else:
 
 config = {
 
-    # Debug flag for verbose printing, 0 = minimum
+    # Debug flag for verbose printing, 0 silences MCEq entirely
     "debug_level": 1,
 
     # Use progress_bars
@@ -171,7 +171,8 @@ config = {
     # bins specified below.
     "low_energy_extension": {
         "enabled": True,
-        "le_model": 'DPMJET-III-2017.1',
+        # "le_model": 'DPMJET-III-2017.1',
+        "le_model": 'DPMJET-III',
         "he_le_transition": 80,  # GeV (not recommended to go below 80)
         "nbins_interp": 3,
         # This flag controls what to do with processes, which are not
