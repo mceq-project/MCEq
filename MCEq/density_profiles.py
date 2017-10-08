@@ -163,7 +163,7 @@ class EarthsAtmosphere():
         # features of the integrand and reduce further the number of steps
 
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)# 
+        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)#
         dl_vec = dl_vec[1:]
         # X_int = np.zeros_like(dl_vec, dtype='float64')
         # X_int[0] = 0.
@@ -183,9 +183,9 @@ class EarthsAtmosphere():
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
 
-#        print  splrep(np.array(h_intp),
-#                      np.log(X_intp),
-#                      k=2, s=0.0)
+        #        print  splrep(np.array(h_intp),
+        #                      np.log(X_intp),
+        #                      k=2, s=0.0)
         self.s_h2X = UnivariateSpline(h_intp, np.log(X_intp),
                                       k=2, s=0.0)
         self.s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec),
@@ -217,7 +217,7 @@ class EarthsAtmosphere():
             self.thrad = theta_rad(theta_deg)
             self.theta_deg = theta_deg
             self.calculate_density_spline()
-            cache[key][theta_deg] = (self.max_X, self.s_h2X, 
+            cache[key][theta_deg] = (self.max_X, self.s_h2X,
                 self.s_X2rho, self.s_lX2h)
             _dump_cache(cache)
 
@@ -727,7 +727,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
     def __init__(self, location, season):
         from MCEq.msis_wrapper import cNRLMSISE00, pyNRLMSISE00
-        
+
         self._msis = (cNRLMSISE00() if config['msis_python'] == 'ctypes' else pyNRLMSISE00())
 
         self.init_parameters(location, season)
@@ -778,9 +778,9 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
     def __init__(self, location, season, extrapolate=True, *args, **kwargs):
         if location != 'SouthPole':
-            raise Exception(self.__class__.__name__ + 
+            raise Exception(self.__class__.__name__ +
                 "(): Only South Pole location supported. " + location)
-        
+
         self.extrapolate = extrapolate
 
         self.month2doy = {'January':1,
@@ -871,13 +871,13 @@ class AIRSAtmosphere(EarthsAtmosphere):
                     cl = (1 - np.exp(-ninterp+ni + 1))
                     ch = (1 - np.exp(-ni))
                     norm = 1./(cl + ch)
-                    d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm + 
+                    d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm +
                                     msis.get_density(h_vec[-ni-1])*ch*norm)
 
                 # Merge the two datasets
                 h_vec = np.hstack([h_vec[:-1], h_extra])
                 d_vec = np.hstack([d_vec[:-1], msis_extra])
-                        
+
             self.interp_tab[self._get_y_doy(date)] = (h_vec, d_vec)
 
             self.dates[self._get_y_doy(date)] = date
@@ -927,7 +927,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
     def get_density(self, h_cm):
         """ Returns the density of air in g/cm**3.
 
-        Wraps around ctypes calls to the NRLMSISE-00 C library.
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
 
         Args:
           h_cm (float): height in cm
@@ -1007,12 +1008,34 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
 
 class GeneralizedTarget(object):
+    """This class provides a way to run MCEq on piece-wise constant
+    one-dimenional density profiles.
 
-    len_target = config['len_target'] * 1e2  # cm
-    env_density = config['env_density']  # g/cm3
-    env_name = config['env_name']
+    The default values for the average density are taken from
+    config file variables `len_target`, `env_density` and `env_name`.
+    The density profile has to be built by calling subsequently
+    :func:`add_material`. The current composition of the target
+    can be checked with :func:`draw_materials` or :func:`print_table`.
 
-    def __init__(self):
+    Note:
+      If the target is not air or hydrogen, the result is approximate,
+      since seconray particle yields are provided for nucleon-air or
+      proton-proton collisions. Depending on this choice one has to
+      adjust the nuclear mass in :mod:`mceq_config`.
+
+    Args:
+      len_target (float): total length of the target in meters
+      env_density (float): density of the default material in g/cm**3
+      env_name (str): title for this environment
+    """
+    def __init__(self,
+                 len_target=config['len_target'] * 1e2, # cm
+                 env_density=config['env_density'], # g/cm3
+                 env_name=config['env_name']):
+
+        self.len_target = len_target
+        self.env_density = env_density
+        self.env_name = env_name
         self.reset()
 
     def reset(self):
@@ -1034,6 +1057,10 @@ class GeneralizedTarget(object):
         self._integrate()
 
     def set_length(self, new_length_cm):
+        """Updates the total length of the target.
+        
+        Usually the length is set 
+        """
         if new_length_cm < self.mat_list[-1][0]:
             raise Exception("GeneralizedTarget::set_length(): " +
                             "can not set length below lower boundary of last " +
@@ -1132,9 +1159,6 @@ class GeneralizedTarget(object):
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
-
-        The spline `s_X2rho` is used, which was calculated or retrieved
-        from cache during the :func:`set_theta` call.
 
         Args:
            X (float):  slant depth in g/cm**2
