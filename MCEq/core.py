@@ -406,10 +406,11 @@ class MCEqRun(object):
           skip_D_matrix (bool): Omit re-creating D matrix
 
         """
-        print(
-            self.cname +
-            "::_init_default_matrices():Start filling matrices. Skip_D_matrix = {0}"
-        ).format(skip_D_matrix if self.iam_mat_initialized else False)
+        if dbg:
+            print(
+                self.cname +
+                "::_init_default_matrices():Start filling matrices. Skip_D_matrix = {0}"
+            ).format(skip_D_matrix if self.iam_mat_initialized else False)
 
         self._fill_matrices(skip_D_matrix=skip_D_matrix
                             if self.iam_mat_initialized else False)
@@ -456,7 +457,8 @@ class MCEqRun(object):
             if dbg > 1:
                 print "    sum        :", self.dec_m.sum()
 
-        print self.cname + "::_init_default_matrices():Done filling matrices."
+        if dbg:
+            print self.cname + "::_init_default_matrices():Done filling matrices."
 
     def _init_progress_bar(self, maximum):
         """Initializes the progress bar.
@@ -661,9 +663,10 @@ class MCEqRun(object):
             (self.yields_params['interaction_model'],
              self.yields_params['charm_model']) == (interaction_model,
                                                     charm_model)):
-            print('MCEqRun::set_interaction_model(): Skipping, since ' +
-                  'current model identical to ' + interaction_model + '/' +
-                  str(charm_model) + '.')
+            if dbg:
+                print('MCEqRun::set_interaction_model(): Skipping, since ' +
+                      'current model identical to ' + interaction_model + '/' +
+                      str(charm_model) + '.')
             return
 
         self.yields_params['interaction_model'] = interaction_model
@@ -900,7 +903,8 @@ class MCEqRun(object):
                 'MCEqRun::set_theta_deg(): Target does not support angles.')
 
         if self.density_model.theta_deg == theta_deg:
-            print 'Theta selection correponds to cached value, skipping calc.'
+            if dbg:
+                print 'Theta selection correponds to cached value, skipping calc.'
             return
 
         self.density_model.set_theta(theta_deg)
@@ -1147,7 +1151,7 @@ class MCEqRun(object):
         # Jacobian doesn't work with sparse matrices, and any precision
         # or speed advantage disappear if used with dense algebra
         def jac(X, phi, *args):
-            print 'jac', X, phi
+            # print 'jac', X, phi
             return (self.int_m + self.dec_m * ri(X)).todense()
 
         # Initial condition
@@ -1189,7 +1193,7 @@ class MCEqRun(object):
             i = 0
             while r.successful() and (r.t + dXstep) < max_X:
                 self.progress_bar.update(r.t)
-                if (i % 5000) == 0:
+                if dbg > 0 and (i % 5000) == 0:
                     print "Solving at depth X =", r.t
                 r.integrate(r.t + dXstep)
                 i += 1
