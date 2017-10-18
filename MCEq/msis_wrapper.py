@@ -14,7 +14,10 @@ else:
 
 class NRLMSISE00Base(object):
     def __init__(self):
-        self.input = nrlmsise_input()
+        # Cache altitude value of last call
+        self.last_alt = None
+
+        self.inp = nrlmsise_input()
         self.output = nrlmsise_output()
         self.flags = nrlmsise_flags()
         self.month2doy = {'January': 1,
@@ -49,23 +52,37 @@ class NRLMSISE00Base(object):
         return quad(self.get_density, altitude_cm, 112.8 * 1e5,
                     epsrel=0.001)[0]
 
+    def _retrieve_result(self, *args, **kwargs):
+        """Calls NRLMSISE library's main function"""
+        raise Exception('Not implemented for the base class')
+
+    def get_temperature(self, altitude_cm):
+        """Returns temperature in K"""
+        self._retrieve_result(altitude_cm)    
+        return self.output.t[1]
+
+    def get_density(self, altitude_cm):
+        """Returns density in g/cm^3"""
+        self._retrieve_result(altitude_cm)    
+        return self.output.d[5]
+
 
 class pyNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
-        self.input.doy = self.month2doy['June']  # Day of year
-        self.input.year = 0  # No effect
-        self.input.sec = self.daytimes['day']  # 12:00
-        self.input.alt = self.locations[self.current_location][2]
-        self.input.g_lat = self.locations[self.current_location][1]
-        self.input.g_long = self.locations[self.current_location][0]
-        self.input.lst = self.input.sec / 3600. + \
-            self.input.g_long / 15.
+        self.inp.doy = self.month2doy['June']  # Day of year
+        self.inp.year = 0  # No effect
+        self.inp.sec = self.daytimes['day']  # 12:00
+        self.inp.alt = self.locations[self.current_location][2]
+        self.inp.g_lat = self.locations[self.current_location][1]
+        self.inp.g_long = self.locations[self.current_location][0]
+        self.inp.lst = self.inp.sec / 3600. + \
+            self.inp.g_long / 15.
         # Do not touch this except you know what you are doing
-        self.input.f107A = 150.
-        self.input.f107 = 150.
-        self.input.ap = 4.
-        self.input.ap_a = ap_array()
+        self.inp.f107A = 150.
+        self.inp.f107 = 150.
+        self.inp.ap = 4.
+        self.inp.ap_a = ap_array()
         self.alt_surface = self.locations[self.current_location][2]
 
         self.flags.switches[0] = 0
@@ -76,49 +93,55 @@ class pyNRLMSISE00(NRLMSISE00Base):
         if tag not in self.locations.keys():
             raise Exception(
                 "NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
-        self.input.alt = self.locations[tag][2]
+        self.inp.alt = self.locations[tag][2]
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 
     def set_location_coord(self, longitude, latitude):
         if abs(latitude) > 90 or abs(longitude) > 180:
-            raise Exception("NRLMSISE00::set_location_coord(): Invalid input.")
-        self.input.g_lat = latitude
-        self.input.g_long = longitude
+            raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
+        self.inp.g_lat = latitude
+        self.inp.g_long = longitude
 
     def set_season(self, tag):
         if tag not in self.month2doy.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
-        self.input.doy = self.month2doy[tag]
+        self.inp.doy = self.month2doy[tag]
 
     def set_doy(self, doy):
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
-        self.input.doy = int(doy)
+        self.inp.doy = int(doy)
 
-    def get_density(self, altitude_cm):
-        self.input.alt = altitude_cm / 1e5
-        gtd7(self.input, self.flags, self.output)
-        return self.output.d[5]
+    def _retrieve_result(self, altitude_cm):
+        """Calls NRLMSISE library's main function"""
+        if self.last_alt == altitude_cm:
+            return
+        
+        self.inp.alt = altitude_cm / 1e5
+        gtd7(self.inp, self.flags, self.output)
+        
+        self.last_alt = altitude_cm
 
 
 class cNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
-        self.input.doy = c_int(self.month2doy['June'])  # Day of year
-        self.input.year = c_int(0)  # No effect
-        self.input.sec = c_double(self.daytimes['day'])  # 12:00
-        self.input.alt = c_double(self.locations[self.current_location][2])
-        self.input.g_lat = c_double(self.locations[self.current_location][1])
-        self.input.g_long = c_double(self.locations[self.current_location][0])
-        self.input.lst = c_double(self.input.sec.value / 3600. +
-                                  self.input.g_long.value / 15.)
+
+        self.inp.doy = c_int(self.month2doy['June'])  # Day of year
+        self.inp.year = c_int(0)  # No effect
+        self.inp.sec = c_double(self.daytimes['day'])  # 12:00
+        self.inp.alt = c_double(self.locations[self.current_location][2])
+        self.inp.g_lat = c_double(self.locations[self.current_location][1])
+        self.inp.g_long = c_double(self.locations[self.current_location][0])
+        self.inp.lst = c_double(self.inp.sec.value / 3600. +
+                                  self.inp.g_long.value / 15.)
         # Do not touch this except you know what you are doing
-        self.input.f107A = c_double(150.)
-        self.input.f107 = c_double(150.)
-        self.input.ap = c_double(4.)
-        self.input.ap_a = pointer(ap_array())
+        self.inp.f107A = c_double(150.)
+        self.inp.f107 = c_double(150.)
+        self.inp.ap = c_double(4.)
+        self.inp.ap_a = pointer(ap_array())
         self.alt_surface = self.locations[self.current_location][2]
 
         self.flags.switches[0] = c_int(0)
@@ -129,37 +152,41 @@ class cNRLMSISE00(NRLMSISE00Base):
         if tag not in self.locations.keys():
             raise Exception(
                 "NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag))
-        self.input.alt = c_double(self.locations[tag][2])
+        self.inp.alt = c_double(self.locations[tag][2])
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
 
     def set_location_coord(self, longitude, latitude):
         if abs(latitude) > 90 or abs(longitude) > 180:
-            raise Exception("NRLMSISE00::set_location_coord(): Invalid input.")
-        self.input.g_lat = c_double(latitude)
-        self.input.g_long = c_double(longitude)
+            raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
+        self.inp.g_lat = c_double(latitude)
+        self.inp.g_long = c_double(longitude)
 
     def set_season(self, tag):
         if tag not in self.month2doy.keys():
             raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
-        self.input.doy = self.month2doy[tag]
+        self.inp.doy = self.month2doy[tag]
 
     def set_doy(self, doy):
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
-        self.input.doy = doy
+        self.inp.doy = doy
 
-    def get_density(self, altitude_cm):
-        input = self.input
-        input.alt = c_double(altitude_cm / 1e5)
-        msis.gtd7_py(input.year, input.doy, input.sec,
-                     input.alt, input.g_lat,
-                     input.g_long, input.lst,
-                     input.f107A, input.f107,
-                     input.ap, input.ap_a,
+    def _retrieve_result(self, altitude_cm):
+        if self.last_alt == altitude_cm:
+            return
+        
+        inp = self.inp
+        inp.alt = c_double(altitude_cm / 1e5)
+        msis.gtd7_py(inp.year, inp.doy, inp.sec,
+                     inp.alt, inp.g_lat,
+                     inp.g_long, inp.lst,
+                     inp.f107A, inp.f107,
+                     inp.ap, inp.ap_a,
                      byref(self.flags), byref(self.output))
-        return self.output.d[5]
+        
+        self.last_alt = altitude_cm
 
 
 def test():
@@ -197,7 +224,7 @@ def test():
     plt.subplot(133)
     msis.set_location('SouthPole')
     for i in range(360 / 30):
-        msis.input.doy = i * 30
+        msis.inp.doy = i * 30
         plt.plot(h_vec / 1e5, den(h_vec) / den_sp_jan, label=str(i + 1))
     plt.legend(ncol=2, loc=3)
     plt.title('MSIS00: SouthPole')

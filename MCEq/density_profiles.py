@@ -760,6 +760,18 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """
         return self._msis.get_density(h_cm)
 
+    def get_temperature(self, h_cm):
+        """ Returns the temperature of air in K.
+
+        Wraps around ctypes calls to the NRLMSISE-00 C library.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: density :math:`T(h_{cm})` in K
+        """
+        return self._msis.get_temperature(h_cm)
 
 class AIRSAtmosphere(EarthsAtmosphere):
 
@@ -807,7 +819,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
         from os import path
 
         data_path = (join(path.expanduser('~'),
-                          'work/projects/atmospheric_variations/'))
+                          'OneDrive/Dokumente/projects/atmospheric_variations/'))
 
         if 'table_path' in kwargs:
             data_path = kwargs['table_path']
@@ -846,7 +858,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
             cols = tab[:, min_press_idx + 2:]
             data_collection[d_key] = (dates, surf_val, cols)
 
-        self.interp_tab = {}
+        self.interp_tab_d = {}
+        self.interp_tab_t = {}
         self.dates = {}
         dates = data_collection['alti'][0]
 
@@ -854,11 +867,14 @@ class AIRSAtmosphere(EarthsAtmosphere):
         for didx, date in enumerate(dates):
             h_vec = np.array(data_collection['alti'][2][didx,:]*1e2)
             d_vec = np.array(data_collection['dens'][2][didx,:])
+            t_vec = np.array(data_collection['temp'][2][didx,:])
+
             if self.extrapolate:
                 #Extrapolate using msis
                 h_extra = np.linspace(h_vec[-1],config['h_atm']*1e2,250)
                 msis._msis.set_doy(self._get_y_doy(date)[1]-1)
-                msis_extra = np.array([msis.get_density(h) for h in h_extra])
+                msis_extra_d = np.array([msis.get_density(h) for h in h_extra])
+                msis_extra_t = np.array([msis.get_temperature(h) for h in h_extra])
 
                 # Interpolate last few altitude bins
                 ninterp = 5
@@ -869,12 +885,16 @@ class AIRSAtmosphere(EarthsAtmosphere):
                     norm = 1./(cl + ch)
                     d_vec[-ni-1] = (d_vec[-ni-1]*cl*norm +
                                     msis.get_density(h_vec[-ni-1])*ch*norm)
+                    t_vec[-ni-1] = (t_vec[-ni-1]*cl*norm +
+                                    msis.get_temperature(h_vec[-ni-1])*ch*norm)
 
                 # Merge the two datasets
                 h_vec = np.hstack([h_vec[:-1], h_extra])
-                d_vec = np.hstack([d_vec[:-1], msis_extra])
+                d_vec = np.hstack([d_vec[:-1], msis_extra_d])
+                t_vec = np.hstack([t_vec[:-1], msis_extra_t])
 
-            self.interp_tab[self._get_y_doy(date)] = (h_vec, d_vec)
+            self.interp_tab_d[self._get_y_doy(date)] = (h_vec, d_vec)
+            self.interp_tab_t[self._get_y_doy(date)] = (h_vec, t_vec)
 
             self.dates[self._get_y_doy(date)] = date
 
@@ -890,13 +910,15 @@ class AIRSAtmosphere(EarthsAtmosphere):
         self.theta_deg = None
 
     def set_date(self, year, doy):
-        self.h, self.dens = self.interp_tab[(year, doy)]
+        self.h, self.dens = self.interp_tab_d[(year, doy)]
+        _, self.temp = self.interp_tab_t[(year, doy)]
         self.date = self.dates[(year, doy)]
         # Compatibility with caching
         self.season = self.date
 
     def _set_doy(self, doy, year=2010):
-        self.h, self.dens = self.interp_tab[(year, doy)]
+        self.h, self.dens = self.interp_tab_d[(year, doy)]
+        _, self.temp = self.interp_tab_t[(year, doy)]
         self.date = self.dates[(year, doy)]
 
     def set_season(self, month):
@@ -913,7 +935,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
                                      datetime.timedelta(days=IC79_day))
         if dbg:
             print 'setting IC79_day', IC79_day
-        self.h, self.dens = self.interp_tab[target_day]
+        self.h, self.dens = self.interp_tab_d[target_day]
+        _, self.temp = self.interp_tab_t[target_day]
         self.date = self.dates[target_day]
         # Compatibility with caching
         self.season = self.date
@@ -934,6 +957,25 @@ class AIRSAtmosphere(EarthsAtmosphere):
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
         ret = np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
+        try:
+            ret[h_cm > self.h[-1]] = np.nan
+        except TypeError:
+            if h_cm > self.h[-1]: return np.nan
+        return ret
+
+    def get_temperature(self, h_cm):
+        """ Returns the temperature in K.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: temperature :math:`T(h_{cm})` in K
+        """
+        ret = np.exp(np.interp(h_cm, self.h, np.log(self.temp)))
         try:
             ret[h_cm > self.h[-1]] = np.nan
         except TypeError:
