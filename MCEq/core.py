@@ -82,11 +82,11 @@ class MCEqRun(object):
         # Interaction matrices initialization flag
         self.iam_mat_initialized = False
         # Load decay spectra
-        self.ds_params = dict(
+        self.decays_params = dict(
             mother_list=self.y.particle_list, )
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
-        self.ds = DecayYields(**self.ds_params)
+        self.decays = DecayYields(**self.decays_params)
 
         # Load cross-section handling
         self.cs_params = dict(interaction_model=interaction_model)
@@ -157,7 +157,7 @@ class MCEqRun(object):
     def _init_dimensions_and_particle_tables(self, particle_list=None):
 
         if particle_list == None:
-            particle_list = self.y.particle_list + self.ds.particle_list
+            particle_list = self.y.particle_list + self.decays.particle_list
 
         self.particle_species, self.cascade_particles, self.resonances = \
             self._gen_list_of_particles(custom_list=particle_list)
@@ -231,7 +231,7 @@ class MCEqRun(object):
 
         self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
 
-    def _gen_list_of_particles(self, custom_list=None, max_density=1.240e-03):
+    def _gen_list_of_particles(self, custom_list=None):
         """Determines the list of particles for calculation and
         returns lists of instances of :class:`data.MCEqParticle` .
 
@@ -282,10 +282,7 @@ class MCEqRun(object):
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
 
         for p in particle_list:
-            p.calculate_mixing_energy(
-                self.e_grid,
-                self.adv_set['no_mixing'],
-                max_density=max_density)
+            p.calculate_mixing_energy(self.e_grid, self.adv_set['no_mixing'])
 
         cascade_particles = [p for p in particle_list if not p.is_resonance]
         resonances = [p for p in particle_list if p.is_resonance]
@@ -346,6 +343,8 @@ class MCEqRun(object):
         self.Lambda_int = np.hstack(
             [p.inverse_interaction_length() for p in self.cascade_particles])
 
+        self.max_lint = np.max(self.Lambda_int)
+
     def _init_Lambda_dec(self):
         """Initializes the decay length vector according to the order
         of particles in state vector. The shortest decay length is determined
@@ -356,6 +355,7 @@ class MCEqRun(object):
         self.Lambda_dec = np.hstack([
             p.inverse_decay_length(self.e_grid) for p in self.cascade_particles
         ])
+
         self.max_ldec = np.max(self.Lambda_dec)
 
     def _convert_to_sparse(self, skip_D_matrix):
@@ -687,8 +687,8 @@ class MCEqRun(object):
                 p.is_projectile = True
                 p.secondaries = \
                     self.y.secondary_dict[p.pdgid]
-            elif p.pdgid in self.ds.daughter_dict:
-                p.daughters = self.ds.daughters(p.pdgid)
+            elif p.pdgid in self.decays.daughter_dict:
+                p.daughters = self.decays.daughters(p.pdgid)
                 p.is_projectile = False
             else:
                 p.is_projectile = False
@@ -734,8 +734,14 @@ class MCEqRun(object):
         p_top, n_top = self.get_nucleon_spectrum(self.e_grid)[1:]
         self.phi0[self.pdg2pref[2212].lidx():self.pdg2pref[2212]
                   .uidx()] = 1e-4 * p_top
-        self.phi0[self.pdg2pref[2112].lidx():self.pdg2pref[2112]
-                  .uidx()] = 1e-4 * n_top
+
+        if 2112 in self.pdg2pref.keys(
+        ) and not self.pdg2pref[2112].is_resonance:
+            self.phi0[self.pdg2pref[2112].lidx():self.pdg2pref[2112]
+                      .uidx()] = 1e-4 * n_top
+        else:
+            self.phi0[self.pdg2pref[2212].lidx():self.pdg2pref[2212]
+                      .uidx()] += 1e-4 * n_top
 
     def set_single_primary_particle(self, E, corsika_id):
         """Set type and energy of a single primary nucleus to
@@ -881,7 +887,7 @@ class MCEqRun(object):
         elif base_model == 'GeneralizedTarget':
             self.integration_path = None
 
-        self._gen_list_of_particles(max_density=self.density_model.max_den)
+        self._gen_list_of_particles()
 
     def set_theta_deg(self, theta_deg):
         """Sets zenith angle :math:`\\theta` as seen from a detector.
@@ -971,32 +977,32 @@ class MCEqRun(object):
         """Some recursive magic.
         """
         r = self.pdg2pref
-
         if dbg > 2:
             print reclev * '\t', 'entering with', r[p].name
 
-        for d in self.ds.daughters(p):
+        for d in self.decays.daughters(p):
             if dbg > 2:
                 print reclev * '\t', 'following to', r[d].name
+            if not r[d].is_resonance:
+                dprop = self._zero_mat()
+                self.decays.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid,
+                                         r[d].hadridx(), dprop)
+                alias = self._alias(p, d)
 
-            dprop = self._zero_mat()
-            self.ds.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid, r[d].hadridx(),
-                                 dprop)
-            alias = self._alias(p, d)
+                # Check if combination of mother and daughter has a special alias
+                # assigned and the index has not be replaced (i.e. pi, K, prompt)
+                if not alias:
+                    # print p_orig, d, r[d].lidx(),r[d].uidx(), r[p_orig].lidx(),r[p_orig].uidx()
+                    propmat[r[d].lidx():r[d].uidx(), r[p_orig].lidx():r[p_orig]
+                            .uidx()] += dprop.dot(pprod_mat)
+                else:
+                    propmat[alias[0]:alias[1], r[p_orig].lidx():r[p_orig]
+                            .uidx()] += dprop.dot(pprod_mat)
 
-            # Check if combination of mother and daughter has a special alias
-            # assigned and the index has not be replaced (i.e. pi, K, prompt)
-            if not alias:
-                propmat[r[d].lidx():r[d].uidx(), r[p_orig].lidx():r[p_orig]
-                        .uidx()] += dprop.dot(pprod_mat)
-            else:
-                propmat[alias[0]:alias[1], r[p_orig].lidx():r[p_orig]
-                        .uidx()] += dprop.dot(pprod_mat)
-
-            alt_score = self._alternate_score(p, d)
-            if alt_score:
-                propmat[alt_score[0]:alt_score[1], r[p_orig].lidx():r[p_orig]
-                        .uidx()] += dprop.dot(pprod_mat)
+                alt_score = self._alternate_score(p, d)
+                if alt_score:
+                    propmat[alt_score[0]:alt_score[1], r[p_orig].lidx():r[
+                        p_orig].uidx()] += dprop.dot(pprod_mat)
 
             if dbg > 2:
                 pstr = 'res'
@@ -1007,12 +1013,11 @@ class MCEqRun(object):
                 print(reclev * '\t' +
                       'setting {0}[({1},{3})->({2},{4})]').format(
                           dstr, r[p_orig].name, r[d].name, pstr, 'prop')
-                print r[p].name
 
-            if r[d].is_mixed:
+            if r[d].is_mixed or r[d].is_resonance:
                 dres = self._zero_mat()
-                self.ds.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid,
-                                     r[d].residx(), dres)
+                self.decays.assign_d_idx(r[p].pdgid, idcs, r[d].pdgid,
+                                         r[d].residx(), dres)
                 reclev += 1
                 self._follow_chains(d,
                                     dres.dot(pprod_mat), p_orig, r[d].residx(),
@@ -1026,13 +1031,13 @@ class MCEqRun(object):
         """
 
         pref = self.pdg2pref
-
         if not skip_D_matrix:
             # Initialize empty D matrix
+
             self.D = np.zeros((self.dim_states, self.dim_states))
             for p in self.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
-                if self.ds.daughters(p.pdgid):
+                if self.decays.daughters(p.pdgid):
                     self._follow_chains(
                         p.pdgid,
                         np.diag(np.ones((self.d))),
@@ -1066,7 +1071,9 @@ class MCEqRun(object):
             # go through all secondaries
             # @debug: y_matrix is copied twice in non_res and res
             # calls to assign_y_...
+
             for s in p.secondaries:
+
                 if s not in self.pdg2pref:
                     continue
                 if self.adv_set['disable_direct_leptons'] and pref[s].is_lepton:
@@ -1081,7 +1088,6 @@ class MCEqRun(object):
                                             pref[s].hadridx(), cmat)
                     self.C[pref[s].lidx():pref[s].uidx(),
                            p.lidx():p.uidx()] += cmat
-
                 cmat = self._zero_mat()
                 self.y.assign_yield_idx(p.pdgid,
                                         p.hadridx(), pref[s].pdgid,
@@ -1121,7 +1127,7 @@ class MCEqRun(object):
                  ).format(config['integrator']))
 
     def _odepack(self,
-                 dXstep=1.,
+                 dXstep=.1,
                  initial_depth=0.0,
                  int_grid=None,
                  grid_var='X',
@@ -1170,14 +1176,14 @@ class MCEqRun(object):
             max_X = int_grid[-1]
             grid_sol.append(phi0)
 
-            if dbg > 0 and max_X < self.density_model.max_X:
-                print '_odepack(): your X-grid is shorter then the material'
-            elif dbg > 0 and max_X > self.density_model.max_X:
-                print('_odepack(): your X-grid exceeds the dimentsions ' +
-                      'of the material')
         else:
             max_X = self.density_model.max_X
 
+        if max_X < self.density_model.max_X:
+            print '_odepack(): your X-grid is shorter then the material'
+        elif max_X > self.density_model.max_X:
+            print('_odepack(): your X-grid exceeds the dimentsions ' +
+                    'of the material')
         # Initial value
         r.set_initial_value(phi0, initial_depth)
 
@@ -1191,7 +1197,7 @@ class MCEqRun(object):
         start = time()
         if int_grid is None:
             i = 0
-            while r.successful() and (r.t + dXstep) < max_X:
+            while r.successful() and (r.t + dXstep) < max_X-1:
                 self.progress_bar.update(r.t)
                 if dbg > 0 and (i % 5000) == 0:
                     print "Solving at depth X =", r.t
@@ -1328,7 +1334,7 @@ class MCEqRun(object):
         dX_vec = []
         rho_inv_vec = []
 
-        X = 0.
+        X = 0.0
         step = 0
         grid_step = 0
         grid_idcs = []
@@ -1359,17 +1365,24 @@ class MCEqRun(object):
         self._init_progress_bar(max_X)
         self.progress_bar.start()
 
+        print float(self.max_ldec*ri(1e-2)), self.max_lint
+        if self.max_ldec*ri(1e-2) > self.max_lint:
+            print 'using decays as leading eigenvalues'
+            delta_X = lambda X: 1. / (max_ldec * ri(X))
+        else:
+            print 'using interactions as leading eigenvalues'
+            delta_X = lambda X: 1. / self.max_lint
+
         while X < max_X:
             self.progress_bar.update(X)
-            ri_x = ri(X)
-            dX = 1. / (max_ldec * ri_x)
+            dX = 1. / delta_X(X)
             if (np.any(int_grid) and (grid_step < int_grid.size) and
                 (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
                 grid_idcs.append(step)
                 grid_step += 1
             dX_vec.append(dX)
-            rho_inv_vec.append(ri_x)
+            rho_inv_vec.append(ri(X))
 
             if config['first_interaction_mode'] and fa_vars['max_step'] == 0:
                 # Only protons and neutrons can produce particles

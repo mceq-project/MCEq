@@ -1097,8 +1097,8 @@ class GeneralizedTarget(object):
 
     def set_length(self, new_length_cm):
         """Updates the total length of the target.
-        
-        Usually the length is set 
+
+        Usually the length is set
         """
         if new_length_cm < self.mat_list[-1][0]:
             raise Exception("GeneralizedTarget::set_length(): " +
@@ -1124,19 +1124,26 @@ class GeneralizedTarget(object):
         if start_position_cm < 0. or start_position_cm > self.len_target:
             raise Exception("GeneralizedTarget::add_material(): " +
                             "distance exceeds target dimensions.")
-        elif start_position_cm < self.mat_list[-1][0]:
+        elif (start_position_cm == self.mat_list[-1][0] and
+              self.mat_list[-1][-1] == self.env_name):
+            self.mat_list[-1] = [
+                start_position_cm, self.len_target, density, name
+            ]
+
+        elif start_position_cm <= self.mat_list[-1][0]:
             raise Exception("GeneralizedTarget::add_material(): " +
                             "start_position_cm is ahead of previous material.")
 
-        self.mat_list[-1][1] = start_position_cm
-        self.mat_list.append([start_position_cm,
-                              self.len_target, density, name])
+        else:
+            self.mat_list[-1][1] = start_position_cm
+            self.mat_list.append(
+                [start_position_cm, self.len_target, density, name])
 
         if dbg > 0:
             ("{0}::add_material(): Material '{1}' added. " +
              "location on path {2} to {3} m").format(
-                 self.__class__.__name__, name,
-                 self.mat_list[-1][0], self.mat_list[-1][1])
+                 self.__class__.__name__, name, self.mat_list[-1][0],
+                 self.mat_list[-1][1])
 
         self._update_variables()
 
@@ -1190,9 +1197,11 @@ class GeneralizedTarget(object):
         if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
             X[-1] = self.max_X
         if np.min(X) < 0. or np.max(X) > self.max_X:
+            return self.get_density(self.s_X2h(self.max_X))
             raise Exception(("GeneralizedTarget::get_density_X(): " +
                              "requested depth {0:4.3f} " +
-                             "exceeds target.").format(np.max(X)))
+                             "exceeds target {1:4.3f}.").format(
+                                 np.max(X), self.max_X))
 
         return self.get_density(self.s_X2h(X))
 
@@ -1234,7 +1243,7 @@ class GeneralizedTarget(object):
             res[i] = self.densities[bi]
         return res
 
-    def draw_materials(self, axes=None):
+    def draw_materials(self, axes=None, logx = False):
         """Makes a plot of depth and density profile as a function
         of the target length. The list of materials is printed out, too.
 
@@ -1250,20 +1259,25 @@ class GeneralizedTarget(object):
         for nm, mat in enumerate(self.mat_list):
             xstart = mat[0]
             xend = mat[1]
-            alpha = 0.188 * mat[2] + 0.248
+            alpha = 0.188 * mat[2]/max(self.densities) + 0.248
             if alpha > 1:
                 alpha = 1.
             elif alpha < 0.:
                 alpha = 0.
-            axes.fill_between((xstart / 1e2, xend / 1e2), (ymax, ymax),
+            axes.fill_between((xstart, xend), (ymax, ymax),
                               (0., 0.), label=mat[2], facecolor='grey',
                               alpha=alpha)
-            axes.text(0.5e-2 * (xstart + xend), 0.5 * ymax, str(nm))
-        plt.plot([xl / 1e2 for xl in self.knots],
-                 self.X_int, lw=1.7, color='r')
+            # axes.text(0.5e-2 * (xstart + xend), 0.5 * ymax, str(nm))
+        
+        axes.plot([xl for xl in self.knots],
+                  self.X_int, lw=1.7, color='r')
+
+        if logx:
+            axes.set_xscale('log', nonposx='clip')
+        
         axes.set_ylim(0., ymax)
-        axes.set_xlabel('distance in target [m]')
-        axes.set_ylabel(r'depth [g/cm$^2$]')
+        axes.set_xlabel('distance in target (cm)')
+        axes.set_ylabel(r'depth X (g/cm$^2)$')
         if dbg:
             self.print_table()
 
@@ -1271,15 +1285,15 @@ class GeneralizedTarget(object):
         """Prints table of materials to standard output.
         """
 
-        templ = '{0:^3} | {1:15} | {2:^9.3f} | {3:^9.3f} | {4:^8.5f}'
+        templ = '{0:^3} | {1:15} | {2:^9.3g}  | {3:^9.3g} | {4:^8.5g}'
         print '********************* List of materials *************************'
         head = '{0:3} | {1:15} | {2:9} | {3:9} | {4:9}'.format(
-            'no', 'name', 'start [m]', 'end [m]', 'density [g/cm**3]')
+            'no', 'name', 'start [cm]', 'end [cm]', 'density [g/cm**3]')
         print '-' * len(head)
         print head
         print '-' * len(head)
         for nm, mat in enumerate(self.mat_list):
-            print templ.format(nm, mat[3], mat[0] / 1e2, mat[1] / 1e2, mat[2])
+            print templ.format(nm, mat[3], mat[0], mat[1], mat[2])
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
