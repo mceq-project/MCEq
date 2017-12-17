@@ -1365,17 +1365,22 @@ class MCEqRun(object):
         self._init_progress_bar(max_X)
         self.progress_bar.start()
 
-        print float(self.max_ldec*ri(1e-2)), self.max_lint
-        if self.max_ldec*ri(1e-2) > self.max_lint:
-            print 'using decays as leading eigenvalues'
-            delta_X = lambda X: 1. / (max_ldec * ri(X))
+        # The factor 0.95 means 5% away from the stability margin of the
+        # Euler intergrator.
+        if self.max_ldec * ri(config['max_density']) > self.max_lint:
+            if dbg > 0:
+                print("MCEqRun::_calculate_integration_path() " +
+                      "using decays as leading eigenvalues")
+            delta_X = lambda X: 0.95 / (max_ldec * ri(X))
         else:
-            print 'using interactions as leading eigenvalues'
-            delta_X = lambda X: 1. / self.max_lint
+            if dbg > 0:
+                print("MCEqRun::_calculate_integration_path() " +
+                      "using decays as leading eigenvalues")
+            delta_X = lambda X: 0.95 / self.max_lint
 
         while X < max_X:
             self.progress_bar.update(X)
-            dX = 1. / delta_X(X)
+            dX = delta_X(X)
             if (np.any(int_grid) and (grid_step < int_grid.size) and
                 (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
