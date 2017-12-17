@@ -89,6 +89,9 @@ config = {
     "len_target": 1000.,  # Total length of the target [m]
     "env_density": 0.001225,  # density of default material in g/cm^3
     "env_name": "air",
+    # Approximate value for the maximum density expected. Needed for the
+    # resonance approximation.
+    "max_density": 0.001225, 
 
     #===========================================================================
     # Parameters of numerical integration
@@ -115,11 +118,11 @@ config = {
     #parameters for the odepack integrator. More details at
     #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
     "ode_params": {
-        'name': 'vode',
+        'name': 'lsoda',
         'method': 'bdf',
-        'nsteps': 10000,
-        'max_step': 10.0,
-        'rtol': 0.05
+        'nsteps': 1000,
+        # 'max_step': 10.0,
+        'rtol': 0.01
     },
 
     #=========================================================================
@@ -220,6 +223,9 @@ config = {
 
         # Switch off decays. E.g., disable muon decay with [13,-13]
         "disable_decays": [],
+
+        # Force particles to be treated as resonance (astrophysical muons)
+        "force_resonance": [],
 
         # Disable mixing between resonance approx. and full propagation
         "no_mixing": False

@@ -36,13 +36,7 @@ class MCEqParticle(object):
       d (int): dimension of the energy grid
     """
 
-    def __init__(self,
-                 pdgid,
-                 particle_db,
-                 pythia_db,
-                 cs_db,
-                 d,
-                 max_density=1.240e-03):
+    def __init__(self, pdgid, particle_db, pythia_db, cs_db, d):
 
         #: (float) mixing energy, transition between hadron and resonance behavior
         self.E_mix = 0
@@ -78,10 +72,10 @@ class MCEqParticle(object):
             pythia_db.force_stable(self.pdgid)
         self.cs = cs_db
         self.d = d
-        self.max_density = max_density
 
         self.E_crit = self.critical_energy()
         self.name = particle_db.pdg2modname[pdgid]
+        
 
         if pdgid in particle_db.mesons:
             self.is_hadron = True
@@ -91,7 +85,7 @@ class MCEqParticle(object):
             self.is_baryon = True
         else:
             self.is_lepton = True
-            if abs(pdgid) > 20:
+            if abs(pdgid) > 22:
                 self.is_alias = True
 
     def hadridx(self):
@@ -171,10 +165,7 @@ class MCEqParticle(object):
         except ZeroDivisionError:
             return np.inf
 
-    def calculate_mixing_energy(self,
-                                e_grid,
-                                no_mix=False,
-                                max_density=1.240e-03):
+    def calculate_mixing_energy(self, e_grid, no_mix=False):
         """Calculates interaction/decay length in Air and decides if
         the particle has resonance and/or hadron behavior.
 
@@ -190,8 +181,8 @@ class MCEqParticle(object):
         """
 
         cross_over = config["hybrid_crossover"]
-
-        if abs(self.pdgid) in [2212, 2112]:
+        max_density = config['max_density']
+        if abs(self.pdgid) in [2212]:
             self.mix_idx = 0
             self.is_mixed = False
             return
@@ -200,21 +191,26 @@ class MCEqParticle(object):
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length(e_grid)
 
-        if (not np.any(inv_declen > 0.) or not np.any(inv_intlen > 0.) or
+        if (not np.any(inv_declen > 0.) or
                 abs(self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
             return
 
-        lint = np.ones(d) / inv_intlen
-        d_tilde = 1 / self.inverse_decay_length(e_grid)
+        if np.abs(self.pdgid) in config["adv_set"]["force_resonance"]:
+            threshold = 0.
+        elif np.any(inv_intlen > 0.):
+            lint = np.ones(d) / inv_intlen
+            d_tilde = 1 / self.inverse_decay_length(e_grid)
 
-        # multiply with maximal density encountered along the
-        # integration path
-        ldec = d_tilde * max_density
-
-        threshold = ldec / lint
+            # multiply with maximal density encountered along the
+            # integration path
+            ldec = d_tilde * max_density
+            threshold = ldec / lint
+        else:
+            threshold = np.inf
+            no_mix = True
 
         if np.max(threshold) < cross_over:
             self.mix_idx = d - 1
@@ -1372,15 +1368,15 @@ class HadAirCrossSections(object):
             if dbg > 2:
                 print message_templ.format('charmed baryon', 'nucleon')
             return scale * self.cs[2212]
-        elif abs(projectile) == 22:
-            if dbg > 2:
-                print message_templ.format('photon', 'pion')
-            return scale * self.cs[211]
+        # elif abs(projectile) == 22:
+        #     if True:#dbg > 2:
+        #         print message_templ.format('photon', 'pion')
+        #     return scale * self.cs[211]
         elif abs(projectile) > 2000 and abs(projectile) < 5000:
             if dbg > 2:
                 print message_templ.format(projectile, 'nucleon')
             return scale * self.cs[2212]
-        elif 10 < abs(projectile) < 17 or 7000 < abs(projectile) < 7500:
+        elif 10 < abs(projectile) < 23 or 7000 < abs(projectile) < 7500:
             if dbg > 2:
                 print 'HadAirCrossSections(): returning 0 cross-section for lepton', projectile
             return 0.
