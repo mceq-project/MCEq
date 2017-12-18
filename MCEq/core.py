@@ -125,9 +125,11 @@ class MCEqRun(object):
         # grid of yield matrices
         #: (np.array) energy grid (bin centers)
         self.e_grid = self.cs.egrid
+        #: (np.array) energy grid (bin edges)
+        self.e_bins = self.y.e_bins
         #: (int) dimension of energy grid
         self.d = self.e_grid.shape[0]
-
+        #: (np.array) energy grid (bin widths)
         self.e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
         # Hadron species include everything apart from resonances
@@ -1285,13 +1287,15 @@ class MCEqRun(object):
               config['use_sparse'] is True):
             kernel = kernels.kern_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                    grid_idcs, (self.e_grid, self.e_bins, self.e_widths),
+                    self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
             kernel = kernels.kern_XeonPHI_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                    grid_idcs, (self.e_grid, self.e_bins, self.e_widths), 
+                    self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar)
         else:
             raise Exception(self.__class__.__name__ + (
@@ -1365,7 +1369,7 @@ class MCEqRun(object):
         self._init_progress_bar(max_X)
         self.progress_bar.start()
 
-        # The factor 0.95 means 5% away from the stability margin of the
+        # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
         if self.max_ldec * ri(config['max_density']) > self.max_lint:
             if dbg > 0:
