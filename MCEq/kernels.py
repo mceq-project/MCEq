@@ -579,9 +579,10 @@ def kern_MKL_sparse(nsteps,
     cione = c_int(1)
 
     enmuloss = config['enable_muon_energy_loss']
-    de = mu_egrid.size
-    mu_egrid = mu_egrid.astype(np_fl)
+    ecen, ebins, ewidths = mu_egrid
+    de = ecen.size
     mu_dEdX = mu_dEdX.astype(np_fl)
+
     muloss_min_step = config['muon_energy_loss_min_step']
     lidx, nmuspec = mu_lidx_nsp
     # Accumulate at least a few g/cm2 for energy loss steps
@@ -594,6 +595,7 @@ def kern_MKL_sparse(nsteps,
     from time import time
     start = time()
 
+    from scipy.interpolate import interp1d
     for step in xrange(nsteps):
         if prog_bar:
             prog_bar.update(step)
@@ -617,11 +619,19 @@ def kern_MKL_sparse(nsteps,
 
         dXaccum += dX[step]
 
-        if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
+        if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
+            newbins = ebins + mu_dEdX * dXaccum
+            newcen = 0.5 * (newbins[1:] + newbins[:-1])
+            newwidths = newbins[1:] - newbins[:-1]
+
             for nsp in xrange(nmuspec):
-                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
-                    mu_egrid, mu_egrid + mu_dEdX * dXaccum,
-                    npphi[lidx + de * nsp:lidx + de * (nsp + 1)])
+                i = interp1d(
+                    newcen,
+                    npphi[lidx + de * nsp:lidx + de * (nsp + 1)] * ewidths,
+                    kind='cubic',
+                    fill_value='extrapolate')
+                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = i(
+                    ecen) / newwidths
 
             dXaccum = 0.
 
