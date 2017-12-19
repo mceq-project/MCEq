@@ -623,15 +623,22 @@ def kern_MKL_sparse(nsteps,
             newbins = ebins + mu_dEdX * dXaccum
             newcen = 0.5 * (newbins[1:] + newbins[:-1])
             newwidths = newbins[1:] - newbins[:-1]
-
             for nsp in xrange(nmuspec):
+                nz = npphi[lidx + de * nsp:lidx + de *
+                         (nsp + 1)].nonzero()[0]
+                if nz.size < 1:
+                    continue
+                # print '1', npphi[lidx + de * nsp:lidx + de * (nsp + 1)]
+                # npphi[lidx + de * nsp:lidx + de * (nsp + 1)][npphi[lidx + de * nsp:lidx + de * (nsp + 1)] <= 0.] = 1e-200
                 i = interp1d(
-                    newcen,
-                    npphi[lidx + de * nsp:lidx + de * (nsp + 1)] * ewidths,
-                    kind='cubic',
+                    np.log(newcen),
+                    npphi[lidx + de * nsp:lidx + de * (nsp + 1)] * newwidths,
+                    kind='linear',
+                    bounds_error=False,
                     fill_value='extrapolate')
-                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = i(
-                    ecen) / newwidths
+                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = i(np.log(ecen))/ ewidths
+                # print '2', npphi[lidx + de * nsp:lidx + de * (nsp + 1)]
+                # npphi[lidx + de * nsp:lidx + de * (nsp + 1)][npphi[lidx + de * nsp:lidx + de * (nsp + 1)] < 0] = 0.
 
             dXaccum = 0.
 
