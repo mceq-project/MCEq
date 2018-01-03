@@ -14,7 +14,7 @@ MCEq.
 
 import numpy as np
 from mceq_config import config, dbg
-
+import MCEq.data
 
 def convert_to_compact(fname):
     """Converts an interaction model dictionary to "compact" mode.
@@ -404,3 +404,66 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
         pickle.dump(ext_di, BZ2File(fname, 'wb'), protocol=-1)
 
     return ext_di
+
+
+class LogSpacedInteractionYields(MCEq.data.InteractionYields):
+    """This derived type puts MCEq on a log spaced grid"""
+    
+    def _load(self, interaction_model):
+        """Substitute  dN/lnE during initialization"""
+        import cPickle as pickle
+        from os.path import join, isfile
+        from MCEq.misc import normalize_hadronic_model_name
+        from MCEq.data_utils import convert_to_compact, extend_to_low_energies
+        if dbg > 1:
+            print 'InteractionYields::_load(): entering..'
+
+        # Remove dashes and points in the name
+        iamstr = normalize_hadronic_model_name(interaction_model)
+
+        fname = join(config['data_dir'], iamstr + '_yields.bz2')
+
+        if config['compact_mode'] and config["low_energy_extension"]["enabled"] \
+                and 'DPMJET' not in iamstr:
+            fname = fname.replace('.bz2', '_compact_ledpm.bz2')
+        elif not config['compact_mode'] and config["low_energy_extension"]["enabled"] \
+                and ('DPMJET' not in iamstr):
+            fname = fname.replace('.bz2', '_ledpm.bz2')
+        elif config['compact_mode']:
+            fname = fname.replace('.bz2', '_compact.bz2')
+
+        yield_dict = None
+        if dbg > 0:
+            print 'InteractionYields::_load(): Looking for', fname
+        if not isfile(fname):
+            if config['compact_mode']:
+                convert_to_compact(fname)
+            elif 'ledpm' in fname:
+                extend_to_low_energies(fname=fname)
+            else:
+                raise Exception(
+                    'InteractionYields::_load(): no model file found for' +
+                    interaction_model)
+
+        if not isfile(fname.replace('.bz2', '.ppd')):
+            self._decompress(fname)
+
+        yield_dict = pickle.load(open(fname.replace('.bz2', '.ppd'), 'rb'))
+
+        self.e_grid = yield_dict.pop('evec')
+        self.e_bins = yield_dict.pop('ebins')
+        self.weights = yield_dict.pop('weights')
+        self.iam = normalize_hadronic_model_name(yield_dict.pop('mname'))
+        self.projectiles = yield_dict.pop('projectiles')
+        self.secondary_dict = yield_dict.pop('secondary_dict')
+        self.nspec = yield_dict.pop('nspec')
+
+        self.yields = yield_dict
+
+        #  = np.diag(self.e_bins[1:] - self.e_bins[:-1])
+        self.dim = self.e_grid.size
+        self.no_interaction = np.zeros(self.dim**2).reshape(self.dim, self.dim)
+
+        self.charm_model = None
+
+        self._gen_particle_list()

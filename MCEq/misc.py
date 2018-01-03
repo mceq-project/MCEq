@@ -232,7 +232,26 @@ def get_bins_and_width_from_centers(vector):
     widths = bins[1:] - bins[:-1]
     return bins, widths
 
+class EnergyGrid(object):
+    """Class for constructing a grid for discrete distributions.
 
+    Since we discretize everything in energy, the name seems appropriate.
+    All grids are log spaced.
+
+    Args:
+        lower (float): log10 of low edge of the lowest bin
+        upper (float): log10 of upper edge of the highest bin
+    """
+
+    def __init__(self, lower, upper, bins_dec):
+        import numpy as np
+        self.bins = np.logspace(lower, upper, (upper - lower) * bins_dec + 1)
+        self.grid = 0.5 * (self.bins[1:] + self.bins[:-1])
+        self.widths = self.bins[1:] - self.bins[:-1]
+        self.d = self.grid.size
+        info(1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
+            self.bins[0], self.bins[-1], self.grid.size))
+            
 class EdepZFactors():
     """Handles calculation of energy dependent Z factors.
 
