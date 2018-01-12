@@ -453,6 +453,7 @@ class LogSpacedInteractionYields(MCEq.data.InteractionYields):
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
         self.weights = yield_dict.pop('weights')
+        self.grid_def = yield_dict.pop('grid_def')
         self.iam = normalize_hadronic_model_name(yield_dict.pop('mname'))
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')

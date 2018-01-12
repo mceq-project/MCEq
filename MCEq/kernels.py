@@ -46,6 +46,83 @@ import numpy as np
 from mceq_config import config, dbg
 
 
+class ChangCooperLosses(object):
+    def __init__(self, abs_dEdX, mu_lidx_nsp=None, B_fake=1e-30):
+
+        self.mu_dEdX = -abs_dEdX  #dlnE/dX
+        self.dlE = 0.28
+        self.de = abs_dEdX.size - 1
+        self.muloss_min_step = config['muon_energy_loss_min_step']
+        self.lidx, self.nmuspec = mu_lidx_nsp
+
+        # Energy loss term 1 order
+        self.A = -abs_dEdX
+        # Energy loss second order
+        self.B = self._set_B(B_fake)
+
+    def _set_B(self, B_fake):
+        self.B = B_fake * np.ones(self.de + 1)
+
+    def _compute_delta(self):
+        w = -self.A / self.B * self.dlE
+        return 0.5 * np.ones(self.de + 1)  #1 / w - 1 / (np.exp(w) - 1)
+
+    def _setup_trigiag(self, force_delta=None, force_B=None, dX=0.01):
+
+        self.delta = self._compute_delta()
+        if force_delta is not None:
+            self.delta = force_delta * np.ones_like(self.delta)
+
+        if force_B is not None:
+            self.B = force_B * np.ones_like(self.delta)
+
+        A, B, delta, dlE = self.A, self.B, self.delta, self.dlE
+
+        dl = -delta[:-1] * (A[:-1] + B[:-1] / dlE)
+        du = (1 - delta[1:]) * (A[1:] - B[1:] / dlE)
+        dc_lhs = (A[1:] * delta[1:] + B[1:] / dlE * (1 - delta[1:]) - A[:-1] *
+                  (1 - delta[:-1]) - B[:-1] / dlE * delta[:-1] + 2 * dlE / dX)
+        dc_rhs = (
+            A[1:] * delta[1:] + B[1:] / dlE * (1 - delta[1:]) - A[:-1] *
+            (1 - delta[:-1] + B[:-1] / dlE * delta[:-1]) - 2*dlE/dX)
+
+        return dl, du, dc_lhs, dc_rhs
+
+    def do_step(self, phc, dX):
+        lidx, de, mu_egrid, mu_dEdX = self.lidx, self.de, self.mu_egrid, self.mu_dEdX
+        for nsp in xrange(self.nmuspec):
+            phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
+                mu_egrid, mu_egrid + mu_dEdX * dX,
+                phc[lidx + de * nsp:lidx + de * (nsp + 1)])
+
+    def setup_eqn(self):
+        pass
+
+
+class SemiLagrangianEnergyLosses(object):
+    def __init__(self, egrid, mu_dEdX, mu_lidx_nsp):
+        self.egrid = egrid
+        self.dim_e = egrid.size
+        self.mu_dEdX = 0.5*(mu_dEdX[1:] + mu_dEdX[:-1])#mu_dEdX
+        self.mu_lidx, self.nmuspec = mu_lidx_nsp
+
+    def do_step(self, state, dX):
+
+        newgrid = self.egrid + self.mu_dEdX*dX
+        oldgrid = self.egrid
+        lidx = self.mu_lidx
+        de = self.dim_e
+        newgrid_log = np.log(newgrid)
+        oldgrid_log = np.log(oldgrid)
+        dEprime_dE = np.gradient(newgrid_log, oldgrid_log) * newgrid / oldgrid
+
+        for nsp in xrange(self.nmuspec):
+            newstate = state[lidx + de * nsp:lidx + de * (nsp + 1)] / dEprime_dE
+            newstate = np.where(newstate > 1e-200, newstate, 1e-200)
+            newstate = np.log(newstate)
+            state[lidx + de * nsp:lidx + de * (nsp + 1)] = np.exp(
+                np.interp(oldgrid_log, newgrid_log, newstate))
+
 def kern_numpy(nsteps,
                dX,
                rho_inv,
@@ -53,10 +130,7 @@ def kern_numpy(nsteps,
                dec_m,
                phi,
                grid_idcs,
-               mu_egrid=None,
-               mu_dEdX=None,
-               mu_lidx_nsp=None,
-               prog_bar=None,
+               mu_loss_handler,
                fa_vars=None):
     """:mod;`numpy` implementation of forward-euler integration.
 
@@ -67,7 +141,7 @@ def kern_numpy(nsteps,
       int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      prog_bar (object,optional): handle to :class:`ProgressBar` object
+      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
       fa_vars (dict,optional): contains variables for first interaction mode
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
@@ -83,9 +157,7 @@ def kern_numpy(nsteps,
     phc = phi
 
     enmuloss = config['enable_muon_energy_loss']
-    de = mu_egrid.size
     muloss_min_step = config['muon_energy_loss_min_step']
-    lidx, nmuspec = mu_lidx_nsp
     # Accumulate at least a few g/cm2 for energy loss steps
     # to avoid numerical errors
     dXaccum = 0.
@@ -120,18 +192,12 @@ def kern_numpy(nsteps,
             return (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
 
     for step in xrange(nsteps):
-        if prog_bar and (step % 200 == 0):
-            prog_bar.update(step)
         phc += stepper(step)
 
         dXaccum += dxc[step]
 
-        if (enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1)):
-            for nsp in xrange(nmuspec):
-                phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
-                    mu_egrid, mu_egrid + mu_dEdX * dXaccum,
-                    phc[lidx + de * nsp:lidx + de * (nsp + 1)])
-
+        if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
+            mu_loss_handler.do_step(phc, dXaccum)
             dXaccum = 0.
 
         if (grid_idcs and grid_step < len(grid_idcs) and
@@ -153,10 +219,7 @@ def kern_CUDA_dense(nsteps,
                     dec_m,
                     phi,
                     grid_idcs,
-                    mu_egrid=None,
-                    mu_dEdX=None,
-                    mu_lidx_nsp=None,
-                    prog_bar=None):
+                    mu_loss_handler):
     """`NVIDIA CUDA cuBLAS <https://developer.nvidia.com/cublas>`_ implementation
     of forward-euler integration.
 
@@ -170,7 +233,7 @@ def kern_CUDA_dense(nsteps,
       int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      prog_bar (object,optional): handle to :class:`ProgressBar` object
+      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -213,8 +276,6 @@ def kern_CUDA_dense(nsteps,
     start = time()
 
     for step in xrange(nsteps):
-        if prog_bar:
-            prog_bar.update(step)
         cubl.gemv(
             trans='N',
             m=m,
@@ -328,101 +389,13 @@ class CUDASparseContext(object):
             alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
 
 
-# class CUDASparseContextSkcuda(object):
-#
-#     *Doesn't work right now because of crashes and missing wrappers for cuSPARSE
-#
-#     def __init__(self, int_m, dec_m, device_id=0):
-
-#         #=======================================================================
-#         # Setup GPU stuff and upload data to it
-#         #=======================================================================
-#         # try:
-#         import pycuda.autoinit
-#         import pycuda.gpuarray as gpuarray
-#         from skcuda import cusparse, cublas
-
-#         # except ImportError:
-#         #     raise Exception("kern_CUDA_sparse(): Numbapro CUDA libaries not " +
-#         #                     "installed.\nCan not use GPU.")
-
-#         # cuda.select_device(0)
-#         self.cusp_handle = cusparse.cusparseCreate()
-#         self.cubl_handle = cublas.cublasCreate()
-#         self.gpua = gpuarray
-
-#         if config['FP_precision'] == 32:
-#             self.fl_pr = np.float32
-#             self.mv = cusparse._libcusparse.cusparseScsrmv
-#             self.axpy = cublas._libcublas.cublasSaxpy
-#         elif config['FP_precision'] == 64:
-#             self.fl_pr = np.float64
-#             self.mv = cusparse._libcusparse.cusparseDcsrmv
-#             self.axpy = cublas._libcublas.cublasDaxpy
-#         else:
-#             raise Exception("CUDASparseContext(): Unknown precision specified.")
-
-#         self.set_matrices(int_m, dec_m)
-
-#     def set_matrices(self, int_m, dec_m):
-#         from skcuda import cusparse
-
-#         self.m, self.n = int_m.shape
-#         self.int_m_nnz = int_m.nnz
-#         self.int_m_csrValA = self.gpua.to_gpu(int_m.data.astype(self.fl_pr))
-#         self.int_m_csrRowPtrA = self.gpua.to_gpu(int_m.indptr)
-#         self.int_m_csrColIndA = self.gpua.to_gpu(int_m.indices)
-
-#         self.dec_m_nnz = dec_m.nnz
-#         self.dec_m_csrValA = self.gpua.to_gpu(dec_m.data.astype(self.fl_pr))
-#         self.dec_m_csrRowPtrA = self.gpua.to_gpu(dec_m.indptr)
-#         self.dec_m_csrColIndA = self.gpua.to_gpu(dec_m.indices)
-
-#         self.descr = cusparse.cusparseMatDescr()
-#         self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
-#         self.cu_delta_phi = self.gpua.empty(self.m,dtype=self.fl_pr)
-
-#     def set_phi(self, phi):
-#         self.cu_curr_phi = self.gpua.to_gpu(phi.astype(self.fl_pr))
-
-#     def get_phi(self):
-#         return self.cu_curr_phi.get()
-
-#     def do_step(self, rho_inv, dX):
-#         from skcuda import cusparse, cublas
-
-#         cusparse._libcusparse.cusparseScsrmv(self.cusp_handle,
-#                    trans='n', m=self.m, n=self.n, nnz=self.int_m_nnz,
-#                    alpha=self.fl_pr(1.0), descrA=self.descr,
-#                    csrVal=self.int_m_csrValA.gpudata,
-#                    csrRowPtr=self.int_m_csrRowPtrA.gpudata,
-#                    csrColInd=self.int_m_csrColIndA.gpudata,
-#                    x=self.cu_curr_phi.gpudata, beta=self.fl_pr(0.0), y=self.cu_delta_phi.gpudata)
-#         # # # print np.sum(cu_curr_phi.copy_to_host())
-#         cusparse._libcusparse.cusparseScsrmv(self.cusp_handle, trans='N', m=self.m, n=self.n,
-#                 nnz=self.dec_m_nnz,
-#                 descr=self.descr,
-#                 alpha=self.fl_pr(rho_inv),
-#                 csrVal=self.dec_m_csrValA.gpudata,
-#                 csrRowPtr=self.dec_m_csrRowPtrA.gpudata,
-#                 csrColInd=self.dec_m_csrColIndA.gpudata,
-#                 x=self.cu_curr_phi.gpudata, beta=self.fl_pr(1.0),
-#                 y=self.cu_delta_phi.gpudata)
-#         cublas.cublasSaxpy(self.cubl_handle, self.cu_curr_phi.size,
-#                            self.fl_pr(dX),
-# self.cu_delta_phi.gpudata, 1, self.cu_curr_phi.gpudata, 1)
-
-
 def kern_CUDA_sparse(nsteps,
                      dX,
                      rho_inv,
                      context,
                      phi,
                      grid_idcs,
-                     mu_egrid=None,
-                     mu_dEdX=None,
-                     mu_lidx_nsp=None,
-                     prog_bar=None):
+                     mu_loss_handler):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation
     of forward-euler integration.
 
@@ -435,7 +408,7 @@ def kern_CUDA_sparse(nsteps,
       int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      prog_bar (object,optional): handle to :class:`ProgressBar` object
+      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -444,10 +417,7 @@ def kern_CUDA_sparse(nsteps,
     c.set_phi(phi)
 
     enmuloss = config['enable_muon_energy_loss']
-    de = mu_egrid.size
-    mu_egrid = mu_egrid.astype(c.fl_pr)
     muloss_min_step = config['muon_energy_loss_min_step']
-    lidx, nmuspec = mu_lidx_nsp
 
     # Accumulate at least a few g/cm2 for energy loss steps
     # to avoid numerical errors
@@ -460,9 +430,6 @@ def kern_CUDA_sparse(nsteps,
     start = time()
 
     for step in xrange(nsteps):
-        if prog_bar and (step % 5 == 0):
-            prog_bar.update(step)
-
         c.do_step(rho_inv[step], dX[step])
 
         dXaccum += dX[step]
@@ -470,10 +437,7 @@ def kern_CUDA_sparse(nsteps,
         if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
             # Download current solution vector to host
             phc = c.get_phi()
-            for nsp in xrange(nmuspec):
-                phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
-                    mu_egrid, mu_egrid + mu_dEdX * dXaccum,
-                    phc[lidx + de * nsp:lidx + de * (nsp + 1)])
+            mu_loss_handler.do_step(phc, dXaccum)
             # Upload changed vector back..
             c.set_phi(phc)
             dXaccum = 0.
@@ -497,10 +461,7 @@ def kern_MKL_sparse(nsteps,
                     dec_m,
                     phi,
                     grid_idcs,
-                    mu_egrid=None,
-                    mu_dEdX=None,
-                    mu_lidx_nsp=None,
-                    prog_bar=None):
+                    mu_loss_handler):
     """`Intel MKL sparse BLAS
     <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_
     implementation of forward-euler integration.
@@ -516,7 +477,7 @@ def kern_MKL_sparse(nsteps,
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
       grid_idcs (list): indices at which longitudinal solutions have to be saved.
-      prog_bar (object,optional): handle to :class:`ProgressBar` object
+      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -579,12 +540,7 @@ def kern_MKL_sparse(nsteps,
     cione = c_int(1)
 
     enmuloss = config['enable_muon_energy_loss']
-    ecen, ebins, ewidths = mu_egrid
-    de = ecen.size
-    mu_dEdX = mu_dEdX.astype(np_fl)
-
     muloss_min_step = config['muon_energy_loss_min_step']
-    lidx, nmuspec = mu_lidx_nsp
     # Accumulate at least a few g/cm2 for energy loss steps
     # to avoid numerical errors
     dXaccum = 0.
@@ -595,11 +551,7 @@ def kern_MKL_sparse(nsteps,
     from time import time
     start = time()
 
-    from scipy.interpolate import interp1d
     for step in xrange(nsteps):
-        if prog_bar:
-            prog_bar.update(step)
-
         # delta_phi = int_m.dot(phi)
         gemv(
             byref(trans),
@@ -620,26 +572,7 @@ def kern_MKL_sparse(nsteps,
         dXaccum += dX[step]
 
         if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            newbins = ebins + mu_dEdX * dXaccum
-            newcen = 0.5 * (newbins[1:] + newbins[:-1])
-            newwidths = newbins[1:] - newbins[:-1]
-            for nsp in xrange(nmuspec):
-                nz = npphi[lidx + de * nsp:lidx + de *
-                         (nsp + 1)].nonzero()[0]
-                if nz.size < 1:
-                    continue
-                # print '1', npphi[lidx + de * nsp:lidx + de * (nsp + 1)]
-                # npphi[lidx + de * nsp:lidx + de * (nsp + 1)][npphi[lidx + de * nsp:lidx + de * (nsp + 1)] <= 0.] = 1e-200
-                i = interp1d(
-                    np.log(newcen),
-                    npphi[lidx + de * nsp:lidx + de * (nsp + 1)] * newwidths,
-                    kind='linear',
-                    bounds_error=False,
-                    fill_value='extrapolate')
-                npphi[lidx + de * nsp:lidx + de * (nsp + 1)] = i(np.log(ecen))/ ewidths
-                # print '2', npphi[lidx + de * nsp:lidx + de * (nsp + 1)]
-                # npphi[lidx + de * nsp:lidx + de * (nsp + 1)][npphi[lidx + de * nsp:lidx + de * (nsp + 1)] < 0] = 0.
-
+            mu_loss_handler.do_step(npphi, dXaccum)
             dXaccum = 0.
 
         if (grid_idcs and grid_step < len(grid_idcs) and
@@ -661,10 +594,7 @@ def kern_XeonPHI_sparse(nsteps,
                         dec_m,
                         phi,
                         grid_idcs,
-                        mu_egrid=None,
-                        mu_dEdX=None,
-                        mu_lidx_nsp=None,
-                        prog_bar=None):
+                        mu_loss_handler):
     """Experimental Xeon Phi support using pyMIC library.
     """
 

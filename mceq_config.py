@@ -28,9 +28,6 @@ config = {
     # Debug flag for verbose printing, 0 silences MCEq entirely
     "debug_level": 1,
 
-    # Use progress_bars
-    "prog_bar": False,
-
     #=========================================================================
     # Paths and library locations
     #=========================================================================
@@ -96,6 +93,11 @@ config = {
     #===========================================================================
     # Parameters of numerical integration
     #===========================================================================
+
+    # Grid definition 'log' or 'lin' 
+    # (Note that bins are log spaced in both cases)
+    # Spectrum is for 'log'= dN/dlnE or energy 'lin' = dN/dE
+    "grid_def" : 'log',
 
     # Selection of integrator (euler/odepack)
     "integrator": "euler",

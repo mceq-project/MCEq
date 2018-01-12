@@ -136,7 +136,7 @@ class MCEqParticle(object):
                 self.pythia_db.ctau(self.pdgid) / E
             if cut:
                 dlen[0:self.mix_idx] = 0.
-            return dlen
+            return 0.9966*dlen # Correction for bin average
         except ZeroDivisionError:
             return np.ones(self.d) * np.inf
 
@@ -397,7 +397,16 @@ class InteractionYields(object):
                 continue
 
         e_bins = yield_dict['ebins']
-        weights = np.diag(e_bins[1:] - e_bins[:-1])
+        e_grid = yield_dict['evec']
+        
+        if config['grid_def'] == 'lin':
+            weights = np.diag(e_bins[1:] - e_bins[:-1])
+        elif config['grid_def'] == 'log':
+            weights = e_grid*np.diag(np.log(e_bins[1:]/e_bins[:-1]))
+            e_grid = np.exp(0.5 * (np.log(e_bins)[1:] + np.log(e_bins)[:-1]))
+        else:
+            raise Exception(self.__class__.__name__ + 'Unknown grid definition ' +
+                           config['grid_def'])
 
         secondary_dict = {}
 
@@ -435,6 +444,10 @@ class InteractionYields(object):
         new_dict['secondary_dict'] = secondary_dict
         new_dict['nspec'] = len(projectiles)
         new_dict['weights'] = weights
+        new_dict['evec'] = e_grid
+        new_dict['ebins'] = e_bins
+        new_dict['grid_def'] = config['grid_def']
+
 
         if 'le_ext' not in new_dict:
             new_dict['le_ext'] = config['low_energy_extension']
@@ -1052,12 +1065,23 @@ class DecayYields(object):
             except ValueError:
                 continue
 
-        weights = decay_dict.pop('weights')
+        e_bins = decay_dict['ebins']
+        e_grid = decay_dict['evec']
+        
+        if config['grid_def'] == 'lin':
+            weights = np.diag(e_bins[1:] - e_bins[:-1])
+        elif config['grid_def'] == 'log':
+            weights = e_grid*np.diag(np.log(e_bins[1:]/e_bins[:-1]))
+            e_bins = np.log(e_bins)
+            e_grid = np.exp(0.5 * (e_bins[1:] + e_bins[:-1]))
+        else:
+            raise Exception(self.__class__.__name__ + 'Unknown grid definition ' +
+                           config['grid_def'])
 
         # This will be the dictionary for the index
         daughter_dict = {}
 
-        # New dictionary to replace yield_dict
+        # New dictionary to replace decay_dict
         new_dict = {}
 
         for mother in mothers:
@@ -1095,6 +1119,8 @@ class DecayYields(object):
 
         new_dict['mothers'] = mothers
         new_dict['weights'] = weights
+        new_dict['ebins'] = e_bins
+        new_dict['evec'] = e_grid
         new_dict['daughter_dict'] = daughter_dict
 
         return new_dict
