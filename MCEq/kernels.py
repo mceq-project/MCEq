@@ -47,81 +47,117 @@ from mceq_config import config, dbg
 
 
 class ChangCooperLosses(object):
-    def __init__(self, abs_dEdX, mu_lidx_nsp=None, B_fake=1e-30):
+    def __init__(self, ebins, dEdX, mu_lidx_nsp, B_fake=1e-5):
 
-        self.mu_dEdX = -abs_dEdX  #dlnE/dX
-        self.dlE = 0.28
-        self.de = abs_dEdX.size - 1
+        self.mu_dEdX = dEdX  #dlnE/dX
+        self.dE = ebins[1:] - ebins[:-1]
+        self.ebins = ebins
+        self.ecenters = np.sqrt(ebins[1:] + ebins[:-1])
+        self.de = self.dE.size
         self.muloss_min_step = config['muon_energy_loss_min_step']
         self.lidx, self.nmuspec = mu_lidx_nsp
 
         # Energy loss term 1 order
-        self.A = -abs_dEdX
+        self.A = dEdX  #np.log(-dEdX)
         # Energy loss second order
-        self.B = self._set_B(B_fake)
+        self.B = B_fake * self.ebins
+        # self._set_B(B_fake)
+
+        self._setup_solver(config['muon_energy_loss_min_step'])
 
     def _set_B(self, B_fake):
         self.B = B_fake * np.ones(self.de + 1)
 
     def _compute_delta(self):
-        w = -self.A / self.B * self.dlE
-        return 0.5 * np.ones(self.de + 1)  #1 / w - 1 / (np.exp(w) - 1)
+        bscale = 1
+        wpl = -self.A[1:] / (bscale * self.B[1:]) * self.dE
+        self.delta_pl = 1 / wpl - 1 / (np.exp(wpl) - 1)
+        wmi = -self.A[:-1] / (bscale * self.B[:-1]) * self.dE
+        self.delta_mi = 1 / wmi - 1 / (np.exp(wmi) - 1)
 
-    def _setup_trigiag(self, force_delta=None, force_B=None, dX=0.01):
-
-        self.delta = self._compute_delta()
-        if force_delta is not None:
-            self.delta = force_delta * np.ones_like(self.delta)
+    def _setup_trigiag(self, dX, force_delta=None, force_B=None):
 
         if force_B is not None:
-            self.B = force_B * np.ones_like(self.delta)
+            self.B = force_B * np.ones_like(self.A)
 
-        A, B, delta, dlE = self.A, self.B, self.delta, self.dlE
+        if force_delta is not None:
+            self.delta_pl = self.delta_mi = force_delta * np.ones_like(
+                self.delta_pl)
+        else:
+            self._compute_delta()
 
-        dl = -delta[:-1] * (A[:-1] + B[:-1] / dlE)
-        du = (1 - delta[1:]) * (A[1:] - B[1:] / dlE)
-        dc_lhs = (A[1:] * delta[1:] + B[1:] / dlE * (1 - delta[1:]) - A[:-1] *
-                  (1 - delta[:-1]) - B[:-1] / dlE * delta[:-1] + 2 * dlE / dX)
-        dc_rhs = (
-            A[1:] * delta[1:] + B[1:] / dlE * (1 - delta[1:]) - A[:-1] *
-            (1 - delta[:-1] + B[:-1] / dlE * delta[:-1]) - 2*dlE/dX)
+        A, B, dpl, dmi, dE = (self.A, self.B, self.delta_pl, self.delta_mi,
+                              self.dE)
+
+        #Chang-Cooper
+        dl = np.tile(-dmi * (A[:-1] + B[:-1] / dE), self.nmuspec)
+        du = np.tile((1 - dpl) * (A[1:] - B[1:] / dE), self.nmuspec)
+        dc_lhs = np.tile((2 * dE / dX + A[1:] * dpl + B[1:] / dE *
+                          (1 - dpl) - A[:-1] * (1 - dmi) - B[:-1] / dE * dmi),
+                         self.nmuspec)
+        dc_rhs = np.tile((2 * dE / dX - A[1:] * dpl - B[1:] / dE *
+                          (1 - dpl) + A[:-1] * (1 - dmi) - B[:-1] / dE * dmi),
+                         self.nmuspec)
+
+        # Crank-Nicholson
+        # du = A[1:]
+        # dl = -A[:-1]
+        # dc_lhs = 4*dE/dX + A[1:] - A[:-1]
+        # dc_rhs = 4*dE/dX - A[1:] + A[:-1]
 
         return dl, du, dc_lhs, dc_rhs
 
+    def _setup_solver(self, dX=1, **kwargs):
+        from scipy.sparse.linalg import factorized
+        from scipy.sparse import dia_matrix
+        dl, du, dc_lhs, dc_rhs = self._setup_trigiag(dX=dX, **kwargs)
+
+        data = np.vstack([dl, dc_lhs, du])
+        offsets = np.array([-1, 0, 1])
+        lhs_mat = dia_matrix(
+            (data, offsets),
+            shape=(self.de * self.nmuspec, self.de * self.nmuspec)).tocsc()
+        data = np.vstack([-dl, dc_rhs, -du])
+        self.rhs_mat = dia_matrix(
+            (data, offsets),
+            shape=(self.de * self.nmuspec, self.de * self.nmuspec)).tocsr()
+        self.solver = factorized(lhs_mat)
+
     def do_step(self, phc, dX):
-        lidx, de, mu_egrid, mu_dEdX = self.lidx, self.de, self.mu_egrid, self.mu_dEdX
-        for nsp in xrange(self.nmuspec):
-            phc[lidx + de * nsp:lidx + de * (nsp + 1)] = np.interp(
-                mu_egrid, mu_egrid + mu_dEdX * dX,
-                phc[lidx + de * nsp:lidx + de * (nsp + 1)])
+        # print dX
+        self._setup_solver(dX)
+        lidx, dim_e = self.lidx, self.de
+        phc[lidx:lidx + dim_e * self.nmuspec] = self.solver(
+            self.rhs_mat.dot(phc[lidx:lidx + dim_e * self.nmuspec]))
 
-    def setup_eqn(self):
-        pass
+    def solve_ext(self, phc):
+        return self.solver(self.rhs_mat.dot(phc))
 
 
-class SemiLagrangianEnergyLosses(object):
-    def __init__(self, egrid, mu_dEdX, mu_lidx_nsp):
-        self.egrid = egrid
-        self.dim_e = egrid.size
-        self.mu_dEdX = 0.5*(mu_dEdX[1:] + mu_dEdX[:-1])#mu_dEdX
-        self.mu_lidx, self.nmuspec = mu_lidx_nsp
+# class SemiLagrangianEnergyLosses(object):
+#     def __init__(self, egrid, mu_dEdX, mu_lidx_nsp):
+#         self.egrid = egrid
+#         self.dim_e = egrid.size
+#         self.mu_dEdX = mu_dEdX#0.5*(mu_dEdX[1:] + mu_dEdX[:-1])#mu_dEdX
+#         self.mu_lidx, self.nmuspec = mu_lidx_nsp
 
-    def do_step(self, state, dX):
+#     def do_step(self, state, dX):
 
-        newgrid = self.egrid + self.mu_dEdX*dX
-        oldgrid = self.egrid
-        lidx = self.mu_lidx
-        de = self.dim_e
-        newgrid_log = np.log(newgrid)
-        oldgrid_log = np.log(oldgrid)
-        dEprime_dE = np.gradient(newgrid_log, oldgrid_log) * newgrid / oldgrid
+#         newgrid = self.egrid + self.mu_dEdX*dX
+#         oldgrid = self.egrid
+#         lidx = self.mu_lidx
+#         dim_e = self.dim_e
+#         newgrid_log = np.log(newgrid)
+#         oldgrid_log = np.log(oldgrid)
+#         dEprime_dE = np.gradient(newgrid_log, oldgrid_log) * newgrid / oldgrid
 
-        for nsp in xrange(self.nmuspec):
-            newstate = state[lidx + de * nsp:lidx + de * (nsp + 1)] / dEprime_dE
-            newstate = np.where(newstate > 1e-200, newstate, 1e-200)
-            newstate = np.log(newstate)
-            state[lidx + de * nsp:lidx + de * (nsp + 1)] = np.exp(
-                np.interp(oldgrid_log, newgrid_log, newstate))
+#         for nsp in xrange(self.nmuspec):
+#             newstate = state[lidx + dim_e * nsp:lidx + dim_e * (nsp + 1)] / dEprime_dE
+#             newstate = np.where(newstate > 1e-200, newstate, 1e-200)
+#             newstate = np.exp(np.interp(oldgrid_log, newgrid_log, np.log(newstate)))
+#             state[lidx + dim_e * nsp:lidx + dim_e * (nsp + 1)] = np.where(
+#                 newstate > 1e-200, newstate, 0.)
+
 
 def kern_numpy(nsteps,
                dX,

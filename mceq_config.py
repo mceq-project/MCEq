@@ -36,7 +36,7 @@ config = {
     "data_dir": path.join(base_path, 'data'),
 
     # File name of particle decay spectra
-    "decay_fname": "decays_v1.ppd",
+    "decay_fname": "decay_tables.ppd",
 
     # File name of the cross-sections tables
     "cs_fname": "crosssections.ppd",
@@ -88,16 +88,11 @@ config = {
     "env_name": "air",
     # Approximate value for the maximum density expected. Needed for the
     # resonance approximation.
-    "max_density": 0.001225, 
+    "max_density": 0.001225,
 
     #===========================================================================
     # Parameters of numerical integration
     #===========================================================================
-
-    # Grid definition 'log' or 'lin' 
-    # (Note that bins are log spaced in both cases)
-    # Spectrum is for 'log'= dN/dlnE or energy 'lin' = dN/dE
-    "grid_def" : 'log',
 
     # Selection of integrator (euler/odepack)
     "integrator": "euler",
@@ -235,6 +230,15 @@ config = {
 }
 
 dbg = config['debug_level']
+
+
+def clean_datadir():
+    from os import path, listdir, unlink
+    for fname in listdir(path.join(base_path, 'data')):
+        absfname = path.join(base_path, 'data', fname)
+        if (absfname.endswith('.ppd') or absfname.endswith('compact.bz2')
+                or absfname.endswith('ledpm.bz2')):
+            unlink(absfname)
 
 
 def mceq_config_without(key_list):

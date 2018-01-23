@@ -108,12 +108,12 @@ def convert_to_compact(fname):
     # Load the decay dictionary (with bin widths and index)
     try:
         ddi = pickle.load(
-            open(os.path.join(config["data_dir"], 'decays_v1.ppd'), 'rb'))
+            open(os.path.join(config["data_dir"], config["decay_fname"]), 'rb'))
     except IOError:
         # In case the ppd file is not yet created, use the DecayYields class to
         # decompress, rotate and weight the yield files
         from MCEq.data import DecayYields
-        ds = DecayYields(fname='decays_v1.ppd')
+        ds = DecayYields(fname=config["decay_fname"])
         ddi = ds.decay_dict
 
     # Define a list of "stable" particles
@@ -453,7 +453,6 @@ class LogSpacedInteractionYields(MCEq.data.InteractionYields):
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
         self.weights = yield_dict.pop('weights')
-        self.grid_def = yield_dict.pop('grid_def')
         self.iam = normalize_hadronic_model_name(yield_dict.pop('mname'))
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')

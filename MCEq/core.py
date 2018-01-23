@@ -244,6 +244,7 @@ class MCEqRun(object):
         ])
 
         self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
+        self.mu_loss_handler = None
 
     def _gen_list_of_particles(self, custom_list=None):
         """Determines the list of particles for calculation and
@@ -736,6 +737,9 @@ class MCEqRun(object):
           E (float): (total) energy of nucleus in GeV
           corsika_id (int): ID of nucleus (see text)
         """
+
+        from scipy.linalg import solve
+
         if self.delay_pmod_init:
             if dbg > 1:
                 print 'MCEqRun::set_single_primary_particle(): Initialization delayed..'
@@ -749,23 +753,23 @@ class MCEqRun(object):
         except AttributeError:
             self.finalize_pmodel = True
 
-        E_gr = self._e_grid
-        widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
+        egrid = self._e_grid
+        ebins = self._e_bins
+        ewidths = self._e_widths
 
-        w_scale = widths[0] / E_gr[0]
+        # w_scale = widths[0] / E_gr[0]
 
         n_protons = 0
         n_neutrons = 0
 
         if corsika_id == 14:
             n_protons = 1
+            En = E
         else:
-            Z = corsika_id % 100
-            A = (corsika_id - Z) / 100
-            n_protons = Z
-            n_neutrons = A - Z
+            n_protons = corsika_id % 100
+            n_neutrons = (corsika_id - Z) / 100 - n_protons
             # convert energy to energy per nucleon
-            E = E / float(A)
+            En = E / float(A)
             if E < np.min(self._e_grid):
                 raise Exception('MCEqRun::set_single_primary_particle():' +
                                 'energy per nucleon too low for primary ' +
@@ -775,46 +779,32 @@ class MCEqRun(object):
             print('MCEqRun::set_single_primary_particle(): superposition:' +
                   'n_protons={0}, n_neutrons={1}, ' +
                   'energy per nucleon={2:5.3g} GeV').format(
-                      n_protons, n_neutrons, E)
+                      n_protons, n_neutrons, En)
 
-        # find energy grid index closest to E
-        idx_min = np.argmin(abs(E - E_gr))
-        idx_up, idx_lo = 0, 0
+        cenbin = np.argwhere(En < ebins)[0][0] - 1
 
-        if E_gr[idx_min] < E:
-            idx_up = idx_min + 1
-            idx_lo = idx_min
-        else:
-            idx_up = idx_min
-            idx_lo = idx_min - 1
-        # calculate the effective bin width at E
-        wE = E * w_scale
-        E_up = E + wE / 2.
-        E_lo = E - wE / 2.
-        # determine partial widths in 2 neighboring bins
-        wE_up = E_up - (E_gr[idx_up] - widths[idx_up] / 2.)
-        wE_lo = E_gr[idx_lo] + widths[idx_lo] / 2. - E_lo
+        # Equalize the first three moments for 3 normalizations around the central
+        # bin
+        emat = np.vstack(
+            (ewidths[cenbin - 1:cenbin + 2],
+             ewidths[cenbin - 1:cenbin + 2] * egrid[cenbin - 1:cenbin + 2],
+             ewidths[cenbin - 1:cenbin + 2] * egrid[cenbin - 1:cenbin + 2]**2))
+
+        b_protons = np.array([
+            n_protons, En * n_protons, En**2 * n_protons])
+        b_neutrons = np.array(
+            [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
 
         self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
 
-        if dbg > 1:
-            print(
-                'MCEqRun::set_single_primary_particle(): \n \t' +
-                'fractional contribution for lower bin @ E={0:5.3g} GeV: {1:5.3} \n \t'
-                +
-                'fractional contribution for upper bin @ E={2:5.3g} GeV: {3:5.3}'
-            ).format(E_gr[idx_lo], wE_lo / widths[idx_lo], E_gr[idx_up],
-                     wE_up / widths[idx_up])
-
-        self.phi0[self.pdg2pref[2212].lidx() + idx_lo] = n_protons * \
-            wE_lo / widths[idx_lo] ** 2
-        self.phi0[self.pdg2pref[2212].lidx() + idx_up] = n_protons * \
-            wE_up / widths[idx_up] ** 2
-
-        self.phi0[self.pdg2pref[2112].lidx() + idx_lo] = n_neutrons * \
-            wE_lo / widths[idx_lo] ** 2
-        self.phi0[self.pdg2pref[2112].lidx() + idx_up] = n_neutrons * \
-            wE_up / widths[idx_up] ** 2
+        if n_protons > 0:
+            p_lidx = self.pdg2pref[2212].lidx()
+            self.phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] = solve(
+                emat, b_protons)
+        if n_neutrons > 0:
+            n_lidx = self.pdg2pref[2112].lidx()
+            self.phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] = solve(
+                emat, b_neutrons)
 
     def set_density_model(self, density_config):
         """Sets model of the atmosphere.
@@ -1222,13 +1212,13 @@ class MCEqRun(object):
 
         import MCEq.kernels as kernels
 
-        if config["enable_muon_energy_loss"]:
-            mu_loss_handler = kernels.SemiLagrangianEnergyLosses(
-                self._e_grid, self.mu_dEdX, self.mu_lidx_nsp)
+        if config["enable_muon_energy_loss"] and self.mu_loss_handler is None:
+            self.mu_loss_handler = kernels.ChangCooperLosses(
+                self._e_bins, self.mu_dEdX, self.mu_lidx_nsp)
 
         start = time()
 
-        
+
         if (config['first_interaction_mode'] and
                 config['kernel_config'] != 'numpy'):
             raise Exception(self.__class__.__name__ + "::_forward_euler(): " +
@@ -1237,31 +1227,31 @@ class MCEqRun(object):
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, mu_loss_handler,
+                    grid_idcs, self.mu_loss_handler,
                     self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
             kernel = kernels.kern_CUDA_dense
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, mu_loss_handler)
+                    grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is True):
             kernel = kernels.kern_CUDA_sparse
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
-                    mu_loss_handler)
+                    self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] is True):
             kernel = kernels.kern_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, mu_loss_handler)
+                    grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
             kernel = kernels.kern_XeonPHI_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, mu_loss_handler)
+                    grid_idcs, self.mu_loss_handler)
         else:
             raise Exception(self.__class__.__name__ + (
                 "::_forward_euler(): " +

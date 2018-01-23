@@ -280,7 +280,7 @@ class InteractionYields(object):
         #: (numpy.array) energy grid bin endges
         self.e_bins = None
         #: (numpy.array) energy grid bin widths
-        self.weights = None
+        self.widths = None
         #: (int) dimension of grid
         self.dim = 0
         #: (tuple) selection of a band of coeffictients (in xf)
@@ -310,7 +310,7 @@ class InteractionYields(object):
         """Un-pickles the yields dictionary using the path specified as
         ``yield_fname`` in :mod:`mceq_config`.
 
-        Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`weights`,
+        Class attributes :attr:`e_grid`, :attr:`e_bins`, :attr:`widths`,
         :attr:`dim` are set here.
 
         Raises:
@@ -356,7 +356,7 @@ class InteractionYields(object):
 
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
-        self.weights = yield_dict.pop('weights')
+        self.widths = yield_dict.pop('widths')
         self.iam = normalize_hadronic_model_name(yield_dict.pop('mname'))
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')
@@ -397,16 +397,8 @@ class InteractionYields(object):
                 continue
 
         e_bins = yield_dict['ebins']
-        e_grid = yield_dict['evec']
-        
-        if config['grid_def'] == 'lin':
-            weights = np.diag(e_bins[1:] - e_bins[:-1])
-        elif config['grid_def'] == 'log':
-            weights = e_grid*np.diag(np.log(e_bins[1:]/e_bins[:-1]))
-            e_grid = np.exp(0.5 * (np.log(e_bins)[1:] + np.log(e_bins)[:-1]))
-        else:
-            raise Exception(self.__class__.__name__ + 'Unknown grid definition ' +
-                           config['grid_def'])
+        widths = np.diag(e_bins[1:] - e_bins[:-1])
+        e_grid = np.sqrt(e_bins[1:]*e_bins[:-1])
 
         secondary_dict = {}
 
@@ -434,8 +426,8 @@ class InteractionYields(object):
                      "Error in construction of index array: {0} -> {1}".format(proj, sec))
                 secondary_dict[proj].append(sec)
 
-                # Multiply by weights (energy bin widths with matrices)
-                new_dict[key] = mat.dot(weights)
+                # Multiply by widths (energy bin widths with matrices)
+                new_dict[key] = mat.dot(widths)
             else:
                 if dbg > 2:
                     print '_gen_index(): Zero yield matrix for', key
@@ -443,10 +435,9 @@ class InteractionYields(object):
         new_dict['projectiles'] = projectiles
         new_dict['secondary_dict'] = secondary_dict
         new_dict['nspec'] = len(projectiles)
-        new_dict['weights'] = weights
+        new_dict['widths'] = widths
         new_dict['evec'] = e_grid
         new_dict['ebins'] = e_bins
-        new_dict['grid_def'] = config['grid_def']
 
 
         if 'le_ext' not in new_dict:
@@ -791,14 +782,14 @@ class InteractionYields(object):
         # The next line creates a copy, to prevent subsequent calls to modify
         # the original matrices stored in the dictionary.
         # @debug: probably performance bottleneck during init
-        m = self.yields[(projectile, daughter)]  # .dot(self.weights)
+        m = self.yields[(projectile, daughter)]  # .dot(self.widths)
 
         # For debugging purposes or plotting xlab distributions use this line instead
         # m = np.copy(self.yields[(projectile, daughter)])
 
         if config['adv_set']['disable_leading_mesons'] and abs(daughter) < 2000 \
                 and (projectile, -daughter) in self.yields.keys():
-            manti = self.yields[(projectile, -daughter)]  # .dot(self.weights)
+            manti = self.yields[(projectile, -daughter)]  # .dot(self.widths)
             ie = 50
             if dbg > 2:
                 print(
@@ -909,7 +900,7 @@ class InteractionYields(object):
             for proj in self.projectiles:
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = mrs.get_yield_matrix(
-                        proj, chid).dot(self.weights)
+                        proj, chid).dot(self.widths)
                     # Update index
                     self.secondary_dict[proj].append(chid)
 
@@ -923,7 +914,7 @@ class InteractionYields(object):
                     cs_h_p.get_cs(proj) / cs_h_air.get_cs(proj)) * 14.5
                 for chid in charm_modids:
                     self.yields[(proj, chid)] = whr.get_yield_matrix(
-                        proj, chid).dot(self.weights) * 14.5
+                        proj, chid).dot(self.widths) * 14.5
                     # Update index
                     self.secondary_dict[proj].append(chid)
 
@@ -938,7 +929,7 @@ class InteractionYields(object):
 
                     self.yields[(
                         proj, chid)] = self.yield_dict[self.iam + '_pl'][(
-                            proj, chid)].dot(cs_scale).dot(self.weights) * 14.5
+                            proj, chid)].dot(cs_scale).dot(self.widths) * 14.5
                     # Update index
                     self.secondary_dict[proj].append(chid)
 
@@ -990,14 +981,16 @@ class DecayYields(object):
         from os.path import join
 
         if fname:
-            fname = join(config['data_dir'], fname)
+            fname = join(config['data_dir' ],fname)
         else:
-            fname = join(config['data_dir'], config['decay_fname'])
-
             # Take the compact dictionary if "enabled" and no
             # file name forced
             if config['compact_mode']:
-                fname = fname.replace('.ppd', '_compact.ppd')
+                fname = join(config['data_dir'], 'compact_' + config['decay_fname'])
+            else:
+                fname = join(config['data_dir'], config['decay_fname'])
+
+            
         if dbg > 0:
             print "DecayYields:_load():: Loading file", fname
         try:
@@ -1007,7 +1000,7 @@ class DecayYields(object):
             self.decay_dict = pickle.load(open(fname, 'rb'))
 
         self.daughter_dict = self.decay_dict.pop('daughter_dict')
-        self.weights = self.decay_dict.pop('weights')
+        self.widths = self.decay_dict.pop('widths')
 
         for mother in config["adv_set"]["disable_decays"]:
             if dbg > 1:
@@ -1066,17 +1059,8 @@ class DecayYields(object):
                 continue
 
         e_bins = decay_dict['ebins']
-        e_grid = decay_dict['evec']
-        
-        if config['grid_def'] == 'lin':
-            weights = np.diag(e_bins[1:] - e_bins[:-1])
-        elif config['grid_def'] == 'log':
-            weights = e_grid*np.diag(np.log(e_bins[1:]/e_bins[:-1]))
-            e_bins = np.log(e_bins)
-            e_grid = np.exp(0.5 * (e_bins[1:] + e_bins[:-1]))
-        else:
-            raise Exception(self.__class__.__name__ + 'Unknown grid definition ' +
-                           config['grid_def'])
+        widths = np.diag(e_bins[1:] - e_bins[:-1])
+        e_grid = np.sqrt(e_bins[1:]*e_bins[:-1])
 
         # This will be the dictionary for the index
         daughter_dict = {}
@@ -1101,8 +1085,8 @@ class DecayYields(object):
             if np.sum(mat) > 0:
                 if daughter not in daughter_dict[mother]:
                     daughter_dict[mother].append(daughter)
-                    # Multiply by weights (energy bin widths with matrices)
-                    new_dict[key] = (mat.T).dot(weights)
+                    # Multiply by widths (energy bin widths with matrices)
+                    new_dict[key] = (mat.T).dot(widths)
 
         # special treatment for muons, which should decay even if they
         # have an alias ID
@@ -1118,7 +1102,7 @@ class DecayYields(object):
                 new_dict[(-alias, d)] = new_dict[(-13, d)]
 
         new_dict['mothers'] = mothers
-        new_dict['weights'] = weights
+        new_dict['widths'] = widths
         new_dict['ebins'] = e_bins
         new_dict['evec'] = e_grid
         new_dict['daughter_dict'] = daughter_dict
@@ -1148,7 +1132,7 @@ class DecayYields(object):
         import bz2
         import cPickle as pickle
         fcompr = os.path.splitext(fname)[0] + '.bz2'
-
+        
         if not os.path.isfile(fcompr):
             raise IOError(
                 self.__class__.__name__ +
