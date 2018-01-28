@@ -192,6 +192,13 @@ class MCEqRun(object):
         #: (dict) Converts index in state vector to reference of :class:`data.MCEqParticle`
         self.nceidx2pname = {}
 
+        # Further short-cuts depending on previous initializations
+        self.n_tot_species = len(self.cascade_particles)
+
+        self.dim_states = self.d * self.n_tot_species
+
+        self.muon_selector = np.zeros(self.dim_states, dtype='bool')
+
         for p in self.particle_species:
             try:
                 nceidx = p.nceidx
@@ -204,10 +211,9 @@ class MCEqRun(object):
             self.pdg2pref[p.pdgid] = p
             self.pname2pref[p.name] = p
 
-        # Further short-cuts depending on previous initializations
-        self.n_tot_species = len(self.cascade_particles)
-
-        self.dim_states = self.d * self.n_tot_species
+            # Select all positions of muon species in the state vector
+            if abs(p.pdgid) % 1000 % 100 % 13 == 0:
+                self.muon_selector[p.lidx():p.uidx()] = True
 
         self.e_weight = np.array(
             self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
@@ -385,7 +391,7 @@ class MCEqRun(object):
         except UnboundLocalError:
             from scipy.sparse import csr_matrix
 
-        from MCEq.kernels import CUDASparseContext
+        from MCEq.time_solvers import CUDASparseContext
         if dbg > 0:
             print(self.cname + "::_convert_to_sparse():" +
                   "Converting to sparse (CSR) matrix format.")
@@ -1192,7 +1198,7 @@ class MCEqRun(object):
         self.grid_sol = grid_sol
 
     def _forward_euler(self, int_grid=None, grid_var='X'):
-        """Solves the transport equations with solvers from :mod:`MCEq.kernels`.
+        """Solves the transport equations with solvers from :mod:`MCEq.time_solvers`.
 
         Args:
           int_grid (list): list of depths at which results are recorded
@@ -1210,11 +1216,24 @@ class MCEqRun(object):
             print("{0}::_forward_euler(): Solver will perform {1} " +
                   "integration steps.").format(self.cname, nsteps)
 
-        import MCEq.kernels as kernels
+        import MCEq.time_solvers as time_solvers
+        import MCEq.energy_solvers as energy_solvers
 
         if config["enable_muon_energy_loss"] and self.mu_loss_handler is None:
-            self.mu_loss_handler = kernels.ChangCooperLosses(
-                self._e_bins, self.mu_dEdX, self.mu_lidx_nsp)
+            if config["energy_solver"] == 'Semi-Lagrangian':
+                self.mu_loss_handler = energy_solvers.SemiLagrangian(
+                    self._e_bins, self.mu_dEdX, self.mu_lidx_nsp,
+                    self.muon_selector)
+            elif config["energy_solver"] == 'Chang-Cooper':
+                self.mu_loss_handler = energy_solvers.ChangCooper(
+                    self._e_bins, self.mu_dEdX, self.mu_lidx_nsp,
+                    self.muon_selector)
+            elif config["energy_solver"] == 'Direct':
+                self.mu_loss_handler = energy_solvers.DifferentialOperator(
+                    self._e_bins, self.mu_dEdX, self.mu_lidx_nsp, 
+                    self.muon_selector)
+            else:
+                raise Exception('Unknown energy solver.')
 
         start = time()
 
@@ -1225,31 +1244,31 @@ class MCEqRun(object):
                             "First interaction mode only works with numpy.")
 
         if config['kernel_config'] == 'numpy':
-            kernel = kernels.kern_numpy
+            kernel = time_solvers.kern_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler,
                     self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
-            kernel = kernels.kern_CUDA_dense
+            kernel = time_solvers.kern_CUDA_dense
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is True):
-            kernel = kernels.kern_CUDA_sparse
+            kernel = time_solvers.kern_CUDA_sparse
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
                     self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] is True):
-            kernel = kernels.kern_MKL_sparse
+            kernel = time_solvers.kern_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
-            kernel = kernels.kern_XeonPHI_sparse
+            kernel = time_solvers.kern_XeonPHI_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
         else:

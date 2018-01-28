@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.kernels` --- calculation kernels for the forward-euler integrator
-============================================================================
+r"""
+:mod:`MCEq.time_solvers` --- ODE solvers for the forward-euler time integrator
+==============================================================================
 
 The module contains functions which are called by the forward-euler
 integration routine :func:`MCEq.core.MCEqRun.forward_euler`.
@@ -10,31 +10,31 @@ The integration is part of these functions. The single step
 
 .. math::
 
-  \Phi_{i + 1} = \\left[\\boldsymbol{M}_{int} + \\frac{1}{\\rho(X_i)}\\boldsymbol{M}_{dec}\\right]
-  \\cdot \\Phi_i \\cdot \\Delta X_i
+  \Phi_{i + 1} = \left[\boldsymbol{M}_{int} + \frac{1}{\rho(X_i)}\boldsymbol{M}_{dec}\right]
+  \cdot \Phi_i \cdot \Delta X_i
 
 with
 
 .. math::
-  \\boldsymbol{M}_{int} = (-\\boldsymbol{1} + \\boldsymbol{C}){\\boldsymbol{\\Lambda}}_{int}
+  \boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}
   :label: int_matrix
 
 and
 
 .. math::
-  \\boldsymbol{M}_{dec} = (-\\boldsymbol{1} + \\boldsymbol{D}){\\boldsymbol{\\Lambda}}_{dec}.
+  \boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}.
   :label: dec_matrix
 
 The functions use different libraries for sparse and dense linear algebra (BLAS):
 
-- The default for dense or sparse matrix representations is the function :func:`kern_numpy`.
+- The default for dense or sparse matrix representations is the function :func:`solv_numpy`.
   It uses the dot-product implementation of :mod:`numpy`. Depending on the details, your
   :mod:`numpy` installation can be already linked to some BLAS library like as ATLAS or MKL,
   what typically accelerates the calculation significantly.
-- The fastest version, :func:`kern_MKL_sparse`, directly interfaces to the sparse BLAS routines
+- The fastest version, :func:`solv_MKL_sparse`, directly interfaces to the sparse BLAS routines
   from `Intel MKL <https://software.intel.com/en-us/intel-mkl>`_ via :mod:`ctypes`. If you have the
   MKL runtime installed, this function is recommended for most purposes.
-- The GPU accelerated versions :func:`kern_CUDA_dense` and :func:`kern_CUDA_sparse` are implemented
+- The GPU accelerated versions :func:`solv_CUDA_dense` and :func:`solv_CUDA_sparse` are implemented
   using the cuBLAS or cuSPARSE libraries, respectively. They should be considered as experimental or
   implementation examples if you need extremely high performance. To keep Python as the main
   programming language, these interfaces are accessed via the module :mod:`numbapro`, which is part
@@ -45,121 +45,7 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 import numpy as np
 from mceq_config import config, dbg
 
-
-class ChangCooperLosses(object):
-    def __init__(self, ebins, dEdX, mu_lidx_nsp, B_fake=1e-5):
-
-        self.mu_dEdX = dEdX  #dlnE/dX
-        self.dE = ebins[1:] - ebins[:-1]
-        self.ebins = ebins
-        self.ecenters = np.sqrt(ebins[1:] + ebins[:-1])
-        self.de = self.dE.size
-        self.muloss_min_step = config['muon_energy_loss_min_step']
-        self.lidx, self.nmuspec = mu_lidx_nsp
-
-        # Energy loss term 1 order
-        self.A = dEdX  #np.log(-dEdX)
-        # Energy loss second order
-        self.B = B_fake * self.ebins
-        # self._set_B(B_fake)
-
-        self._setup_solver(config['muon_energy_loss_min_step'])
-
-    def _set_B(self, B_fake):
-        self.B = B_fake * np.ones(self.de + 1)
-
-    def _compute_delta(self):
-        bscale = 1
-        wpl = -self.A[1:] / (bscale * self.B[1:]) * self.dE
-        self.delta_pl = 1 / wpl - 1 / (np.exp(wpl) - 1)
-        wmi = -self.A[:-1] / (bscale * self.B[:-1]) * self.dE
-        self.delta_mi = 1 / wmi - 1 / (np.exp(wmi) - 1)
-
-    def _setup_trigiag(self, dX, force_delta=None, force_B=None):
-
-        if force_B is not None:
-            self.B = force_B * np.ones_like(self.A)
-
-        if force_delta is not None:
-            self.delta_pl = self.delta_mi = force_delta * np.ones_like(
-                self.delta_pl)
-        else:
-            self._compute_delta()
-
-        A, B, dpl, dmi, dE = (self.A, self.B, self.delta_pl, self.delta_mi,
-                              self.dE)
-
-        #Chang-Cooper
-        dl = np.tile(-dmi * (A[:-1] + B[:-1] / dE), self.nmuspec)
-        du = np.tile((1 - dpl) * (A[1:] - B[1:] / dE), self.nmuspec)
-        dc_lhs = np.tile((2 * dE / dX + A[1:] * dpl + B[1:] / dE *
-                          (1 - dpl) - A[:-1] * (1 - dmi) - B[:-1] / dE * dmi),
-                         self.nmuspec)
-        dc_rhs = np.tile((2 * dE / dX - A[1:] * dpl - B[1:] / dE *
-                          (1 - dpl) + A[:-1] * (1 - dmi) - B[:-1] / dE * dmi),
-                         self.nmuspec)
-
-        # Crank-Nicholson
-        # du = A[1:]
-        # dl = -A[:-1]
-        # dc_lhs = 4*dE/dX + A[1:] - A[:-1]
-        # dc_rhs = 4*dE/dX - A[1:] + A[:-1]
-
-        return dl, du, dc_lhs, dc_rhs
-
-    def _setup_solver(self, dX=1, **kwargs):
-        from scipy.sparse.linalg import factorized
-        from scipy.sparse import dia_matrix
-        dl, du, dc_lhs, dc_rhs = self._setup_trigiag(dX=dX, **kwargs)
-
-        data = np.vstack([dl, dc_lhs, du])
-        offsets = np.array([-1, 0, 1])
-        lhs_mat = dia_matrix(
-            (data, offsets),
-            shape=(self.de * self.nmuspec, self.de * self.nmuspec)).tocsc()
-        data = np.vstack([-dl, dc_rhs, -du])
-        self.rhs_mat = dia_matrix(
-            (data, offsets),
-            shape=(self.de * self.nmuspec, self.de * self.nmuspec)).tocsr()
-        self.solver = factorized(lhs_mat)
-
-    def do_step(self, phc, dX):
-        # print dX
-        self._setup_solver(dX)
-        lidx, dim_e = self.lidx, self.de
-        phc[lidx:lidx + dim_e * self.nmuspec] = self.solver(
-            self.rhs_mat.dot(phc[lidx:lidx + dim_e * self.nmuspec]))
-
-    def solve_ext(self, phc):
-        return self.solver(self.rhs_mat.dot(phc))
-
-
-# class SemiLagrangianEnergyLosses(object):
-#     def __init__(self, egrid, mu_dEdX, mu_lidx_nsp):
-#         self.egrid = egrid
-#         self.dim_e = egrid.size
-#         self.mu_dEdX = mu_dEdX#0.5*(mu_dEdX[1:] + mu_dEdX[:-1])#mu_dEdX
-#         self.mu_lidx, self.nmuspec = mu_lidx_nsp
-
-#     def do_step(self, state, dX):
-
-#         newgrid = self.egrid + self.mu_dEdX*dX
-#         oldgrid = self.egrid
-#         lidx = self.mu_lidx
-#         dim_e = self.dim_e
-#         newgrid_log = np.log(newgrid)
-#         oldgrid_log = np.log(oldgrid)
-#         dEprime_dE = np.gradient(newgrid_log, oldgrid_log) * newgrid / oldgrid
-
-#         for nsp in xrange(self.nmuspec):
-#             newstate = state[lidx + dim_e * nsp:lidx + dim_e * (nsp + 1)] / dEprime_dE
-#             newstate = np.where(newstate > 1e-200, newstate, 1e-200)
-#             newstate = np.exp(np.interp(oldgrid_log, newgrid_log, np.log(newstate)))
-#             state[lidx + dim_e * nsp:lidx + dim_e * (nsp + 1)] = np.where(
-#                 newstate > 1e-200, newstate, 0.)
-
-
-def kern_numpy(nsteps,
+def solv_numpy(nsteps,
                dX,
                rho_inv,
                int_m,
@@ -233,7 +119,7 @@ def kern_numpy(nsteps,
         dXaccum += dxc[step]
 
         if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            mu_loss_handler.do_step(phc, dXaccum)
+            mu_loss_handler.solve_step(phc, dXaccum)
             dXaccum = 0.
 
         if (grid_idcs and grid_step < len(grid_idcs) and
@@ -248,7 +134,7 @@ def kern_numpy(nsteps,
     return phc, grid_sol
 
 
-def kern_CUDA_dense(nsteps,
+def solv_CUDA_dense(nsteps,
                     dX,
                     rho_inv,
                     int_m,
@@ -260,7 +146,7 @@ def kern_CUDA_dense(nsteps,
     of forward-euler integration.
 
     Function requires a working :mod:`numbapro` installation. It is typically slower
-    compared to :func:`kern_MKL_sparse` but it depends on your hardware.
+    compared to :func:`solv_MKL_sparse` but it depends on your hardware.
 
     Args:
       nsteps (int): number of integration steps
@@ -280,15 +166,15 @@ def kern_CUDA_dense(nsteps,
     elif config['FP_precision'] == 64:
         fl_pr = np.float64
     else:
-        raise Exception("kern_CUDA_dense(): Unknown precision specified.")
+        raise Exception("solv_CUDA_dense(): Unknown precision specified.")
 
     # if config['enable_muon_energyloss']:
-    #     raise NotImplementedError('kern_CUDA_dense(): ' +
+    #     raise NotImplementedError('solv_CUDA_dense(): ' +
     #         'Energy loss not imlemented for this solver.')
 
     if config['enable_muon_energy_loss']:
         raise NotImplementedError(
-            'kern_CUDA_dense(): ' +
+            'solv_CUDA_dense(): ' +
             'Energy loss not imlemented for this solver.')
 
     #=======================================================================
@@ -298,7 +184,7 @@ def kern_CUDA_dense(nsteps,
         from accelerate.cuda.blas import Blas
         from accelerate.cuda import cuda
     except ImportError:
-        raise Exception("kern_CUDA_dense(): Numbapro CUDA libaries not " +
+        raise Exception("solv_CUDA_dense(): Numbapro CUDA libaries not " +
                         "installed.\nCan not use GPU.")
     cubl = Blas()
     m, n = int_m.shape
@@ -356,7 +242,7 @@ class CUDASparseContext(object):
             import accelerate.cuda.sparse as cusparse
             from accelerate.cuda import cuda
         except ImportError:
-            raise Exception("kern_CUDA_sparse(): Numbapro CUDA libaries not " +
+            raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
                             "installed.\nCan not use GPU.")
 
         cuda.select_device(0)
@@ -425,7 +311,7 @@ class CUDASparseContext(object):
             alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
 
 
-def kern_CUDA_sparse(nsteps,
+def solv_CUDA_sparse(nsteps,
                      dX,
                      rho_inv,
                      context,
@@ -466,14 +352,14 @@ def kern_CUDA_sparse(nsteps,
     start = time()
 
     for step in xrange(nsteps):
-        c.do_step(rho_inv[step], dX[step])
+        c.solve_step(rho_inv[step], dX[step])
 
         dXaccum += dX[step]
 
         if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
             # Download current solution vector to host
             phc = c.get_phi()
-            mu_loss_handler.do_step(phc, dXaccum)
+            mu_loss_handler.solve_step(phc, dXaccum)
             # Upload changed vector back..
             c.set_phi(phc)
             dXaccum = 0.
@@ -490,7 +376,7 @@ def kern_CUDA_sparse(nsteps,
     return c.get_phi(), grid_sol
 
 
-def kern_MKL_sparse(nsteps,
+def solv_MKL_sparse(nsteps,
                     dX,
                     rho_inv,
                     int_m,
@@ -523,7 +409,7 @@ def kern_MKL_sparse(nsteps,
     try:
         mkl = cdll.LoadLibrary(config['MKL_path'])
     except OSError:
-        raise Exception("kern_MKL_sparse(): MKL runtime library not " +
+        raise Exception("solv_MKL_sparse(): MKL runtime library not " +
                         "found. Please check path.")
 
     gemv = None
@@ -544,7 +430,7 @@ def kern_MKL_sparse(nsteps,
         axpy = mkl.cblas_daxpy
         np_fl = np.float64
     else:
-        raise Exception("kern_MKL_sparse(): Unknown precision specified.")
+        raise Exception("solv_MKL_sparse(): Unknown precision specified.")
 
     # Set number of threads
     mkl.mkl_set_num_threads(byref(c_int(config['MKL_threads'])))
@@ -608,7 +494,7 @@ def kern_MKL_sparse(nsteps,
         dXaccum += dX[step]
 
         if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            mu_loss_handler.do_step(npphi, dXaccum)
+            mu_loss_handler.solve_step(npphi, dXaccum)
             dXaccum = 0.
 
         if (grid_idcs and grid_step < len(grid_idcs) and
@@ -623,7 +509,7 @@ def kern_MKL_sparse(nsteps,
     return npphi, grid_sol
 
 
-def kern_XeonPHI_sparse(nsteps,
+def solv_XeonPHI_sparse(nsteps,
                         dX,
                         rho_inv,
                         int_m,
