@@ -1244,31 +1244,31 @@ class MCEqRun(object):
                             "First interaction mode only works with numpy.")
 
         if config['kernel_config'] == 'numpy':
-            kernel = time_solvers.kern_numpy
+            kernel = time_solvers.solv_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler,
                     self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
-            kernel = time_solvers.kern_CUDA_dense
+            kernel = time_solvers.solv_CUDA_dense
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is True):
-            kernel = time_solvers.kern_CUDA_sparse
+            kernel = time_solvers.solv_CUDA_sparse
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
                     self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MKL' and
               config['use_sparse'] is True):
-            kernel = time_solvers.kern_MKL_sparse
+            kernel = time_solvers.solv_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
 
         elif (config['kernel_config'] == 'MIC' and
               config['use_sparse'] is True):
-            kernel = time_solvers.kern_XeonPHI_sparse
+            kernel = time_solvers.solv_XeonPHI_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
         else:
