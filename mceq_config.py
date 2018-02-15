@@ -149,8 +149,8 @@ config = {
     # Muon energy loss according to Kokoulin et al.
     "enable_muon_energy_loss": True,
 
-    # Energy solver, options are "Semi-Lagrangian" and "Chang-Cooper"
-    "energy_solver" : "Semi-Lagrangian",
+    # Energy solver, options are "Semi-Lagrangian", "Direct" and "Chang-Cooper"
+    "energy_solver" : "Direct",
 
     # Minimal step size for muon energy loss steps in g/cm2
     "muon_energy_loss_min_step": 5.,
