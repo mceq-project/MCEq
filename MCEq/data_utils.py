@@ -119,7 +119,8 @@ def convert_to_compact(fname):
     # Define a list of "stable" particles
     # Particles having an anti-partner
     standard_particles = [
-        22, 11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
+        22, 11, 12, 13, 7113, 7213, 7313,
+        14, 15, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
     ]  #for EM cascade add 11, 22
     standard_particles += [-pid for pid in standard_particles]
 
