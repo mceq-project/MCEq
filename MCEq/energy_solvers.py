@@ -152,8 +152,12 @@ class DifferentialOperator(object):
         denom_left_2 = 60
 
         # Centered diagonals
-        diags = [-3, -2, -1, 1, 2, 3]
-        coeffs = [-1, 9, -45, 45, -9, 1]
+        # diags = [-3, -2, -1, 1, 2, 3]
+        # coeffs = [-1, 9, -45, 45, -9, 1]
+        # denom = 60.
+
+	diags = diags_left_2
+        coeffs = coeffs_left_2
         denom = 60.
 
         # Last rows at the right of operator matrix
