@@ -75,7 +75,7 @@ class MCEqParticle(object):
 
         self.E_crit = self.critical_energy()
         self.name = particle_db.pdg2modname[pdgid]
-        
+
 
         if pdgid in particle_db.mesons:
             self.is_hadron = True
@@ -678,6 +678,31 @@ class InteractionYields(object):
                 print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
                     i + j, prim_pdg, sec_pdg, argname, argv)
 
+    def get_xlab_dist(self, energy, prim_pdg, sec_pdg, verbose=True):
+        """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
+        to `energy` for hadron-air collisions.
+
+        The function respects modifications applied via :func:`_set_mod_pprod`.
+        
+        Args:
+            energy (float): approximate interaction energy
+            prim_pdg (int): PDG ID of projectile
+            sec_pdg (int): PDG ID of secondary particle
+            verbose (bool): print out the closest energy
+        Returns:
+            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+        """
+
+        eidx = (np.abs(self.e_grid - energy)).argmin()
+        en  = self.e_grid[eidx]
+        if verbose: 
+            print 'Nearest energy, index: ', en, eidx
+        m = self.get_y_matrix(prim_pdg, sec_pdg)
+        xgrid = self.e_grid[:eidx + 1] / en
+        xlab = xgrid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
+        
+        return xgrid, xlab
+
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
 
@@ -990,7 +1015,7 @@ class DecayYields(object):
             else:
                 fname = join(config['data_dir'], config['decay_fname'])
 
-            
+
         if dbg > 0:
             print "DecayYields:_load():: Loading file", fname
         try:
@@ -1132,7 +1157,7 @@ class DecayYields(object):
         import bz2
         import cPickle as pickle
         fcompr = os.path.splitext(fname)[0] + '.bz2'
-        
+
         if not os.path.isfile(fcompr):
             raise IOError(
                 self.__class__.__name__ +

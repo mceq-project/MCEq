@@ -42,7 +42,7 @@ config = {
     "cs_fname": "crosssections.ppd",
 
     # File name of for energy losses
-    "mu_eloss_fname": "dEdX_mu_air.ppl",
+    "mu_eloss_fname": "dEdX_mu_air_centers.ppl",
 
     # File where to cache interpolating splines of the atmosphere module
     'atm_cache_file': 'atm_cache.ppd',
