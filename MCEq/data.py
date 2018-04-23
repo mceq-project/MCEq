@@ -632,7 +632,7 @@ class InteractionYields(object):
         elif abs(sec_pdg) == 321:
             # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
             mpli[(symm_pdg, sec_pdg)][('isospin', args)] = kmat
-
+            print args
             k0_arg = (args[0], 0.5 * args[1])
             if (prim_pdg, -sec_pdg) in mpli:
                 # Compute average of K+ and K- modification matrices
@@ -695,11 +695,13 @@ class InteractionYields(object):
 
         eidx = (np.abs(self.e_grid - energy)).argmin()
         en  = self.e_grid[eidx]
-        if verbose: 
+        if True: 
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
         xgrid = self.e_grid[:eidx + 1] / en
         xlab = xgrid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
+        # xlab = 1/en*m[:eidx + 1, eidx] * np.diag(self.widths)[eidx]
+        
         
         return xgrid, xlab
 

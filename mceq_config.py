@@ -234,14 +234,17 @@ config = {
 
 dbg = config['debug_level']
 
+# Particles for compact mode
+standard_particles = [
+    22, 11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
+]
 
-def clean_datadir():
-    from os import path, listdir, unlink
-    for fname in listdir(path.join(base_path, 'data')):
-        absfname = path.join(base_path, 'data', fname)
-        if (absfname.endswith('.ppd') or absfname.endswith('compact.bz2')
-                or absfname.endswith('ledpm.bz2')):
-            unlink(absfname)
+# Anti-particles
+standard_particles += [-pid for pid in standard_particles]
+
+# unflavored particles
+# append 221, 223, 333, if eta, omega and phi needed directly
+standard_particles += [130, 310]  #, 221, 223, 333]
 
 
 def mceq_config_without(key_list):
