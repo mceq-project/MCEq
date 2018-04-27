@@ -234,10 +234,10 @@ class MCEqRun(object):
         import cPickle as pickle
         from os.path import join
         if config['energy_solver'] != 'Semi-Lagrangian':
-            eloss_fname =  str(config['mu_eloss_fname'][:-3] 
+            eloss_fname =  str(config['mu_eloss_fname'][:-4] 
                 + '_centers.ppl')
         else:
-            eloss_fname =  str(config['mu_eloss_fname'][:-3] 
+            eloss_fname =  str(config['mu_eloss_fname'][:-4] 
                 + '_edges.ppl')
         self.mu_dEdX = pickle.load(
             open(join(config['data_dir'], eloss_fname),
