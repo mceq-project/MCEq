@@ -42,7 +42,7 @@ config = {
     "cs_fname": "crosssections.ppd",
 
     # File name of for energy losses
-    "mu_eloss_fname": "dEdX_mu_air_centers.ppl",
+    "mu_eloss_fname": "dEdX_mu_air.ppl",
 
     # File where to cache interpolating splines of the atmosphere module
     'atm_cache_file': 'atm_cache.ppd',
@@ -236,7 +236,7 @@ dbg = config['debug_level']
 
 # Particles for compact mode
 standard_particles = [
-    22, 11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
+    11, 12, 13, 14, 15, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
 ]
 
 # Anti-particles
@@ -244,7 +244,7 @@ standard_particles += [-pid for pid in standard_particles]
 
 # unflavored particles
 # append 221, 223, 333, if eta, omega and phi needed directly
-standard_particles += [130, 310]  #, 221, 223, 333]
+standard_particles += [22, 130, 310]  #, 221, 223, 333]
 
 
 def mceq_config_without(key_list):

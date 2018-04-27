@@ -233,8 +233,14 @@ class MCEqRun(object):
         # Muon energy loss
         import cPickle as pickle
         from os.path import join
+        if config['energy_solver'] != 'Semi-Lagrangian':
+            eloss_fname =  str(config['mu_eloss_fname'][:-3] 
+                + '_centers.ppl')
+        else:
+            eloss_fname =  str(config['mu_eloss_fname'][:-3] 
+                + '_edges.ppl')
         self.mu_dEdX = pickle.load(
-            open(join(config['data_dir'], config['mu_eloss_fname']),
+            open(join(config['data_dir'], eloss_fname),
                  'rb')).astype(self.fl_pr) * 1e-3  # ... to GeV
         # Left index of first muon species and number of
         # muon species including aliases
