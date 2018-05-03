@@ -367,11 +367,11 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         +--------------+-------------------+------------------------------+
         | location     | CORSIKA Table     | Description/season           |
         +==============+===================+==============================+
-        | "USStd"      |         1         |  US Standard atmosphere      |
+        | "USStd"      |         23        |  US Standard atmosphere      |
         +--------------+-------------------+------------------------------+
-        | "BK_USStd"   |         31        |  Bianca Keilhauer's USStd    |
+        | "BK_USStd"   |         37        |  Bianca Keilhauer's USStd    |
         +--------------+-------------------+------------------------------+
-        | "Karlsruhe"  |         18        |  AT115 / Karlsruhe           |
+        | "Karlsruhe"  |         24        |  AT115 / Karlsruhe           |
         +--------------+-------------------+------------------------------+
         | "SouthPole"  |      26 and 28    |  MSIS-90-E for Dec and June  |
         +--------------+-------------------+------------------------------+
