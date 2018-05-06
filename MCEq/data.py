@@ -76,7 +76,6 @@ class MCEqParticle(object):
         self.E_crit = self.critical_energy()
         self.name = particle_db.pdg2modname[pdgid]
 
-
         if pdgid in particle_db.mesons:
             self.is_hadron = True
             self.is_meson = True
@@ -136,7 +135,7 @@ class MCEqParticle(object):
                 self.pythia_db.ctau(self.pdgid) / E
             if cut:
                 dlen[0:self.mix_idx] = 0.
-            return 0.9966*dlen # Correction for bin average
+            return 0.9966 * dlen  # Correction for bin average
         except ZeroDivisionError:
             return np.ones(self.d) * np.inf
 
@@ -191,8 +190,8 @@ class MCEqParticle(object):
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length(e_grid)
 
-        if (not np.any(inv_declen > 0.) or
-                abs(self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
+        if (not np.any(inv_declen > 0.) or abs(
+                self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -398,7 +397,7 @@ class InteractionYields(object):
 
         e_bins = yield_dict['ebins']
         widths = np.diag(e_bins[1:] - e_bins[:-1])
-        e_grid = np.sqrt(e_bins[1:]*e_bins[:-1])
+        e_grid = np.sqrt(e_bins[1:] * e_bins[:-1])
 
         secondary_dict = {}
 
@@ -438,7 +437,6 @@ class InteractionYields(object):
         new_dict['widths'] = widths
         new_dict['evec'] = e_grid
         new_dict['ebins'] = e_bins
-
 
         if 'le_ext' not in new_dict:
             new_dict['le_ext'] = config['low_energy_extension']
@@ -662,8 +660,8 @@ class InteractionYields(object):
         elif abs(sec_pdg) == symm_pdg:
             mpli[(symm_pdg, prim_pdg)][('isospin', args)] = kmat
         else:
-            raise Exception('No isospin relation found for secondary' +
-                            str(sec_pdg))
+            raise Exception(
+                'No isospin relation found for secondary' + str(sec_pdg))
 
         # Tell MCEqRun to regenerate the matrices if something has changed
         return True
@@ -673,12 +671,17 @@ class InteractionYields(object):
         """
 
         for i, (prim_pdg, sec_pdg) in enumerate(sorted(self.mod_pprod)):
-            for j, (argname,
-                    argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
+            for j, (argname, argv) in enumerate(self.mod_pprod[(prim_pdg,
+                                                                sec_pdg)]):
                 print '{0}: {1} -> {2}, func: {3}, arg: {4}'.format(
                     i + j, prim_pdg, sec_pdg, argname, argv)
 
-    def get_xlab_dist(self, energy, prim_pdg, sec_pdg, verbose=True):
+    def get_xf_dist(self,
+                    energy,
+                    prim_pdg,
+                    sec_pdg,
+                    pos_only=True,
+                    verbose=True):
         """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
         to `energy` for hadron-air collisions.
 
@@ -692,18 +695,49 @@ class InteractionYields(object):
         Returns:
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
+        if not hasattr(self, '_ptav_sib23c'):
+            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
+            import pickle
+            from os.path import join
+            self._ptav_sib23c = pickle.load(
+                open(join(config['data_dir'], 'sibyll23c_aux.ppd'), 'rb'))[0]
+
+        def xF(xL, Elab, ppdg):
+
+            m = {2212: 0.938, 211: 0.139, 321: 0.493}
+            mp = m[2212]
+
+            Ecm = np.sqrt(2 * Elab * mp + 2 * mp**2)
+            Esec = xL * Elab
+            betacm = np.sqrt((Elab - mp) / (Elab + mp))
+            gammacm = (Elab + mp) / Ecm
+            avpt = self._ptav_sib23c[ppdg](
+                np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)]**2))
+            print Elab, ppdg, avpt
+            xf = 2 * (-betacm * gammacm * Esec + gammacm * np.sqrt(
+                Esec**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm
+            dxl_dxf = 1. / (2 * (
+                -betacm * gammacm * Elab + xL * Elab**2 * gammacm / np.sqrt(
+                    (xL * Elab)**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm)
+
+            return xf, dxl_dxf
 
         eidx = (np.abs(self.e_grid - energy)).argmin()
-        en  = self.e_grid[eidx]
-        if True: 
+        en = self.e_grid[eidx]
+        if True:
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
-        xgrid = self.e_grid[:eidx + 1] / en
-        xlab = xgrid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
-        # xlab = 1/en*m[:eidx + 1, eidx] * np.diag(self.widths)[eidx]
-        
-        
-        return xgrid, xlab
+        xl_grid = self.e_grid[:eidx] / en
+        xl_dist = xl_grid * en * m[:eidx, eidx] / np.diag(self.widths)[:eidx]
+        xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)
+        xf_dist = xl_dist * dxl_dxf
+
+        if pos_only:
+            xf_dist = xf_dist[xf_grid >= 0]
+            xf_grid = xf_grid[xf_grid >= 0]
+            return xf_grid, xf_dist
+
+        return xf_grid, xf_dist
 
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
@@ -797,9 +831,9 @@ class InteractionYields(object):
         """
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
-        if (config['adv_set']['disable_charm_pprod'] and
-            ((abs(projectile) > 400 and abs(projectile) < 500) or
-             (abs(projectile) > 4000 and abs(projectile) < 5000))):
+        if (config['adv_set']['disable_charm_pprod']
+                and ((abs(projectile) > 400 and abs(projectile) < 500) or
+                     (abs(projectile) > 4000 and abs(projectile) < 5000))):
 
             if dbg > 2:
                 print('InteractionYields::get_y_matrix(): disabled particle ' +
@@ -1008,15 +1042,15 @@ class DecayYields(object):
         from os.path import join
 
         if fname:
-            fname = join(config['data_dir' ],fname)
+            fname = join(config['data_dir'], fname)
         else:
             # Take the compact dictionary if "enabled" and no
             # file name forced
             if config['compact_mode']:
-                fname = join(config['data_dir'], 'compact_' + config['decay_fname'])
+                fname = join(config['data_dir'],
+                             'compact_' + config['decay_fname'])
             else:
                 fname = join(config['data_dir'], config['decay_fname'])
-
 
         if dbg > 0:
             print "DecayYields:_load():: Loading file", fname
@@ -1040,8 +1074,8 @@ class DecayYields(object):
             self.mothers = self.daughter_dict.keys()
         else:
             for m in mother_list:
-                if (m not in self.daughter_dict.keys() and
-                        abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
+                if (m not in self.daughter_dict.keys()
+                        and abs(m) not in [2212, 11, 12, 14, 22, 7012, 7014]):
                     if dbg:
                         print("DecayYields::_load(): Warning: no decay " +
                               "distributions for {0} found.").format(m)
@@ -1087,7 +1121,7 @@ class DecayYields(object):
 
         e_bins = decay_dict['ebins']
         widths = np.diag(e_bins[1:] - e_bins[:-1])
-        e_grid = np.sqrt(e_bins[1:]*e_bins[:-1])
+        e_grid = np.sqrt(e_bins[1:] * e_bins[:-1])
 
         # This will be the dictionary for the index
         daughter_dict = {}
@@ -1225,8 +1259,8 @@ class DecayYields(object):
         Returns:
           bool: ``True`` if ``daughter`` is daughter of ``mother``
         """
-        if (mother not in self.daughter_dict.keys() or
-                daughter not in self.daughter_dict[mother]):
+        if (mother not in self.daughter_dict.keys()
+                or daughter not in self.daughter_dict[mother]):
             return False
         else:
             return True
@@ -1353,7 +1387,6 @@ class HadAirCrossSections(object):
         Raises: 
           Exception: if invalid name specified in argument ``interaction_model``
         """
-
         # Remove the _compact suffix, since this does not affect cross sections
         if dbg > 2:
             print("InteractionYields:set_interaction_model()::Using cross " +

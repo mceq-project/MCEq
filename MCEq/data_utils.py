@@ -33,7 +33,7 @@ def clean_data_directory():
             os.unlink(path.join(datad, fname))
         elif 'yields_compact' in fname:
             os.unlink(path.join(datad, fname))
-        elif fname.endswith('.ppd'):
+        elif fname.endswith('.ppd') and 'sibyll23c_aux' not in fname:
             os.unlink(path.join(datad, fname))
 
 def convert_to_compact(fname):

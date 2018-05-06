@@ -1359,7 +1359,7 @@ class MCEqRun(object):
 
         while X < max_X:
             dX = delta_X(X)
-            if (np.any(int_grid) and (grid_step < int_grid.size) and
+            if (np.any(int_grid) and (grid_step < len(int_grid)) and
                 (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
                 grid_idcs.append(step)
