@@ -713,7 +713,7 @@ class InteractionYields(object):
             gammacm = (Elab + mp) / Ecm
             avpt = self._ptav_sib23c[ppdg](
                 np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)]**2))
-            print Elab, ppdg, avpt
+            
             xf = 2 * (-betacm * gammacm * Esec + gammacm * np.sqrt(
                 Esec**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm
             dxl_dxf = 1. / (2 * (
@@ -724,7 +724,7 @@ class InteractionYields(object):
 
         eidx = (np.abs(self.e_grid - energy)).argmin()
         en = self.e_grid[eidx]
-        if True:
+        if verbose:
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
         xl_grid = self.e_grid[:eidx] / en
