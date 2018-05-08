@@ -681,8 +681,9 @@ class InteractionYields(object):
                     prim_pdg,
                     sec_pdg,
                     pos_only=True,
-                    verbose=True):
-        """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
+                    verbose=True,
+                    **kwargs):
+        """Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close 
         to `energy` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
@@ -693,7 +694,7 @@ class InteractionYields(object):
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
         if not hasattr(self, '_ptav_sib23c'):
             # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
@@ -727,8 +728,8 @@ class InteractionYields(object):
         if verbose:
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
-        xl_grid = self.e_grid[:eidx] / en
-        xl_dist = xl_grid * en * m[:eidx, eidx] / np.diag(self.widths)[:eidx]
+        xl_grid = self.e_grid[:eidx + 1] / en
+        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
         xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)
         xf_dist = xl_dist * dxl_dxf
 
@@ -738,6 +739,36 @@ class InteractionYields(object):
             return xf_grid, xf_dist
 
         return xf_grid, xf_dist
+
+    def get_xlab_dist(self,
+                    energy,
+                    prim_pdg,
+                    sec_pdg,
+                    verbose=True,
+                    **kwargs):
+        """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
+        to `energy` for hadron-air collisions.
+
+        The function respects modifications applied via :func:`_set_mod_pprod`.
+        
+        Args:
+            energy (float): approximate interaction energy
+            prim_pdg (int): PDG ID of projectile
+            sec_pdg (int): PDG ID of secondary particle
+            verbose (bool): print out the closest energy
+        Returns:
+            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+        """
+
+        eidx = (np.abs(self.e_grid - energy)).argmin()
+        en = self.e_grid[eidx]
+        if verbose:
+            print 'Nearest energy, index: ', en, eidx
+        m = self.get_y_matrix(prim_pdg, sec_pdg)
+        xl_grid = self.e_grid[:eidx + 1] / en
+        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
+
+        return xl_grid, xl_dist
 
     def set_interaction_model(self, interaction_model, force=False):
         """Selects an interaction model and prepares all internal variables.
