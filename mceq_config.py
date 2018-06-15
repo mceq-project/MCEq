@@ -139,6 +139,12 @@ config = {
     # experiments. Here, ctau => 2.5 cm (K0S).
     "compact_mode": True,
 
+    # The leading process is can be either decay or interaction. This depends
+    # on the target density and it is usually chosen automatically. For
+    # advanced applications one can force "interactions" to be the dominant
+    # process. Essentially this affects how the adaptive step size is computed.
+    "leading_process" : "decays",   
+
     # Ratio of decay_length/interaction_length where particle interactions
     # are neglected and the resonance approximation is used
     # 0.5 ~ precision loss <+3% speed gain ~ factor 10

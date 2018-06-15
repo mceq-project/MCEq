@@ -1346,7 +1346,8 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if self.max_ldec * ri(config['max_density']) > self.max_lint:
+        if (self.max_ldec * ri(config['max_density']) > self.max_lint and 
+            config["leading_process"] == 'decays'):
             if dbg > 0:
                 print("MCEqRun::_calculate_integration_path() " +
                       "using decays as leading eigenvalues")
@@ -1354,7 +1355,7 @@ class MCEqRun(object):
         else:
             if dbg > 0:
                 print("MCEqRun::_calculate_integration_path() " +
-                      "using decays as leading eigenvalues")
+                      "using interactions as leading eigenvalues")
             delta_X = lambda X: 0.95 / self.max_lint
 
         while X < max_X:
