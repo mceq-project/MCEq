@@ -779,9 +779,10 @@ class MCEqRun(object):
             En = E
         else:
             n_protons = corsika_id % 100
-            n_neutrons = (corsika_id - Z) / 100 - n_protons
+            n_neutrons = (corsika_id - n_protons) / 100 - n_protons
             # convert energy to energy per nucleon
-            En = E / float(A)
+            En = E / float(n_protons + n_neutrons)
+            
             if E < np.min(self._e_grid):
                 raise Exception('MCEqRun::set_single_primary_particle():' +
                                 'energy per nucleon too low for primary ' +
