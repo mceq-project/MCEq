@@ -198,7 +198,6 @@ class MCEqRun(object):
         self.dim_states = self.d * self.n_tot_species
 
         self.muon_selector = np.zeros(self.dim_states, dtype='bool')
-
         for p in self.particle_species:
             try:
                 nceidx = p.nceidx
@@ -212,9 +211,9 @@ class MCEqRun(object):
             self.pname2pref[p.name] = p
 
             # Select all positions of muon species in the state vector
-            if abs(p.pdgid) % 1000 % 100 % 13 == 0:
+            if abs(p.pdgid) % 1000 % 100 % 13 == 0 and not (100 < abs(p.pdgid) < 7000):
                 self.muon_selector[p.lidx():p.uidx()] = True
-
+        
         self.e_weight = np.array(
             self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
 
