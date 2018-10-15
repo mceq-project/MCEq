@@ -1267,7 +1267,7 @@ class MCEqRun(object):
         if config['kernel_config'] == 'numpy':
             kernel = kernels.kern_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.e_grid, self.mu_dEdX, self.mu_lidx_nsp,
+                    grid_idcs, self.e_bins, self.mu_dEdX, self.mu_lidx_nsp,
                     self.progress_bar, self.fa_vars)
         elif (config['kernel_config'] == 'CUDA' and
               config['use_sparse'] is False):
