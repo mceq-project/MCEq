@@ -108,6 +108,7 @@ class EarthsAtmosphere():
         self.theta_deg = None
         self.max_X = None
         self.max_den = 1.240e-03
+        self.max_theta = 90.
 
     @abstractmethod
     def get_density(self, h_cm):
@@ -207,6 +208,10 @@ class EarthsAtmosphere():
           force_spline_calc (bool): forces (re-)calculation of the
                                     spline for each call
         """
+        if theta_deg < 0. or theta_deg > self.max_theta:
+            raise Exception(self.__class__.__name__ + 
+                '(): Zenith angle not in allowed range.')
+
         def calculate_and_store(key, cache):
             self.thrad = theta_rad(theta_deg)
             self.theta_deg = theta_deg
@@ -999,7 +1004,11 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
                 print ('{0} location forced to SouthPole in' +
                        ' class').format(self.__class__.__name__)
             location = 'SouthPole'
+        
         MSIS00Atmosphere.__init__(self, location, season)
+        
+        # Allow for upgoing zenith angles 
+        self.max_theta = 180.
 
     def latitude(self, det_zenith_deg):
         """ Returns the geographic latitude of the shower impact point.
