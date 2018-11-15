@@ -991,7 +991,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
 class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
     """Extension of :class:`MSIS00Atmosphere` which couples the latitude
-    setting with the zenith angle of the detector.
+    setting with the zenith angle of the detector and transforms from detector 
+    to surface coordinates.
 
     Args:
       location (str): see :func:`init_parameters`
@@ -1035,23 +1036,51 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         return -90. + np.arctan2(x * np.sin(theta_rad),
                                  r - d + x * np.cos(theta_rad)) / np.pi * 180.
 
+    def transform_to_surface(self, det_zenith_deg):
+        """ Returns the zenith angle in local coordinates anchored
+        at the shower impact point.
+        Assumes a spherical earth. The detector is 1948m under the
+        surface.
+        Credits: geometry formulae by Hans Niederhausen, Yiqian Xu 
+        (Stony Brook Univ.)
+        Args:
+          det_zenith_deg (float): zenith angle at detector in degrees
+        Returns:
+          float: zenith angle in surface coordinates
+        """
+        r = config['r_E']
+        d = 1948  # m
+        theta_rad = det_zenith_deg / 180. * np.pi
+        s2 = np.sin(theta_rad)**2
+        c2 = np.cos(theta_rad)**2
+        x = (r-d) / r
+        prod = x * s2
+        if theta_rad < np.pi / 2.:
+            delta = np.arccos(prod  + np.sqrt(prod**2 + c2 - x*prod))
+        else:
+            delta = np.arccos(prod - np.sqrt(prod**2 + c2 - x*prod))
+        return det_zenith_deg - delta / np.pi * 180.
+
+
     def set_theta(self, theta_deg, force_spline_calc=True):
+            
+        theta_deg_surface = self.transform_to_surface(theta_deg)
 
         self._msis.set_location_coord(longitude=0.,
                                       latitude=self.latitude(theta_deg))
+
         if dbg > 0:
             print ('{0}::set_theta(): latitude = {1} for ' +
                    'zenith angle = {2}').format(self.__class__.__name__,
                                                 self.latitude(theta_deg),
                                                 theta_deg)
-        if theta_deg > 90.:
-            if dbg > 0:
-                print ('{0}::set_theta(): theta = {1} below horizon.' +
-                       'using theta = {2}').format(self.__class__.__name__,
-                                                   theta_deg,
-                                                   180. - theta_deg)
-            theta_deg = 180. - theta_deg
-        MSIS00Atmosphere.set_theta(self, theta_deg,
+
+            print ('{0}::set_theta(): theta = {1} at detector.' +
+                   'using theta = {2}' +
+                    'at surface').format(self.__class__.__name__,
+                                                theta_deg, theta_deg_surface)
+
+        MSIS00Atmosphere.set_theta(self, theta_deg_surface,
                                    force_spline_calc=force_spline_calc)
 
 
