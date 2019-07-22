@@ -9,7 +9,7 @@ pytest_runner = ['pytest-runner'] if needs_pytest else []
 setup_requires = pytest_runner
 
 libnrlmsise00 = Extension(
-    'MCEq.geometry.nrlmsise00._libnrlmsise00',
+    'MCEq.geometry.nrlmsise00.libnrlmsise00',
     sources=[
         join('MCEq/geometry/nrlmsise00', sf)
         for sf in ['nrlmsise-00_data.c', 'nrlmsise-00.c']
@@ -17,7 +17,7 @@ libnrlmsise00 = Extension(
     include_dirs=['MCEq/geometry/nrlmsise00'])
     
 libcorsikaatm = Extension(
-    'MCEq.geometry.corsikaatm._libcorsikaatm',
+    'MCEq.geometry.corsikaatm.libcorsikaatm',
     sources=['MCEq/geometry/corsikaatm/corsikaatm.c'])
 
 
