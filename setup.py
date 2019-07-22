@@ -83,8 +83,8 @@ setup(
     ],
     ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={
-        'MKL': ['mkl>=2019.1'],
-        'CUDA': ['cupy>=5.1.0']
+        'MKL': ['mkl==2019.0'],
+        'CUDA': ['cupy==6.2.0']
     },
     classifiers=[
         'Programming Language :: Python',
