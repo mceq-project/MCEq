@@ -1,6 +1,5 @@
 crflux==1.0.2
 h5py==2.9.0
-MCEq==1.0.1
 numpy==1.16.4
 particletools==1.1.3
 scipy==1.2.2
