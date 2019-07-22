@@ -58,7 +58,7 @@ setup(
         'six',
         'h5py',
         'particletools==1.1.3',
-        'crflux==1.0.1',
+        'crflux==1.0.2',
         'scipy',
         'numpy',
     ],
