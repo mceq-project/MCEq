@@ -21,9 +21,9 @@ done
 # Install packages and test
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/python" -m pip install $package_name --no-index -f /io/wheelhouse
-    if [ -d "/io/tests" ]; then
-        "${PYBIN}/pytest" /io/tests
-    else
-        "${PYBIN}/pytest" --pyargs $package_name
-    fi
+    # if [ -d "/io/tests" ]; then
+    #     "${PYBIN}/pytest" /io/tests
+    # else
+    #     "${PYBIN}/pytest" --pyargs $package_name
+    # fi
 done
