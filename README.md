@@ -24,9 +24,13 @@ If you are using this code in your scientific work, please cite the code **AND**
 physical models. A complete list of references can be found in the 
 `Citations section of the docs <http://mceq.readthedocs.org/en/latest/citations.html>`_.
 
-## Contributers
+### Authors:
 
 *Anatoli Fedynitch*
+
+##$ Contributers
+
+*[Hans Dembinski](https://github.com/HDembinski)*
 
 ## Copyright and license
 
