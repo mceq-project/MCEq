@@ -261,9 +261,11 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
     _atm_param = None
-
+    
     def __init__(self, location, season=None):
         self.init_parameters(location, season)
+        import  MCEq.corsikaatm.corsikaatm as corsika_acc
+        self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
@@ -408,7 +410,8 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
-        return corsika_get_density_jit(h_cm, self._atm_param)
+        return corsika_acc.corsika_get_density(h_cm, *self._atm_param)
+        # return corsika_get_density_jit(h_cm, self._atm_param)
 
     def get_mass_overburden(self, h_cm):
         """ Returns the mass overburden in atmosphere in g/cm**2.
@@ -421,7 +424,8 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: column depth :math:`T(h_{cm})` in g/cm**2
         """
-        return corsika_get_m_overburden_jit(h_cm, self._atm_param)
+        return corsika_acc.corsika_get_m_overburden(h_cm, *self._atm_param)
+        # return corsika_get_m_overburden_jit(h_cm, self._atm_param)
 
     def rho_inv(self, X, cos_theta):
         """Returns reciprocal density in cm**3/g using planar approximation.
@@ -434,7 +438,8 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: :math:`\\frac{1}{\\rho}(X,\\cos{\\theta})` cm**3/g
         """
-        return planar_rho_inv_jit(X, cos_theta, self._atm_param)
+        return corsika_acc.planar_rho_inv(X, cos_theta, *self._atm_param)
+        # return planar_rho_inv_jit(X, cos_theta, self._atm_param)
 
     def calc_thickl(self):
         """Calculates thickness layers for :func:`depth2height`
@@ -461,98 +466,98 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         info(5, '_thickl = np.array([' + ', '.join(thickl) + '])')
 
 
-# TODO: Remove numba dependence
-@jit(double(double, double, double[:, :]), target='cpu')
-def planar_rho_inv_jit(X, cos_theta, param):
-    """Optimized calculation of :math:`1/\\rho(X,\\theta)` in
-    planar approximation.
+# # TODO: Remove numba dependence
+# @jit(double(double, double, double[:, :]), target='cpu')
+# def planar_rho_inv_jit(X, cos_theta, param):
+#     """Optimized calculation of :math:`1/\\rho(X,\\theta)` in
+#     planar approximation.
 
-    This function can be used for calculations where
-    :math:`\\theta < 70^\\circ`.
+#     This function can be used for calculations where
+#     :math:`\\theta < 70^\\circ`.
 
-    Args:
-      X (float): slant depth in g/cm**2
-      cos_theta (float): :math:`\\cos(\\theta)`
+#     Args:
+#       X (float): slant depth in g/cm**2
+#       cos_theta (float): :math:`\\cos(\\theta)`
 
-    Returns:
-      float: :math:`1/\\rho(X,\\theta)` in cm**3/g
-    """
-    a = param[0]
-    b = param[1]
-    c = param[2]
-    t = param[3]
-    res = 0.0
-    x_v = X * cos_theta
-    layer = 0
-    for i in range(t.size):
-        if not x_v >= t[i]:
-            layer = i
-    if layer == 4:
-        res = c[4] / b[4]
-    else:
-        res = c[layer] / (x_v - a[layer])
-    return res
-
-
-@jit(double(double, double[:, :]), target='cpu')
-def corsika_get_density_jit(h_cm, param):
-    """Optimized calculation of :math:`\\rho(h)` in
-    according to CORSIKA type parameterization.
-
-    Args:
-      h_cm (float): height above surface in cm
-      param (numpy.array): 5x5 parameter array from
-                        :class:`CorsikaAtmosphere`
-
-    Returns:
-      float: :math:`\\rho(h)` in g/cm**3
-    """
-    b = param[1]
-    c = param[2]
-    hl = param[4]
-    res = 0.0
-    layer = 0
-    for i in range(hl.size):
-        if not h_cm <= hl[i]:
-            layer = i
-    if layer == 4:
-        res = b[4] / c[4]
-    else:
-        res = b[layer] / c[layer] * np.exp(-h_cm / c[layer])
-
-    return res
+#     Returns:
+#       float: :math:`1/\\rho(X,\\theta)` in cm**3/g
+#     """
+#     a = param[0]
+#     b = param[1]
+#     c = param[2]
+#     t = param[3]
+#     res = 0.0
+#     x_v = X * cos_theta
+#     layer = 0
+#     for i in range(t.size):
+#         if not x_v >= t[i]:
+#             layer = i
+#     if layer == 4:
+#         res = c[4] / b[4]
+#     else:
+#         res = c[layer] / (x_v - a[layer])
+#     return res
 
 
-@jit(double(double, double[:, :]), target='cpu')
-def corsika_get_m_overburden_jit(h_cm, param):
-    """Optimized calculation of :math:`\\T(h)` in
-    according to CORSIKA type parameterization.
+# @jit(double(double, double[:, :]), target='cpu')
+# def corsika_get_density_jit(h_cm, param):
+#     """Optimized calculation of :math:`\\rho(h)` in
+#     according to CORSIKA type parameterization.
 
-    Args:
-      h_cm (float): height above surface in cm
-      param (numpy.array): 5x5 parameter array from
-                        :class:`CorsikaAtmosphere`
+#     Args:
+#       h_cm (float): height above surface in cm
+#       param (numpy.array): 5x5 parameter array from
+#                         :class:`CorsikaAtmosphere`
 
-    Returns:
-      float: :math:`\\rho(h)` in g/cm**3
-    """
-    a = param[0]
-    b = param[1]
-    c = param[2]
-    hl = param[4]
-    res = 0.0
-    layer = 0
+#     Returns:
+#       float: :math:`\\rho(h)` in g/cm**3
+#     """
+#     b = param[1]
+#     c = param[2]
+#     hl = param[4]
+#     res = 0.0
+#     layer = 0
+#     for i in range(hl.size):
+#         if not h_cm <= hl[i]:
+#             layer = i
+#     if layer == 4:
+#         res = b[4] / c[4]
+#     else:
+#         res = b[layer] / c[layer] * np.exp(-h_cm / c[layer])
 
-    for i in range(hl.size):
-        if not h_cm <= hl[i]:
-            layer = i
+#     return res
 
-    if layer == 4:
-        res = a[4] - b[4] / c[4] * h_cm
-    else:
-        res = a[layer] + b[layer] * np.exp(-h_cm / c[layer])
 
-    return res
+# @jit(double(double, double[:, :]), target='cpu')
+# def corsika_get_m_overburden_jit(h_cm, param):
+#     """Optimized calculation of :math:`\\T(h)` in
+#     according to CORSIKA type parameterization.
+
+#     Args:
+#       h_cm (float): height above surface in cm
+#       param (numpy.array): 5x5 parameter array from
+#                         :class:`CorsikaAtmosphere`
+
+#     Returns:
+#       float: :math:`\\rho(h)` in g/cm**3
+#     """
+#     a = param[0]
+#     b = param[1]
+#     c = param[2]
+#     hl = param[4]
+#     res = 0.0
+#     layer = 0
+
+#     for i in range(hl.size):
+#         if not h_cm <= hl[i]:
+#             layer = i
+
+#     if layer == 4:
+#         res = a[4] - b[4] / c[4] * h_cm
+#     else:
+#         res = a[layer] + b[layer] * np.exp(-h_cm / c[layer])
+
+#     return res
 
 
 class IsothermalAtmosphere(EarthsAtmosphere):

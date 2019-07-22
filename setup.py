@@ -9,12 +9,16 @@ pytest_runner = ['pytest-runner'] if needs_pytest else []
 setup_requires = pytest_runner
 
 libnrlmsise00 = Extension(
-    'MCEq/nrlmsise00/_libnrlmsise00',
+    'MCEq/geometry/nrlmsise00/_libnrlmsise00',
     sources=[
-        join('MCEq/nrlmsise00', sf)
+        join('MCEq/geometry/nrlmsise00', sf)
         for sf in ['nrlmsise-00_data.c', 'nrlmsise-00.c']
     ],
-    include_dirs=['MCEq/nrlmsise00'])
+    include_dirs=['MCEq/geometry/nrlmsise00'])
+    
+libcorsikaatm = Extension(
+    'MCEq/geometry/corsikaatm/_libcorsikaatm',
+    sources=['MCEq/geometry/corsikaatm/corsikaatm.c'])
 
 
 # This method is adopted from iMinuit https://github.com/scikit-hep/iminuit
@@ -38,12 +42,14 @@ setup(
     author_email='afedynitch@gmail.com',
     license='BSD 3-Clause License',
     url='https://github.com/afedynitch/MCEq',
-    packages=['MCEq', 'MCEq.nrlmsise00', 'MCEq.geometry'],
+    packages=['MCEq', 'MCEq.geometry', 'MCEq.geometry.nrlmsise00',
+        'MCEq.geometry.corsikaatm'],
     setup_requires=[] + pytest_runner,
     package_dir={
         'MCEq': 'MCEq',
         'MCEq.geometry': 'MCEq/geometry',
-        'MCEq.nrlmsise00': 'MCEq/nrlmsise00'
+        'MCEq.geometry.nrlmsise00': 'MCEq/geometry/nrlmsise00',
+        'MCEq.geometry.corsikaatm': 'MCEq/geometry/corsikaatm'
     },
     package_data={
         'MCEq': ['data/README.md'],
@@ -62,7 +68,7 @@ setup(
     requires=[
         'numpy', 'scipy', 'numba', 'mkl', 'particletools', 'crflux', 'h5py'
     ],
-    ext_modules=[libnrlmsise00],
+    ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={
         'MKL': ['mkl>=2019.1'],
         'CUDA': ['cupy>=5.1.0']
