@@ -61,12 +61,11 @@ setup(
         'crflux>=1.0.1',
         'scipy>=1.2.1',
         'numpy>=1.16.2',
-        'numba',
         'mock>=3.0.5'
     ],
     py_modules=['mceq_config'],
     requires=[
-        'numpy', 'scipy', 'numba', 'mkl', 'particletools', 'crflux', 'h5py'
+        'numpy', 'scipy', 'particletools', 'crflux', 'h5py'
     ],
     ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={

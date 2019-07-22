@@ -36,7 +36,6 @@ from six import with_metaclass
 from os.path import join
 import numpy as np
 from MCEq.misc import theta_rad, info
-from numba import jit, double
 
 import mceq_config as config
 
