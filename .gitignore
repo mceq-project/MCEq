@@ -1,0 +1,12 @@
+*.pyc
+data/*
+docs/_build
+.vscode
+examples/.ipynb*
+_skbuild
+*.h5
+build
+dist
+*egg-info
+.nfs*
+*.ipynb_checkpoints*
