@@ -55,10 +55,10 @@ setup(
         'MCEq': ['data/README.md'],
     },
     install_requires=[
-        'six>=1.12.0',
-        'h5py>=2.9.0',
-        'particletools>=1.1.3',
-        'crflux>=1.0.1',
+        'six',
+        'h5py',
+        'particletools==1.1.3',
+        'crflux==1.0.1',
         'scipy',
         'numpy',
         'mock'
