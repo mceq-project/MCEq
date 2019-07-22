@@ -22,7 +22,8 @@ double planar_rho_inv(double X, double cos_theta,
     double res = 0.0;
     double x_v = X * cos_theta;
     int layer = 0;
-    for (int i = 0; i < 5; ++i)
+    int i;
+    for (i = 0; i < 5; ++i)
         if (!(x_v >= t[i]))
             layer = i;
 
@@ -52,7 +53,8 @@ double corsika_get_density(double h_cm, double *a,
 
     double res = 0.0;
     int layer = 0;
-    for (int i = 0; i < 5; ++i)
+    int i;
+    for (i = 0; i < 5; ++i)
         if (!(h_cm <= hl[i]))
             layer = i;
     if (layer == 4)
@@ -80,7 +82,8 @@ double corsika_get_m_overburden_jit(double h_cm, double *a,
 
     double res = 0.0;
     int layer = 0;
-    for (int i = 0; i < 5; ++i)
+    int i;
+    for (i = 0; i < 5; ++i)
         if (!(h_cm <= hl[i]))
             layer = i;
 
