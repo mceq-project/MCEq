@@ -55,7 +55,7 @@ setup(
         'crflux>=1.0.1',
         'scipy>=1.2.1',
         'numpy>=1.16.2',
-        'numba>=0.43.1',
+        'numba',
         'mock>=3.0.5'
     ],
     py_modules=['mceq_config'],
