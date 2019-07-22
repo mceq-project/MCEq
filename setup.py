@@ -59,9 +59,9 @@ setup(
         'h5py>=2.9.0',
         'particletools>=1.1.3',
         'crflux>=1.0.1',
-        'scipy>=1.2.1',
-        'numpy>=1.16.2',
-        'mock>=3.0.5'
+        'scipy',
+        'numpy',
+        'mock'
     ],
     py_modules=['mceq_config'],
     requires=[
