@@ -4,8 +4,7 @@ from MCEq.core import MCEqRun
 import crflux.models as pm
 
 config.debug_level = 5
-config.mceq_db_fname = 'mceq_db_lext_dpm191.h5'
-config.kernel_config = 'CUDA'
+config.kernel_config = 'numpy'
 config.CUDA_GPU_ID = 2
 config.mkl_threads = 8
 

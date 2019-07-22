@@ -74,6 +74,8 @@ setup(
         'crflux==1.0.2',
         'scipy',
         'numpy',
+        'tqdm',
+        'requests'
     ],
     py_modules=['mceq_config'],
     requires=[

@@ -1,9 +1,11 @@
 """MCEq RC1 config file """
-
 import sys
 import platform
 import os.path as path
 import warnings
+from MCEq.misc import info, download_file
+
+
 
 base_path = path.dirname(path.abspath(__file__))
 sys.path.append(base_path)
@@ -249,7 +251,6 @@ standard_particles += [22, 111, 130, 310]  # , 221, 223, 333]
 # versions, using `from mceq_config import config`. The future versions
 # will access the module attributes directly.
 
-
 class MCEqConfigCompatibility(dict):
     def __init__(self, namespace):
         self.__dict__.update(namespace)
@@ -266,3 +267,12 @@ class MCEqConfigCompatibility(dict):
 
 
 config = MCEqConfigCompatibility(globals())
+
+# Download database file from github
+base_url = 'https://github.com/afedynitch/MCEq/releases/download/'
+release_tag = 'builds_on_azure/'
+url = base_url + release_tag + mceq_db_fname
+if not path.isfile(path.join(data_dir, mceq_db_fname)):
+    info(1, 'Downloading for mceq database file {0}.'.format(mceq_db_fname))
+    info(2, url)
+    download_file(url, path.join(data_dir, mceq_db_fname))
