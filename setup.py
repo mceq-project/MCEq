@@ -61,7 +61,6 @@ setup(
         'crflux==1.0.1',
         'scipy',
         'numpy',
-        'mock'
     ],
     py_modules=['mceq_config'],
     requires=[
