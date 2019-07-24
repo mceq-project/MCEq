@@ -32,11 +32,11 @@ jobs:
         plat: manylinux2010_x86_64
         image: quay.io/pypa/manylinux2010_x86_64
         python.architecture: x64
-      64Bit:
-        arch: x86_64
-        plat: manylinux1_x86_64
-        image: $(many_linux_base)x86_64
-        python.architecture: x64
+      # 64Bit:
+      #   arch: x86_64
+      #   plat: manylinux1_x86_64
+      #   image: $(many_linux_base)x86_64
+      #   python.architecture: x64
       32Bit:
         arch: i686
         plat: manylinux1_i686

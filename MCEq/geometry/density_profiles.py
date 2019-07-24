@@ -263,7 +263,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     
     def __init__(self, location, season=None):
         self.init_parameters(location, season)
-        import  MCEq.corsikaatm.corsikaatm as corsika_acc
+        import MCEq.geometry.corsikaatm.corsikaatm as corsika_acc
         self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)
 
@@ -409,7 +409,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
-        return corsika_acc.corsika_get_density(h_cm, *self._atm_param)
+        return self.corsika_acc.corsika_get_density(h_cm, *self._atm_param)
         # return corsika_get_density_jit(h_cm, self._atm_param)
 
     def get_mass_overburden(self, h_cm):
@@ -423,7 +423,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: column depth :math:`T(h_{cm})` in g/cm**2
         """
-        return corsika_acc.corsika_get_m_overburden(h_cm, *self._atm_param)
+        return self.corsika_acc.corsika_get_m_overburden(h_cm, *self._atm_param)
         # return corsika_get_m_overburden_jit(h_cm, self._atm_param)
 
     def rho_inv(self, X, cos_theta):
@@ -437,7 +437,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Returns:
           float: :math:`\\frac{1}{\\rho}(X,\\cos{\\theta})` cm**3/g
         """
-        return corsika_acc.planar_rho_inv(X, cos_theta, *self._atm_param)
+        return self.corsika_acc.planar_rho_inv(X, cos_theta, *self._atm_param)
         # return planar_rho_inv_jit(X, cos_theta, self._atm_param)
 
     def calc_thickl(self):
@@ -629,7 +629,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
                  season=None,
                  doy=None,
                  use_loc_altitudes=False):
-        from MCEq.geometry.nrlmsis_mceq import cNRLMSISE00
+        from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
         self._msis = cNRLMSISE00()
 

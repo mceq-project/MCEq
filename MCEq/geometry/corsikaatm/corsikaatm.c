@@ -64,7 +64,7 @@ double corsika_get_density(double h_cm, double *a,
 
     return res;
 }
-double corsika_get_m_overburden_jit(double h_cm, double *a,
+double corsika_get_m_overburden(double h_cm, double *a,
                                     double *b, double *c,
                                     double *t, double *hl)
 {
@@ -94,3 +94,4 @@ double corsika_get_m_overburden_jit(double h_cm, double *a,
 
     return res;
 }
+
