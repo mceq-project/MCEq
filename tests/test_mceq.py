@@ -16,8 +16,8 @@ def test_some_angles():
 
     config.debug_level = 5
     config.kernel_config = 'numpy'
-    # config.CUDA_GPU_ID = 2
-    # config.mkl_threads = 8
+    config.cuda_gpu_id = 0
+    config.mkl_threads = 2
 
     mceq = MCEqRun(
         interaction_model='SIBYLL23C',

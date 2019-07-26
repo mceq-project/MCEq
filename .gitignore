@@ -10,3 +10,4 @@ dist
 *egg-info
 .nfs*
 *.ipynb_checkpoints*
+*.so

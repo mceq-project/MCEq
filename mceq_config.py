@@ -5,23 +5,8 @@ import os.path as path
 import warnings
 from MCEq.misc import info, download_file
 
-
-
 base_path = path.dirname(path.abspath(__file__))
 sys.path.append(base_path)
-
-# determine shared library extension and MKL path
-libext = None
-mkl_default = path.join(sys.prefix, 'lib', 'libmkl_rt')
-
-if platform.platform().find('Linux') != -1:
-    libext = '.so'
-elif platform.platform().find('Darwin') != -1:
-    libext = '.dylib'
-else:
-    # Windows case
-    mkl_default = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt')
-    libext = '.dll'
 
 # Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -47,8 +32,6 @@ mceq_db_fname = "mceq_db_lext_dpm191.h5"
 # File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 
-# full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
-mkl_path = mkl_default + libext
 # =================================================================
 # Atmosphere and geometry settings
 # =================================================================
@@ -92,7 +75,7 @@ max_density = 0.001225,
 # The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 # stability problems with the integrator with such low thresholds. Use with
 # care and check results for oscillations and feasibility.
-e_min = 1.
+e_min = .1
 
 # The maximal energy is 1e12 GeV, but not all interaction models run at such
 # high energies. If you are interested in lower energies, reduce this value
@@ -109,7 +92,8 @@ integrator = "euler"
 
 # euler kernel implementation (numpy/MKL/CUDA).
 # With serious nVidia GPUs CUDA a few times faster than MKL
-kernel_config = "MKL"
+# autodetection of fastest kernel below
+kernel_config = "numpy"
 
 # Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -251,6 +235,49 @@ standard_particles += [22, 111, 130, 310]  # , 221, 223, 333]
 # versions, using `from mceq_config import config`. The future versions
 # will access the module attributes directly.
 
+# Autodetect best solver
+# determine shared library extension and MKL path
+pf = platform.platform() 
+
+if 'Linux' in pf:
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.so') 
+elif 'Darwin' in pf:
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.dylib') 
+else:
+    # Windows case
+    mkl_path = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt.dll')
+
+# Check if MKL library found
+if path.isfile(mkl_path):
+    has_mkl = True
+else:
+    has_mkl = False
+
+# Look for cupy module
+try:
+    import cupy
+    has_cuda = True
+except ImportError:
+    has_cuda = False
+
+# CUDA is usually fastest, then MKL. Fallback to numpy.
+if has_cuda:
+    kernel_config = 'CUDA'
+elif has_mkl:
+    kernel_config = 'MKL'
+else:
+    kernel_config = 'numpy'
+info(2, 'Auto-detected {0} solver.'.format(kernel_config))
+
+if has_mkl:
+    from ctypes import cdll, c_int, byref
+    mkl = cdll.LoadLibrary(mkl_path)
+    # Set number of threads
+    mkl.mkl_set_num_threads(byref(c_int(mkl_threads)))
+    info(5, 'MKL threads limited to {0}'.format(mkl_threads))
+
+# Compatibility layer for dictionary access to config attributes
+# This is deprecated and will be removed in future
 class MCEqConfigCompatibility(dict):
     def __init__(self, namespace):
         self.__dict__.update(namespace)
@@ -265,8 +292,8 @@ class MCEqConfigCompatibility(dict):
             raise Exception('Unknown config key', key)
         return super(MCEqConfigCompatibility, self).__setitem__(key, value)
 
-
 config = MCEqConfigCompatibility(globals())
+
 
 # Download database file from github
 base_url = 'https://github.com/afedynitch/MCEq/releases/download/'

@@ -224,13 +224,8 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import cdll, c_int, c_char, POINTER, byref
-
-    try:
-        mkl = cdll.LoadLibrary(config.mkl_path)
-    except OSError:
-        raise Exception("solv_MKL_sparse(): MKL runtime library not " +
-                        "found. Please check path.")
+    from ctypes import c_int, c_char, POINTER, byref
+    from mceq_config import mkl
 
     gemv = None
     axpy = None
@@ -241,9 +236,6 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     # dense vector + dense vector
     axpy = mkl.cblas_daxpy
     np_fl = np.float64
-
-    # Set number of threads
-    mkl.mkl_set_num_threads(byref(c_int(config.mkl_threads)))
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -270,12 +262,6 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     cdzero = fl_pr(0.)
     cdone = fl_pr(1.)
     cione = c_int(1)
-
-    # enmuloss = config.enable_muon_energy_loss
-    # muloss_min_step = config.muon_energy_loss_min_step
-    # # Accumulate at least a few g/cm2 for energy loss steps
-    # # to avoid numerical errors
-    # dXaccum = 0.
 
     grid_step = 0
     grid_sol = []

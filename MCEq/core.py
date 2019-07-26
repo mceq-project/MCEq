@@ -68,12 +68,6 @@ class MCEqRun(object):
 
         self.mceq_db = MCEq.data.HDF5Backend()
 
-        if os.path.isfile(config.mkl_path):
-            from ctypes import cdll, c_int, byref
-            mkl = cdll.LoadLibrary(config.mkl_path)
-            # Set number of threads
-            mkl.mkl_set_num_threads(byref(c_int(config.mkl_threads)))
-
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         # Save atmospheric parameters
@@ -692,12 +686,12 @@ class MCEqRun(object):
 
         start = time()
 
-        if config.kernel_config == 'numpy':
+        if config.kernel_config.lower() == 'numpy':
             kernel = MCEq.solvers.solv_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs)
 
-        elif (config.kernel_config == 'CUDA'):
+        elif (config.kernel_config.lower() == 'cuda'):
             kernel = MCEq.solvers.solv_CUDA_sparse
             try:
                 self.cuda_context.set_matrices(self.int_m, self.dec_m)
@@ -707,15 +701,14 @@ class MCEqRun(object):
                     self.int_m, self.dec_m, device_id=self.cuda_device)
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs)
 
-        elif (config.kernel_config == 'MKL'):
+        elif (config.kernel_config.lower() == 'mkl'):
             kernel = MCEq.solvers.solv_MKL_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs)
 
         else:
             raise Exception(
-                "Unsupported integrator settings '{0}/{1}'.".format(
-                    'sparse' if config.use_sparse else 'dense',
+                "Unsupported integrator setting '{0}'.".format(
                     config.kernel_config))
 
         self._solution, self.grid_sol = kernel(*args)
