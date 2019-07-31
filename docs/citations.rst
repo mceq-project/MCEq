@@ -1,32 +1,12 @@
-*******************
-Citations (Updated)
-*******************
+.. _citations:
 
-The first version of the code is feature complete and enters a final stage,
-where release candidates are circulated. We had several conference papers
-using ``MCEq``. If you use it in your scientific publication, please cite
-the code **AND** the physical model publications properly.
+References
+==========
 
-Before the main paper is published please continue citing the proceedings below,
-which describes a bit of functionality, possibilities and technical details:
+Cosmic-ray flux parameterizations
+---------------------------------
 
-   | *Calculation of conventional and prompt lepton fluxes at very high energy*
-   | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
-   | EPJ Web Conf. 99 (2015) 08001
-   | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
-
-You might want to consider citing the paper which for us was the basis for
-this type of calculations
-
-   | *Influence of hadronic interaction models and the cosmic ray spectrum on the high energy atmospheric muon and neutrino flux*
-   | A. Fedynitch, J. B. Tjus, P. Desiati
-   | Phys.Rev. D86 (2012) 114024
-   | `arXiv:1206.6710 <http://arxiv.org/abs/arXiv:1206.6710>`_
-
-Cosmic-ray flux parametrizations
---------------------------------
-
-The parametrizations of the flux of cosmic rays are provided via the module `CRFluxModels <https://github.com/afedynitch/CRFluxModels>`_.
+The parameterizations of the flux of cosmic rays are provided via the module `CRFluxModels <https://github.com/afedynitch/CRFluxModels>`_.
 The references are given in the `module's documentation <http://crfluxmodels.readthedocs.org/en/latest/index.html#>`_.
 
 Atmosphere
@@ -79,19 +59,9 @@ Hadronic interaction models
     | Advanced Monte Carlo for radiation physics, particle transport simulation and applications. Proceedings, Conference, MC2000, Lisbon, Portugal, October 23-26, 2000
     | `arXiv:hep-ph/0012252 <https://arxiv.org/abs/hep-ph/0012252>`_
 
-* DPMJET-III-17.1:
+* DPMJET-III-19.1:
     | *Revision of the high energy hadronic interaction models PHOJET/DPMJET-III*
     | A. Fedynitch, R. Engel
     | 14th International Conference on Nuclear Reaction Mechanisms, Villa Monastero, Varenna, Italy, 15 - 19 Jun 2015, pp.291
     | `on CERN Document Server <http://cds.cern.ch/record/2115393?ln=en>`_
 
-
-Models of charm production
---------------------------
-
-For prompt fluxes from SIBYLL-2.3, refer to the corresponding proceedings above.
-
-* MRS - Martin-Ryskin-Stasto
-    | *Prompt neutrinos from atmospheric* :math:`c\bar{c}` *and* :math:`b\bar{b}` *production and the gluon at very small x*
-    | A. D. Martin, M. G. Ryskin, A. M. Stasto
-    | Acta Physica Polonica B 34, 3273 (2003)

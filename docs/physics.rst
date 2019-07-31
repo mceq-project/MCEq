@@ -36,7 +36,12 @@ model for normal hadron production. In practice any kind of model which predicts
 
 --------------------
 
-.. automodule:: MCEq.geometry.msis_wrapper
+.. automodule:: MCEq.geometry.nrlmsise00
+   :members:
+
+--------------------
+
+.. automodule:: MCEq.geometry.corsikaatm
    :members:
 
 --------------------

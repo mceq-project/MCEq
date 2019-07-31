@@ -2,9 +2,12 @@
 
 
 This is a completely new version of the code
-and may break compatibility with the previous versions. Refer to ... when transitioning between the versions.
+and may break compatibility with the previous versions. 
+Refer to ... when transitioning between the versions.
 
-The old versions known as 'master' branch and 'development' branch deprecated and can be found in the [MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
+The old versions known as 'master' and 'development' branch are 
+deprecated and located in the 
+[MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
 
 ## [Documentation (updated)](http://mceq.readthedocs.org/en/latest/>)
 

@@ -11,9 +11,6 @@ import numpy as np
 from MCEq.misc import theta_rad
 import mceq_config as config
 
-sys.path.append('..')
-
-
 class EarthGeometry(object):
     r"""A model of the Earth's geometry, approximating it
        by a sphere. The figure below illustrates the meaning of the parameters.
