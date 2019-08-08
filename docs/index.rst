@@ -1,20 +1,20 @@
-.. Matrix Cascade Equation (MCEq) documentation master file, created by
-   sphinx-quickstart on Fri Nov 21 10:13:38 2014.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Matrix Cascade Equations  - MCEq
+================================
 
-Matrix Cascade Equations (MCEq) documentation
-===============================================
+:Release: |release|
+:Date: |today|
 
 Purpose of the code:
 
-    This program is a toolkit for calculations of particle cascades in the
-    Earth's atmosphere or other target media. Particles are represented by
-    average densities within discrete energy ranges (bins). The results of
-    calculations are, therefore, differential spectra.
+    This program is a toolkit to compute the evolution of particle densities
+    that evolve as a cascade in the Earth's atmosphere or other target media.
+    Particles are represented by average densities on discrete energy bins.
+    The results are differential energy spectra or total particle numbers.
+    Various models/parameterizations for particle interactions and atmospheric
+    density profiles are packaged with the code.  
 
-Installation:
-.............
+Installation
+............
 
 The installation via PyPi is the simplest method::
 
@@ -35,11 +35,16 @@ will try to use cuSPARSE as solver. To install MCEq with CUDA 10.1 support::
 
 Alternatively, install cupy by yourself (see [cupy homepage](https://cupy.chainer.org)).
 
+Supported architectures:
 
-How to use the code:
-....................
+- Linux 32- and 64-bit
+- Mac OS X
+- Windows 10
 
-Open an new python file or jupyter notebook::
+Quick start
+...........
+
+Open an new python file or jupyter notebook/lab::
 
     from MCEq.core import config, MCEqRun
     import crflux.models as crf
@@ -47,20 +52,24 @@ Open an new python file or jupyter notebook::
     import matplotlib.pyplot as plt
 
 
-    # Initalize MCEq by creating the user interface :class:`MCEqRun`
+    # Initalize MCEq by creating the user interface object MCEqRun
     mceq = MCEqRun(
+
         # High-energy hadronic interaction model
         interaction_model='SIBYLL23C',
+
         # cosmic ray flux at the top of the atmosphere
         primary_model = (crf.HillasGaisser2012, 'H3a'), 
+        
         # zenith angle
         theta_deg = 0. 
-        )
+    )
     
     # Solve the equation system
     mceq.solve()
 
-    # Multiply fluxes be E**mag to better see the features
+    # Obtain the result
+    # Multiply fluxes be E**mag to resolve the features of the steep spectrum
     mag = 3
     muon_flux = (mceq.get_solution('mu+', mag) + 
                  mceq.get_solution('mu-', mag))
@@ -69,6 +78,7 @@ Open an new python file or jupyter notebook::
     nue_flux = (mceq.get_solution('nue', mag) +
                 mceq.get_solution('antinue', mag))
 
+    # The lines below are for plotting with matplotlib 
     plt.loglog(mceq.e_grid, muon_flux, label='muons')
     plt.loglog(mceq.e_grid, numu_flux, label='muon neutrinos')
     plt.loglog(mceq.e_grid, nue_flux, label='electron neutrinos')
@@ -81,35 +91,30 @@ Open an new python file or jupyter notebook::
     plt.show()
 
 
+Citations
+.........
 
+If you use MCEq in your scientific publication, please cite the code **AND** the physical models.
 
-
-
-
-Citations:
-..........
-
-If you use MCEq in your scientific publication, please cite
-the code **AND** the physical model publications properly.
-
-The current citation for the code is:
+The current citation for the MCEq is:
 
    | *Calculation of conventional and prompt lepton fluxes at very high energy*
    | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
    | EPJ Web Conf. 99 (2015) 08001
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-See :ref:`citations` for the papers about the physical models.
+Find the :ref:`citations` for the physical models.
 
-
-Contents:
+Contents
+........
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
 
-   intro
+   tutorial
    citations
-   modules
+   densities
+   advanced
 
 Indices and tables
 ==================

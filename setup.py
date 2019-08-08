@@ -41,7 +41,7 @@ libcorsikaatm = Extension(
 # This is one of the recommended methods that works in Python 2 and 3:
 def get_version():
     version = {}
-    with open("MCEq/info.py") as fp:
+    with open("MCEq/version.py") as fp:
         exec (fp.read(), version)
     return version['__version__']
 

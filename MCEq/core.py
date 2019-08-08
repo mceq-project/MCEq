@@ -1,27 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.core` - core module
-==============================
-
-This module contains the main program features. Instantiating :class:`MCEq.core.MCEqRun`
-will initialize the data structures and particle tables, create and fill the
-interaction and decay matrix and check if all information for the calculation
-of inclusive fluxes in the atmosphere is available.
-
-The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
-
-    from mceq_config import config
-    from MCEq.core import MCEqRun
-    import CRFluxModels as pm
-
-    mceq_run = MCEqRun(interaction_model='SIBYLL2.3c',
-                       primary_model=(pm.HillasGaisser2012, "H3a"),
-                       **config)
-
-    mceq_run.set_theta_deg(60.)
-    mceq_run.solve()
-
-"""
 import os
 import six
 from time import time
@@ -66,7 +42,7 @@ class MCEqRun(object):
     """
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
 
-        self.mceq_db = MCEq.data.HDF5Backend()
+        self._mceq_db = MCEq.data.HDF5Backend()
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
@@ -75,18 +51,18 @@ class MCEqRun(object):
         self.theta_deg = theta_deg
 
         #: Interface to interaction tables of the HDF5 database
-        self.interactions = MCEq.data.Interactions(mceq_hdf_db=self.mceq_db)
+        self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self.int_cs = MCEq.data.InteractionCrossSections(
-            mceq_hdf_db=self.mceq_db)
+        self._int_cs = MCEq.data.InteractionCrossSections(
+            mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self.cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self.mceq_db,
+        self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db,
                                                       material='air')
 
         #: Interface to decay tables of the HDF5 database
-        self.decays = MCEq.data.Decays(mceq_hdf_db=self.mceq_db)
+        self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
 
         #: Particle manager (initialized/updated in set_interaction_model)
         self.pman = None
@@ -96,7 +72,7 @@ class MCEqRun(object):
 
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
-        self._energy_grid = self.mceq_db.energy_grid
+        self._energy_grid = self._mceq_db.energy_grid
 
         # Initialize solution vector
         self._solution = np.zeros(1)
@@ -113,7 +89,7 @@ class MCEqRun(object):
                                        'particle_list', None))
 
         # Default GPU device id for CUDA
-        self.cuda_device = kwargs.pop('cuda_gpu_id', config.cuda_gpu_id)
+        self._cuda_device = kwargs.pop('cuda_gpu_id', config.cuda_gpu_id)
 
         # Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
@@ -311,59 +287,59 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if not force and (self.interactions.iam == interaction_model
+        if not force and (self._interactions.iam == interaction_model
                           ) and particle_list != self._particle_list:
             info(2, 'Skip, since current model identical to',
                  interaction_model + '.')
             return
 
-        self.int_cs.load(interaction_model)
+        self._int_cs.load(interaction_model)
 
         # TODO: simplify this, stuff not needed anymore
         if not update_particle_list and self._particle_list is not None:
             info(10, 'Re-using particle list.')
-            self.interactions.load(interaction_model,
+            self._interactions.load(interaction_model,
                                    parent_list=self._particle_list)
-            self.pman.set_interaction_model(self.int_cs, self.interactions)
-            self.pman.set_decay_channels(self.decays)
-            self.pman.set_continuous_losses(self.cont_losses)
+            self.pman.set_interaction_model(self._int_cs, self._interactions)
+            self.pman.set_decay_channels(self._decays)
+            self.pman.set_continuous_losses(self._cont_losses)
 
         elif self._particle_list is None:
             info(10, 'New initialization of particle list.')
             # First initialization
             if particle_list is None:
-                self.interactions.load(interaction_model)
+                self._interactions.load(interaction_model)
             else:
-                self.interactions.load(interaction_model,
+                self._interactions.load(interaction_model,
                                        parent_list=particle_list)
 
-            self.decays.load(parent_list=self.interactions.particles)
-            self._particle_list = self.interactions.particles + self.decays.particles
+            self._decays.load(parent_list=self._interactions.particles)
+            self._particle_list = self._interactions.particles + self._decays.particles
             # Create particle database
             self.pman = ParticleManager(self._particle_list, self._energy_grid,
-                                        self.int_cs)
-            self.pman.set_interaction_model(self.int_cs, self.interactions)
-            self.pman.set_decay_channels(self.decays)
-            self.pman.set_continuous_losses(self.cont_losses)
+                                        self._int_cs)
+            self.pman.set_interaction_model(self._int_cs, self._interactions)
+            self.pman.set_decay_channels(self._decays)
+            self.pman.set_continuous_losses(self._cont_losses)
             self.matrix_builder = MatrixBuilder(self.pman)
 
         elif (update_particle_list and particle_list != self._particle_list):
             info(10, 'Updating particle list.')
             # Updated particle list received
             if particle_list is None:
-                self.interactions.load(interaction_model)
+                self._interactions.load(interaction_model)
             else:
-                self.interactions.load(interaction_model,
+                self._interactions.load(interaction_model,
                                        parent_list=particle_list)
 
-            self.decays.load(parent_list=self.interactions.particles)
-            self._particle_list = self.interactions.particles + self.decays.particles
+            self._decays.load(parent_list=self._interactions.particles)
+            self._particle_list = self._interactions.particles + self._decays.particles
             self.pman.set_interaction_model(
-                self.int_cs,
-                self.interactions,
+                self._int_cs,
+                self._interactions,
                 updated_parent_list=self._particle_list)
-            self.pman.set_decay_channels(self.decays)
-            self.pman.set_continuous_losses(self.cont_losses)
+            self.pman.set_decay_channels(self._decays)
+            self.pman.set_continuous_losses(self._cont_losses)
 
         else:
             raise Exception('Should not happen in practice.')
@@ -527,7 +503,7 @@ class MCEqRun(object):
         To choose, for example, a CORSIKA parametrization for the Southpole in January,
         do the following::
 
-            mceq_instance.set_density_model(('CORSIKA', 'PL_SouthPole', 'January'))
+            mceq_instance.set_density_model(('CORSIKA', ('PL_SouthPole', 'January')))
 
         More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
@@ -621,7 +597,7 @@ class MCEqRun(object):
             1, '{0}/{1}, {2}, {3}'.format(prim_pdg, sec_pdg, x_func.__name__,
                                           str(x_func_args)))
 
-        init = self.interactions._set_mod_pprod(prim_pdg, sec_pdg, x_func,
+        init = self._interactions._set_mod_pprod(prim_pdg, sec_pdg, x_func,
                                                 x_func_args)
 
         # Need to regenerate matrices completely
@@ -642,7 +618,7 @@ class MCEqRun(object):
         from collections import defaultdict
         info(1, 'Particle production modifications reset to defaults.')
 
-        self.interactions.mod_pprod = defaultdict(lambda: {})
+        self._interactions.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         if not dont_fill:
             self.regenerate_matrices()
@@ -654,8 +630,8 @@ class MCEqRun(object):
         # TODO: Not all particles need to be reset and there is some performance loss
         # This can be optmized by refreshing only the particles that change or through
         # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix on demand
-        self.pman.set_interaction_model(self.int_cs,
-                                        self.interactions,
+        self.pman.set_interaction_model(self._int_cs,
+                                        self._interactions,
                                         force=True)
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=skip_decay_matrix)
@@ -698,7 +674,7 @@ class MCEqRun(object):
             except AttributeError:
                 from MCEq.solvers import CUDASparseContext
                 self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self.cuda_device)
+                    self.int_m, self.dec_m, device_id=self._cuda_device)
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs)
 
         elif (config.kernel_config.lower() == 'mkl'):
@@ -891,8 +867,8 @@ class MCEqRun(object):
 class MatrixBuilder(object):
     """This class constructs the interaction and decay matrices."""
     def __init__(self, particle_manager):
-        self.pman = particle_manager
-        self._energy_grid = self.pman._energy_grid
+        self._pman = particle_manager
+        self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
 
@@ -925,7 +901,7 @@ class MatrixBuilder(object):
 
         self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
 
-        cparts = self.pman.cascade_particles
+        cparts = self._pman.cascade_particles
 
         # interaction part
         # -I + C
@@ -1027,18 +1003,18 @@ class MatrixBuilder(object):
     @property
     def dim(self):
         """Energy grid (dimension)"""
-        return self.pman.dim
+        return self._pman.dim
 
     @property
     def dim_states(self):
         """Number of cascade particles times dimension of grid
         (dimension of the equation system)"""
-        return self.pman.dim_states
+        return self._pman.dim_states
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
         """
-        return np.zeros((self.pman.dim, self.pman.dim))
+        return np.zeros((self._pman.dim, self._pman.dim))
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1052,7 +1028,7 @@ class MatrixBuilder(object):
 
         new_mat = np.zeros((self.dim_states, self.dim_states))
         for (c, p), d in six.iteritems(blocks):
-            rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
+            rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
                 new_mat[rc.lidx:rc.uidx, rp.lidx:rp.uidx] = d
             except ValueError:
@@ -1104,7 +1080,7 @@ class MatrixBuilder(object):
         if not skip_decay_matrix or self.dec_m is None:
             # Initialize empty D matrix
             self.D_blocks = defaultdict(lambda: self._zero_mat())
-            for p in self.pman.cascade_particles:
+            for p in self._pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     self._follow_chains(p,
@@ -1118,7 +1094,7 @@ class MatrixBuilder(object):
 
         # Initialize empty C blocks
         self.C_blocks = defaultdict(lambda: self._zero_mat())
-        for p in self.pman.cascade_particles:
+        for p in self._pman.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if not p.is_projectile:
                 if p.is_hadron:

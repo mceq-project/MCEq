@@ -1,16 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.particlemanager` --- management of particle objects
-==============================================================
 
-This module includes code for bookkeeping, interfacing and
-validating data structures:
-
-- :class:`MCEqParticle` bundles different particle properties for simpler
-  usage in :class:`MCEqRun`
-
-
-"""
 import six
 from math import copysign
 import numpy as np

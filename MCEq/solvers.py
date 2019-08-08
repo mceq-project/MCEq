@@ -1,54 +1,11 @@
-# -*- coding: utf-8 -*-
-r"""
-:mod:`MCEq.time_solvers` --- ODE solvers for the forward-euler time integrator
-==============================================================================
 
-The module contains functions which are called by the forward-euler
-integration routine :func:`MCEq.core.MCEqRun.forward_euler`.
-
-The integration is part of these functions. The single step
-
-.. math::
-
-  \Phi_{i + 1} = \left[\boldsymbol{M}_{int} + \frac{1}{\rho(X_i)}\boldsymbol{M}_{dec}\right]
-  \cdot \Phi_i \cdot \Delta X_i
-
-with
-
-.. math::
-  \boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}
-  :label: int_matrix
-
-and
-
-.. math::
-  \boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}.
-  :label: dec_matrix
-
-The functions use different libraries for sparse and dense linear algebra (BLAS):
-
-- The default for dense or sparse matrix representations is the function :func:`solv_numpy`.
-  It uses the dot-product implementation of :mod:`numpy`. Depending on the details, your
-  :mod:`numpy` installation can be already linked to some BLAS library like as ATLAS or MKL,
-  what typically accelerates the calculation significantly.
-- The fastest version, :func:`solv_MKL_sparse`, directly interfaces to the sparse BLAS routines
-  from `Intel MKL <https://software.intel.com/en-us/intel-mkl>`_ via :mod:`ctypes`. If you have the
-  MKL runtime installed, this function is recommended for most purposes.
-- The GPU accelerated versions :func:`solv_CUDA_dense` and :func:`solv_CUDA_sparse` are implemented
-  using the cuBLAS or cuSPARSE libraries, respectively. They should be considered as experimental or
-  implementation examples if you need extremely high performance. To keep Python as the main
-  programming language, these interfaces are accessed via the module :mod:`numbapro`, which is part
-  of the `Anaconda Accelerate <https://store.continuum.io/cshop/accelerate/>`_ package. It is free
-  for academic use.
-
-"""
 import numpy as np
 import mceq_config as config
 from MCEq.misc import info
 
 
 def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
-    """:mod;`numpy` implementation of forward-euler integration.
+    """:mod:`numpy` implementation of forward-euler integration.
 
     Args:
       nsteps (int): number of integration steps
@@ -93,6 +50,10 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 class CUDASparseContext(object):
+    """This class handles the transfer between CPU and GPU memory, and the calling
+    of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
+    :func:`solv_CUDA_sparse`.
+    """
     def __init__(self, int_m, dec_m, device_id=0):
 
         if config.cuda_fp_precision == 32:
@@ -118,31 +79,37 @@ class CUDASparseContext(object):
         self.set_matrices(int_m, dec_m)
 
     def set_matrices(self, int_m, dec_m):
-
+        """Upload sparce matrices to GPU memory"""
         self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
         self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
         self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0],
                                           dtype=self.fl_pr)
 
     def alloc_grid_sol(self, dim, nsols):
+        """Allocates memory for intermediate if grid solution requested."""
         self.curr_sol_idx = 0
         self.grid_sol = self.cp.zeros((nsols, dim))
 
     def dump_sol(self):
+        """Saves current solution to a new index in grid solution memory."""
         self.cp.copyto(self.grid_sol[self.curr_sol_idx, :], self.cu_curr_phi)
         self.curr_sol_idx += 1
         # self.grid_sol[self.curr_sol, :] = self.cu_curr_phi
 
     def get_gridsol(self):
+        """Downloads grid solution to main memory."""
         return self.cp.asnumpy(self.grid_sol)
 
     def set_phi(self, phi):
+        """Uploads initial condition to GPU memory."""
         self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
 
     def get_phi(self):
+        """Downloads current solution from GPU memory."""
         return self.cp.asnumpy(self.cu_curr_phi)
 
     def solve_step(self, rho_inv, dX):
+        """Makes one solver step on GPU using cuSparse (BLAS)"""
 
         self.cp.cusparse.csrmv(a=self.cu_int_m,
                                x=self.cu_curr_phi,

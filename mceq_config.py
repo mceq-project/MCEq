@@ -1,12 +1,15 @@
-"""MCEq RC1 config file """
+"""MCEq configuration module.
+
+This module defines the default settings and is not meant to be directly modified.
+Each option can be modifield in runtime by importing the module.
+"""
 import sys
 import platform
 import os.path as path
 import warnings
-from MCEq.misc import info, download_file
-
 base_path = path.dirname(path.abspath(__file__))
 sys.path.append(base_path)
+from MCEq.misc import info, download_file
 
 # Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1

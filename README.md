@@ -1,25 +1,15 @@
 # MCEq - Matrix cascade equations
 
-
-This is a completely new version of the code
-and may break compatibility with the previous versions. 
+This is a new version of the code and may break compatibility with the previous versions. 
 Refer to ... when transitioning between the versions.
 
 The old versions known as 'master' and 'development' branch are 
 deprecated and located in the 
 [MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
 
-## [Documentation (updated)](http://mceq.readthedocs.org/en/latest/>)
+## [Documentation](http://mceq.readthedocs.org/en/latest/>)
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) does not yet reflect all changes of this version and will be updated soon.
-
-## Installation
-
-Fairly simple:
-
-```bash
-pip install MCEq
-```
 
 ## Please cite our work
 

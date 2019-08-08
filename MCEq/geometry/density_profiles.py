@@ -1,41 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.geometry.density_profiles` - models of the Earth's atmosphere
-========================================================================
 
-This module includes classes and functions modeling the Earth's atmosphere.
-Currently, two different types models are supported:
-
-- Linsley-type/CORSIKA-style parameterization
-- Numerical atmosphere via external routine (NRLMSISE-00)
-
-Both implementations have to inherit from the abstract class
-:class:`EarthsAtmosphere`, which provides the functions for other parts of
-the program. In particular the function :func:`EarthsAtmosphere.get_density`
-
-Typical interaction::
-
-      $ atm_object = CorsikaAtmosphere("BK_USStd")
-      $ atm_object.set_theta(90)
-      $ print 'density at X=100', atm_object.X2rho(100.)
-
-The class :class:`MCEqRun` will only the following routines::
-    - :func:`EarthsAtmosphere.set_theta`,
-    - :func:`EarthsAtmosphere.r_X2rho`.
-
-If you are extending this module make sure to provide these
-functions without breaking compatibility.
-
-Example:
-  An example can be run by executing the module::
-
-      $ python MCEq/atmospheres.py
-"""
 from abc import ABCMeta, abstractmethod
 from six import with_metaclass
 from os.path import join
 import numpy as np
-from MCEq.misc import theta_rad, info
+from MCEq.misc import theta_rad
+from MCEq.misc import info
 
 import mceq_config as config
 

@@ -1,14 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.misc` - other useful things
-======================================
 
-Some helper functions and plotting features are collected in this module.
-
-- :class:`EdepZFactos` calculates energy-dependent spectrum weighted
-  moments (Z-Factors)
-
-"""
 from __future__ import print_function
 from collections import namedtuple
 import numpy as np

@@ -1,18 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.data` --- data management
-====================================
 
-This module includes code for bookkeeping, interfacing and
-validating data structures:
-
-- :class:`InteractionYields` manages particle interactions, obtained
-  from sampling of various interaction models
-- :class:`DecayYields` manages particle decays, obtained from
-  sampling PYTHIA8 Monte Carlo
-- :class:`HadAirCrossSections` keeps information about the inelastic,
-  cross-section of hadrons with air. Typically obtained from Monte Carlo.
-"""
 import six
 import numpy as np
 import h5py

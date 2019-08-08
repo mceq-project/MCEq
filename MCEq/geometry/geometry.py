@@ -1,11 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-:mod:`MCEq.geometry` --- Extensive-Air-Shower geometry
-======================================================
 
-This module includes classes and functions modeling
-the geometry of the cascade trajectory.
-"""
 import sys
 import numpy as np
 from MCEq.misc import theta_rad
@@ -92,11 +85,6 @@ class EarthGeometry(object):
         ax.xaxis.set_ticks_position('bottom')
         ax.yaxis.set_ticks_position('left')
         plt.show()
-
-    The module currently contains only module level functions. To
-    implement a different geometry, e.g. in an astrophysical content,
-    you can create a new module providing similar functions or
-    place the current content into a class.
 
     Attributes:
       h_obs (float): observation level height [cm]
