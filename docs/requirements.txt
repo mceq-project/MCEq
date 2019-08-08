@@ -1,2 +1,3 @@
 sphinxcontrib-napoleon>=0.1.0
 matplotlib
+tqdm
