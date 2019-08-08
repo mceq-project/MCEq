@@ -39,12 +39,23 @@ By default MCEq will pick the numpy, MKL or the CUDA solver, depending on the
 the installed packages. Currently only 'forward-euler' solvers are available,
 which are fast and stable enough.
 
-To obtain a solution along various points in :math:`X`, create a
-grid and then supply it to the solver::
+The spectrum of each particle species at the surface can be retrieved as numpy array with ::
 
-    # A linearly spaced set of points from 0.1 up to an X value
-    # corresponding to the depth at the surface for the selected zenith
-    # angle and atmospheric model/season
+    mceq.get_solution('mu+')
+
+List available particle species in :class:`MCEq.particlemanager.ParticleManager`::
+
+    mceq.pman.print_particle_tables(0)
+
+To multiply the solution automatically with :math:`E^{\rm mag}` use ::
+
+    mceq.get_solution('mu+', mag=3) # for E^3 * flux
+
+To obtain a solution along a series depths :math:`X`, create a
+grid and pass it to the solver ::
+
+    # A linearly spaced set of points from 0.1 up to the X value corresponding 
+    # to the depth at the surface (for the selected zenith angle and atmospheric model/season)
     n_pts = 100
     X_grid = np.linspace(0.1, mceq.density_profile.maxX, n_pts)
     
@@ -53,8 +64,8 @@ grid and then supply it to the solver::
 To obtain particle spectra at each depth point::
 
     for idx in range(n_pts):
-        print('Obtaining solution at X = {0:5.2f} g/cm2'.format(x_grid[idx]))
-        some_list.append(mceq.get_solution('mu+',grid_idx=idx))
+        print('Reading solution at X = {0:5.2f} g/cm2'.format(x_grid[idx]))
+        some_list.append(mceq.get_solution('mu+', grid_idx=idx))
 
 To obtain the solutions at equivalent altitudes one needs to simply map the
 the values of :math:`X` to the corresponding altitude for the **current** zenith
@@ -93,7 +104,7 @@ Available models are:
 
 Refer for more info to :ref:`densities`.
 
-After changing the models, the spectra can be recomputed with a simple `mceq.solve()`.
+After changing the models, the spectra can be recomputed with a :func:`MCEq.core.MCEqRun.solve()`.
 
 Changing hadronic interaction models
 ....................................
@@ -122,3 +133,36 @@ MCEq will take care of updating all data structures regenerating the matrices. T
 takes some time since data memory needs to be allocated and some numbers crunched. If you
 use this function in a loop for multiple computations, put it further out.
 
+Changing cosmic ray flux model
+..............................
+
+The flux of cosmic ray nucleons at the top of the atmosphere (primary flux) is the initial condition. The
+module :mod:`crflux.models` contains a contemporary selection of flux models. Refer to the
+`crflux documentation <https://crfluxmodels.readthedocs.io/en/latest/>`_ or 
+`the source code <https://github.com/afedynitch/CRFluxModels>`_.
+
+To change the primary flux use :func:`MCEq.core.MCEqRun.set_primary_model` ::
+
+    import crflux.models as pm
+
+    mceq.set_primary_model(pm.HillasGaisser2012, 'H3a')
+
+Using MCEq for air-showers
+..........................
+
+MCEq currently provides solutions of the one-dimensional (longitudinal) cascade equations in
+the variable X (depth). Therefore, full air-shower calculations including the lateral (transverse)
+extension of particle densities are not possible. What is possible is the computation of longitudinal
+profiles of particle numbers or depth dependence of spectra. The only difference between "air-shower mode"
+and the standard "inclusive flux modes" is the initial condition. For air-showers the initial condition
+is a single particle of a certain type and fixed energy, instead of an entire spectrum of cosmic
+ray nucleons as described above. To launch a cascade from a single particle use
+:func:`MCEq.core.MCEqRun.set_single_primary_particle` ::
+
+    # For a 1 EeV proton
+    mceq.set_single_primary_particle(1e9, pdg_id=2212)
+
+    # Or for a 1 EeV iron nucleus
+    mceq.set_single_primary_particle(1e9, corsika_id=5626)
+
+The zenith angle has to be set as shown above with :func:`MCEq.core.MCEqRun.set_zenith_deg`.

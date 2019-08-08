@@ -105,8 +105,8 @@ The current citation for the MCEq is:
 
 Find the :ref:`citations` for the physical models.
 
-Contents
-........
+Main documentation
+..................
 
 .. toctree::
    :maxdepth: 2
