@@ -41,6 +41,25 @@ Supported architectures:
 - Mac OS X
 - Windows 10
 
+Building MCEq from source
+.........................
+
+To modify the code and contribute, the code needs to be installed from the github source::
+
+    git clone https://github.com/afedynitch/MCEq.git
+    cd MCEq
+    pip install -r requirements.txt
+    python setup.py build_ext --inplace
+
+These commands should leave a working git repository and a working code. The last line builds the
+C modules and installs the requirements. A C compiler is required for this step. To run MCEq from
+the folder, add the folder to your PYTHONPATH or insert at the beginning of your script::
+
+    import sys
+    sys.path.insert(0, <path_to_your_MCEq_git_repository>)
+
+If you think the modifications are useful for others feel free to make a pull request.
+
 Quick start
 ...........
 
@@ -90,6 +109,10 @@ Open an new python file or jupyter notebook/lab::
     plt.legend()
     plt.show()
 
+Examples
+........
+
+Download and run the notebooks located on `github <https://github.com/afedynitch/MCEq/tree/master/examples>`_.
 
 Citations
 .........

@@ -8,6 +8,16 @@ The "advanced documentation" is the almost complete documentation of all modules
    :local:
    :depth: 2
 
+:mod:`mceq_config` -- default configuration options
+...................................................
+
+These are all options MCEq accepts. Usually there is no need to change, except for advanced
+scenarios. Check out the file for a better formatted description and some advanced settings
+not contained in the list below.
+
+.. automodule:: mceq_config
+   :members:
+
 :mod:`MCEq.core` -- Core module
 ...............................
 
