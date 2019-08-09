@@ -112,7 +112,8 @@ Open an new python file or jupyter notebook/lab::
 Examples
 ........
 
-Download and run the notebooks located on `github <https://github.com/afedynitch/MCEq/tree/master/examples>`_.
+Follow the :ref:`tutorial` and/or download and run the notebooks from 
+`github <https://github.com/afedynitch/MCEq/tree/master/examples>`_.
 
 Citations
 .........

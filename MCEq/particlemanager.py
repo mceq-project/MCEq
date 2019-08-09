@@ -311,15 +311,15 @@ class MCEqParticle(object):
         return (self.mceqidx + 1) * self._energy_grid.d
 
     def inverse_decay_length(self, cut=True):
-        """Returns inverse decay length (or infinity (np.inf), if
-        particle is stable), where the air density :math:`\\rho` is
+        r"""Returns inverse decay length (or infinity (np.inf), if
+        particle is stable), where the air density :math:`\rho` is
         factorized out.
 
         Args:
           E (float) : energy in laboratory system in GeV
           cut (bool): set to zero in 'resonance' regime
         Returns:
-          (float): :math:`\\frac{\\rho}{\\lambda_{dec}}` in 1/cm
+          (float): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm
         """
         try:
             dlen = self.mass / self.ctau / (self._energy_grid.c + self.mass)
@@ -632,20 +632,20 @@ class ParticleManager(object):
         # (dict) Dimension of primary grid
         self._energy_grid = energy_grid
         # Particle index shortcuts
-        #: (dict) Converts Neucosma ID to index in state vector
+        #: (dict) Converts PDG ID to index in state vector
         self.pdg2mceqidx = {}
         #: (dict) Converts particle name to index in state vector
         self.pname2mceqidx = {}
-        #: (dict) Converts Neucosma ID to reference of
+        #: (dict) Converts PDG ID to reference of
         # :class:`particlemanager.MCEqParticle`
         self.pdg2pref = {}
         #: (dict) Converts particle name to reference of
         #: class:`particlemanager.MCEqParticle`
         self.pname2pref = {}
-        #: (dict) Converts prince index to reference of
+        #: (dict) Converts MCEq index to reference of
         #: class:`particlemanager.MCEqParticle`
         self.mceqidx2pref = {}
-        #: (dict) Converts index in state vector to Neucosma ID
+        #: (dict) Converts index in state vector to PDG ID
         self.mceqidx2pdg = {}
         #: (dict) Converts index in state vector to reference
         # of :class:`particlemanager.MCEqParticle`

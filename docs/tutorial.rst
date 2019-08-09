@@ -1,10 +1,10 @@
-.. tutorial:
+.. _tutorial:
 
 Tutorial
 --------
 
-The main user interface is the :class:`MCEqRun`. For the initialization
-a reference to a primary model class is required. Any cosmic ray flux model
+The main user interface is the class :class:`MCEq.core.MCEqRun` that requires
+a reference to a cosmic ray model for the initialization. Any cosmic ray flux model
 from `the crflux package <http://crfluxmodels.readthedocs.org/en/latest/index.html#>`_.
 can be selected::
 
@@ -25,7 +25,7 @@ can be selected::
     )
 
 The code will raise an exception of a non-existent hadronic interaction
-model is selected and will list the currently available models. Models
+model is selected and will list the currently available models. All models
 can be changed between calls to the solver.
 
 Solving cascade equations
@@ -43,7 +43,7 @@ The spectrum of each particle species at the surface can be retrieved as numpy a
 
     mceq.get_solution('mu+')
 
-List available particle species in :class:`MCEq.particlemanager.ParticleManager`::
+List available particle species managed by :mod:`MCEq.particlemanager`::
 
     mceq.pman.print_particle_tables(0)
 
@@ -51,7 +51,7 @@ To multiply the solution automatically with :math:`E^{\rm mag}` use ::
 
     mceq.get_solution('mu+', mag=3) # for E^3 * flux
 
-To obtain a solution along a series depths :math:`X`, create a
+To obtain a solution along the cascade trajectory in depth :math:`X`, create a
 grid and pass it to the solver ::
 
     # A linearly spaced set of points from 0.1 up to the X value corresponding 
@@ -62,10 +62,11 @@ grid and pass it to the solver ::
     mceq.solve(int_grid=X_grid)
 
 To obtain particle spectra at each depth point::
-
+    
+    longitudinal_spectrum = []
     for idx in range(n_pts):
         print('Reading solution at X = {0:5.2f} g/cm2'.format(x_grid[idx]))
-        some_list.append(mceq.get_solution('mu+', grid_idx=idx))
+        longitudinal_spectrum.append(mceq.get_solution('mu+', grid_idx=idx))
 
 To obtain the solutions at equivalent altitudes one needs to simply map the
 the values of :math:`X` to the corresponding altitude for the **current** zenith
@@ -80,6 +81,22 @@ function::
     X_grid = mceq.density_profile.h2X(h_grid)
 
     mceq.solve(int_grid=X_grid)
+
+Particle numbers can be obtained by using predefined functions or by integrating
+the spectrum. These functions support `grid_idx` (as shown above) and a minimal
+energy cutoff (larger than the minimal grid energy :attr:`mceq_config.e_min`)::
+
+    # Number of muons
+    n_mu = mceq.n_mu(grid_idx=None, min_energy_cutoff=1e-1)
+
+    # Number of electrons
+    n_e = mceq.n_e(grid_idx=None, min_energy_cutoff=86e-3)
+
+    # Number of protons above minimal grid energy
+    n_p = np.sum(mceq.get_solution('p+', integrate=True))
+
+All particles listed by :func:`MCEq.ParticleManager.print_particle_tables(0)` are
+available to :func:`MCEq.core.get_solution`.
 
 Changing geometrical and atmospheric parameters
 ...............................................

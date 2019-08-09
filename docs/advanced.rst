@@ -32,9 +32,12 @@ of inclusive fluxes in the atmosphere is available.
 :mod:`MCEq.particlemanager` -- Particle manager
 ...............................................
 
-The :class:`ParticleManager` handles the bookkeeping of :class:`MCEqParticle` objects.
-It feeds the data from data management classes from :mod:`MCEq.data` into the corresponding
-variables and validates certain relations.
+The :class:`MCEq.particlemanager.ParticleManager` handles the bookkeeping of
+:class:`MCEq.particlemanager.MCEqParticle`. It feeds the data from data management
+classes from :mod:`MCEq.data` into the corresponding variables and validates certain relations.
+Each particle object knows the its own properties and what the particle can do
+interact/decay and in what. There is usually no need to directly access any of the classes
+in :mod:`MCEq.data`.
 
 .. automodule:: MCEq.particlemanager
    :members:

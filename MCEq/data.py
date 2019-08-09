@@ -235,7 +235,6 @@ class HDF5Backend(object):
             raise Exception('Unknown selections.')
 
     def interaction_db(self, interaction_model_name):
-
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, 'Generating interaction db. mname={0}'.format(mname))
         with h5py.File(self.had_fname, 'r') as mceq_db:
@@ -378,19 +377,8 @@ class HDF5Backend(object):
 class Interactions(object):
     """Class for managing the dictionary of interaction yield matrices.
 
-    The class unpickles a dictionary, which contains the energy grid
-    and :math:`x` spectra, sampled from hadronic interaction models.
-
-
-
-    A list of available interaction model keys can be printed by::
-
-        $ print yield_obj
-
     Args:
-      interaction_model (str): name of the interaction model
-      charm_model (str, optional): name of the charm model
-
+    mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
     def __init__(self, mceq_hdf_db):
@@ -646,11 +634,6 @@ class Interactions(object):
           child (int): PDG ID of final state child/secondary particle
         Returns:
           numpy.array: yield matrix
-
-        Note:
-          In the current version, the matrices have to be multiplied by the
-          bin widths. In later versions they will be stored with the
-          multiplication carried out.
         """
         info(10, 'Called for', parent, child)
         if child not in self.relations[parent]:
@@ -693,13 +676,8 @@ class Interactions(object):
 class Decays(object):
     """Class for managing the dictionary of decay yield matrices.
 
-    The class un-pickles a dictionary, which contains :math:`x`
-    spectra of decay products/childs, sampled from PYTHIA 8
-    Monte Carlo.
-
     Args:
-      parent_list (list, optional): list of particle parents from
-                                    interaction model
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
     def __init__(self, mceq_hdf_db, default_decay_dset='full_decays'):
@@ -778,15 +756,12 @@ class Decays(object):
 
     def get_matrix(self, parent, child):
         """Returns a ``DIM x DIM`` decay matrix.
+
         Args:
           parent (int): PDG ID of parent particle
           child (int): PDG ID of final state child particle
         Returns:
           numpy.array: decay matrix
-        Note:
-          In the current version, the matrices have to be multiplied by the
-          bin widths. In later versions they will be stored with the
-          multiplication carried out.
         """
         info(20, 'entering with', parent, child)
         if child not in self.relations[parent]:
@@ -799,11 +774,8 @@ class Decays(object):
 class InteractionCrossSections(object):
     """Class for managing the dictionary of hadron-air cross-sections.
 
-    The class unpickles a dictionary, which contains proton-air,
-    pion-air and kaon-air cross-sections tabulated on the common
-    energy grid.
-
     Args:
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
       interaction_model (str): name of the interaction model
     """
     #: unit - :math:`\text{GeV} \cdot \text{fm}`
@@ -896,12 +868,9 @@ class InteractionCrossSections(object):
 class ContinuousLosses(object):
     """Class for managing the dictionary of hadron-air cross-sections.
 
-    The class unpickles a dictionary, which contains proton-air,
-    pion-air and kaon-air cross-sections tabulated on the common
-    energy grid.
-
     Args:
-      interaction_model (str): name of the interaction model
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
+      material (str): name of the material (not fully implemented)
     """
 
     def __init__(self, mceq_hdf_db, material='air'):
