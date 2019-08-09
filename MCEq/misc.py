@@ -10,28 +10,6 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 #: Matrix with x_lab=E_child/E_parent values
 _xmat = None
 
-def download_file(url, outfile):
-    from tqdm import tqdm
-    import requests
-    import math
-
-    # Streaming, so we can iterate over the response.
-    r = requests.get(url, stream=True)
-
-    # Total size in bytes.
-    total_size = int(r.headers.get('content-length', 0))
-    block_size = 1024*1024
-    wrote = 0 
-    with open(outfile, 'wb') as f:
-        for data in tqdm(r.iter_content(block_size), total=math.ceil(total_size//block_size) , 
-            unit='MB', unit_scale=True):
-            wrote = wrote  + len(data)
-            f.write(data)
-    if total_size != 0 and wrote != total_size:
-        raise Exception("ERROR, something went wrong") 
-
-
-
 def normalize_hadronic_model_name(name):
     import re
     """Converts hadronic model name into standard form"""

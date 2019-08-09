@@ -993,7 +993,7 @@ class MatrixBuilder(object):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
         op_mat = -np.diag(1 / self._energy_grid.c).dot(
-            self.op_matrix.dot(np.diag(self.pman[pdg_id].dEdX)))
+            self.op_matrix.dot(np.diag(self._pman[pdg_id].dEdX)))
 
         if config.average_loss_operator:
             return self._average_operator(op_mat)

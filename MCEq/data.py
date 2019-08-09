@@ -681,7 +681,7 @@ class Interactions(object):
                     parent[0], child[0]))
             i = 0
             m = np.copy(m)
-            for args, mmat in six.items(self.mod_pprod[(parent[0], child[0])]):
+            for args, mmat in six.iteritems(self.mod_pprod[(parent[0], child[0])]):
                 info(10, i, (parent[0], child[0]), args, np.sum(mmat),
                      np.sum(m))
                 i += 1
