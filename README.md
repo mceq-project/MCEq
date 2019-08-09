@@ -1,15 +1,20 @@
 # MCEq - Matrix cascade equations
 
-This is a new version of the code and may break compatibility with the previous versions. 
-Refer to ... when transitioning between the versions.
+MCEq is a tool to numerically solve cascade equations that describe the evolution
+of particle densities as they propagate through a gaseous or dense medium.
+The main application are particle cascades in the Earth's atmosphere.
+Particles are represented by average densities on discrete energy bins.
+The results are differential energy spectra or total particle numbers.
+Various models/parameterizations for particle interactions and atmospheric
+density profiles are packaged with the code.  
 
-The old versions known as 'master' and 'development' branch are 
-deprecated and located in the 
+This is a new version of the code and may break compatibility with the previous versions. 
+The old versions known as 'master' and 'development' branch are deprecated and located in the 
 [MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
 
 ## [Documentation](http://mceq.readthedocs.org/en/latest/>)
 
-[The documentation](http://mceq.readthedocs.org/en/latest/) does not yet reflect all changes of this version and will be updated soon.
+[The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
 ## Please cite our work
 
@@ -21,7 +26,7 @@ physical models. A complete list of references can be found in the
 
 *Anatoli Fedynitch*
 
-##$ Contributers
+### Contributers
 
 *[Hans Dembinski](https://github.com/HDembinski)*
 
