@@ -33,13 +33,16 @@ will try to use cuSPARSE as solver. To install MCEq with CUDA 10.1 support::
 
     pip install MCEq[CUDA]
 
-Alternatively, install cupy by yourself (see [cupy homepage](https://cupy.chainer.org)).
+Alternatively, install cupy by yourself (see `cupy homepage<https://cupy.chainer.org>`_).
 
 Supported architectures:
 
 - Linux 32- and 64-bit
 - Mac OS X
-- Windows 10
+- Windows
+
+Note:: pip installations of scipy on Windows may be faulty. If scipy throws errors
+on import, use `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_
 
 Building MCEq from source
 .........................
