@@ -1,4 +1,5 @@
 *.pyc
+*.pyd
 data/*
 docs/_build
 .vscode
@@ -11,3 +12,4 @@ dist
 .nfs*
 *.ipynb_checkpoints*
 *.so
+MCEq/geometry/corsikaatm/libcorsikaatm.cp37-win_amd64.pyd
