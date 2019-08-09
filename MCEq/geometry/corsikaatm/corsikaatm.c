@@ -1,7 +1,7 @@
 
 #include <math.h>
 
-double planar_rho_inv(double X, double cos_theta,
+double __declspec(dllexport) planar_rho_inv(double X, double cos_theta,
                       double *a, double *b, double *c,
                       double *t, double *hl)
 {
@@ -35,7 +35,7 @@ double planar_rho_inv(double X, double cos_theta,
     return res;
 }
 
-double corsika_get_density(double h_cm, double *a,
+double __declspec(dllexport) corsika_get_density(double h_cm, double *a,
                            double *b, double *c,
                            double *t, double *hl)
 {
@@ -64,7 +64,7 @@ double corsika_get_density(double h_cm, double *a,
 
     return res;
 }
-double corsika_get_m_overburden(double h_cm, double *a,
+double __declspec(dllexport) corsika_get_m_overburden(double h_cm, double *a,
                                     double *b, double *c,
                                     double *t, double *hl)
 {

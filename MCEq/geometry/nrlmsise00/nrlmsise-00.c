@@ -1016,7 +1016,7 @@ double glob7s(double *p, struct nrlmsise_input *input, struct nrlmsise_flags *fl
 /* ------------------------------------------------------------------- */
 /* ------------------------------- GTD7 ------------------------------ */
 /* ------------------------------------------------------------------- */
-void gtd7_py(int year, int doy, double sec, double alt, double g_lat, double g_long, double lst,
+void __declspec(dllexport) gtd7_py(int year, int doy, double sec, double alt, double g_lat, double g_long, double lst,
 		double f107A, double f107, double ap, struct ap_array* ap_a, struct nrlmsise_flags *flags,
 		struct nrlmsise_output *output)
 {

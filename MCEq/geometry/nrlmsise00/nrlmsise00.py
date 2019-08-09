@@ -10,7 +10,8 @@ base = os.path.dirname(os.path.abspath(__file__))
 for fn in os.listdir(base):
     if 'libnrlmsis' in fn and (fn.endswith('.so') or
                                fn.endswith('.dll') or 
-                               fn.endswith('.dylib')):
+                               fn.endswith('.dylib') or
+                               fn.endswith('.pyd')):
         msis = cdll.LoadLibrary(os.path.join(base, fn))
         break
 
