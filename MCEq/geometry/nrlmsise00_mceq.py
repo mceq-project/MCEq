@@ -1,6 +1,6 @@
 from MCEq.misc import info
 import six
-import MCEq.nrlmsise00.nrlmsise00 as cmsis
+import MCEq.geometry.nrlmsise00.nrlmsise00 as cmsis
 
 
 class NRLMSISE00Base(object):

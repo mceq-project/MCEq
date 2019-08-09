@@ -3,7 +3,7 @@ Ctypes interface for struct-based interface to the C-version of NRLMSISE-00.
 This C version of NRLMSISE-00 is written by Dominik Brodowski 
 '''
 
-from ctypes import (cdll, Structure, c_int, c_double, POINTER)
+from ctypes import (cdll, Structure, c_int, c_double, pointer, byref, POINTER)
 import os
 base = os.path.dirname(os.path.abspath(__file__))
 
