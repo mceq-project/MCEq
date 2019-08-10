@@ -167,10 +167,12 @@ struct nrlmsise_output
 /*   Modified version of GTD7 for compatibility with CTYPES and Python.
  *
  */
-//void gtd7_py(int year, int doy, double sec, double alt, double g_lat, double g_long, double lst,
-//		double f107A, double f107, double ap, struct nrlmsise_flags *flags,
-//		struct nrlmsise_output *output);
-void __declspec(dllexport) gtd7_py(int year, int doy, double sec, double alt, double g_lat, double g_long, double lst,
+
+void 
+#if _MSC_VER >= 1200
+__declspec(dllexport) 
+#endif
+gtd7_py(int year, int doy, double sec, double alt, double g_lat, double g_long, double lst,
 		double f107A, double f107, double ap, struct ap_array* ap_a, struct nrlmsise_flags *flags,
 		struct nrlmsise_output *output);
 /* GTD7 */
