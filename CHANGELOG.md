@@ -1,5 +1,15 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Version 1.0.5:
+    - Check added to make sure depth grids are strictly increasing
+    - Tutorial updated to reflect this fact
+    - New advanced variable in config "stability_margin"
+    - New method in MCEqRun to set the entire spectrum for combinations
+      of particles as initial condition
+
+Version 1.0.4:
+    First official version distributed over PyPi
+
 Version 1.0.0:
 
 General remark::
