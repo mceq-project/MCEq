@@ -125,6 +125,11 @@ ode_params = {
 #: process. Essentially this affects how the adaptive step size is computed.
 leading_process = "decays"
 
+#: Stability margin for the integrator. The default 0.95 means that step
+#: sizes are chosen 5% away from the stability circle. Usually no need to
+#: change, except you know what it does.
+stability_margin = 0.95
+
 #: Ratio of decay_length/interaction_length where particle interactions
 #: are neglected and the resonance approximation is used
 #: 0.5 ~ precision loss <+3% speed gain ~ factor 10
