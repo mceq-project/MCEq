@@ -40,6 +40,7 @@ class MCEqRun(object):
       obs_ids (list): list of particle name strings. Those lepton decay
         products will be scored in the special ``obs_`` categories
     """
+
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
 
         self._mceq_db = MCEq.data.HDF5Backend()
@@ -59,7 +60,7 @@ class MCEqRun(object):
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db,
-                                                      material='air')
+                                                       material='air')
 
         #: Interface to decay tables of the HDF5 database
         self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
@@ -81,7 +82,7 @@ class MCEqRun(object):
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
         # Save initial condition (primary flux) to restore after dimensional resizing
-        self._restore_initial_condition = None
+        self._restore_initial_condition = []
 
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(interaction_model,
@@ -299,7 +300,7 @@ class MCEqRun(object):
         if not update_particle_list and self._particle_list is not None:
             info(10, 'Re-using particle list.')
             self._interactions.load(interaction_model,
-                                   parent_list=self._particle_list)
+                                    parent_list=self._particle_list)
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
@@ -311,7 +312,7 @@ class MCEqRun(object):
                 self._interactions.load(interaction_model)
             else:
                 self._interactions.load(interaction_model,
-                                       parent_list=particle_list)
+                                        parent_list=particle_list)
 
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = self._interactions.particles + self._decays.particles
@@ -330,7 +331,7 @@ class MCEqRun(object):
                 self._interactions.load(interaction_model)
             else:
                 self._interactions.load(interaction_model,
-                                       parent_list=particle_list)
+                                        parent_list=particle_list)
 
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = self._interactions.particles + self._decays.particles
@@ -349,9 +350,9 @@ class MCEqRun(object):
         self._solution.resize(self.dim_states)
 
         # Restore insital condition if present
-        if self._restore_initial_condition is not None:
-            self._restore_initial_condition[0](
-                *self._restore_initial_condition[1:])
+        if len(self._restore_initial_condition) > 0:
+            for con in self._restore_initial_condition:
+                con[0](*con[1:])
 
         # initialize matrices
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
@@ -372,7 +373,8 @@ class MCEqRun(object):
         info(1, mclass.__name__, tag if tag is not None else '')
 
         # Save primary flux model for restauration after interaction model changes
-        self._restore_initial_condition = (self.set_primary_model, mclass, tag)
+        self._restore_initial_condition = [
+            (self.set_primary_model, mclass, tag)]
         # Initialize primary model object
         self.pmodel = mclass(tag)
         self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
@@ -414,8 +416,8 @@ class MCEqRun(object):
             self._phi0[min_idx + self.pman[(2212, 0)].lidx:self.pman[(
                 2212, 0)].uidx] += 1e-4 * n_top
 
-    def set_single_primary_particle(self, E, corsika_id=None, pdg_id=None):
-        """Set type and energy of a single primary nucleus to
+    def set_single_primary_particle(self, ptot, corsika_id=None, pdg_id=None):
+        """Set type and kinetic energy of a single primary nucleus to
         calculation of particle yields.
 
         The functions uses the superposition theorem, where the flux of
@@ -428,7 +430,7 @@ class MCEqRun(object):
         :math:`50*A~ \\text{GeV} < E_\\text{nucleus} < 10^{10}*A \\text{GeV}`.
 
         Args:
-          E (float): (total) energy of nucleus in GeV
+          E (float): kinetic energy of nucleus in GeV
           corsika_id (int): ID of nucleus (see text)
         """
 
@@ -442,8 +444,8 @@ class MCEqRun(object):
             2, 'CORSIKA ID {0}, PDG ID {1}, energy {2:5.3g} GeV'.format(
                 corsika_id, pdg_id, E))
 
-        self._restore_initial_condition = (self.set_single_primary_particle, E,
-                                           corsika_id, pdg_id)
+        self._restore_initial_condition = [(self.set_single_primary_particle, E,
+                                            corsika_id, pdg_id)]
 
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
@@ -496,6 +498,42 @@ class MCEqRun(object):
             n_lidx = self.pman[2112].lidx
             self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] = solve(
                 emat, b_neutrons)
+
+    def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
+        """Set a user-defined spectrum for an arbitrary species as initial condition. 
+
+        This function is an equivalent to :func:`set_single_primary_particle`. It
+        allows to define an arbitrary spectrum for each available particle species
+        as initial condition for the integration. Set the `append` argument to `True`
+        for subsequent species to define initial spectra combined from different particles.
+
+        The (differential) spectrum has to be distributed on the energy grid as dN/dptot, i.e.
+        divided by the bin widths and with the total momentum units in GeV(/c).
+
+        Args:
+          spectrum (np.array): spectrum dN/dptot
+          pdg_id (int): PDG ID in case of a particle 
+        """
+
+        from MCEq.misc import getAZN_corsika, getAZN
+
+        info(2, 'PDG ID {0}'.format(pdg_id))
+
+        if not append:
+            self._restore_initial_condition = [(self.set_initial_spectrum,
+                                                pdg_id, append)]
+            self._phi0 *= 0
+        else:
+            self._restore_initial_condition.append((self.set_initial_spectrum,
+                                                    pdg_id, append))
+        egrid = self._energy_grid.c
+        ebins = self._energy_grid.b
+        ewidths = self._energy_grid.w
+
+        if len(spectrum) != self.dim:
+            raise Exception('Lengths of spectrum and energy grid do not match.')
+
+        self._phi0[self.pman[pdg_id].lidx:self.pman[pdg_id].uidx] += spectrum 
 
     def set_density_model(self, density_config):
         """Sets model of the atmosphere.
@@ -598,7 +636,7 @@ class MCEqRun(object):
                                           str(x_func_args)))
 
         init = self._interactions._set_mod_pprod(prim_pdg, sec_pdg, x_func,
-                                                x_func_args)
+                                                 x_func_args)
 
         # Need to regenerate matrices completely
         return int(init)
@@ -649,10 +687,10 @@ class MCEqRun(object):
 
         """
         info(2, "Launching {0} solver".format(config.integrator))
-        
+
         if int_grid is not None and np.any(np.diff(int_grid) < 0):
             raise Exception('The X values in int_grid are required to be strickly',
-                'increasing.')
+                            'increasing.')
 
         # Calculate integration path if not yet happened
         self._calculate_integration_path(int_grid, grid_var)
@@ -729,10 +767,10 @@ class MCEqRun(object):
         if (max_ldec * ri(config.max_density) > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
-            delta_X = lambda X: config.stability_margin / (max_ldec * ri(X))
+            def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
         else:
             info(2, "using interactions as leading eigenvalues")
-            delta_X = lambda X: config.stability_margin / max_lint
+            def delta_X(X): return config.stability_margin / max_lint
 
         dXmax = config.dXmax
         while X < max_X:
@@ -870,6 +908,7 @@ class MCEqRun(object):
 
 class MatrixBuilder(object):
     """This class constructs the interaction and decay matrices."""
+
     def __init__(self, particle_manager):
         self._pman = particle_manager
         self._energy_grid = self._pman._energy_grid
