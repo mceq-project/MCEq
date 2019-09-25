@@ -55,9 +55,9 @@ To obtain a solution along the cascade trajectory in depth :math:`X`, create a
 grid and pass it to the solver ::
 
     # A linearly spaced set of points from 0.1 up to the X value corresponding 
-    # to the depth at the surface (for the selected zenith angle and atmospheric model/season)
+    # to the depth at the surface `max_X` (for the selected zenith angle and atmospheric model/season)
     n_pts = 100
-    X_grid = np.linspace(0.1, mceq.density_profile.maxX, n_pts)
+    X_grid = np.linspace(0.1, mceq.density_model.max_X, n_pts)
     
     mceq.solve(int_grid=X_grid)
 
@@ -72,13 +72,12 @@ To obtain the solutions at equivalent altitudes one needs to simply map the
 the values of :math:`X` to the corresponding altitude for the **current** zenith
 angle and atmospheric model::
 
-    h_grid = mceq.density_profile.X2h(X_grid)
+    h_grid = mceq.density_model.X2h(X_grid)
 
-To define a grid in X that corresponds to certain altitudes, use the inverse
-function::
+To define a strictly increasing grid in X (=stricktly decreasing in altitude), using the converter function between height and depth::
 
-    h_grid = np.linspace(0,50*1e3*1e2) # altitudes from 0 to 50 km (in cm)
-    X_grid = mceq.density_profile.h2X(h_grid)
+    h_grid = np.linspace(50 * 1e3 * 1e2, 0) # altitudes from 50 to 0 km (in cm)
+    X_grid = mceq.density_model.h2X(h_grid)
 
     mceq.solve(int_grid=X_grid)
 
@@ -113,7 +112,7 @@ To change the density profile ::
 
 Available models are:
 
-- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`)
+- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC (see :func:`MCEq.geometry.density_models.CorsikaAtmosphere.init_parameters`)
 - 'MSIS00' and 'MSIS00_IC' - NRLMSISE-00 global static atmospheric model by NASA (_IC = centered on IceCube at the South Pole, where zenith angles > 90 degrees are up-going)
 - 'AIRS' - an interface to tabulated satellite data (not provided), extrapolated with MSIS00 at altitudes above 50km
 - 'Isothermal' - a simple isothermal model with scale height at 6.3 km
