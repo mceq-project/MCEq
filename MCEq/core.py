@@ -173,7 +173,7 @@ class MCEqRun(object):
                 'Solution not has not been computed on grid. Check input.')
         if grid_idx is None:
             sol = np.copy(self._solution)
-        elif grid_idx >= len(self.grid_sol):
+        elif grid_idx >= len(self.grid_sol) or grid_idx is None:
             sol = self.grid_sol[-1, :]
         else:
             sol = self.grid_sol[grid_idx, :]
@@ -649,6 +649,10 @@ class MCEqRun(object):
 
         """
         info(2, "Launching {0} solver".format(config.integrator))
+        
+        if int_grid is not None and np.any(np.diff(int_grid) < 0):
+            raise Exception('The X values in int_grid are required to be strickly',
+                'increasing.')
 
         # Calculate integration path if not yet happened
         self._calculate_integration_path(int_grid, grid_var)
@@ -725,10 +729,10 @@ class MCEqRun(object):
         if (max_ldec * ri(config.max_density) > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
-            delta_X = lambda X: 0.95 / (max_ldec * ri(X))
+            delta_X = lambda X: config.stability_margin / (max_ldec * ri(X))
         else:
             info(2, "using interactions as leading eigenvalues")
-            delta_X = lambda X: 0.95 / max_lint
+            delta_X = lambda X: config.stability_margin / max_lint
 
         dXmax = config.dXmax
         while X < max_X:
