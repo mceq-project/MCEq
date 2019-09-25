@@ -46,7 +46,7 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
                                                       float(nsteps)))
 
-    return phc, grid_sol
+    return phc, np.array(grid_sol)
 
 
 class CUDASparseContext(object):
