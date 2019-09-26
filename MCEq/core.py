@@ -416,7 +416,7 @@ class MCEqRun(object):
             self._phi0[min_idx + self.pman[(2212, 0)].lidx:self.pman[(
                 2212, 0)].uidx] += 1e-4 * n_top
 
-    def set_single_primary_particle(self, ptot, corsika_id=None, pdg_id=None):
+    def set_single_primary_particle(self, E, corsika_id=None, pdg_id=None):
         """Set type and kinetic energy of a single primary nucleus to
         calculation of particle yields.
 
