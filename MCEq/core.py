@@ -454,7 +454,7 @@ class MCEqRun(object):
         if corsika_id:
             n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
         elif pdg_id:
-            n_nucleons, n_protons, n_neutrons = getAZN(corsika_id)
+            n_nucleons, n_protons, n_neutrons = getAZN(pdg_id)
 
         En = E / float(n_nucleons) if n_nucleons > 0 else E
 
