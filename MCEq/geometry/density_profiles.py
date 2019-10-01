@@ -1001,7 +1001,7 @@ class GeneralizedTarget(object):
         """Updates internal variables. Not needed to call by user."""
 
         self.start_bounds, self.end_bounds, \
-            self.densities = zip(*self.mat_list)[:-1]
+            self.densities = list(zip(*self.mat_list))[:-1]
         self.densities = np.array(self.densities)
         self.start_bounds = np.array(self.start_bounds)
         self.end_bounds = np.array(self.end_bounds)
