@@ -411,9 +411,9 @@ class Interactions(object):
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
-
-        self.parents = index['parents']
-        self.particles = index['particles']
+        disabled_particles = config.adv_set['disabled_particles']
+        self.parents = [p for p in index['parents'] 
+                        if p[0] not in disabled_particles]
         self.relations = index['relations']
         self.index_d = index['index_d']
         self.description = index['description']
@@ -422,7 +422,8 @@ class Interactions(object):
         regenerate_index = False
 
         if parent_list is not None:
-            self.parents = [p for p in self.parents if p in parent_list]
+            self.parents = [p for p in self.parents if p in parent_list and p[0] 
+                            not in disabled_particles]
             regenerate_index = True
         if (config.adv_set['disable_charm_pprod']):
             self.parents = [
@@ -441,21 +442,28 @@ class Interactions(object):
                 if p[0] in config.adv_set['allowed_projectiles']
             ]
             regenerate_index = True
-        if regenerate_index:
-            self.particles = []
-            for p in list(self.relations):
-                if p not in self.parents:
-                    _ = self.relations.pop(p, None)
-                    continue
-                self.particles.append(p)
-                self.particles += self.relations[p]
-            self.particles = sorted(list(set(self.particles)))
+        
+        self.particles = []
+        for p in list(self.relations):
+            if p not in self.parents:
+                _ = self.relations.pop(p, None)
+                continue
+            self.particles.append(p)
+            self.particles += [d for d in self.relations[p] 
+                                if d not in disabled_particles]
+        self.particles = sorted(list(set(self.particles)))
 
         if config.adv_set['disable_direct_leptons']:
-            # info(5, 'Hotfix for DPMJET, no direct leptons')
             for p in list(self.relations):
                 self.relations[p] = [
                     c for c in self.relations[p] if not 10 < abs(c[0]) < 20
+                ]
+
+        if len(disabled_particles) > 0:
+            for p in list(self.relations):
+                self.relations[p] = [
+                    c for c in self.relations[p] if c[0] not in 
+                    disabled_particles
                 ]
 
     def __getitem__(self, key):

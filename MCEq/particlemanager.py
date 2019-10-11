@@ -708,7 +708,8 @@ class ParticleManager(object):
         each projectile particle"""
 
         info(5, 'Setting hadronic secondaries for particles.')
-        if self.current_hadronic_model == hadronic_db.iam and not force:
+        if (self.current_hadronic_model == hadronic_db.iam and 
+            not force and updated_parent_list is None):
             info(10, 'Same hadronic model not applied to particles.')
             return
         if updated_parent_list is not None:

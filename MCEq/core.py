@@ -332,7 +332,6 @@ class MCEqRun(object):
             else:
                 self._interactions.load(interaction_model,
                                         parent_list=particle_list)
-
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = self._interactions.particles + self._decays.particles
             self.pman.set_interaction_model(
