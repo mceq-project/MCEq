@@ -1,11 +1,19 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Version 1.0.8:
+- Fixed a Python3 compatibility issue in density profiles
+- Cross checked and corrected the functionality of "disabled particles" in config file
+- Version tagged for paper submission
+
+Version 1.0.6 and 1.0.7:
+- A few typos corrected
+
 Version 1.0.5:
-    - Check added to make sure depth grids are strictly increasing
-    - Tutorial updated to reflect this fact
-    - New advanced variable in config "stability_margin"
-    - New method in MCEqRun to set the entire spectrum for combinations
-      of particles as initial condition
+- Check added to make sure depth grids are strictly increasing
+- Tutorial updated to reflect this fact
+- New advanced variable in config "stability_margin"
+- New method in MCEqRun to set the entire spectrum for combinations
+    of particles as initial condition
 
 Version 1.0.4:
     First official version distributed over PyPi
