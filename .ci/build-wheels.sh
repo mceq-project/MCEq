@@ -6,6 +6,8 @@ pys=(/opt/python/*/bin)
 
 # Filter out Python 3.4
 pys=(${pys[@]//*34*/})
+# Filter out Python 3.8 too since no binaries are availabel on PYPI yet
+pys=(${pys[@]//*38*/})
 
 # Compile wheels
 for PYBIN in "${pys[@]}"; do
