@@ -1,5 +1,8 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Current:
+- disable_decays flag in advanced options fixed
+
 Version 1.0.8:
 - Fixed a Python3 compatibility issue in density profiles
 - Cross checked and corrected the functionality of "disabled particles" in config file
