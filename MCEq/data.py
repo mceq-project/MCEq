@@ -730,13 +730,6 @@ class Decays(object):
             self.parents = sorted(list(set(plist)))
             regenerate_index = True
 
-        if (config.adv_set['disable_decays']):
-            self.parents = [
-                p for p in self.parents
-                if p[0] not in config.adv_set['disable_decays']
-            ]
-            regenerate_index = True
-
         if regenerate_index:
             self.particles = []
             for p in list(self.relations):

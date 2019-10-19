@@ -73,7 +73,7 @@ class MCEqParticle(object):
         #: (bool) particle is interacting projectile
         self.is_projectile = False
         #: (bool) particle is stable
-        self.is_stable = False
+        self.is_stable = False or pdg_id in config.adv_set['disable_decays']
         #: (bool) can_interact
         self.can_interact = False
         #: (bool) has continuous losses dE/dX defined
@@ -99,11 +99,6 @@ class MCEqParticle(object):
         self.mix_idx = 0
         #: (float) critical energy in air at the surface
         self.E_crit = 0
-
-        # # TODO: move this check to internal variable self.is_stable, or so
-        # # if pdg_id in config.adv_set["disable_decays"]:
-        # #     _pdata.force_stable(self.pdg_id)
-
         # Energy and cross section dependent inits
         self.current_cross_sections = None
         self._energy_grid = energy_grid
@@ -147,7 +142,8 @@ class MCEqParticle(object):
         self.name = name
         #: (bool) particle is stable
         #: TODO the exclusion of neutron decays is a hotfix
-        self.is_stable = not self.ctau < np.inf
+        self.is_stable = (not self.ctau < np.inf or
+                          self.pdg_id[0] in config.adv_set['disable_decays'])
 
     def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass,
                                   **kwargs):
@@ -518,10 +514,10 @@ class MCEqParticle(object):
         Returns:
           (float): :math:`\\frac{m\\ 6.4 \\text{km}}{c\\tau}` in GeV
         """
-        try:
-            self.E_crit = self.mass * 6.4e5 / self.ctau
-        except ZeroDivisionError:
+        if self.is_stable or self.ctau <= 0.:
             self.E_crit = np.inf
+        else:
+            self.E_crit = self.mass * 6.4e5 / self.ctau
 
     def _calculate_mixing_energy(self):
         """Calculates interaction/decay length in Air and decides if
@@ -548,7 +544,8 @@ class MCEqParticle(object):
         inv_declen = self.inverse_decay_length()
         if (not np.any(np.nan_to_num(inv_declen) > 0.)
                 or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
-                or config.adv_set['no_mixing']):
+                or config.adv_set['no_mixing']
+                or self.pdg_id[0] in config.adv_set['disable_decays']):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -609,14 +606,15 @@ class MCEqParticle(object):
         is_hadron     : {1}
         is_lepton     : {2}
         is_nucleus    : {3}
-        is_mixed      : {4}
-        is_resonance  : {5}
-        is_tracking   : {6}
-        is_projectile : {7}
-        mceqidx       : {8}
-        E_mix         : {9:2.1e} GeV\n""").format(
+        is_stable     : {4}
+        is_mixed      : {5}
+        is_resonance  : {6}
+        is_tracking   : {7}
+        is_projectile : {8}
+        mceqidx       : {9}
+        E_mix         : {10:2.1e} GeV\n""").format(
             self.name, self.is_hadron, self.is_lepton, self.is_nucleus,
-            self.is_mixed, self.is_resonance, self.is_tracking,
+            self.is_stable, self.is_mixed, self.is_resonance, self.is_tracking,
             self.is_projectile, self.mceqidx, self.E_mix)
         return a_string
 
