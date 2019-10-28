@@ -2,6 +2,8 @@ Changes in first release version of MCEq from release candidate 1:
 
 Current:
 - disable_decays flag in advanced options fixed
+- threshold energy not used in n_mu, n_e
+- new generic function 'n_particles' for arbitrary particle types
 
 Version 1.0.8:
 - Fixed a Python3 compatibility issue in density profiles
