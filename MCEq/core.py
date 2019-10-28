@@ -790,15 +790,15 @@ class MCEqRun(object):
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
 
-    def n_mu(self, grid_idx=None, min_energy_cutoff=1e-1):
-        """Returns muon number at a grid step above
+    def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):
+        """Returns number of particles of type `label` at a grid step above
         an energy threshold for counting."""
         ie_min = np.argmin(
             np.abs(self.e_bins -
                    self.e_bins[self.e_bins >= min_energy_cutoff][0]))
         info(
             10,
-            'Energy cutoff for muon number calculation {0:4.3e} GeV'.format(
+            'Energy cutoff for particle number calculation {0:4.3e} GeV'.format(
                 self.e_bins[ie_min]))
         info(
             15,
@@ -806,29 +806,19 @@ class MCEqRun(object):
             .format(self.e_bins[ie_min], self.e_bins[ie_min + 1],
                     self.e_grid[ie_min]))
         return np.sum(
-            self.get_solution(
-                'total_mu+', mag=0, integrate=True, grid_idx=grid_idx) +
-            self.get_solution(
-                'total_mu-', mag=0, integrate=True, grid_idx=grid_idx))
+            self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:])
+
+    def n_mu(self, grid_idx=None, min_energy_cutoff=1e-1):
+        """Returns muon number at a grid step above
+        an energy threshold for counting."""
+        return (self.n_particles('total_mu+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
+                self.n_particles('total_mu-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
     def n_e(self, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns muon number at a grid step above
         an energy threshold for counting."""
-        ie_min = np.argmin(
-            np.abs(self.e_bins -
-                   self.e_bins[self.e_bins >= min_energy_cutoff][0]))
-        info(
-            10,
-            'Energy cutoff for muon number calculation {0:4.3e} GeV'.format(
-                self.e_bins[ie_min]))
-        info(
-            15,
-            'First bin is between {0:3.2e} and {1:3.2e} with midpoint {2:3.2e}'
-            .format(self.e_bins[ie_min], self.e_bins[ie_min + 1],
-                    self.e_grid[ie_min]))
-        return np.sum(
-            self.get_solution('e+', mag=0, integrate=True, grid_idx=grid_idx) +
-            self.get_solution('e-', mag=0, integrate=True, grid_idx=grid_idx))
+        return (self.n_particles('e+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
+                self.n_particles('e-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
     def z_factor(self, projectile_pdg, secondary_pdg, definition='primary_e'):
         """Energy dependent Z-factor according to Thunman et al. (1996)"""
