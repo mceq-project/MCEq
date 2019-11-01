@@ -415,7 +415,7 @@ class MCEqRun(object):
             self._phi0[min_idx + self.pman[(2212, 0)].lidx:self.pman[(
                 2212, 0)].uidx] += 1e-4 * n_top
 
-    def set_single_primary_particle(self, E, corsika_id=None, pdg_id=None):
+    def set_single_primary_particle(self, E, corsika_id=None, pdg_id=None, append=False):
         """Set type and kinetic energy of a single primary nucleus to
         calculation of particle yields.
 
@@ -425,12 +425,21 @@ class MCEqRun(object):
         The nucleus type is defined via :math:`\\text{CORSIKA ID} = A*100 + Z`. For
         example iron has the CORSIKA ID 5226.
 
+        Single leptons or hadrons can be defined by specifiying `pdg_id` instead of
+        `corsika_id`.
+
+        The `append` argument can be used to compose an initial state with
+        multiple particles. If it is `False` the initial condition is reset to zero
+        before adding the particle.
+
         A continuous input energy range is allowed between
         :math:`50*A~ \\text{GeV} < E_\\text{nucleus} < 10^{10}*A \\text{GeV}`.
 
         Args:
-          E (float): kinetic energy of nucleus in GeV
-          corsika_id (int): ID of nucleus (see text)
+          E (float): kinetic energy of a nucleus in GeV
+          corsika_id (int): ID of a nucleus (see text)
+          pdg_id (int): PDG ID of a particle
+          append (bool): If True, keep previous state and append a new particle.
         """
 
         from scipy.linalg import solve
@@ -443,9 +452,13 @@ class MCEqRun(object):
             2, 'CORSIKA ID {0}, PDG ID {1}, energy {2:5.3g} GeV'.format(
                 corsika_id, pdg_id, E))
 
-        self._restore_initial_condition = [(self.set_single_primary_particle, E,
-                                            corsika_id, pdg_id)]
-
+        if append == False:
+            self._restore_initial_condition = [(self.set_single_primary_particle, E,
+                                                corsika_id, pdg_id)]
+            self._phi0 *= 0.
+        else:
+            self._restore_initial_condition.append((self.set_single_primary_particle, E,
+                                                    corsika_id, pdg_id))
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
         ewidths = self._energy_grid.w
@@ -474,13 +487,11 @@ class MCEqRun(object):
              ewidths[cenbin - 1:cenbin + 2] * egrid[cenbin - 1:cenbin + 2],
              ewidths[cenbin - 1:cenbin + 2] * egrid[cenbin - 1:cenbin + 2]**2))
 
-        self._phi0 *= 0.
-
         if n_nucleons == 0:
             # This case handles other exotic projectiles
             b_particle = np.array([1., En, En**2])
             lidx = self.pman[pdg_id].lidx
-            self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] = solve(
+            self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] += solve(
                 emat, b_particle)
             return
 
@@ -489,13 +500,13 @@ class MCEqRun(object):
                 [n_protons, En * n_protons, En**2 * n_protons])
             p_lidx = self.pman[2212].lidx
 
-            self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] = solve(
+            self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] += solve(
                 emat, b_protons)
         if n_neutrons > 0:
             b_neutrons = np.array(
                 [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
-            self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] = solve(
+            self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] += solve(
                 emat, b_neutrons)
 
     def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
