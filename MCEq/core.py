@@ -60,7 +60,7 @@ class MCEqRun(object):
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db,
-                                                       material='air')
+                                                       material=config.dedx_material)
 
         #: Interface to decay tables of the HDF5 database
         self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)

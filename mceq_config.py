@@ -64,9 +64,11 @@ len_target = 1000.
 env_density = 0.001225
 env_name = "air"
 #: Approximate value for the maximum density expected. Needed for the
-#: resonance approximation.
+#: resonance approximation. Default value: air at the surface
 max_density = 0.001225,
-
+#: Material for ionization and radiation (=continuous) loss terms
+#: Currently available choices: 'air', 'water', 'ice'
+dedx_material = 'air'
 # =================================================================
 # Parameters of numerical integration
 # =================================================================

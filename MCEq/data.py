@@ -874,7 +874,7 @@ class ContinuousLosses(object):
       material (str): name of the material (not fully implemented)
     """
 
-    def __init__(self, mceq_hdf_db, material='air'):
+    def __init__(self, mceq_hdf_db, material=config.dedx_material):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
