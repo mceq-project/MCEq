@@ -387,14 +387,14 @@ class MCEqParticle(object):
         cmat[chidx[0]:chidx[1], projidx[0]:projidx[1]] = self.decay_dists[
             child][chidx[0]:chidx[1], projidx[0]:projidx[1]]
 
-    def dN_dxlab(self, energy, sec_pdg, verbose=True, **kwargs):
+    def dN_dxlab(self, plab, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
         to ``energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
+            energy (float): approximate interaction plab (or kinetic energy)
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
@@ -402,46 +402,42 @@ class MCEqParticle(object):
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
+        eidx = (np.abs(self._energy_grid.c - plab)).argmin()
         en = self._energy_grid.c[eidx] + self.mass
-        info(10, 'Nearest energy, index: ', en, eidx, condition=verbose)
+        info(0 if verbose else 10, 'Nearest energy, index: ', en, eidx, condition=verbose)
 
         m = self.hadr_yields[sec_pdg]
-        xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
-        xl_dist = en * xl_grid * m[:eidx +
-                                   1, eidx] / self._energy_grid.w[:eidx + 1]
+        xl_grid = (self._energy_grid.c[:eidx + 1] + sec_pdg.mass) / (en + self.mass)
+        xl_dist =  en * m[:eidx + 1, eidx] / self._energy_grid.w[eidx]
 
         return xl_grid, xl_dist
 
-    def dNdec_dxlab(self, energy, sec_pdg, verbose=True, **kwargs):
+    def dNdec_dxlab(self, plab, secondary, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
         to ``energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
+            plab (float): approximate interaction plab (or kinetic energy)
+            secondary (object): MCEqParticle reference to secondary particle type
             verbose (bool): print out the closest energy
         Returns:
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
+        eidx = (np.abs(self._energy_grid.c - plab)).argmin()
         en = self._energy_grid.c[eidx] + self.mass
-        info(10, 'Nearest energy, index: ', en, eidx, condition=verbose)
+        info(0 if verbose else 10, 'Nearest energy, index: ', en, eidx, condition=verbose)
 
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
-        xl_dist = en * xl_grid * m[:eidx +
-                                   1, eidx] / self._energy_grid.w[:eidx + 1]
+        xl_dist = en * m[:eidx + 1, eidx] / self._energy_grid.w[eidx]
 
         return xl_grid, xl_dist
 
     def dN_dxf(self,
-               energy,
-               prim_pdg,
+               plab,
                sec_pdg,
                pos_only=True,
                verbose=True,
@@ -452,7 +448,7 @@ class MCEqParticle(object):
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
+            plab (float): approximate interaction plab (or kinetic energy)
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
@@ -460,6 +456,8 @@ class MCEqParticle(object):
         Returns:
             (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
+        
+        # TODO: Needs debugging and the raise Exceptions if the avpt file not present 
         if not hasattr(self, '_ptav_sib23c'):
             # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
             import pickle
@@ -488,7 +486,7 @@ class MCEqParticle(object):
 
             return xf, dxl_dxf
 
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
+        eidx = (np.abs(self._energy_grid.c - plab)).argmin()
         en = self._energy_grid.c[eidx] + self.mass
         info(2, 'Nearest energy, index: ', en, eidx, condition=verbose)
         m = self.hadr_yields[sec_pdg]
