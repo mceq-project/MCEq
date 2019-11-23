@@ -2,6 +2,7 @@ Changes in first release version of MCEq from release candidate 1:
 
 Current:
 - multiple calls to `set_single_particle` can define an initial state by using an the `append` flag
+- fixed get_dNdxlab function (dNdxf is still not usable)
 
 Version 1.0.9:
 - disable_decays flag in advanced options fixed
