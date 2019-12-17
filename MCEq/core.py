@@ -1003,7 +1003,7 @@ class MatrixBuilder(object):
                      np.max(parent.inverse_decay_length())])
                 self.D_blocks[idx] *= parent.inverse_decay_length()
 
-        self.dec_m = self._csr_from_blocks(self.D_blocks)
+            self.dec_m = self._csr_from_blocks(self.D_blocks)
 
         for mname, mat in [('C', self.int_m), ('D', self.dec_m)]:
             mat_density = (float(mat.nnz) / float(np.prod(mat.shape)))
