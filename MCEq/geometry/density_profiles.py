@@ -726,8 +726,12 @@ class AIRSAtmosphere(EarthsAtmosphere):
           location (str): supported is only "SouthPole"
           doy (int): Day Of Year
         """
-        from matplotlib.dates import strpdate2num, num2date
+        # from time import strptime
+        from matplotlib.dates import datestr2num, num2date
         from os import path
+
+        def bytespdate2num(b):
+            return datestr2num(b.decode('utf-8'))
 
         data_path = (join(
             path.expanduser('~'),
@@ -750,8 +754,10 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         for d_key, fname in files:
             fname = data_path + 'tables/' + fname
+            # tabf = open(fname).read()
+            
             tab = np.loadtxt(fname,
-                             converters={0: strpdate2num('%Y/%m/%d')},
+                             converters={0: bytespdate2num},
                              usecols=[0] + list(range(2, 27)))
             # with open(fname, 'r') as f:
             #     comline = f.readline()
@@ -767,7 +773,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
                         IC79_idx_2 = di
             surf_val = tab[:, 1]
             cols = tab[:, min_press_idx + 2:]
-            data_collection[d_key] = (dates, surf_val, cols)
+            data_collection[d_key] = (dates, surf_val, cols) 
 
         self.interp_tab_d = {}
         self.interp_tab_t = {}
