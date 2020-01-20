@@ -2,6 +2,11 @@ Changes in first release version of MCEq from release candidate 1:
 
 Current:
 - multiple calls to `set_single_particle` can define an initial state by using an the `append` flag
+- updated to crflux 1.0.3 (Windows compatibility)
+- Flux and result array are re-created when interaction model changes (not resized)
+- Fixed ctypes bug in NRLMSISE
+- Long description fixed in setup.py
+- added license to scikit-hep project's azure-build-helpers by Henryii
 
 Version 1.0.9:
 - disable_decays flag in advanced options fixed

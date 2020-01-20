@@ -1,5 +1,8 @@
 BSD 3-Clause License
 
+This license below covers the files in this folder adopted from the
+scikit-hep project. 
+
 Copyright (c) 2019, Henry Schreiner.
 All rights reserved.
 
