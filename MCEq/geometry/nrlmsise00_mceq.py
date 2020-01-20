@@ -122,7 +122,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
         info(5, 'day of year', doy)
-        self.inp.doy = doy
+        self.inp.doy = cmsis.c_int(doy)
 
     def _retrieve_result(self, altitude_cm):
         if self.last_alt == altitude_cm:
