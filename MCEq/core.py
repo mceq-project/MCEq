@@ -345,8 +345,8 @@ class MCEqRun(object):
             raise Exception('Should not happen in practice.')
 
         # Update dimensions if particle dimensions changed
-        self._phi0.resize(self.dim_states)
-        self._solution.resize(self.dim_states)
+        self._phi0 = np.zeros(self.dim_states)
+        self._solution = np.zeros(self.dim_states)
 
         # Restore insital condition if present
         if len(self._restore_initial_condition) > 0:
@@ -541,9 +541,10 @@ class MCEqRun(object):
         ewidths = self._energy_grid.w
 
         if len(spectrum) != self.dim:
-            raise Exception('Lengths of spectrum and energy grid do not match.')
+            raise Exception(
+                'Lengths of spectrum and energy grid do not match.')
 
-        self._phi0[self.pman[pdg_id].lidx:self.pman[pdg_id].uidx] += spectrum 
+        self._phi0[self.pman[pdg_id].lidx:self.pman[pdg_id].uidx] += spectrum
 
     def set_density_model(self, density_config):
         """Sets model of the atmosphere.
