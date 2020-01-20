@@ -1,5 +1,5 @@
 import sys
-from os.path import join
+from os.path import join, dirname, abspath
 from setuptools import setup, Extension
 
 from distutils.command import build_ext
@@ -48,10 +48,16 @@ def get_version():
 
 __version__ = get_version()
 
+this_directory = abspath(dirname(__file__))
+with open(join(this_directory, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
+
 setup(
     name='MCEq',
     version=__version__,
     description='Numerical cascade equation solver',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     author='Anatoli Fedynitch',
     author_email='afedynitch@gmail.com',
     license='BSD 3-Clause License',
@@ -71,8 +77,8 @@ setup(
     install_requires=[
         'six',
         'h5py',
-        'particletools==1.1.3',
-        'crflux==1.0.2',
+        'particletools',
+        'crflux',
         'scipy',
         'numpy',
         'tqdm',

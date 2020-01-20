@@ -4,13 +4,16 @@ PYTHON_VERSION="$1"
 
 case $PYTHON_VERSION in
 2.7)
-  FULL_VERSION=2.7.16
+  FULL_VERSION=2.7.17
   ;;
 3.6)
-  FULL_VERSION=3.6.8
+  FULL_VERSION=3.6.9
   ;;
 3.7)
-  FULL_VERSION=3.7.3
+  FULL_VERSION=3.7.6
+  ;;
+3.8)
+  FULL_VERSION=3.8.1
   ;;
 esac
 
@@ -31,4 +34,4 @@ sudo ln -s /usr/local/bin/python$PYTHON_VERSION /usr/local/bin/python
 which python
 python --version
 python -m ensurepip
-python -m pip install setuptools twine wheel numpy
+python -m pip install setuptools twine wheel
