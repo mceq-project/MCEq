@@ -1,8 +1,9 @@
-crflux
-h5py
-numpy
-particletools
-requests
-scipy
 six
+h5py
+particletools
+crflux
+scipy
+numpy
 tqdm
+requests
+mkl
