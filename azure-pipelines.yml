@@ -59,6 +59,8 @@ jobs:
         python.version: '3.6'
       Python37:
         python.version: '3.7'
+      Python38:
+        python.version: '3.8'
   pool:
     vmImage: 'macOS-latest'
   steps:
@@ -79,6 +81,9 @@ jobs:
       Python37:
         python.version: '3.7'
         python.architecture: 'x64'
+      Python38:
+        python.version: '3.8'
+        python.architecture: 'x64'
       Python27_32:
         python.version: '2.7'
         python.architecture: 'x86'
@@ -88,8 +93,11 @@ jobs:
       Python37_32:
         python.version: '3.7'
         python.architecture: 'x86'
+      Python38_32:
+        python.version: '3.8'
+        python.architecture: 'x86'
   pool:
-    vmImage: 'vs2017-win2016'
+    vmImage: 'windows-latest'
   steps:
     - template: .ci/azure-setup.yml
     - template: .ci/azure-steps.yml
