@@ -69,15 +69,9 @@ setup(
     author_email='afedynitch@gmail.com',
     license='BSD 3-Clause License',
     url='https://github.com/afedynitch/MCEq',
-    packages=['MCEq', 'MCEq.geometry', 'MCEq.geometry.nrlmsise00',
-        'MCEq.geometry.corsikaatm'],
+    packages=['MCEq', 'MCEq.tests', 'MCEq.geometry',
+        'MCEq.geometry.nrlmsise00', 'MCEq.geometry.corsikaatm'],
     setup_requires=[] + pytest_runner,
-    package_dir={
-        'MCEq': 'MCEq',
-        'MCEq.geometry': 'MCEq/geometry',
-        'MCEq.geometry.nrlmsise00': 'MCEq/geometry/nrlmsise00',
-        'MCEq.geometry.corsikaatm': 'MCEq/geometry/corsikaatm'
-    },
     package_data={
         'MCEq': ['data/README.md'],
     },

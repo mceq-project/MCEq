@@ -7,6 +7,9 @@ Current:
 - Fixed ctypes bug in NRLMSISE
 - Long description fixed in setup.py
 - added license to scikit-hep project's azure-build-helpers by Henryii
+- build includes Python 3.8 binaries (except for 32bit Linux)
+- tests moved into MCEq package
+
 
 Version 1.0.9:
 - disable_decays flag in advanced options fixed

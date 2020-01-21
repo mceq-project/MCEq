@@ -775,7 +775,7 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if (max_ldec * ri(config.max_density) > max_lint
+        if (max_ldec / config.max_density > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
             def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
