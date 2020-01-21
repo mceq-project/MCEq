@@ -11,6 +11,7 @@ steps:
       -e package_name=$(package_name) \
       -e dev_requirements_file='$(dev_requirements_file)' \
       -e test_requirements_file='$(test_requirements_file)' \
+      -e arch='$(arch)' \
       -v $PWD:/io \
       $(image) \
       /io/.ci/build-wheels.sh

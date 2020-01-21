@@ -9,7 +9,7 @@
 # with CC0 license here: https://github.com/pypa/python-manylinux-demo/blob/master/LICENSE
 
 set -e -x
-echo "$dev_requirements_file, $test_requirements_file"
+echo "$dev_requirements_file, $test_requirements_file, $arch" 
 
 # Collect the pythons
 pys=(/opt/python/*/bin)
