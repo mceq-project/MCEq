@@ -1,4 +1,4 @@
-# Azure only builds master, Travis and Appveyor only build develop
+# Azure only builds master
 
 trigger:
   - master
@@ -9,20 +9,27 @@ pr:
 variables:
   package_name: MCEq
   many_linux_base: quay.io/pypa/manylinux1_
+  dev_requirements_file: .ci/requirements-build.txt
+  test_requirements_file: .ci/requirements-test.txt
 
 jobs:
-
+  
 - job: LinuxSDist
   pool:
     vmImage: 'ubuntu-latest'
   variables:
     python.architecture: 'none'
   steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.8'
     - script: |
+        python -m pip install --upgrade pip
         python -m pip install setuptools
-        python setup.py sdist
-      displayName: Publish sdist
-    - template: .ci/azure-publish-dist.yml
+      displayName: Install sdist deps
+    - script: python setup.py sdist
+      displayName: Prepare sdist
+    - template: azure-wheel-helpers/azure-publish-dist.yml
 
 - job: ManyLinux
   strategy:
@@ -32,11 +39,11 @@ jobs:
         plat: manylinux2010_x86_64
         image: quay.io/pypa/manylinux2010_x86_64
         python.architecture: x64
-      # 64Bit:
-      #   arch: x86_64
-      #   plat: manylinux1_x86_64
-      #   image: $(many_linux_base)x86_64
-      #   python.architecture: x64
+      64Bit:
+        arch: x86_64
+        plat: manylinux1_x86_64
+        image: $(many_linux_base)x86_64
+        python.architecture: x64
       32Bit:
         arch: i686
         plat: manylinux1_i686

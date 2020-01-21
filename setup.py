@@ -49,8 +49,12 @@ def get_version():
 __version__ = get_version()
 
 this_directory = abspath(dirname(__file__))
-with open(join(this_directory, 'README.md'), encoding='utf-8') as f:
-    long_description = f.read()
+if sys.version_info.major == 3:
+    with open(join(this_directory, 'README.md'), encoding='utf-8') as f:
+        long_description = f.read()
+else:
+    with open(join(this_directory, 'README.md')) as f:
+        long_description = f.read()
 
 setup(
     name='MCEq',

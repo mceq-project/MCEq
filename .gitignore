@@ -14,3 +14,4 @@ dist
 *.so
 MCEq/geometry/corsikaatm/libcorsikaatm.cp37-win_amd64.pyd
 *.afdesign
+MCEq/data/GSF_spline_20171007.pkl.bz2

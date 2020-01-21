@@ -1,7 +1,10 @@
+# Copyright (c) 2019, Henry Schreiner.
+#
+# Distributed under the 3-clause BSD license, see accompanying file LICENSE
+# or https://github.com/scikit-hep/azure-wheel-helpers for details.
 
 # This is special for macOS because "UsePythonVersion"
 # does not use the official Python.org installers.
-
 steps:
 
 - script: ./macos-install-python.sh '$(python.version)'

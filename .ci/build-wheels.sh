@@ -1,17 +1,31 @@
 #!/bin/bash
+
+# Copyright (c) 2019, Henry Schreiner.
+#
+# Distributed under the 3-clause BSD license, see accompanying file LICENSE
+# or https://github.com/scikit-hep/azure-wheel-helpers for details.
+
+# Based on https://github.com/pypa/python-manylinux-demo/blob/master/travis/build-wheels.sh
+# with CC0 license here: https://github.com/pypa/python-manylinux-demo/blob/master/LICENSE
+
 set -e -x
+echo "$dev_requirements_file, $test_requirements_file"
 
 # Collect the pythons
 pys=(/opt/python/*/bin)
 
+# Print list of Python's available
+echo "All Pythons: ${pys[@]}"
+
 # Filter out Python 3.4
 pys=(${pys[@]//*34*/})
-# Filter out Python 3.8 too since no binaries are availabel on PYPI yet
-pys=(${pys[@]//*38*/})
+
+# Print list of Python's being used
+echo "Using Pythons: ${pys[@]}"
 
 # Compile wheels
 for PYBIN in "${pys[@]}"; do
-    "${PYBIN}/pip" install -r /io/.ci/requirements-build.txt
+    "${PYBIN}/pip" install -r /io/$dev_requirements_file
     "${PYBIN}/pip" wheel /io/ -w wheelhouse/
 done
 
@@ -23,6 +37,7 @@ done
 # Install packages and test
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/python" -m pip install $package_name --no-index -f /io/wheelhouse
+    "${PYBIN}/pip" install -r /io/$test_requirements_file
     # if [ -d "/io/tests" ]; then
     #     "${PYBIN}/pytest" /io/tests
     # else
