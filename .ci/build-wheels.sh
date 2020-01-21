@@ -15,13 +15,13 @@ echo "$dev_requirements_file, $test_requirements_file"
 pys=(/opt/python/*/bin)
 
 # Print list of Python's available
-echo "All Pythons: ${pys[@]}"
+echo "All Pythons on $arch: ${pys[@]}"
 
 # Filter out Python 3.4
 pys=(${pys[@]//*34*/})
 
 # # Filter out Python 3.8 for 32bit due to h5py failure
-if [ $arch -eq i686 ]
+if [ $arch = "i686" ]
 then
     echo "Do not build for Python 3.8 on i686"
     pys=(${pys[@]//*38*/})
