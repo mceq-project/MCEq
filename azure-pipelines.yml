@@ -14,31 +14,31 @@ variables:
 
 jobs:
   
-# - job: LinuxSDist
-#   pool:
-#     vmImage: 'ubuntu-latest'
-#   variables:
-#     python.architecture: 'none'
-#   steps:
-#     - task: UsePythonVersion@0
-#       inputs:
-#         versionSpec: '3.8'
-#     - script: |
-#         python -m pip install --upgrade pip
-#         python -m pip install setuptools
-#       displayName: Install sdist deps
-#     - script: python setup.py sdist
-#       displayName: Prepare sdist
-#     - template: .ci/azure-publish-dist.yml
+- job: LinuxSDist
+  pool:
+    vmImage: 'ubuntu-latest'
+  variables:
+    python.architecture: 'none'
+  steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.8'
+    - script: |
+        python -m pip install --upgrade pip
+        python -m pip install setuptools
+      displayName: Install sdist deps
+    - script: python setup.py sdist
+      displayName: Prepare sdist
+    - template: .ci/azure-publish-dist.yml
 
 - job: ManyLinux
   strategy:
     matrix:
-      # 64Bit2010:
-      #   arch: x86_64
-      #   plat: manylinux2010_x86_64
-      #   image: quay.io/pypa/manylinux2010_x86_64
-      #   python.architecture: x64
+      64Bit2010:
+        arch: x86_64
+        plat: manylinux2010_x86_64
+        image: quay.io/pypa/manylinux2010_x86_64
+        python.architecture: x64
       64Bit:
         arch: x86_64
         plat: manylinux1_x86_64
@@ -55,58 +55,58 @@ jobs:
     - template: .ci/azure-manylinux-wheels.yml
     - template: .ci/azure-publish-dist.yml
 
-# - job: macOS
-#   variables:
-#     python.architecture: 'x64'
-#   strategy:
-#     matrix:
-#       Python27:
-#         python.version: '2.7'
-#       Python36:
-#         python.version: '3.6'
-#       Python37:
-#         python.version: '3.7'
-#       Python38:
-#         python.version: '3.8'
-#   pool:
-#     vmImage: 'macOS-latest'
-#   steps:
-#     - template: .ci/azure-setup.yml
-#     - template: .ci/azure-steps.yml
-#     - template: .ci/azure-tests.yml
-#     - template: .ci/azure-publish-dist.yml
+- job: macOS
+  variables:
+    python.architecture: 'x64'
+  strategy:
+    matrix:
+      Python27:
+        python.version: '2.7'
+      Python36:
+        python.version: '3.6'
+      Python37:
+        python.version: '3.7'
+      Python38:
+        python.version: '3.8'
+  pool:
+    vmImage: 'macOS-latest'
+  steps:
+    - template: .ci/azure-setup.yml
+    - template: .ci/azure-steps.yml
+    - template: .ci/azure-tests.yml
+    - template: .ci/azure-publish-dist.yml
 
-# - job: Windows
-#   strategy:
-#     matrix:
-#       Python27:
-#         python.version: '2.7'
-#         python.architecture: 'x64'
-#       Python36:
-#         python.version: '3.6'
-#         python.architecture: 'x64'
-#       Python37:
-#         python.version: '3.7'
-#         python.architecture: 'x64'
-#       Python38:
-#         python.version: '3.8'
-#         python.architecture: 'x64'
-#       Python27_32:
-#         python.version: '2.7'
-#         python.architecture: 'x86'
-#       Python36_32:
-#         python.version: '3.6'
-#         python.architecture: 'x86'
-#       Python37_32:
-#         python.version: '3.7'
-#         python.architecture: 'x86'
-#       Python38_32:
-#         python.version: '3.8'
-#         python.architecture: 'x86'
-#   pool:
-#     vmImage: 'vs2017-win2016'
-#   steps:
-#     - template: .ci/azure-setup.yml
-#     - template: .ci/azure-steps.yml
-#     # - template: .ci/azure-tests.yml
-#     - template: .ci/azure-publish-dist.yml
+- job: Windows
+  strategy:
+    matrix:
+      Python27:
+        python.version: '2.7'
+        python.architecture: 'x64'
+      Python36:
+        python.version: '3.6'
+        python.architecture: 'x64'
+      Python37:
+        python.version: '3.7'
+        python.architecture: 'x64'
+      Python38:
+        python.version: '3.8'
+        python.architecture: 'x64'
+      Python27_32:
+        python.version: '2.7'
+        python.architecture: 'x86'
+      Python36_32:
+        python.version: '3.6'
+        python.architecture: 'x86'
+      Python37_32:
+        python.version: '3.7'
+        python.architecture: 'x86'
+      Python38_32:
+        python.version: '3.8'
+        python.architecture: 'x86'
+  pool:
+    vmImage: 'vs2017-win2016'
+  steps:
+    - template: .ci/azure-setup.yml
+    - template: .ci/azure-steps.yml
+    # - template: .ci/azure-tests.yml
+    - template: .ci/azure-publish-dist.yml
