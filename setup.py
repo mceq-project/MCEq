@@ -89,9 +89,6 @@ setup(
         'requests'
     ],
     py_modules=['mceq_config'],
-    requires=[
-        'numpy', 'scipy', 'particletools', 'crflux', 'h5py'
-    ],
     ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={
         'MKL': ['mkl==2019.0'],
