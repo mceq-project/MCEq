@@ -56,6 +56,9 @@ else:
     with open(join(this_directory, 'README.md')) as f:
         long_description = f.read()
 
+skip_marker = "# MCEq"
+long_description = long_description[long_description.index(skip_marker) :].lstrip()
+
 setup(
     name='MCEq',
     version=__version__,
