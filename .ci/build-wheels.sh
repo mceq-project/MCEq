@@ -20,18 +20,19 @@ echo "All Pythons: ${pys[@]}"
 # Filter out Python 3.4
 pys=(${pys[@]//*34*/})
 
-# Filter out Python 3.8 for 32bit due to h5py failure
-if [ $arch -eq i686 ]
-then
-    pys=(${pys[@]//*38*/})
-fi
+# # Filter out Python 3.8 for 32bit due to h5py failure
+# if [ $arch -eq i686 ]
+# then
+#     pys=(${pys[@]//*38*/})
+# fi
 
 # Print list of Python's being used
 echo "Using Pythons: ${pys[@]}"
 
 # Compile wheels
 for PYBIN in "${pys[@]}"; do
-    "${PYBIN}/pip" install -r /io/$dev_requirements_file
+    "${PYBIN}/pip" install pip --upgrade 
+    "${PYBIN}/pip" install -vv -r /io/$dev_requirements_file
     "${PYBIN}/pip" wheel /io/ -w wheelhouse/
 done
 
