@@ -104,7 +104,7 @@ jobs:
         python.version: '3.8'
         python.architecture: 'x86'
   pool:
-    vmImage: 'windows-latest'
+    vmImage: 'vs2017-win2016'
   steps:
     - template: .ci/azure-setup.yml
     - template: .ci/azure-steps.yml

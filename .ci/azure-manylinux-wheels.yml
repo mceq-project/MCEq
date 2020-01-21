@@ -13,7 +13,7 @@ steps:
       -e test_requirements_file='$(test_requirements_file)' \
       -v $PWD:/io \
       $(image) \
-      /io/.ci/azure-wheel-helpers/build-wheels.sh
+      /io/.ci/build-wheels.sh
   displayName: Build wheels
 
 - script: |
