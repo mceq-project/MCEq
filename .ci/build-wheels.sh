@@ -21,7 +21,7 @@ echo "All Pythons on $arch: ${pys[@]}"
 pys=(${pys[@]//*34*/})
 
 # # Filter out Python 3.8 for 32bit due to h5py failure
-if [ $arch = "i686" ]
+if [ $arch = "i686" ];
 then
     echo "Do not build for Python 3.8 on i686"
     pys=(${pys[@]//*38*/})
