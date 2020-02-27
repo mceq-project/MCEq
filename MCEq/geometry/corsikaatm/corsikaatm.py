@@ -1,10 +1,13 @@
 from ctypes import (cdll, Structure, c_int, c_double, POINTER)
 import os
+import sysconfig
+
 base = os.path.dirname(os.path.abspath(__file__))
+suffix = sysconfig.get_config_var('EXT_SUFFIX')
+pversion = sysconfig.get_config_var('VERSION')
 
 for fn in os.listdir(base):
-    if 'libcorsikaatm' in fn and (fn.endswith('.so') or fn.endswith('.dll')
-                                  or fn.endswith('.dylib') or fn.endswith('.pyd')):
+    if 'libcorsikaatm' in fn and fn.endswith(suffix) and pversion in fn:
         corsika_acc = cdll.LoadLibrary(os.path.join(base, fn))
         break
 

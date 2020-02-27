@@ -1,6 +1,7 @@
 from __future__ import print_function
 import sys
 import platform
+import sysconfig
 import os.path as path
 import warnings
 base_path = path.dirname(path.abspath(__file__))
@@ -50,7 +51,7 @@ prompt_ctau = 0.123
 #: By default all inclusive cross sections are calculated for air targets
 #: expect those with '_pp' suffix.
 #: <A> = 14.51 for air
-A_target = 14.51  
+A_target = 14.51
 
 #: parameters for EarthGeometry
 r_E = 6391.e3  # Earth radius in m
@@ -59,7 +60,7 @@ h_atm = 112.8e3  # top of the atmosphere in m
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]
-len_target = 1000.  
+len_target = 1000.
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
@@ -244,12 +245,11 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 
 #: Autodetect best solver
 #: determine shared library extension and MKL path
-pf = platform.platform() 
+pf = platform.platform()
 
-if 'Linux' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.so') 
-elif 'Darwin' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.dylib') 
+if 'Linux' in pf or 'Darwin' in pf:
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt'
+                         sysconfig.get_config_var('EXT_SUFFIX'))
 else:
     # Windows case
     mkl_path = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt.dll')
@@ -287,6 +287,8 @@ if has_mkl:
 
 # Compatibility layer for dictionary access to config attributes
 # This is deprecated and will be removed in future
+
+
 class MCEqConfigCompatibility(dict):
     """This class provides access to the attributes of the module as a
     dictionary, as it was in the previous versions of MCEq
@@ -307,7 +309,9 @@ class MCEqConfigCompatibility(dict):
             raise Exception('Unknown config key', key)
         return super(MCEqConfigCompatibility, self).__setitem__(key, value)
 
+
 config = MCEqConfigCompatibility(globals())
+
 
 def _download_file(url, outfile):
     """Downloads the MCEq database from github"""
@@ -321,15 +325,16 @@ def _download_file(url, outfile):
 
     # Total size in bytes.
     total_size = int(r.headers.get('content-length', 0))
-    block_size = 1024*1024
-    wrote = 0 
+    block_size = 1024 * 1024
+    wrote = 0
     with open(outfile, 'wb') as f:
-        for data in tqdm(r.iter_content(block_size), total=math.ceil(total_size//block_size) , 
-            unit='MB', unit_scale=True):
-            wrote = wrote  + len(data)
+        for data in tqdm(r.iter_content(block_size), total=math.ceil(total_size // block_size),
+                         unit='MB', unit_scale=True):
+            wrote = wrote + len(data)
             f.write(data)
     if total_size != 0 and wrote != total_size:
-        raise Exception("ERROR, something went wrong") 
+        raise Exception("ERROR, something went wrong")
+
 
 # Download database file from github
 base_url = 'https://github.com/afedynitch/MCEq/releases/download/'

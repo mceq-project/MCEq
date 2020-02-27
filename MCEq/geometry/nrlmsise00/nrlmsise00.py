@@ -5,13 +5,14 @@ This C version of NRLMSISE-00 is written by Dominik Brodowski
 
 from ctypes import (cdll, Structure, c_int, c_double, pointer, byref, POINTER)
 import os
+import sysconfig
+
 base = os.path.dirname(os.path.abspath(__file__))
+suffix = sysconfig.get_config_var('EXT_SUFFIX')
+pversion = sysconfig.get_config_var('VERSION')
 
 for fn in os.listdir(base):
-    if 'libnrlmsis' in fn and (fn.endswith('.so') or
-                               fn.endswith('.dll') or 
-                               fn.endswith('.dylib') or
-                               fn.endswith('.pyd')):
+    if 'libnrlmsis' in fn and fn.endswith(suffix) and pversion in fn:
         msis = cdll.LoadLibrary(os.path.join(base, fn))
         break
 
