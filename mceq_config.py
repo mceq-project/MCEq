@@ -248,7 +248,7 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 pf = platform.platform()
 
 if 'Linux' in pf or 'Darwin' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt'
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt',
                          sysconfig.get_config_var('EXT_SUFFIX'))
 else:
     # Windows case
