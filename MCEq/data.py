@@ -201,8 +201,8 @@ class HDF5Backend(object):
             if config.assume_nucleon_interactions_for_exotics:
                 for eqv_parent in eqv_lookup[parent_pdg]:
                     if eqv_parent[0] not in model_particles:
-                        info(10, 'Skip equiv. parent', eqv_parent, 'from',
-                             parent_pdg)
+                        info(10, 'No equiv. replacement needed of', eqv_parent, 'for',
+                             parent_pdg, 'parent.')
                         continue
                     elif eqv_parent in available_parents:
                         info(
@@ -419,29 +419,24 @@ class Interactions(object):
         self.description = index['description']
 
         # Advanced options
-        regenerate_index = False
 
         if parent_list is not None:
             self.parents = [p for p in self.parents if p in parent_list and p[0] 
                             not in disabled_particles]
-            regenerate_index = True
         if (config.adv_set['disable_charm_pprod']):
             self.parents = [
                 p for p in self.parents if not is_charm_pdgid(p[0])
             ]
-            regenerate_index = True
         if (config.adv_set['disable_interactions_of_unstable']):
             self.parents = [
                 p for p in self.parents
                 if p[0] not in [2212, 2112, -2212, -2112]
             ]
-            regenerate_index = True
         if (config.adv_set['allowed_projectiles']):
             self.parents = [
                 p for p in self.parents
                 if p[0] in config.adv_set['allowed_projectiles']
             ]
-            regenerate_index = True
         
         self.particles = []
         for p in list(self.relations):
