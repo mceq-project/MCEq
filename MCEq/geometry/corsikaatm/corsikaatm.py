@@ -4,10 +4,9 @@ import sysconfig
 
 base = os.path.dirname(os.path.abspath(__file__))
 suffix = sysconfig.get_config_var('EXT_SUFFIX')
-pversion = sysconfig.get_config_var('VERSION')
 
 for fn in os.listdir(base):
-    if 'libcorsikaatm' in fn and fn.endswith(suffix) and pversion in fn:
+    if 'libcorsikaatm' in fn and fn.endswith(suffix):
         corsika_acc = cdll.LoadLibrary(os.path.join(base, fn))
         break
 

@@ -1,7 +1,6 @@
 from __future__ import print_function
 import sys
 import platform
-import sysconfig
 import os.path as path
 import warnings
 base_path = path.dirname(path.abspath(__file__))
@@ -247,9 +246,10 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: determine shared library extension and MKL path
 pf = platform.platform()
 
-if 'Linux' in pf or 'Darwin' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt',
-                         sysconfig.get_config_var('EXT_SUFFIX'))
+if 'Linux' in pf:
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.so')
+elif 'Darwin' in pf:
+    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.dylib')
 else:
     # Windows case
     mkl_path = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt.dll')
