@@ -387,40 +387,40 @@ class MCEqParticle(object):
         cmat[chidx[0]:chidx[1], projidx[0]:projidx[1]] = self.decay_dists[
             child][chidx[0]:chidx[1], projidx[0]:projidx[1]]
 
-    def dN_dxlab(self, energy, sec_pdg, verbose=True, **kwargs):
+    def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
-        to ``energy`` for hadron-air collisions.
+        to ``kin_energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
+            kin_energy (float): approximate interaction kin_energy
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
-            verbose (bool): print out the closest energy
+            verbose (bool): print out the closest enerkin_energygy
         Returns:
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
-        en = self._energy_grid.c[eidx] + self.mass
+        eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
+        en = self._energy_grid.c[eidx]
         info(10, 'Nearest energy, index: ', en, eidx, condition=verbose)
 
         m = self.hadr_yields[sec_pdg]
-        xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
+        xl_grid = (self._energy_grid.c[:eidx + 1]) / en
         xl_dist = en * xl_grid * m[:eidx +
                                    1, eidx] / self._energy_grid.w[:eidx + 1]
 
         return xl_grid, xl_dist
 
-    def dNdec_dxlab(self, energy, sec_pdg, verbose=True, **kwargs):
+    def dNdec_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
-        to ``energy`` for hadron-air collisions.
+        to ``kin_energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
+            kin_energy (float): approximate interaction energy
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
@@ -428,16 +428,41 @@ class MCEqParticle(object):
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
-        en = self._energy_grid.c[eidx] + self.mass
+        eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
+        en = self._energy_grid.c[eidx]
         info(10, 'Nearest energy, index: ', en, eidx, condition=verbose)
 
         m = self.decay_dists[sec_pdg]
-        xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
+        xl_grid = (self._energy_grid.c[:eidx + 1]) / en
         xl_dist = en * xl_grid * m[:eidx +
                                    1, eidx] / self._energy_grid.w[:eidx + 1]
 
         return xl_grid, xl_dist
+
+    def dN_dEkin(self, kin_energy, sec_pdg, verbose=True, **kwargs):
+        r"""Returns :math:`dN/dE_{\rm Kin}` in lab frame for an interaction energy
+        close to ``kin_energy`` (total) for hadron-air collisions.
+
+        The function respects modifications applied via :func:`_set_mod_pprod`.
+
+        Args:
+            kin_energy (float): approximate interaction energy
+            prim_pdg (int): PDG ID of projectile
+            sec_pdg (int): PDG ID of secondary particle
+            verbose (bool): print out the closest energy
+        Returns:
+            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+        """
+
+        eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
+        en = self._energy_grid.c[eidx]
+        info(10, 'Nearest energy, index: ', en, eidx, condition=verbose)
+
+        m = self.hadr_yields[sec_pdg]
+        ekin_grid = self._energy_grid.c
+        elab_dist = m[:eidx + 1, eidx]  / self._energy_grid.w[eidx]
+
+        return ekin_grid[:eidx + 1], elab_dist
 
     def dN_dxf(self,
                energy,
@@ -447,12 +472,12 @@ class MCEqParticle(object):
                verbose=True,
                **kwargs):
         r"""Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close
-        to ``energy`` for hadron-air collisions.
+        to ``energy`` (lab. not kinetic) for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            energy (float): approximate interaction energy
+            energy (float): approximate interaction lab. energy
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
