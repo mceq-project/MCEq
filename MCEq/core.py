@@ -128,6 +128,12 @@ class MCEqRun(object):
         """Number of cascade particles times dimension of grid
         (dimension of the equation system)"""
         return self.pman.dim_states
+    
+    def closest_energy(self, kin_energy):
+        """Convenience function to obtain the nearest grid energy
+        to the `energy` argument, provided as kinetik energy in lab. frame."""
+        eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
+        return self._energy_grid.c[eidx]
 
     def get_solution(self,
                      particle_name,
