@@ -277,13 +277,18 @@ else:
 if debug_level >= 2:
     print('Auto-detected {0} solver.'.format(kernel_config))
 
-if has_mkl:
+def set_mkl_threads(nthreads):
     from ctypes import cdll, c_int, byref
     mkl = cdll.LoadLibrary(mkl_path)
     # Set number of threads
-    mkl.mkl_set_num_threads(byref(c_int(mkl_threads)))
+    mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     if debug_level >= 5:
-        print('MKL threads limited to {0}'.format(mkl_threads))
+        print('MKL threads limited to {0}'.format(nthreads))
+
+if has_mkl:
+    set_mkl_threads(mkl_threads)
+
+
 
 # Compatibility layer for dictionary access to config attributes
 # This is deprecated and will be removed in future
