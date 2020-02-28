@@ -9,6 +9,9 @@ Current:
 - added license to scikit-hep project's azure-build-helpers by Henryii
 - build includes Python 3.8 binaries (except for 32bit Linux)
 - tests moved into MCEq package
+- improved ctypes library finding
+- new convenience function MCEqRun.closest_energy to obtain the closest grid point
+- new convenience functions mceq_config.set_mkl_threads allows setting thread count in run time
 
 
 Version 1.0.9:
