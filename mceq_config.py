@@ -278,9 +278,11 @@ if debug_level >= 2:
     print('Auto-detected {0} solver.'.format(kernel_config))
 
 def set_mkl_threads(nthreads):
+    global mkl_threads
     from ctypes import cdll, c_int, byref
     mkl = cdll.LoadLibrary(mkl_path)
     # Set number of threads
+    mkl_threads = nthreads
     mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     if debug_level >= 5:
         print('MKL threads limited to {0}'.format(nthreads))
