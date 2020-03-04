@@ -302,7 +302,8 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         +--------------+-------------------+------------------------------+
         |"PL_SouthPole"|      29 and 30    |  P. Lipari's  Jan and Aug    |
         +--------------+-------------------+------------------------------+
-        |"ANTARES/KM3NeT-ORCA"|    NA      |  Antares collaboration       |
+        |"ANTARES/KM3NeT-ORCA"|    NA      |  PhD Thomas Held see         |
+                             https://github.com/afedynitch/MCEq/issues/12 |
         +--------------+-------------------+------------------------------+
 
 
