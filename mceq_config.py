@@ -254,6 +254,9 @@ else:
     # Windows case
     mkl_path = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt.dll')
 
+# mkl library handler
+mkl = None
+
 # Check if MKL library found
 if path.isfile(mkl_path):
     has_mkl = True
@@ -278,7 +281,7 @@ if debug_level >= 2:
     print('Auto-detected {0} solver.'.format(kernel_config))
 
 def set_mkl_threads(nthreads):
-    global mkl_threads
+    global mkl_threads, mkl
     from ctypes import cdll, c_int, byref
     mkl = cdll.LoadLibrary(mkl_path)
     # Set number of threads

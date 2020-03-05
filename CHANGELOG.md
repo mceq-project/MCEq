@@ -1,5 +1,9 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Version 1.1.2:
+
+- Hotfix for MKL library handler
+
 Version 1.1.0:
 
 Minor version bump because of an interface change in some convenience functions, for example
