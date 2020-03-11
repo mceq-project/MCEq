@@ -174,7 +174,7 @@ class MCEqParticle(object):
 
     def set_cs(self, cs_db):
         """Set cross section adn recalculate the dependent variables"""
-
+        info(11, 'Obtaining cross sections for', self.pdg_id)
         self.current_cross_sections = cs_db.iam
         self.cs = cs_db[self.pdg_id[0]]
         if sum(self.cs) > 0:
