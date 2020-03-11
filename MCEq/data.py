@@ -10,20 +10,34 @@ from .misc import normalize_hadronic_model_name, info
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
 equivalences = {
-    'SIBYLL': {
+    'SIBYLL23': {
         -3322: -2112,
         -3312: 2212,
         -3222: -2212,
         -3212: -2112,
-        -3122: -2112,
-        -3112: 2212,
         310: 130,
         111: 211,
-        3112: -2212,
-        3122: 2112,
         3212: 2112,
         3222: 2212,
         3312: -2212,
+        3322: 2112
+    },
+    'SIBYLL21': {
+        -3322: 2112,
+        -3312: 2212,
+        -3222: 2212,
+        -3212: 2112,
+        -3122: 2112,
+        -3112: 2212,
+        -2212: 2212, 
+        -2112: 2112, 
+        310: 130,
+        111: 211,
+        3112: 2212,
+        3122: 2112,
+        3212: 2112,
+        3222: 2212,
+        3312: 2212,
         3322: 2112
     },
     'QGSJET': {
@@ -240,8 +254,10 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['hadronic_interactions'],
                                         mname)
-            if 'SIBYLL' in mname:
-                eqv = equivalences['SIBYLL']
+            if 'SIBYLL21' in mname:
+                eqv = equivalences['SIBYLL21']
+            elif 'SIBYLL23' in mname:
+                eqv = equivalences['SIBYLL23']
             elif 'QGSJET' in mname:
                 eqv = equivalences['QGSJET']
             elif 'DPMJET' in mname:
@@ -840,7 +856,7 @@ class InteractionCrossSections(object):
             cs = self.index_d[abs(parent)]
         elif 100 < abs(parent) < 300 and abs(parent) != 130:
             cs = self.index_d[211]
-        elif 300 < abs(parent) < 1000 or abs(parent) == 130:
+        elif 300 < abs(parent) < 1000 or abs(parent) in [130, 10313, 10323]:
             info(15, message_templ.format(parent, 'K+-'))
             cs = self.index_d[321]
         elif abs(parent) > 1000 and abs(parent) < 5000:

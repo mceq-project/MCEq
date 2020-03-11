@@ -205,7 +205,7 @@ adv_set = {
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
 
     #: Disable particle (production)
-    "disabled_particles": [10313, 20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
+    "disabled_particles": [10323, 20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
 
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
@@ -219,7 +219,7 @@ adv_set = {
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
 
-    #: Force particles to be treated as resonance (astrophysical muons)
+    #: Force particles to be treated as resonance
     "force_resonance": [15],
 
     #: Disable mixing between resonance approx. and full propagation
