@@ -85,9 +85,11 @@ class MCEqRun(object):
         self._restore_initial_condition = []
 
         # Set interaction model and compute grids and matrices
-        self.set_interaction_model(interaction_model,
-                                   particle_list=kwargs.pop(
-                                       'particle_list', None))
+        self.set_interaction_model(
+            interaction_model,
+            particle_list = kwargs.pop('particle_list', None),
+            build_matrices = kwargs.pop('build_matrices', True)
+        )
 
         # Default GPU device id for CUDA
         self._cuda_device = kwargs.pop('cuda_gpu_id', config.cuda_gpu_id)
@@ -279,7 +281,8 @@ class MCEqRun(object):
                               interaction_model,
                               particle_list=None,
                               update_particle_list=True,
-                              force=False):
+                              force=False,
+                              build_matrices=True):
         """Sets interaction model and/or an external charm model for calculation.
 
         Decay and interaction matrix will be regenerated automatically
@@ -360,6 +363,8 @@ class MCEqRun(object):
                 con[0](*con[1:])
 
         # initialize matrices
+        if not build_matrices:
+            return
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False)
 
@@ -962,8 +967,8 @@ class MatrixBuilder(object):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
             if child.mceqidx == parent.mceqidx and parent.can_interact:
-                # Substract unity from the main diagonals
-                info(10, 'substracting main C diagonal from', child.name,
+                # Subtract unity from the main diagonals
+                info(10, 'subtracting main C diagonal from', child.name,
                      parent.name)
                 self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.
 
@@ -996,8 +1001,8 @@ class MatrixBuilder(object):
                 idx = (child.mceqidx, parent.mceqidx)
                 # Main diagonal
                 if child.mceqidx == parent.mceqidx and not parent.is_stable:
-                    # Substract unity from the main diagonals
-                    info(10, 'substracting main D diagonal from', child.name,
+                    # Subtract unity from the main diagonals
+                    info(10, 'subtracting main D diagonal from', child.name,
                          parent.name)
                     self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
                 if idx not in self.D_blocks:
