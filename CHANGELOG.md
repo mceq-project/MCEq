@@ -1,5 +1,11 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Version 1.1.3:
+
+- Added atmospheres for KM3NeT by @Kakiczi (https://github.com/Kakiczi)
+- new keyword for MCEqRun "build_matrices"=False (to prevent matrix building on init)
+- Equivalent projectile mappings separated for SIBYLL 2.1 and 2.3  
+
 Version 1.1.2:
 
 - Hotfix for MKL library handler
