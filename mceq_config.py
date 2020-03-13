@@ -205,7 +205,7 @@ adv_set = {
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
 
     #: Disable particle (production)
-    "disabled_particles": [10323, 20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
+    "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
 
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
