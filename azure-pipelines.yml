@@ -1,8 +1,12 @@
 # Azure only builds master
 
 trigger:
-  - master
-
+  branches:
+    include:
+      - 'refs/tags/*'
+      - master
+    exclude:
+      - next_*
 pr:
   - master
 
