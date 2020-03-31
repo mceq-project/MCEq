@@ -463,7 +463,6 @@ class Interactions(object):
             self.particles += [d for d in self.relations[p] 
                                 if d not in disabled_particles]
         self.particles = sorted(list(set(self.particles)))
-
         if config.adv_set['disable_direct_leptons']:
             for p in list(self.relations):
                 self.relations[p] = [
@@ -476,6 +475,10 @@ class Interactions(object):
                     c for c in self.relations[p] if c[0] not in 
                     disabled_particles
                 ]
+        if not self.particles:
+            info(2, 'None of the parent_list particles interact. Returning custom list.')
+            self.particles = parent_list
+
 
     def __getitem__(self, key):
         return self.get_matrix(*key)

@@ -45,12 +45,12 @@ density_model = ('CORSIKA', ('BK_USStd', None))
 #: Definition of prompt: default ctau < 0.123 cm (that of D0)
 prompt_ctau = 0.123
 
-#: Average mass of target (for cross section calculations)
+#: Average mass of target (for interaction length calculations)
 #: Change parameter only in combination with interaction model setting.
-#: By default all inclusive cross sections are calculated for air targets
-#: expect those with '_pp' suffix.
-#: <A> = 14.51 for air
-A_target = 14.51
+#: By default all particle production matrices are calculated for air targets
+#: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
+#: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+A_target = sum([f[0]*f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]])
 
 #: parameters for EarthGeometry
 r_E = 6391.e3  # Earth radius in m
