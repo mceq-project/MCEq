@@ -106,9 +106,9 @@ Open an new python file or jupyter notebook/lab::
     plt.loglog(mceq.e_grid, nue_flux, label='electron neutrinos')
 
     plt.xlim(1., 1e9)
-    plt.xlabel('Kinetic energy (GeV))
+    plt.xlabel('Kinetic energy (GeV)')
     plt.ylim(1e-6, 1.)
-    plt.ylabel('r"$(E/\text{GeV})^3\,\Phi$ (GeV cm$^{-2}$\,$s$^{-1}\,$sr$^{-1}$)" (GeV))
+    plt.ylabel(r'$(E/\text{GeV})^3\,\Phi$ (GeV cm$^{-2}$\,$s$^{-1}\,$sr$^{-1}$) (GeV)')
     plt.legend()
     plt.show()
 
