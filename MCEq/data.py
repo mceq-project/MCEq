@@ -40,7 +40,7 @@ equivalences = {
         3312: 2212,
         3322: 2112
     },
-    'QGSJET': {
+    'QGSJET01': {
         -4122: 2212,
         -3322: 2212,
         -3312: 2212,
@@ -59,6 +59,26 @@ equivalences = {
         411: 321,
         421: 321,
         2112: 2212,
+        3112: 2212,
+        3122: 2212,
+        3222: 2212,
+        3312: 2212,
+        3322: 2212,
+        4122: 2212
+    },
+    'QGSJETII': {
+        -4122: 2212,
+        -3322: 2212,
+        -3312: 2212,
+        -3222: 2212,
+        -3122: 2212,
+        -3112: 2212,
+        -421: 321,
+        -411: 321,
+        111: 211,
+        310: 130,
+        411: 321,
+        421: 321,
         3112: 2212,
         3122: 2212,
         3222: 2212,
@@ -258,8 +278,10 @@ class HDF5Backend(object):
                 eqv = equivalences['SIBYLL21']
             elif 'SIBYLL23' in mname:
                 eqv = equivalences['SIBYLL23']
-            elif 'QGSJET' in mname:
-                eqv = equivalences['QGSJET']
+            elif 'QGSJET01' in mname:
+                eqv = equivalences['QGSJET01']
+            elif 'QGSJETII' in mname:
+                eqv = equivalences['QGSJETII']
             elif 'DPMJET' in mname:
                 eqv = equivalences['DPMJET']
             elif 'EPOSLHC' in mname:
