@@ -56,7 +56,7 @@ class MCEqParticle(object):
         self.is_nucleus = False
         #: (bool) particle is a hadron
         self.is_hadron = False
-        #: (bool) particle is a hadron
+        #: (bool) particle is a lepton
         self.is_lepton = False
         #: (float) ctau in cm
         self.ctau = None

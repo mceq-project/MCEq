@@ -815,7 +815,13 @@ class MCEqRun(object):
 
     def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns number of particles of type `label` at a grid step above
-        an energy threshold for counting."""
+        an energy threshold for counting.
+        
+        Args:
+            label (str): Particle name
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        """
         ie_min = np.argmin(
             np.abs(self.e_bins -
                    self.e_bins[self.e_bins >= min_energy_cutoff][0]))
@@ -832,14 +838,25 @@ class MCEqRun(object):
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:])
 
     def n_mu(self, grid_idx=None, min_energy_cutoff=1e-1):
-        """Returns muon number at a grid step above
-        an energy threshold for counting."""
+        """Returns the number of positive and negative muons at a grid step above
+        `min_energy_cutoff`.
+        
+        Args:
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        
+        """
         return (self.n_particles('total_mu+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('total_mu-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
     def n_e(self, grid_idx=None, min_energy_cutoff=1e-1):
-        """Returns muon number at a grid step above
-        an energy threshold for counting."""
+        """Returns the number of electrons plus positrons at a grid step above
+        `min_energy_cutoff`.
+        
+        Args:
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        """
         return (self.n_particles('e+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('e-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
