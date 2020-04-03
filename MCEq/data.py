@@ -93,7 +93,6 @@ equivalences = {
         111: 211,
         411: 321,
         413: 321,
-        413: 321,
         421: 321,
         431: 321,
         3212: 3122,
@@ -117,6 +116,23 @@ equivalences = {
         3312: -2212,
         3322: 3122,
         3334: -2212
+    },
+    'PYTHIA8': {
+        -3122: -2112,
+        -431: -321,
+        -421: -321,
+        -413: -321,
+        -411: -321,
+        111: 211,
+        113: 211,
+        221: 211,
+        310: 321,
+        130: 321,
+        411: 321,
+        413: 321,
+        421: 321,
+        431: 321,
+        3122: 2112,
     }
 }
 
@@ -290,6 +306,8 @@ class HDF5Backend(object):
                 eqv = equivalences['DPMJET']
             elif 'EPOSLHC' in mname:
                 eqv = equivalences['EPOSLHC']
+            elif 'PYTHIA8' in mname:
+                eqv = equivalences['PYTHIA8']
             int_index = self._gen_db_dictionary(
                 mceq_db['hadronic_interactions'][mname],
                 mceq_db['hadronic_interactions'][mname + '_indptrs'],
