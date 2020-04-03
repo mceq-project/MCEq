@@ -1,5 +1,13 @@
 Changes in first release version of MCEq from release candidate 1:
 
+Version 1.2.0:
+- New data tables: physics will be affected mostly low energies < 30 GeV and minor corrections can be visible for particle ratios at higher energies. (thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
+- SIBYLL23C release is now patch level 03 instead of the previous 01
+- QGSJET tables had bugs and there are more pronounced changes
+- Projectile equivalence tables updated (again, thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
+- Documentation badge
+- Minor (cosmetic and technical) updates of crflux and particletools packages
+
 Version 1.1.3:
 
 - Added atmospheres for KM3NeT by @Kakiczi (https://github.com/Kakiczi)

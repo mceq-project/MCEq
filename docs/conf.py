@@ -39,8 +39,8 @@ intersphinx_mapping = {
     'python': ('http://docs.python.org/2.7', None),
     'numpy': ('http://docs.scipy.org/doc/numpy/', None),
     'scipy': ('http://docs.scipy.org/doc/scipy/reference/', None),
-    'CRFluxModels': ('http://crfluxmodels.readthedocs.org/en/latest', None),
-    'ParticleDataTool': ('http://particledatatool.readthedocs.org/en/latest',
+    'crflux': ('http://crfluxmodels.readthedocs.org/en/latest', None),
+    'particletools': ('http://particledatatool.readthedocs.org/en/latest',
                          None)
 }
 

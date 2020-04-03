@@ -33,7 +33,7 @@ class MCEqRun(object):
       interaction_model (string): PDG ID of the particle
       density_model (string,sting,string): model type, location, season
       primary_model (class, param_tuple): classes derived from
-        :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple
+        :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
       adv_set (dict): advanced settings, see :mod:`mceq_config`

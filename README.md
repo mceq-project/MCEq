@@ -1,4 +1,5 @@
 ![PyPI](https://img.shields.io/pypi/v/MCEq)
+[![Documentation](https://readthedocs.org/projects/mceq/badge/?version=latest)](https://mceq.readthedocs.io/en/latest/?badge=latest)
 [![Build Status](https://dev.azure.com/afedynitch/MCEq/_apis/build/status/afedynitch.MCEq?branchName=master)](https://dev.azure.com/afedynitch/MCEq/_build/latest?definitionId=1&branchName=master)
 ![Azure DevOps releases](https://img.shields.io/azure-devops/release/afedynitch/e02bcbf5-db8e-4417-ad07-cc2547ea47e0/6/6)
 

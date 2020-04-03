@@ -895,7 +895,7 @@ class ParticleManager(object):
         defined index in the SIBYLL 2.3 interaction model. Included are
         most relevant baryons and mesons and some of their high mass states.
         More details about the particles which enter the calculation can
-        be found in :mod:`ParticleDataTool`.
+        be found in :mod:`particletools`.
 
         Returns:
           (tuple of lists of :class:`data.MCEqParticle`): (all particles,
