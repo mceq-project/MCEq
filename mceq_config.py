@@ -24,7 +24,7 @@ print_module = False
 data_dir = path.join(base_path, 'MCEq', 'data')
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191.h5"
+mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
@@ -81,9 +81,9 @@ e_min = .1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
-#: to for inclusive calculations to max. energy of interest + 4-5 orders of
-#: magnitude. For single primaries the maximal energy can be also set at any
-#: value. Smaller grids speed up the initialization and integration.
+#: for inclusive calculations to max. energy of interest + 4-5 orders of
+#: magnitude. For single primaries the maximal energy is directly limited by
+#: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
 
 #: Enable electromagnetic cascade with matrices from EmCA
@@ -104,7 +104,9 @@ cuda_gpu_id = 0
 cuda_fp_precision = 32
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
-#: advantage from using more than 1 thread is limited by memory bandwidth)
+#: advantage from using more than a few threads is limited by memory bandwidth)
+#: Irrelevant for GPU integrators, but can affect initialization speed if
+#: numpy is linked to MKL. 
 mkl_threads = 8
 
 #: parameters for the odepack integrator. More details at
