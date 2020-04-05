@@ -710,12 +710,15 @@ class MCEqRun(object):
         """
         info(2, "Launching {0} solver".format(config.integrator))
 
-        if int_grid is not None and np.any(np.diff(int_grid) < 0):
-            raise Exception('The X values in int_grid are required to be strickly',
-                            'increasing.')
+        if not kwargs.pop('skip_integration_path', False):
+            if int_grid is not None and np.any(np.diff(int_grid) < 0):
+                raise Exception('The X values in int_grid are required to be strickly',
+                                'increasing.')
 
-        # Calculate integration path if not yet happened
-        self._calculate_integration_path(int_grid, grid_var)
+            # Calculate integration path if not yet happened
+            self._calculate_integration_path(int_grid, grid_var)
+        else:
+            info(2,'Warning: integration path calculation skipped.')
 
         phi0 = np.copy(self._phi0)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
