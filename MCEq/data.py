@@ -163,6 +163,8 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             from MCEq.misc import energy_grid
             ca = mceq_db['common'].attrs
+            self.version = (mceq_db.attrs['version'] 
+                if 'version' in mceq_db.attrs else '1.0.0')
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca['e_grid'])
             self._energy_grid = energy_grid(
