@@ -324,7 +324,8 @@ class MCEqParticle(object):
             # Correction for bin average, since dec. length is a steep falling
             # function. This factor averages the value over bin length for
             # 10 bins per decade.
-            return 0.989 * dlen
+            # return 0.989 * dlen
+            return dlen
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.d) * np.inf
 
