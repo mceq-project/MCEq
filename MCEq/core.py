@@ -568,45 +568,59 @@ class MCEqRun(object):
         More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
 
+        From version 1.2 and above, the `density_config` parameter can be a reference to
+        an instance of a density class directly. The class has to be derived either from
+        :class:`MCEq.geometry.density_profiles.EarthsAtmosphere` or
+        :class:`MCEq.geometry.density_profiles.GeneralizedTarget`.
+
         Args:
           density_config (tuple of strings): (parametrization type, arguments)
         """
         import MCEq.geometry.density_profiles as dprof
+        
+        # Check if string arguments or an instance of the density class is provided 
+        if not isinstance(density_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)):
+            
+            base_model, model_config = density_config
 
-        base_model, model_config = density_config
+            available_models = [
+                'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
+                'GeneralizedTarget'
+            ]
 
-        available_models = [
-            'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
-            'GeneralizedTarget'
-        ]
+            if base_model not in available_models:
+                info(0, 'Unknown density model. Available choices are:\n',
+                    '\n'.join(available_models))
+                raise Exception('Choose a different profile.')
 
-        if base_model not in available_models:
-            info(0, 'Unknown density model. Available choices are:\n',
-                 '\n'.join(available_models))
-            raise Exception('Choose a different profile.')
+            info(1, 'Setting density profile to', base_model, model_config)
 
-        info(1, 'Setting density profile to', base_model, model_config)
+            if base_model == 'MSIS00':
+                self.density_model = dprof.MSIS00Atmosphere(*model_config)
+            elif base_model == 'MSIS00_IC':
+                self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
+            elif base_model == 'CORSIKA':
+                self.density_model = dprof.CorsikaAtmosphere(*model_config)
+            elif base_model == 'AIRS':
+                self.density_model = dprof.AIRSAtmosphere(*model_config)
+            elif base_model == 'Isothermal':
+                self.density_model = dprof.IsothermalAtmosphere(*model_config)
+            elif base_model == 'GeneralizedTarget':
+                self.density_model = dprof.GeneralizedTarget()
+            else:
+                raise Exception('Unknown atmospheric base model.')
+            self.density_config = density_config 
 
-        if base_model == 'MSIS00':
-            self.density_model = dprof.MSIS00Atmosphere(*model_config)
-        elif base_model == 'MSIS00_IC':
-            self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
-        elif base_model == 'CORSIKA':
-            self.density_model = dprof.CorsikaAtmosphere(*model_config)
-        elif base_model == 'AIRS':
-            self.density_model = dprof.AIRSAtmosphere(*model_config)
-        elif base_model == 'Isothermal':
-            self.density_model = dprof.IsothermalAtmosphere(*model_config)
-        elif base_model == 'GeneralizedTarget':
-            self.density_model = dprof.GeneralizedTarget()
         else:
-            raise Exception('Unknown atmospheric base model.')
-        self.density_config = density_config
+            self.density_model = density_config
+            self.density_config = density_config
 
-        if self.theta_deg is not None and base_model != 'GeneralizedTarget':
+        if self.theta_deg is not None and isinstance(self.density_model, dprof.EarthsAtmosphere):
             self.set_theta_deg(self.theta_deg)
-        elif base_model == 'GeneralizedTarget':
+        elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
+        else:
+            raise Exception('Density model not supported.')
 
         # TODO: Make the pman aware of that density might have changed and
         # indices as well
@@ -620,9 +634,11 @@ class MCEqRun(object):
         Args:
           atm_config (tuple of strings): (parametrization type, location string, season string)
         """
+        import MCEq.geometry.density_profiles as dprof
+        
         info(2, 'Zenith angle {0:6.2f}'.format(theta_deg))
 
-        if self.density_config[0] == 'GeneralizedTarget':
+        if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception('GeneralizedTarget does not support angles.')
 
         if self.density_model.theta_deg == theta_deg:
@@ -789,7 +805,7 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if (max_ldec / config.max_density > max_lint
+        if (max_ldec / self.density_model.max_den > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
             def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
