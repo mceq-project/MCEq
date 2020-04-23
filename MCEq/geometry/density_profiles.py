@@ -22,15 +22,16 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
       theta_deg (float): current zenith angle :math:`\\theta` in degrees
       max_X (float): Slant depth at the surface according to the geometry
                      defined in the :mod:`MCEq.geometry`
+      geometry (object): Can be a custom instance of EarthGeometry
 
     """
 
     def __init__(self, *args, **kwargs):
         from MCEq.geometry.geometry import EarthGeometry
-        self.geom = EarthGeometry()
+        self.geom = kwargs.pop('geometry', EarthGeometry())
         self.thrad = None
         self.theta_deg = None
-        self._max_den = 1.240e-03
+        self._max_den = config.max_density
         self.max_theta = 90.
         self.location = None
         self.season = None
@@ -807,7 +808,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
             if self.extrapolate:
                 # Extrapolate using msis
-                h_extra = np.linspace(h_vec[-1], config.h_atm * 1e2, 250)
+                h_extra = np.linspace(h_vec[-1], self.geom.h_atm * 1e2, 250)
                 msis._msis.set_doy(self._get_y_doy(date)[1] - 1)
                 msis_extra_d = np.array([msis.get_density(h) for h in h_extra])
                 msis_extra_t = np.array(
@@ -956,7 +957,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         Returns:
           float: latitude of the impact point in degrees
         """
-        r = config.r_E
+        r = self.geom.r_E
         d = 1948  # m
 
         theta_rad = det_zenith_deg / 180. * np.pi
