@@ -112,6 +112,9 @@ class MCEqParticle(object):
         self.children = []
         self.decay_dists = {}
 
+        # A_target
+        self.A_target = config.A_target
+
         if init_pdata_defaults:
             self._init_defaults_from_pythia_database()
 
@@ -330,10 +333,12 @@ class MCEqParticle(object):
             return np.ones_like(self._energy_grid.d) * np.inf
 
     def inel_cross_section(self, mbarn=False):
-        """Returns inverse interaction length for A_target given by config.
+        """Returns inelastic cross section.
 
+        Args:
+          mbarn (bool) : if True cross section in mb otherwise in cm**2
         Returns:
-          (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
+          (float): :math:`\\sigma_{\\rm inel}` in mb or cm**2
         """
         #: unit - :math:`\text{GeV} \cdot \text{fm}`
         GeVfm = 0.19732696312541853
@@ -355,7 +360,7 @@ class MCEqParticle(object):
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
         """
 
-        m_target = config.A_target * 1.672621 * 1e-24  # <A> * m_proton [g]
+        m_target = self.A_target * 1.672621 * 1e-24  # <A> * m_proton [g]
         return self.cs / m_target
 
     def _assign_hadr_dist_idx(self, child, projidx, chidx, cmat):
