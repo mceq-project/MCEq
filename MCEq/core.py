@@ -97,8 +97,8 @@ class MCEqRun(object):
         # Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
 
-        # Set atmosphere and geometry TODO do not allow empty density model
-        # if density_model is not None:
+        # Set atmosphere and geometry
+        self.integration_path, self.int_grid, self.grid_var = None, None, None
         self.set_density_model(self.density_config)
 
         # Set initial flux condition
@@ -648,6 +648,7 @@ class MCEqRun(object):
 
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
+
 
     def set_mod_pprod(self,
                       prim_pdg,
