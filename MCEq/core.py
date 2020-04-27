@@ -452,7 +452,7 @@ class MCEqRun(object):
           pdg_id (int): PDG ID of a particle
           append (bool): If True, keep previous state and append a new particle.
         """
-
+        import warnings
         from scipy.linalg import solve
         from MCEq.misc import getAZN_corsika, getAZN
 
@@ -502,23 +502,28 @@ class MCEqRun(object):
             # This case handles other exotic projectiles
             b_particle = np.array([1., En, En**2])
             lidx = self.pman[pdg_id].lidx
-            self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] += solve(
-                emat, b_particle)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] += solve(
+                    emat, b_particle)
             return
 
         if n_protons > 0:
             b_protons = np.array(
                 [n_protons, En * n_protons, En**2 * n_protons])
             p_lidx = self.pman[2212].lidx
-
-            self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] += solve(
-                emat, b_protons)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] += solve(
+                    emat, b_protons)
         if n_neutrons > 0:
             b_neutrons = np.array(
                 [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
-            self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] += solve(
-                emat, b_neutrons)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] += solve(
+                    emat, b_neutrons)
 
     def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
         """Set a user-defined spectrum for an arbitrary species as initial condition. 
