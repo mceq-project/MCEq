@@ -350,10 +350,15 @@ def _download_file(url, outfile):
 
 # Download database file from github
 base_url = 'https://github.com/afedynitch/MCEq/releases/download/'
-release_tag = 'builds_on_azure/'
+release_tag = 'release_1_2_0/'
 url = base_url + release_tag + mceq_db_fname
 if not path.isfile(path.join(data_dir, mceq_db_fname)):
     print('Downloading for mceq database file {0}.'.format(mceq_db_fname))
     if debug_level >= 2:
         print(url)
     _download_file(url, path.join(data_dir, mceq_db_fname))
+
+if path.isfile(path.join(data_dir, 'mceq_db_lext_dpm191.h5')):
+    import os
+    print('Removing previous database {0}.'.format('mceq_db_lext_dpm191.h5'))
+    os.unlink(path.join(data_dir, 'mceq_db_lext_dpm191.h5'))
