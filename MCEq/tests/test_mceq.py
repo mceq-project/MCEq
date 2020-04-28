@@ -5,6 +5,12 @@ from MCEq.core import MCEqRun
 import crflux.models as pm
 import numpy as np
 
+import pytest
+import sys
+
+if sys.platform.startswith("win") and sys.maxsize <= 2**32:
+    pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
+
 def format_8_digits(a_list):
     return ["%.8e" % member for member in a_list]
 
