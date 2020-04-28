@@ -44,6 +44,16 @@ Supported architectures:
 Note:: pip installations of scipy on Windows may be faulty. If scipy throws errors
 on import, use `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_
 
+Upgrading
+.........
+
+For installations with pip, upgrading the code and data tables can be done with::
+
+    pip install MCEq --upgrade
+
+In case of major updates the database file will be updated on first import and the old
+one will be removed. For installations from source, pull the latest release or master branch. The database file will be updated automatically as well.
+
 Building MCEq from source
 .........................
 

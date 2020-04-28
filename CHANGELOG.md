@@ -1,12 +1,18 @@
-Changes in first release version of MCEq from release candidate 1:
+Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
 Version 1.2.0:
-- New data tables: physics will be affected mostly low energies < 30 GeV and minor corrections can be visible for particle ratios at higher energies. (thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
-- SIBYLL23C release is now patch level 03 instead of the previous 01
+- New data tables: physics will be affected mostly low energies < 30 GeV and minor
+corrections can be visible for particle ratios at higher energies.
+[See dedicated doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+- tests have been updated to the new version and will fail if used with the old database file
+- SIBYLL23C release is updated to patch level 04 instead of the previous 01. The results are very similar and changes are smaller than in CORSIKA because MCEq uses the air target and not the Nitrogen/Oxygen mix.
 - QGSJET tables had bugs and there are more pronounced changes
-- Projectile equivalence tables updated (again, thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
+- Projectile equivalence tables updated (thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
 - Documentation badge
 - Minor (cosmetic and technical) updates of crflux and particletools packages
+- crflux includes the spline for the GlobalSplineFitBeta class and will be updated during install.  
+- set_density_profile accepts a density object as parameter in parallel to the previous definition
+- some config values that can produce inconsistent results (A_target for ex.) are saved in the objects that can trigger such inconsistencies. Changing config values in runtime should be more safe, but not free of failures. It is still not recommended to change config values in runtime if this can be avoided.
 
 Version 1.1.3:
 

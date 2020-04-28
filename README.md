@@ -21,6 +21,10 @@ The old versions known as 'master' and 'development' branch are deprecated and l
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
+### Version 1.2
+This is a significant update and some of the results. Please consult the
+[CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+
 ## Please cite our work
 
 If you are using this code in your scientific work, please cite the code **AND** the
