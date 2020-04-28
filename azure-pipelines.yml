@@ -112,5 +112,5 @@ jobs:
   steps:
     - template: .ci/azure-setup.yml
     - template: .ci/azure-steps.yml
-    # - template: .ci/azure-tests.yml
+    - template: .ci/azure-tests.yml
     - template: .ci/azure-publish-dist.yml
