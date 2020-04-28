@@ -1,8 +1,12 @@
 # Azure only builds master
 
 trigger:
-  - master
-
+  branches:
+    include:
+      - 'refs/tags/*'
+      - master
+    exclude:
+      - next_*
 pr:
   - master
 
@@ -108,5 +112,5 @@ jobs:
   steps:
     - template: .ci/azure-setup.yml
     - template: .ci/azure-steps.yml
-    # - template: .ci/azure-tests.yml
+    - template: .ci/azure-tests.yml
     - template: .ci/azure-publish-dist.yml

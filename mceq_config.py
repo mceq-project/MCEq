@@ -24,7 +24,7 @@ print_module = False
 data_dir = path.join(base_path, 'MCEq', 'data')
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191.h5"
+mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
@@ -45,12 +45,12 @@ density_model = ('CORSIKA', ('BK_USStd', None))
 #: Definition of prompt: default ctau < 0.123 cm (that of D0)
 prompt_ctau = 0.123
 
-#: Average mass of target (for cross section calculations)
+#: Average mass of target (for interaction length calculations)
 #: Change parameter only in combination with interaction model setting.
-#: By default all inclusive cross sections are calculated for air targets
-#: expect those with '_pp' suffix.
-#: <A> = 14.51 for air
-A_target = 14.51
+#: By default all particle production matrices are calculated for air targets
+#: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
+#: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+A_target = sum([f[0]*f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]])
 
 #: parameters for EarthGeometry
 r_E = 6391.e3  # Earth radius in m
@@ -81,9 +81,9 @@ e_min = .1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
-#: to for inclusive calculations to max. energy of interest + 4-5 orders of
-#: magnitude. For single primaries the maximal energy can be also set at any
-#: value. Smaller grids speed up the initialization and integration.
+#: for inclusive calculations to max. energy of interest + 4-5 orders of
+#: magnitude. For single primaries the maximal energy is directly limited by
+#: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
 
 #: Enable electromagnetic cascade with matrices from EmCA
@@ -104,7 +104,9 @@ cuda_gpu_id = 0
 cuda_fp_precision = 32
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
-#: advantage from using more than 1 thread is limited by memory bandwidth)
+#: advantage from using more than a few threads is limited by memory bandwidth)
+#: Irrelevant for GPU integrators, but can affect initialization speed if
+#: numpy is linked to MKL. 
 mkl_threads = 8
 
 #: parameters for the odepack integrator. More details at
@@ -355,3 +357,8 @@ if not path.isfile(path.join(data_dir, mceq_db_fname)):
     if debug_level >= 2:
         print(url)
     _download_file(url, path.join(data_dir, mceq_db_fname))
+
+if path.isfile(path.join(data_dir, 'mceq_db_lext_dpm191.h5')):
+    import os
+    print('Removing previous database {0}.'.format('mceq_db_lext_dpm191.h5'))
+    os.unlink(path.join(data_dir, 'mceq_db_lext_dpm191.h5'))

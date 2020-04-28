@@ -44,6 +44,16 @@ Supported architectures:
 Note:: pip installations of scipy on Windows may be faulty. If scipy throws errors
 on import, use `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_
 
+Upgrading
+.........
+
+For installations with pip, upgrading the code and data tables can be done with::
+
+    pip install MCEq --upgrade
+
+In case of major updates the database file will be updated on first import and the old
+one will be removed. For installations from source, pull the latest release or master branch. The database file will be updated automatically as well.
+
 Building MCEq from source
 .........................
 
@@ -106,9 +116,9 @@ Open an new python file or jupyter notebook/lab::
     plt.loglog(mceq.e_grid, nue_flux, label='electron neutrinos')
 
     plt.xlim(1., 1e9)
-    plt.xlabel('Kinetic energy (GeV))
+    plt.xlabel('Kinetic energy (GeV)')
     plt.ylim(1e-6, 1.)
-    plt.ylabel('r"$(E/\text{GeV})^3\,\Phi$ (GeV cm$^{-2}$\,$s$^{-1}\,$sr$^{-1}$)" (GeV))
+    plt.ylabel(r'$(E/\text{GeV})^3\,\Phi$ (GeV cm$^{-2}$\,$s$^{-1}\,$sr$^{-1}$) (GeV)')
     plt.legend()
     plt.show()
 
@@ -130,7 +140,14 @@ The current citation for the MCEq is:
    | EPJ Web Conf. 99 (2015) 08001
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-Find the :ref:`citations` for the physical models.
+In :ref:`citations` is the list for the physical models.
+
+Changes to physics between version 1.1.X and 1.2.X 
+..................................................
+
+Due to a bug found in the decay table generation for the "new" MCEq versions
+there are some larger changes for the lowest energies at tens of GeV. To estimate
+if your computations may be affected check out :ref:`v12v11_diff`.
 
 Main documentation
 ..................
@@ -142,6 +159,7 @@ Main documentation
    citations
    densities
    advanced
+   v12v11_diff
 
 Indices and tables
 ==================

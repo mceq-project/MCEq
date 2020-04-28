@@ -33,7 +33,7 @@ class MCEqRun(object):
       interaction_model (string): PDG ID of the particle
       density_model (string,sting,string): model type, location, season
       primary_model (class, param_tuple): classes derived from
-        :class:`CRFluxModels.PrimaryFlux` and its parameters as tuple
+        :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
       adv_set (dict): advanced settings, see :mod:`mceq_config`
@@ -97,8 +97,8 @@ class MCEqRun(object):
         # Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
 
-        # Set atmosphere and geometry TODO do not allow empty density model
-        # if density_model is not None:
+        # Set atmosphere and geometry
+        self.integration_path, self.int_grid, self.grid_var = None, None, None
         self.set_density_model(self.density_config)
 
         # Set initial flux condition
@@ -452,7 +452,7 @@ class MCEqRun(object):
           pdg_id (int): PDG ID of a particle
           append (bool): If True, keep previous state and append a new particle.
         """
-
+        import warnings
         from scipy.linalg import solve
         from MCEq.misc import getAZN_corsika, getAZN
 
@@ -502,23 +502,28 @@ class MCEqRun(object):
             # This case handles other exotic projectiles
             b_particle = np.array([1., En, En**2])
             lidx = self.pman[pdg_id].lidx
-            self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] += solve(
-                emat, b_particle)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[lidx + cenbin - 1:lidx + cenbin + 2] += solve(
+                    emat, b_particle)
             return
 
         if n_protons > 0:
             b_protons = np.array(
                 [n_protons, En * n_protons, En**2 * n_protons])
             p_lidx = self.pman[2212].lidx
-
-            self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] += solve(
-                emat, b_protons)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] += solve(
+                    emat, b_protons)
         if n_neutrons > 0:
             b_neutrons = np.array(
                 [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
-            self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] += solve(
-                emat, b_neutrons)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] += solve(
+                    emat, b_neutrons)
 
     def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
         """Set a user-defined spectrum for an arbitrary species as initial condition. 
@@ -568,45 +573,59 @@ class MCEqRun(object):
         More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
 
+        From version 1.2 and above, the `density_config` parameter can be a reference to
+        an instance of a density class directly. The class has to be derived either from
+        :class:`MCEq.geometry.density_profiles.EarthsAtmosphere` or
+        :class:`MCEq.geometry.density_profiles.GeneralizedTarget`.
+
         Args:
           density_config (tuple of strings): (parametrization type, arguments)
         """
         import MCEq.geometry.density_profiles as dprof
+        
+        # Check if string arguments or an instance of the density class is provided 
+        if not isinstance(density_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)):
+            
+            base_model, model_config = density_config
 
-        base_model, model_config = density_config
+            available_models = [
+                'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
+                'GeneralizedTarget'
+            ]
 
-        available_models = [
-            'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
-            'GeneralizedTarget'
-        ]
+            if base_model not in available_models:
+                info(0, 'Unknown density model. Available choices are:\n',
+                    '\n'.join(available_models))
+                raise Exception('Choose a different profile.')
 
-        if base_model not in available_models:
-            info(0, 'Unknown density model. Available choices are:\n',
-                 '\n'.join(available_models))
-            raise Exception('Choose a different profile.')
+            info(1, 'Setting density profile to', base_model, model_config)
 
-        info(1, 'Setting density profile to', base_model, model_config)
+            if base_model == 'MSIS00':
+                self.density_model = dprof.MSIS00Atmosphere(*model_config)
+            elif base_model == 'MSIS00_IC':
+                self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
+            elif base_model == 'CORSIKA':
+                self.density_model = dprof.CorsikaAtmosphere(*model_config)
+            elif base_model == 'AIRS':
+                self.density_model = dprof.AIRSAtmosphere(*model_config)
+            elif base_model == 'Isothermal':
+                self.density_model = dprof.IsothermalAtmosphere(*model_config)
+            elif base_model == 'GeneralizedTarget':
+                self.density_model = dprof.GeneralizedTarget()
+            else:
+                raise Exception('Unknown atmospheric base model.')
+            self.density_config = density_config 
 
-        if base_model == 'MSIS00':
-            self.density_model = dprof.MSIS00Atmosphere(*model_config)
-        elif base_model == 'MSIS00_IC':
-            self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
-        elif base_model == 'CORSIKA':
-            self.density_model = dprof.CorsikaAtmosphere(*model_config)
-        elif base_model == 'AIRS':
-            self.density_model = dprof.AIRSAtmosphere(*model_config)
-        elif base_model == 'Isothermal':
-            self.density_model = dprof.IsothermalAtmosphere(*model_config)
-        elif base_model == 'GeneralizedTarget':
-            self.density_model = dprof.GeneralizedTarget()
         else:
-            raise Exception('Unknown atmospheric base model.')
-        self.density_config = density_config
+            self.density_model = density_config
+            self.density_config = density_config
 
-        if self.theta_deg is not None and base_model != 'GeneralizedTarget':
+        if self.theta_deg is not None and isinstance(self.density_model, dprof.EarthsAtmosphere):
             self.set_theta_deg(self.theta_deg)
-        elif base_model == 'GeneralizedTarget':
+        elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
+        else:
+            raise Exception('Density model not supported.')
 
         # TODO: Make the pman aware of that density might have changed and
         # indices as well
@@ -620,9 +639,11 @@ class MCEqRun(object):
         Args:
           atm_config (tuple of strings): (parametrization type, location string, season string)
         """
+        import MCEq.geometry.density_profiles as dprof
+        
         info(2, 'Zenith angle {0:6.2f}'.format(theta_deg))
 
-        if self.density_config[0] == 'GeneralizedTarget':
+        if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception('GeneralizedTarget does not support angles.')
 
         if self.density_model.theta_deg == theta_deg:
@@ -632,6 +653,7 @@ class MCEqRun(object):
 
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
+
 
     def set_mod_pprod(self,
                       prim_pdg,
@@ -710,12 +732,15 @@ class MCEqRun(object):
         """
         info(2, "Launching {0} solver".format(config.integrator))
 
-        if int_grid is not None and np.any(np.diff(int_grid) < 0):
-            raise Exception('The X values in int_grid are required to be strickly',
-                            'increasing.')
+        if not kwargs.pop('skip_integration_path', False):
+            if int_grid is not None and np.any(np.diff(int_grid) < 0):
+                raise Exception('The X values in int_grid are required to be strickly',
+                                'increasing.')
 
-        # Calculate integration path if not yet happened
-        self._calculate_integration_path(int_grid, grid_var)
+            # Calculate integration path if not yet happened
+            self._calculate_integration_path(int_grid, grid_var)
+        else:
+            info(2,'Warning: integration path calculation skipped.')
 
         phi0 = np.copy(self._phi0)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
@@ -786,7 +811,7 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if (max_ldec / config.max_density > max_lint
+        if (max_ldec / self.density_model.max_den > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
             def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
@@ -815,7 +840,13 @@ class MCEqRun(object):
 
     def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns number of particles of type `label` at a grid step above
-        an energy threshold for counting."""
+        an energy threshold for counting.
+        
+        Args:
+            label (str): Particle name
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        """
         ie_min = np.argmin(
             np.abs(self.e_bins -
                    self.e_bins[self.e_bins >= min_energy_cutoff][0]))
@@ -832,14 +863,25 @@ class MCEqRun(object):
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:])
 
     def n_mu(self, grid_idx=None, min_energy_cutoff=1e-1):
-        """Returns muon number at a grid step above
-        an energy threshold for counting."""
+        """Returns the number of positive and negative muons at a grid step above
+        `min_energy_cutoff`.
+        
+        Args:
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        
+        """
         return (self.n_particles('total_mu+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('total_mu-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
     def n_e(self, grid_idx=None, min_energy_cutoff=1e-1):
-        """Returns muon number at a grid step above
-        an energy threshold for counting."""
+        """Returns the number of electrons plus positrons at a grid step above
+        `min_energy_cutoff`.
+        
+        Args:
+            grid_idx (int): Depth grid index (for profiles)
+            min_energy_cutoff (float): Energy threshold > mceq_config.e_min
+        """
         return (self.n_particles('e+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('e-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 

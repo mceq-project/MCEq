@@ -8,7 +8,12 @@ import os
 import sysconfig
 
 base = os.path.dirname(os.path.abspath(__file__))
-suffix = sysconfig.get_config_var('EXT_SUFFIX')
+suffix =  sysconfig.get_config_var('EXT_SUFFIX')
+# Some Python 2.7 versions don't define EXT_SUFFIX
+if suffix is None and 'SO' in sysconfig.get_config_vars():
+    suffix =  sysconfig.get_config_var('SO')
+
+assert suffix is not None, 'Shared lib suffix was not identified.'
 
 for fn in os.listdir(base):
     if 'libnrlmsis' in fn and fn.endswith(suffix):

@@ -10,7 +10,8 @@ import mceq_config as config
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):
-    """Abstract class containing common methods on atmosphere.
+    """
+    Abstract class containing common methods on atmosphere.
     You have to inherit from this class and implement the virtual method
     :func:`get_density`.
 
@@ -22,15 +23,16 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
       theta_deg (float): current zenith angle :math:`\\theta` in degrees
       max_X (float): Slant depth at the surface according to the geometry
                      defined in the :mod:`MCEq.geometry`
+      geometry (object): Can be a custom instance of EarthGeometry
 
     """
 
     def __init__(self, *args, **kwargs):
         from MCEq.geometry.geometry import EarthGeometry
-        self.geom = EarthGeometry()
+        self.geom = kwargs.pop('geometry', EarthGeometry())
         self.thrad = None
         self.theta_deg = None
-        self._max_den = 1.240e-03
+        self._max_den = config.max_density
         self.max_theta = 90.
         self.location = None
         self.season = None
@@ -189,11 +191,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
     def X2h(self, X):
         """Returns the height above surface as a function of slant depth
-        for currently selected zenith a
-            @property
-            def s_h2X(self):
-                if hasattr(self, '_s)
-        ngle.
+        for currently selected zenith angle.
 
         The spline `s_lX2h` is used, which was calculated or retrieved
         from cache during the :func:`set_theta` call.
@@ -261,6 +259,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters
                                 _aatm, _batm, _catm, _thickl, _hlay
                                 for each of the 5 layers
+
     Args:
       location (str): see :func:`init_parameters`
       season (str,optional): see :func:`init_parameters`
@@ -291,26 +290,27 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
-        """Initializes :attr:`_atm_param`.
+        """Initializes :attr:`_atm_param`. Parameters from ANTARES/KM3NET
+        are based on the work of T. Heid
+        (`see this issue <https://github.com/afedynitch/MCEq/issues/12>`_)
 
-        +--------------+-------------------+------------------------------+
-        | location     | CORSIKA Table     | Description/season           |
-        +==============+===================+==============================+
-        | "USStd"      |         23        |  US Standard atmosphere      |
-        +--------------+-------------------+------------------------------+
-        | "BK_USStd"   |         37        |  Bianca Keilhauer's USStd    |
-        +--------------+-------------------+------------------------------+
-        | "Karlsruhe"  |         24        |  AT115 / Karlsruhe           |
-        +--------------+-------------------+------------------------------+
-        | "SouthPole"  |      26 and 28    |  MSIS-90-E for Dec and June  |
-        +--------------+-------------------+------------------------------+
-        |"PL_SouthPole"|      29 and 30    |  P. Lipari's  Jan and Aug    |
-        +--------------+-------------------+------------------------------+
-        |"ANTARES/KM3NeT-ORCA"|    NA      |  PhD T. Heid see             |
-                             https://github.com/afedynitch/MCEq/issues/12 |
-        +--------------+-------------------+------------------------------+
-        | "KM3NeT-ARCA"|    NA             |  PhD T. Heid                 |
-        +--------------+-------------------+------------------------------+
+        +---------------------+-------------------+------------------------------+
+        | location            | CORSIKA Table     | Description/season           |
+        +=====================+===================+==============================+
+        | "USStd"             |         23        |  US Standard atmosphere      |
+        +---------------------+-------------------+------------------------------+
+        | "BK_USStd"          |         37        |  Bianca Keilhauer's USStd    |
+        +---------------------+-------------------+------------------------------+
+        | "Karlsruhe"         |         24        |  AT115 / Karlsruhe           |
+        +---------------------+-------------------+------------------------------+
+        | "SouthPole"         |      26 and 28    |  MSIS-90-E for Dec and June  |
+        +---------------------+-------------------+------------------------------+
+        |"PL_SouthPole"       |      29 and 30    |  P. Lipari's  Jan and Aug    |
+        +---------------------+-------------------+------------------------------+
+        |"ANTARES/KM3NeT-ORCA"|    NA             |  PhD T. Heid                 |
+        +---------------------+-------------------+------------------------------+
+        | "KM3NeT-ARCA"       |    NA             |  PhD T. Heid                 |
+        +---------------------+-------------------+------------------------------+
 
 
         Args:
@@ -807,7 +807,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
             if self.extrapolate:
                 # Extrapolate using msis
-                h_extra = np.linspace(h_vec[-1], config.h_atm * 1e2, 250)
+                h_extra = np.linspace(h_vec[-1], self.geom.h_atm * 1e2, 250)
                 msis._msis.set_doy(self._get_y_doy(date)[1] - 1)
                 msis_extra_d = np.array([msis.get_density(h) for h in h_extra])
                 msis_extra_t = np.array(
@@ -956,7 +956,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         Returns:
           float: latitude of the impact point in degrees
         """
-        r = config.r_E
+        r = self.geom.r_E
         d = 1948  # m
 
         theta_rad = det_zenith_deg / 180. * np.pi

@@ -1,4 +1,5 @@
 ![PyPI](https://img.shields.io/pypi/v/MCEq)
+[![Documentation](https://readthedocs.org/projects/mceq/badge/?version=latest)](https://mceq.readthedocs.io/en/latest/?badge=latest)
 [![Build Status](https://dev.azure.com/afedynitch/MCEq/_apis/build/status/afedynitch.MCEq?branchName=master)](https://dev.azure.com/afedynitch/MCEq/_build/latest?definitionId=1&branchName=master)
 ![Azure DevOps releases](https://img.shields.io/azure-devops/release/afedynitch/e02bcbf5-db8e-4417-ad07-cc2547ea47e0/6/6)
 
@@ -19,6 +20,10 @@ The old versions known as 'master' and 'development' branch are deprecated and l
 ## [Documentation](http://mceq.readthedocs.org/en/latest/)
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
+
+### Version 1.2
+This is a significant update and some of the results. Please consult the
+[CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
 
 ## Please cite our work
 

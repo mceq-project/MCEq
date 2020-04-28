@@ -155,7 +155,7 @@ Changing cosmic ray flux model
 The flux of cosmic ray nucleons at the top of the atmosphere (primary flux) is the initial condition. The
 module :mod:`crflux.models` contains a contemporary selection of flux models. Refer to the
 `crflux documentation <https://crfluxmodels.readthedocs.io/en/latest/>`_ or 
-`the source code <https://github.com/afedynitch/CRFluxModels>`_.
+`the source code <https://github.com/afedynitch/crflux>`_.
 
 To change the primary flux use :func:`MCEq.core.MCEqRun.set_primary_model` ::
 

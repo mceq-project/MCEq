@@ -11,16 +11,20 @@ from .misc import normalize_hadronic_model_name, info
 # enter stuff by hand
 equivalences = {
     'SIBYLL23': {
+        -4132: 4122,
+        -4122: 4122,
+        -3334: -3312,
         -3322: -2112,
-        -3312: 2212,
-        -3222: -2212,
-        -3212: -2112,
-        310: 130,
+        -3212: -3122,
+        -413: -411,
+        113: 211,
+        221: 211,
         111: 211,
-        3212: 2112,
-        3222: 2212,
-        3312: -2212,
-        3322: 2112
+        310: 130,
+        413: 411,
+        3212: 3122,
+        3334: 3312
+
     },
     'SIBYLL21': {
         -3322: 2112,
@@ -40,7 +44,7 @@ equivalences = {
         3312: 2212,
         3322: 2112
     },
-    'QGSJET': {
+    'QGSJET01': {
         -4122: 2212,
         -3322: 2212,
         -3312: 2212,
@@ -54,6 +58,7 @@ equivalences = {
         -211: 211,
         -321: 321,
         111: 211,
+        221: 211,
         130: 321,
         310: 321,
         411: 321,
@@ -66,26 +71,44 @@ equivalences = {
         3322: 2212,
         4122: 2212
     },
-    'DPMJET': {
+    'QGSJETII': {
         -3122: -2112,
-        -431: -321,
-        -421: -321,
-        -411: -321,
-        310: 130,
         111: 211,
-        411: 321,
-        421: 321,
-        431: 321,
+        113: 211,
+        221: 211,
+        310: 130,
         3122: 2112,
     },
+    'DPMJET': {
+        -4122: -3222,
+        -3334: -3312,
+        -3212: -3122,
+        -431: -321,
+        -421: -321,
+        -413: -321,
+        -411: -321,
+        310: 130,
+        113: 211,
+        221: 211,
+        111: 211,
+        411: 321,
+        413: 321,
+        421: 321,
+        431: 321,
+        3212: 3122,
+        3334: 3312,
+        4122: 3222,
+    },
     'EPOSLHC': {
-        -3334: -2212,
+        -3334: 2212,
         -3322: -3122,
         -3312: 2212,
         -3222: -2212,
         -3212: -3122,
         -3112: 2212,
         111: 211,
+        113: 211,
+        221: 211,
         310: 130,
         3112: -2212,
         3212: 3122,
@@ -93,6 +116,23 @@ equivalences = {
         3312: -2212,
         3322: 3122,
         3334: -2212
+    },
+    'PYTHIA8': {
+        -3122: -2112,
+        -431: -321,
+        -421: -321,
+        -413: -321,
+        -411: -321,
+        111: 211,
+        113: 211,
+        221: 211,
+        310: 321,
+        130: 321,
+        411: 321,
+        413: 321,
+        421: 321,
+        431: 321,
+        3122: 2112,
     }
 }
 
@@ -123,6 +163,8 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             from MCEq.misc import energy_grid
             ca = mceq_db['common'].attrs
+            self.version = (mceq_db.attrs['version'] 
+                if 'version' in mceq_db.attrs else '1.0.0')
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca['e_grid'])
             self._energy_grid = energy_grid(
@@ -258,12 +300,16 @@ class HDF5Backend(object):
                 eqv = equivalences['SIBYLL21']
             elif 'SIBYLL23' in mname:
                 eqv = equivalences['SIBYLL23']
-            elif 'QGSJET' in mname:
-                eqv = equivalences['QGSJET']
+            elif 'QGSJET01' in mname:
+                eqv = equivalences['QGSJET01']
+            elif 'QGSJETII' in mname:
+                eqv = equivalences['QGSJETII']
             elif 'DPMJET' in mname:
                 eqv = equivalences['DPMJET']
             elif 'EPOSLHC' in mname:
                 eqv = equivalences['EPOSLHC']
+            elif 'PYTHIA8' in mname:
+                eqv = equivalences['PYTHIA8']
             int_index = self._gen_db_dictionary(
                 mceq_db['hadronic_interactions'][mname],
                 mceq_db['hadronic_interactions'][mname + '_indptrs'],
@@ -463,7 +509,6 @@ class Interactions(object):
             self.particles += [d for d in self.relations[p] 
                                 if d not in disabled_particles]
         self.particles = sorted(list(set(self.particles)))
-
         if config.adv_set['disable_direct_leptons']:
             for p in list(self.relations):
                 self.relations[p] = [
@@ -476,6 +521,10 @@ class Interactions(object):
                     c for c in self.relations[p] if c[0] not in 
                     disabled_particles
                 ]
+        if not self.particles:
+            info(2, 'None of the parent_list particles interact. Returning custom list.')
+            self.particles = parent_list
+
 
     def __getitem__(self, key):
         return self.get_matrix(*key)

@@ -31,7 +31,8 @@ import MCEq.version
 extensions = [
     'sphinx.ext.autodoc', 'sphinx.ext.napoleon', 'sphinx.ext.todo',
     'sphinx.ext.coverage', 'sphinx.ext.imgmath', 'sphinx.ext.viewcode',
-    'sphinx.ext.intersphinx', 'matplotlib.sphinxext.plot_directive',
+    'sphinx.ext.intersphinx',
+    'matplotlib.sphinxext.plot_directive',
     'sphinx.ext.autosummary'
 ]
 
@@ -39,8 +40,8 @@ intersphinx_mapping = {
     'python': ('http://docs.python.org/2.7', None),
     'numpy': ('http://docs.scipy.org/doc/numpy/', None),
     'scipy': ('http://docs.scipy.org/doc/scipy/reference/', None),
-    'CRFluxModels': ('http://crfluxmodels.readthedocs.org/en/latest', None),
-    'ParticleDataTool': ('http://particledatatool.readthedocs.org/en/latest',
+    'crflux': ('http://crfluxmodels.readthedocs.org/en/latest', None),
+    'particletools': ('http://particledatatool.readthedocs.org/en/latest',
                          None)
 }
 

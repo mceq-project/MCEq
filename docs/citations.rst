@@ -6,7 +6,7 @@ References
 Cosmic-ray flux parameterizations
 .................................
 
-The parameterizations of the flux of cosmic rays are provided via the module `CRFluxModels <https://github.com/afedynitch/CRFluxModels>`_.
+The parameterizations of the flux of cosmic rays are provided via the module `crflux <https://github.com/afedynitch/crflux>`_.
 The references are given in the `module's documentation <http://crfluxmodels.readthedocs.org/en/latest/index.html#>`_.
 
 Atmosphere
