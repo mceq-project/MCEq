@@ -130,7 +130,14 @@ The current citation for the MCEq is:
    | EPJ Web Conf. 99 (2015) 08001
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-Find the :ref:`citations` for the physical models.
+In :ref:`citations` is the list for the physical models.
+
+Changes to physics between version 1.1.X and 1.2.X 
+..................................................
+
+Due to a bug found in the decay table generation for the "new" MCEq versions
+there are some larger changes for the lowest energies at tens of GeV. To estimate
+if your computations may be affected check out :ref:`v12v11_diff`.
 
 Main documentation
 ..................
@@ -142,6 +149,7 @@ Main documentation
    citations
    densities
    advanced
+   v12v11_diff
 
 Indices and tables
 ==================
