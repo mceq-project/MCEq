@@ -4,7 +4,7 @@ steps:
   displayName: Install testing requirements
 
 - script: |
-    python -m pytest --pyargs iminuit --junitxml=junit/test-results.xml
+    python -m pytest --pyargs MCEq --junitxml=junit/test-results.xml
   # I'm selecting a random directory to not trigger relative imports.
   workingDirectory: examples
   displayName: Test with pytest

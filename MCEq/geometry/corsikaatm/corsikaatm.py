@@ -3,7 +3,12 @@ import os
 import sysconfig
 
 base = os.path.dirname(os.path.abspath(__file__))
-suffix = sysconfig.get_config_var('EXT_SUFFIX')
+suffix =  sysconfig.get_config_var('EXT_SUFFIX')
+# Some Python 2.7 versions don't define EXT_SUFFIX
+if suffix is None:
+    suffix =  sysconfig.get_config_var('SHLIB_EXT')[1:-1]
+
+assert suffix is not None, 'Shared lib suffix was not identified.'
 
 for fn in os.listdir(base):
     if 'libcorsikaatm' in fn and fn.endswith(suffix):
