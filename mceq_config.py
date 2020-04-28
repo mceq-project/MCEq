@@ -350,7 +350,7 @@ def _download_file(url, outfile):
 
 # Download database file from github
 base_url = 'https://github.com/afedynitch/MCEq/releases/download/'
-release_tag = 'release_1_2_0/'
+release_tag = 'builds_on_azure/'
 url = base_url + release_tag + mceq_db_fname
 if not path.isfile(path.join(data_dir, mceq_db_fname)):
     print('Downloading for mceq database file {0}.'.format(mceq_db_fname))
