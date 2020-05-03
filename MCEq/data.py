@@ -752,8 +752,6 @@ class Decays(object):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
-        #: reference to energy grid
-        self.energy_grid = mceq_hdf_db.energy_grid
         #: (list) List of particles in the decay matrices
         self.parent_list = []
         self._default_decay_dset = default_decay_dset
