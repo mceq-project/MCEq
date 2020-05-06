@@ -352,6 +352,19 @@ class MCEqRun(object):
 
         else:
             raise Exception('Should not happen in practice.')
+        
+        self._resize_vectors_and_restore()
+
+        # initialize matrices
+        if not build_matrices:
+            return
+        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+            skip_decay_matrix=False)
+
+    def _resize_vectors_and_restore(self):
+        """Update solution and grid vectors if the number of particle species
+        or the interaction models change. The previous state, such as the
+        initial spectrum, are restored."""
 
         # Update dimensions if particle dimensions changed
         self._phi0 = np.zeros(self.dim_states)
@@ -361,12 +374,6 @@ class MCEqRun(object):
         if len(self._restore_initial_condition) > 0:
             for con in self._restore_initial_condition:
                 con[0](*con[1:])
-
-        # initialize matrices
-        if not build_matrices:
-            return
-        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-            skip_decay_matrix=False)
 
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
@@ -685,11 +692,6 @@ class MCEqRun(object):
         # Need to regenerate matrices completely
         return int(init)
 
-        # if init and not delay_init:
-        #     self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-        #         skip_decay_matrix=True)
-        #     return 0
-
     def unset_mod_pprod(self, dont_fill=False):
         """Removes modifications from :func:`MCEqRun.set_mod_pprod`.
 
@@ -808,16 +810,26 @@ class MCEqRun(object):
         step = 0
         grid_step = 0
         grid_idcs = []
-
-        # The factor 0.95 means 5% inbound from stability margin of the
-        # Euler intergrator.
-        if (max_ldec / self.density_model.max_den > max_lint
+        if True or (max_ldec / self.density_model.max_den > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
-            def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
-        else:
+            def delta_X(X): 
+                return config.stability_margin / (max_ldec * ri(X))
+        elif config.leading_process == 'interactions':
             info(2, "using interactions as leading eigenvalues")
-            def delta_X(X): return config.stability_margin / max_lint
+            def delta_X(X): 
+                return config.stability_margin / max_lint
+        else:    
+            def delta_X(X):
+                dX = min(
+                    config.stability_margin / (max_ldec * ri(X)),
+                    config.stability_margin / max_lint)
+                # if dX/self.density_model.max_X < 1e-7:
+                #     raise Exception(
+                # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
+                # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
+                return dX
+        
 
         dXmax = config.dXmax
         while X < max_X:

@@ -212,6 +212,40 @@ class MCEqParticle(object):
             self.hadr_secondaries = []
             self.hadr_yields = {}
 
+    def add_hadronic_production_channel(self, child, int_matrix):
+        """Add a new particle that is produced in hadronic interactions.
+
+        The int_matrix is expected to be in the correct shape and scale
+        as the other interaction (dN/dE(i,j)) matrices. Energy conservation
+        is not checked.
+        """
+
+        if not self.is_projectile:
+            raise Exception('The particle should be a projectile.')
+
+        if child in self.hadr_secondaries:
+            info(1, 'Child {0} has been already added.'.format(child.name))
+            return
+        
+        self.hadr_secondaries.append(child)
+        self.hadr_yields[child] = int_matrix
+    
+    def add_decay_channel(self, child, dec_matrix, force=False):
+        """Add a decay channel.
+        
+        The branching ratios are not renormalized and one needs to take care
+        of this externally.
+        """
+        if self.is_stable:
+            raise Exception('Cannot add decay channel to stable particle.')
+        
+        if child in self.children:
+            info(1, 'Child {0} has been already added.'.format(child.name))
+            return
+
+        self.children.append(child)
+        self.decay_dists[child] = dec_matrix
+
     def set_decay_channels(self, decay_db, pmanager):
         """Populates decay channel and energy distributions"""
 
@@ -567,12 +601,12 @@ class MCEqParticle(object):
 
         cross_over = config.hybrid_crossover
         max_density = config.max_density
-        no_mix = False
 
         d = self._energy_grid.d
-
         inv_intlen = self.inverse_interaction_length()
+
         inv_declen = self.inverse_decay_length()
+        # If particle is stable, no "mixing" necessary
         if (not np.any(np.nan_to_num(inv_declen) > 0.)
                 or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
                 or config.adv_set['no_mixing']
@@ -581,37 +615,37 @@ class MCEqParticle(object):
             self.is_mixed = False
             self.is_resonance = False
             return
-        if (np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]
-                or (np.all(inv_declen == 0.) and not self.is_lepton)):
-            threshold = 0.
-        elif np.any(inv_intlen > 0.):
-            with np.errstate(divide='ignore'):
-                lint = 1. / inv_intlen
-            d_tilde = np.zeros(d)
-            d_tilde[inv_declen > 0] = 1. / inv_declen[inv_declen > 0]
-            # multiply with maximal density encountered along the
-            # integration path
-            ldec = d_tilde * max_density
-            threshold = ldec / lint
-        else:
-            threshold = np.inf
-            no_mix = True
-
-        if np.max(threshold) < cross_over:
+            
+        # If particle is forced to be a "resonance" 
+        if (np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]):
             self.mix_idx = d - 1
             self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_mixed = False
             self.is_resonance = True
-
-        elif np.min(threshold) > cross_over or no_mix:
-            self.mix_idx = 0
-            self.is_mixed = False
-            self.is_resonance = False
-        else:
-            self.mix_idx = np.where(ldec / lint > cross_over)[0][0]
+        # Particle can interact and decay
+        elif self.can_interact and not self.is_stable:
+            # This is lambda_dec / lambda_int
+            with np.errstate(all='ignore'):
+                threshold = np.nan_to_num(inv_intlen * max_density / inv_declen) 
+            self.mix_idx = np.where(threshold > cross_over)[0][0]
             self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
+        # These particles don't interact but can decay (e.g. tau leptons)
+        elif not self.can_interact and not self.is_stable:
+            self.mix_idx = np.where(
+                max_density / inv_declen > config.dXmax)[0][0]
+            self.E_mix = self._energy_grid.c[self.mix_idx]
+            self.is_mixed = True
+            self.is_resonance = False
+        # Particle is stable but that shouldn't occur
+        else:
+            print(self.name, "This case shouldn't occur.")
+            threshold = np.inf
+            self.mix_idx = 0
+            self.is_mixed = False
+            self.is_resonance = False
+
 
     def __eq__(self, other):
         """Checks name for equality"""
@@ -945,6 +979,29 @@ class ParticleManager(object):
         # Resonances will kepp the default mceqidx = -1
         for mceqidx, h in enumerate(self.cascade_particles):
             h.mceqidx = mceqidx
+
+        self.all_particles = self.cascade_particles + self.resonances
+        self._update_particle_tables()
+
+    def add_new_particle(self, new_mceq_particle):
+        
+        if new_mceq_particle in self.all_particles:
+            info(0, 'Particle {0}/{1} has already been added. Use it.'.format(
+                new_mceq_particle.name, new_mceq_particle.pdg_id
+            ))
+            return
+
+        if not new_mceq_particle.is_resonance:
+            info(2, 'New particle {0}/{1} is not a resonance.'.format(
+                new_mceq_particle.name, new_mceq_particle.pdg_id
+            ))
+            new_mceq_particle.mceqidx = len(self.cascade_particles)
+            self.cascade_particles.append(new_mceq_particle)
+        else:
+            info(2, 'New particle {0}/{1} is a resonance.'.format(
+                new_mceq_particle.name, new_mceq_particle.pdg_id
+            ))
+            self.resonances.append(new_mceq_particle)
 
         self.all_particles = self.cascade_particles + self.resonances
         self._update_particle_tables()
