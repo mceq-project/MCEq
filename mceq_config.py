@@ -123,11 +123,12 @@ ode_params = {
 # Advanced settings
 # =========================================================================
 
-#: The leading process is can be either decay or interaction. This depends
+#: The leading process is can be either "decays" or "interactions". This depends
 #: on the target density and it is usually chosen automatically. For
 #: advanced applications one can force "interactions" to be the dominant
 #: process. Essentially this affects how the adaptive step size is computed.
-leading_process = "decays"
+#: There is also the choice of "auto" that takes both processes into account
+leading_process = "auto"
 
 #: Stability margin for the integrator. The default 0.95 means that step
 #: sizes are chosen 5% away from the stability circle. Usually no need to
@@ -206,8 +207,8 @@ adv_set = {
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
 
-    #: Disable particle (production)
-    "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
+    #: Disable particle (production) 
+    "disabled_particles": [], #20, 19, 18, 17, 97, 98, 99, 101, 102, 103
 
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
@@ -216,13 +217,13 @@ adv_set = {
     'disable_leading_mesons': False,
 
     #: Do not apply mixing to these particles
-    "exclude_from_mixing": [],
+    "exclude_from_mixing": [13],
 
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
 
     #: Force particles to be treated as resonance
-    "force_resonance": [15],
+    "force_resonance": [],
 
     #: Disable mixing between resonance approx. and full propagation
     "no_mixing": False

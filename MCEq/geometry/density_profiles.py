@@ -1017,6 +1017,10 @@ class GeneralizedTarget(object):
         self.env_name = env_name
         self.reset()
 
+    @property
+    def max_den(self):
+        return self._max_den
+
     def reset(self):
         """Resets material list to defaults."""
         self.mat_list = [[
