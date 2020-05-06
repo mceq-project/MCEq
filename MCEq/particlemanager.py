@@ -625,20 +625,23 @@ class MCEqParticle(object):
         # Particle can interact and decay
         elif self.can_interact and not self.is_stable:
             # This is lambda_dec / lambda_int
-            with np.errstate(all='ignore'):
-                threshold = np.nan_to_num(inv_intlen * max_density / inv_declen) 
+            threshold = np.zeros_like(inv_intlen)
+            mask = inv_declen != 0.
+            threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask] 
+            del mask
             self.mix_idx = np.where(threshold > cross_over)[0][0]
             self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
         # These particles don't interact but can decay (e.g. tau leptons)
         elif not self.can_interact and not self.is_stable:
+            mask = inv_declen != 0.
             self.mix_idx = np.where(
                 max_density / inv_declen > config.dXmax)[0][0]
             self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
-        # Particle is stable but that shouldn't occur
+        # Particle is stable but that should be handled above
         else:
             print(self.name, "This case shouldn't occur.")
             threshold = np.inf
