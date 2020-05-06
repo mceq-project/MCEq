@@ -239,8 +239,12 @@ class MCEqParticle(object):
         if self.is_stable:
             raise Exception('Cannot add decay channel to stable particle.')
         
-        if child in self.children:
+        if child in self.children and not force:
             info(1, 'Child {0} has been already added.'.format(child.name))
+            return
+        elif child in self.children and force:
+            info(1, 'Overwriting decay matrix of child {0}.'.format(child.name))
+            self.decay_dists[child] = dec_matrix
             return
 
         self.children.append(child)
