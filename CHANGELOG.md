@@ -1,5 +1,9 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.2.1:
+- Some cleanup and new convenience functions on MCEqParticle
+- Autodetection of leading eigenvalues setting 
+
 Version 1.2.0:
 - New data tables: physics will be affected mostly low energies < 30 GeV and minor
 corrections can be visible for particle ratios at higher energies.
