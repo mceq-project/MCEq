@@ -239,8 +239,13 @@ class MCEqRun(object):
             try:
                 res = sum_lr(particle_name, prefix='')
             except KeyError:
-                info(10,
-                     'Requested particle {0} not found.'.format(particle_name))
+                if config.excpt_on_missing_particle:
+                    raise Exception(
+                        'Requested particle {0} not found.'.format(particle_name))
+                else:
+                    info(10,
+                        'Requested particle {0} not found.'.format(particle_name))
+                
 
         # When returning in Etot, interpolate on different grid
         if return_as == 'total energy':
