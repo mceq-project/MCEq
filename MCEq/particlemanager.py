@@ -603,6 +603,7 @@ class MCEqParticle(object):
                                decay length)
         """
 
+        info(10, 'Calculating mixing energy for', self.name)
         cross_over = config.hybrid_crossover
         max_density = config.max_density
 
@@ -632,27 +633,36 @@ class MCEqParticle(object):
             threshold = np.zeros_like(inv_intlen)
             mask = inv_declen != 0.
             threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask] 
-            del mask
-            self.mix_idx = np.where(threshold > cross_over)[0][0]
-            self.E_mix = self._energy_grid.c[self.mix_idx]
-            self.is_mixed = True
-            self.is_resonance = False
-        # These particles don't interact but can decay (e.g. tau leptons)
+            mask = np.where(threshold > cross_over)
+            if len(mask[0]) > 0:
+                self.mix_idx = np.where(threshold > cross_over)[0][0]
+                self.E_mix = self._energy_grid.c[self.mix_idx]
+                self.is_mixed = True
+                self.is_resonance = False
+            else:
+                self.mix_idx = d - 1
+                self.E_mix = self._energy_grid.c[self.mix_idx]
+                self.is_mixed = False
+                self.is_resonance = True
+        # These particles don't interact but can decay (e.g. muons or taus)
         elif not self.can_interact and not self.is_stable:
             mask = inv_declen != 0.
-            self.mix_idx = np.where(
-                max_density / inv_declen > config.dXmax)[0][0]
-            self.E_mix = self._energy_grid.c[self.mix_idx]
+            mix_idx = np.where(
+                max_density / inv_declen[mask] > config.dXmax)[0][0]
+            self.E_mix = self._energy_grid.c[mask][mix_idx]
+            self.mix_idx = np.argmin(np.abs(self.E_mix - self._energy_grid.c))
+            assert self.E_mix == self._energy_grid.c[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
         # Particle is stable but that should be handled above
         else:
-            print(self.name, "This case shouldn't occur.")
+            info(0, "This case shouldn't occur. Particle =", self.name)
             threshold = np.inf
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
 
+        assert self.E_mix == self._energy_grid.c[self.mix_idx]
 
     def __eq__(self, other):
         """Checks name for equality"""
