@@ -79,7 +79,7 @@ setup(
         'six',
         'h5py',
         'particletools',
-        'crflux>1.0.4',
+        'crflux>1.0.5',
         'scipy',
         'numpy',
         'tqdm',
