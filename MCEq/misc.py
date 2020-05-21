@@ -219,7 +219,11 @@ def info(min_dbg_level, *message, **kwargs):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-    condition = kwargs.pop('condition', True)
+    condition = kwargs.pop('condition', min_dbg_level <= config.debug_level)
+    # Dont' process the if the function if nothing will happen
+    if not (condition or config.override_debug_fcn): 
+        return
+
     blank_caller = kwargs.pop('blank_caller', False)
     no_caller = kwargs.pop('no_caller', False)
     if config.override_debug_fcn and min_dbg_level < config.override_max_level:
