@@ -95,8 +95,8 @@ def getAZN(pdg_id):
     elif pdg_id == 2212:
         return 1, 1, 0
     elif pdg_id > 1000000000:
-        A = pdg_id % 1000 / 10
-        Z = pdg_id % 1000000 / 10000
+        A = (pdg_id % 1000) // 10
+        Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
     else:
         return 1, 0, 0
@@ -117,7 +117,7 @@ def getAZN_corsika(corsikaid):
         return getAZN(2212)
     if corsikaid >= 100:
         Z = corsikaid % 100
-        A = (corsikaid - Z) / 100
+        A = (corsikaid - Z) // 100
     else:
         Z, A = 0, 0
 
