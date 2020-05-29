@@ -77,7 +77,7 @@ dedx_material = 'air'
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
-e_min = .1
+e_min = 1.
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
@@ -151,11 +151,14 @@ dXmax = 10.
 #: performance since the eqution system becomes smaller and sparser
 enable_default_tracking = True
 
-#: Muon energy loss according to Kokoulin et al.
-enable_muon_energy_loss = True
+#: Ionization and radiative losses according to stopping power tables (PDG)
+enable_energy_loss = True
 
-#: enable EM ionization loss
-enable_em_ion = False
+#: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
+generic_losses_all_charged = False
+
+#: enable EM ionization loss for electrons and positrons
+enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
@@ -163,6 +166,12 @@ average_loss_operator = True
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
+
+#: Energy solver FD | SL (finite differences or semi-langrangian)
+energy_solver = "FD"
+
+#: Order of semi-lagrangian
+sl_order = 1
 
 #: Raise exception when requesting unknown particles from get_solution
 excpt_on_missing_particle = False
@@ -322,6 +331,9 @@ class MCEqConfigCompatibility(dict):
             raise Exception('Unknown config key', key)
         return super(MCEqConfigCompatibility, self).__setitem__(key, value)
 
+
+
+globals()['enable_muon_energy_loss'] = globals()['enable_energy_loss']
 
 config = MCEqConfigCompatibility(globals())
 

@@ -58,10 +58,14 @@ class MCEqParticle(object):
         self.is_hadron = False
         #: (bool) particle is a lepton
         self.is_lepton = False
+        #: (bool) particle is charged
+        self.is_charged = False
         #: (float) ctau in cm
         self.ctau = None
         #: (float) mass in GeV
         self.mass = None
+        #: (int) Charge
+        self.charge = None
         #: (str) species name in string representation
         self.name = None
         #: Mass, charge, neutron number
@@ -132,6 +136,11 @@ class MCEqParticle(object):
         self.is_lepton = _pdata.is_lepton(self.pdg_id[0])
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(self.pdg_id[0])
+        if self.is_nucleus:
+            self.charge = self.Z
+        else:
+            self.charge = int(_pdata.charge(self.pdg_id[0]))
+        self.is_charged = bool(abs(self.charge))
         #: (float) ctau in cm
         self.ctau = _pdata.ctau(self.pdg_id[0])
         #: (float) mass in GeV
@@ -810,6 +819,15 @@ class ParticleManager(object):
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
+            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
+                # Stopping power dEdX is almost the same for all charged particles.
+                # What changes is the gamma factor. We interpolate the dEdX tables
+                # stored for muons to different gamma factor grids. 
+                # Compute gamma factor from kinetic energy
+                gamma_p = (self._energy_grid.c + p.mass)/p.mass
+                p.dEdX = -np.exp(contloss_db.generic_spl(np.log(gamma_p)))
+                
+                p.has_contloss = True
 
     def add_tracking_particle(self,
                               parent_list,

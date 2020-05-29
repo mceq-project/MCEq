@@ -418,9 +418,14 @@ class HDF5Backend(object):
             cl_db = mceq_db['continuous_losses'][medium]
 
             index_d = {}
-            for pstr in list(cl_db):
-                for hel in [0, 1, -1]:
-                    index_d[(int(pstr), hel)] = cl_db[pstr][self._cuts]
+            generic_dedx = None
+            for k in list(cl_db):
+                if k != 'generic':
+                    for hel in [0, 1, -1]:
+                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                else:
+                    # Tuple (boost, dEdx)
+                    generic_dedx = (cl_db[k][0], cl_db[k][1])
             if config.enable_em:
                 with h5py.File(self.em_fname, 'r') as em_db:
                     info(2, 'Injecting EmCA matrices into interaction_db.')
@@ -432,9 +437,10 @@ class HDF5Backend(object):
                         index_d[(-11,
                                  hel)] = em_db["electromagnetic"]['dEdX -11'][
                                      self._cuts]
-
-        return {'parents': sorted(list(index_d)), 'index_d': index_d}
-
+        if generic_dedx is not None:
+            return {'parents': sorted(list(index_d)), 'index_d': index_d, 'generic': generic_dedx}
+        else:
+            return {'parents': sorted(list(index_d)), 'index_d': index_d}
 
 class Interactions(object):
     """Class for managing the dictionary of interaction yield matrices.
@@ -955,8 +961,12 @@ class ContinuousLosses(object):
         return key in self.parents
 
     def load_db(self, material):
+        from scipy.interpolate import InterpolatedUnivariateSpline
         # Load tables and index from file
         index = self.mceq_db.continuous_loss_db(material)
-
         self.parents = index['parents']
         self.index_d = index['index_d']
+        if 'generic' not in index and config.generic_losses_all_charged:
+            raise Exception('New data file needed to support generic losses.')
+        self.generic_spl = InterpolatedUnivariateSpline(
+            np.log(index['generic'][0]), np.log(index['generic'][1]), k=1) 
