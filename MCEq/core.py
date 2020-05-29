@@ -137,6 +137,35 @@ class MCEqRun(object):
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
         return self._energy_grid.c[eidx]
 
+    def _get_state_vector(self, grid_idx=None):
+        """Returns state vector"""
+        if not hasattr(self, '_solution') and grid_idx is None:
+            raise Exception('State vector not initialized. Run solve() first.')
+        if not hasattr(self, 'grid_sol') and grid_idx is not None:
+            raise Exception('Solution not on grid. Re-run solve() with a grid.')
+        
+        
+        if grid_idx is None:
+            state_vec = np.copy(self._solution)
+        elif grid_idx < len(self.grid_sol):
+            state_vec = self.grid_sol[grid_idx, :]
+        else:
+            raise Exception('Invalid grid index', grid_idx)
+        
+        order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
+        
+        return order, state_vec
+    
+    def _set_state_vector(self, order_i, state_vec):
+        """Sets the initial to that supplied as state vector."""
+
+        order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
+        if order_i != order:
+            print(order_i, order)
+            raise Exception("The orders of the state vecs. don't match")
+
+        self._phi0[:] = state_vec[:]
+        
     def get_solution(self,
                      particle_name,
                      mag=0.,
@@ -182,7 +211,7 @@ class MCEqRun(object):
                 'Solution not has not been computed on grid. Check input.')
         if grid_idx is None:
             sol = np.copy(self._solution)
-        elif grid_idx >= len(self.grid_sol) or grid_idx is None:
+        elif grid_idx >= len(self.grid_sol):
             sol = self.grid_sol[-1, :]
         else:
             sol = self.grid_sol[grid_idx, :]
@@ -1041,12 +1070,12 @@ class MatrixBuilder(object):
                 self.C_blocks[idx] *= parent.inverse_interaction_length()
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
-                if config.enable_muon_energy_loss and abs(
-                        parent.pdg_id[0]) == 13:
-                    info(5, 'Cont. loss for', parent.name)
-                    self.C_blocks[idx] += self.cont_loss_operator(
-                        parent.pdg_id)
-                if config.enable_em_ion and abs(parent.pdg_id[0]) == 11:
+                if config.enable_energy_loss and (
+                        config.generic_losses_all_charged or
+                        abs(parent.pdg_id[0]) in [11, 13]):
+                        
+                    if abs(parent.pdg_id[0]) == 11 and not config.enable_em_ion:
+                        continue
                     info(5, 'Cont. loss for', parent.name)
                     self.C_blocks[idx] += self.cont_loss_operator(
                         parent.pdg_id)
