@@ -3,6 +3,10 @@ Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 Version 1.2.1:
 - Some cleanup and new convenience functions on MCEqParticle
 - Autodetection of leading eigenvalues setting 
+- Mixing energy more robustly calculated
+- Stopping power for all charged hadrons enabled by option 'generic_losses_all_charged' (req. new data file)
+- Default minimal energy increased to 1 GeV because it's safe under all conditions (no swing)
+- get_AZN function fixed to return integers only (thx Max)
 
 Version 1.2.0:
 - New data tables: physics will be affected mostly low energies < 30 GeV and minor
