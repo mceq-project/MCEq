@@ -420,7 +420,7 @@ class HDF5Backend(object):
             index_d = {}
             generic_dedx = None
             for k in list(cl_db):
-                if k != 'generic':
+                if k != 'hadron':
                     for hel in [0, 1, -1]:
                         index_d[(int(k), hel)] = cl_db[k][self._cuts]
                 else:

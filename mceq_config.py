@@ -167,12 +167,6 @@ average_loss_operator = True
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
 
-#: Energy solver FD | SL (finite differences or semi-langrangian)
-energy_solver = "FD"
-
-#: Order of semi-lagrangian
-sl_order = 1
-
 #: Raise exception when requesting unknown particles from get_solution
 excpt_on_missing_particle = False
 
@@ -333,7 +327,7 @@ class MCEqConfigCompatibility(dict):
 
 
 
-globals()['enable_muon_energy_loss'] = globals()['enable_energy_loss']
+# globals()['enable_muon_energy_loss'] = globals()['enable_energy_loss']
 
 config = MCEqConfigCompatibility(globals())
 
