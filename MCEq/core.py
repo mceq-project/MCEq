@@ -87,8 +87,8 @@ class MCEqRun(object):
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(
             interaction_model,
-            particle_list = kwargs.pop('particle_list', None),
-            build_matrices = kwargs.pop('build_matrices', True)
+            particle_list=kwargs.pop('particle_list', None),
+            build_matrices=kwargs.pop('build_matrices', True)
         )
 
         # Default GPU device id for CUDA
@@ -130,7 +130,7 @@ class MCEqRun(object):
         """Number of cascade particles times dimension of grid
         (dimension of the equation system)"""
         return self.pman.dim_states
-    
+
     def closest_energy(self, kin_energy):
         """Convenience function to obtain the nearest grid energy
         to the `energy` argument, provided as kinetik energy in lab. frame."""
@@ -143,29 +143,34 @@ class MCEqRun(object):
             raise Exception('State vector not initialized. Run solve() first.')
         if not hasattr(self, 'grid_sol') and grid_idx is not None:
             raise Exception('Solution not on grid. Re-run solve() with a grid.')
-        
-        
+
         if grid_idx is None:
             state_vec = np.copy(self._solution)
         elif grid_idx < len(self.grid_sol):
             state_vec = self.grid_sol[grid_idx, :]
         else:
             raise Exception('Invalid grid index', grid_idx)
-        
+
         order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
-        
+
         return order, state_vec
-    
-    def _set_state_vector(self, order_i, state_vec):
+
+    def _set_state_vector(self, order_i, state_vec, only_available=False):
         """Sets the initial to that supplied as state vector."""
 
         order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
-        if order_i != order:
+        if order_i != order and not only_available:
             print(order_i, order)
             raise Exception("The orders of the state vecs. don't match")
+        elif order_i != order and only_available:
+            for pidx, pname in order:
+                if pname in self.pman.pname2pref:
+                    p = self.pman.pname2pref[pname]
+                    self._phi0[p.lidx:p.uidx] = state_vec[
+                        pidx * self.dim:(pidx + 1) * self.dim]
+        else:
+            self._phi0[:] = state_vec[:]
 
-        self._phi0[:] = state_vec[:]
-        
     def get_solution(self,
                      particle_name,
                      mag=0.,
@@ -273,8 +278,7 @@ class MCEqRun(object):
                         'Requested particle {0} not found.'.format(particle_name))
                 else:
                     info(10,
-                        'Requested particle {0} not found.'.format(particle_name))
-                
+                         'Requested particle {0} not found.'.format(particle_name))
 
         # When returning in Etot, interpolate on different grid
         if return_as == 'total energy':
@@ -386,7 +390,7 @@ class MCEqRun(object):
 
         else:
             raise Exception('Should not happen in practice.')
-        
+
         self._resize_vectors_and_restore()
 
         # initialize matrices
@@ -567,7 +571,7 @@ class MCEqRun(object):
                     emat, b_neutrons)
 
     def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
-        """Set a user-defined spectrum for an arbitrary species as initial condition. 
+        """Set a user-defined spectrum for an arbitrary species as initial condition.
 
         This function is an equivalent to :func:`set_single_primary_particle`. It
         allows to define an arbitrary spectrum for each available particle species
@@ -579,7 +583,7 @@ class MCEqRun(object):
 
         Args:
           spectrum (np.array): spectrum dN/dptot
-          pdg_id (int): PDG ID in case of a particle 
+          pdg_id (int): PDG ID in case of a particle
         """
 
         from MCEq.misc import getAZN_corsika, getAZN
@@ -623,10 +627,11 @@ class MCEqRun(object):
           density_config (tuple of strings): (parametrization type, arguments)
         """
         import MCEq.geometry.density_profiles as dprof
-        
-        # Check if string arguments or an instance of the density class is provided 
-        if not isinstance(density_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)):
-            
+
+        # Check if string arguments or an instance of the density class is provided
+        if not isinstance(density_config, (dprof.EarthsAtmosphere,
+                                           dprof.GeneralizedTarget)):
+
             base_model, model_config = density_config
 
             available_models = [
@@ -636,7 +641,7 @@ class MCEqRun(object):
 
             if base_model not in available_models:
                 info(0, 'Unknown density model. Available choices are:\n',
-                    '\n'.join(available_models))
+                     '\n'.join(available_models))
                 raise Exception('Choose a different profile.')
 
             info(1, 'Setting density profile to', base_model, model_config)
@@ -655,13 +660,14 @@ class MCEqRun(object):
                 self.density_model = dprof.GeneralizedTarget()
             else:
                 raise Exception('Unknown atmospheric base model.')
-            self.density_config = density_config 
+            self.density_config = density_config
 
         else:
             self.density_model = density_config
             self.density_config = density_config
 
-        if self.theta_deg is not None and isinstance(self.density_model, dprof.EarthsAtmosphere):
+        if self.theta_deg is not None and isinstance(
+                self.density_model, dprof.EarthsAtmosphere):
             self.set_theta_deg(self.theta_deg)
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
@@ -681,7 +687,7 @@ class MCEqRun(object):
           atm_config (tuple of strings): (parametrization type, location string, season string)
         """
         import MCEq.geometry.density_profiles as dprof
-        
+
         info(2, 'Zenith angle {0:6.2f}'.format(theta_deg))
 
         if isinstance(self.density_model, dprof.GeneralizedTarget):
@@ -694,7 +700,6 @@ class MCEqRun(object):
 
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
-
 
     def set_mod_pprod(self,
                       prim_pdg,
@@ -747,7 +752,8 @@ class MCEqRun(object):
 
         # TODO: Not all particles need to be reset and there is some performance loss
         # This can be optmized by refreshing only the particles that change or through
-        # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix on demand
+        # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix
+        # on demand
         self.pman.set_interaction_model(self._int_cs,
                                         self._interactions,
                                         force=True)
@@ -776,7 +782,7 @@ class MCEqRun(object):
             # Calculate integration path if not yet happened
             self._calculate_integration_path(int_grid, grid_var)
         else:
-            info(2,'Warning: integration path calculation skipped.')
+            info(2, 'Warning: integration path calculation skipped.')
 
         phi0 = np.copy(self._phi0)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
@@ -845,15 +851,17 @@ class MCEqRun(object):
         grid_step = 0
         grid_idcs = []
         if True or (max_ldec / self.density_model.max_den > max_lint
-                and config.leading_process == 'decays'):
+                    and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
-            def delta_X(X): 
+
+            def delta_X(X):
                 return config.stability_margin / (max_ldec * ri(X))
         elif config.leading_process == 'interactions':
             info(2, "using interactions as leading eigenvalues")
-            def delta_X(X): 
+
+            def delta_X(X):
                 return config.stability_margin / max_lint
-        else:    
+        else:
             def delta_X(X):
                 dX = min(
                     config.stability_margin / (max_ldec * ri(X)),
@@ -863,7 +871,6 @@ class MCEqRun(object):
                 # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
                 # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
                 return dX
-        
 
         dXmax = config.dXmax
         while X < max_X:
@@ -887,7 +894,7 @@ class MCEqRun(object):
     def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns number of particles of type `label` at a grid step above
         an energy threshold for counting.
-        
+
         Args:
             label (str): Particle name
             grid_idx (int): Depth grid index (for profiles)
@@ -911,11 +918,11 @@ class MCEqRun(object):
     def n_mu(self, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns the number of positive and negative muons at a grid step above
         `min_energy_cutoff`.
-        
+
         Args:
             grid_idx (int): Depth grid index (for profiles)
             min_energy_cutoff (float): Energy threshold > mceq_config.e_min
-        
+
         """
         return (self.n_particles('total_mu+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('total_mu-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
@@ -923,7 +930,7 @@ class MCEqRun(object):
     def n_e(self, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns the number of electrons plus positrons at a grid step above
         `min_energy_cutoff`.
-        
+
         Args:
             grid_idx (int): Depth grid index (for profiles)
             min_energy_cutoff (float): Energy threshold > mceq_config.e_min
@@ -1070,15 +1077,14 @@ class MatrixBuilder(object):
                 self.C_blocks[idx] *= parent.inverse_interaction_length()
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
-                if config.enable_energy_loss and (
-                        config.generic_losses_all_charged or
-                        abs(parent.pdg_id[0]) in [11, 13]):
-                        
-                    if abs(parent.pdg_id[0]) == 11 and not config.enable_em_ion:
-                        continue
-                    info(5, 'Cont. loss for', parent.name)
-                    self.C_blocks[idx] += self.cont_loss_operator(
-                        parent.pdg_id)
+                pid = abs(parent.pdg_id[0])
+                if config.enable_energy_loss:
+                    if (pid == 13 or
+                        (config.enable_em_ion and pid == 11) or
+                            (config.generic_losses_all_charged and pid != 11)):
+                        info(5, 'Cont. loss for', parent.name)
+                        self.C_blocks[idx] += self.cont_loss_operator(
+                            parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
         # -I + D

@@ -48,12 +48,12 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     return phc, np.array(grid_sol)
 
-
 class CUDASparseContext(object):
     """This class handles the transfer between CPU and GPU memory, and the calling
     of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
     :func:`solv_CUDA_sparse`.
     """
+
     def __init__(self, int_m, dec_m, device_id=0):
 
         if config.cuda_fp_precision == 32:
@@ -273,7 +273,8 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 #         dXstep (float): external step size (adaptive sovlers make more steps internally)
 #         initial_depth (float): starting depth in g/cm**2
 #         int_grid (list): list of depths at which results are recorded
-#         grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+# grid_var (str): Can be depth `X` or something else (currently only `X`
+# supported)
 
 #     """
 #     from scipy.integrate import ode
