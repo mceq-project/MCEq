@@ -220,14 +220,14 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
-    trans = c_char(b'n')
+    trans = byref(c_char(b'n'))
     npmatd = np.chararray(6)
     npmatd[0] = b'G'
     npmatd[3] = b'C'
     matdsc = npmatd.ctypes.data_as(POINTER(c_char))
-    m = c_int(int_m.shape[0])
-    cdzero = fl_pr(0.)
-    cdone = fl_pr(1.)
+    m = byref(c_int(int_m.shape[0]))
+    cdzero = byref(fl_pr(0.))
+    cdone = byref(fl_pr(1.))
     cione = c_int(1)
 
     grid_step = 0
@@ -238,13 +238,13 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     for step in range(nsteps):
         # delta_phi = int_m.dot(phi)
-        gemv(byref(trans), byref(m), byref(m), byref(cdone),
+        gemv(trans, m, m, cdone,
              matdsc, int_m_data, int_m_ci, int_m_pb, int_m_pe, phi,
-             byref(cdzero), delta_phi)
+             cdzero, delta_phi)
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(byref(trans), byref(m), byref(m), byref(fl_pr(rho_inv[step])),
+        gemv(trans, m, m, byref(fl_pr(rho_inv[step])),
              matdsc, dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe, phi,
-             byref(cdone), delta_phi)
+             cdone, delta_phi)
         # phi = delta_phi * dX + phi
         axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
