@@ -10,29 +10,42 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 #: Matrix with x_lab=E_child/E_parent values
 _xmat = None
 
-target_masses = {
-    #<A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    'air': sum([f[0]*f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
-    'water' : 1./3.*(2. + 16.),
-    'ice' : 1./3.*(2. + 16.),
-    'co2' : 1./3.*(12. + 2.*16.),
-    'rock' : 22.,
-    'hydrogen' : 1.
+_target_masses = {
+    # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    'air': sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    'water': 1. / 3. * (2. + 16.),
+    'ice': 1. / 3. * (2. + 16.),
+    'co2': 1. / 3. * (12. + 2. * 16.),
+    'rock': 22.,
+    'hydrogen': 1.
 }
+
 
 def normalize_hadronic_model_name(name):
     import re
     """Converts hadronic model name into standard form"""
     return re.sub('[-.]', '', name).upper()
 
+
 def A_target(mat=config.A_target):
-    #: By default all particle production matrices are calculated for air targets
-    #: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
-    #: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    if mat.lower() == 'auto':
-        return target_masses[mat.lower()]
-    else:
+    """Average target mass number.
+
+    For air <A> = 14.6568 (using mass fractions from
+    https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    Other media supported are co2, rock, ice, water and hydrogen.
+    """
+
+    if isinstance(mat, str) and mat.lower() == 'auto':
+        return _target_masses[config.interaction_medium.lower()]
+    elif isinstance(mat, str) and mat.lower() in _target_masses:
+        return _target_masses[mat.lower()]
+    elif isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
+    else:
+        raise Exception('mceq_config.A_target is expected to be a ' +
+                        'number or one of {0} or "auto"'.format(
+                            ', '.join(_target_masses.keys())))
+
 
 def theta_deg(cos_theta):
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees.
@@ -239,7 +252,7 @@ def info(min_dbg_level, *message, **kwargs):
     """
     condition = kwargs.pop('condition', min_dbg_level <= config.debug_level)
     # Dont' process the if the function if nothing will happen
-    if not (condition or config.override_debug_fcn): 
+    if not (condition or config.override_debug_fcn):
         return
 
     blank_caller = kwargs.pop('blank_caller', False)
