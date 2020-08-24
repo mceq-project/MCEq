@@ -27,7 +27,7 @@ data_dir = path.join(base_path, 'MCEq', 'data')
 mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
+em_db_fname = "mceq_db_EM_Tsai_Max.h5"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -45,12 +45,18 @@ density_model = ('CORSIKA', ('BK_USStd', None))
 #: Definition of prompt: default ctau < 0.123 cm (that of D0)
 prompt_ctau = 0.123
 
-#: Average mass of target (for interaction length calculations)
+#: Approximate value for the maximum density expected. Needed for the
+#: resonance approximation. Default value: air at the surface
+max_density = 0.001225
+#: Material for interaction lengths, ionization and radiation (=continuous) loss terms
+#: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen'
+interaction_medium = 'air'
+
+#: Average target mass (for interaction length calculations)
 #: Change parameter only in combination with interaction model setting.
-#: By default all particle production matrices are calculated for air targets
-#: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
-#: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-A_target = sum([f[0]*f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]])
+#: By default, secondary particle production matrices are calculated for air targets
+#: If set to 'auto', use default according to the "interaction_medium" settings below
+A_target = 'auto'
 
 #: parameters for EarthGeometry
 r_E = 6391.e3  # Earth radius in m
@@ -63,12 +69,7 @@ len_target = 1000.
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-#: Approximate value for the maximum density expected. Needed for the
-#: resonance approximation. Default value: air at the surface
-max_density = 0.001225,
-#: Material for ionization and radiation (=continuous) loss terms
-#: Currently available choices: 'air', 'water', 'ice'
-dedx_material = 'air'
+
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
