@@ -60,7 +60,7 @@ class MCEqRun(object):
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db,
-                                                       material=config.dedx_material)
+                                                       material=config.interaction_medium)
 
         #: Interface to decay tables of the HDF5 database
         self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
@@ -597,10 +597,6 @@ class MCEqRun(object):
         else:
             self._restore_initial_condition.append((self.set_initial_spectrum,
                                                     pdg_id, append))
-        egrid = self._energy_grid.c
-        ebins = self._energy_grid.b
-        ewidths = self._energy_grid.w
-
         if len(spectrum) != self.dim:
             raise Exception(
                 'Lengths of spectrum and energy grid do not match.')
