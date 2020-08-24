@@ -33,8 +33,8 @@ equivalences = {
         -3212: 2112,
         -3122: 2112,
         -3112: 2212,
-        -2212: 2212, 
-        -2112: 2112, 
+        -2212: 2212,
+        -2112: 2112,
         310: 130,
         111: 211,
         3112: 2212,
@@ -145,7 +145,7 @@ class HDF5Backend(object):
     and it will change infrequently.
     """
 
-    def __init__(self):
+    def __init__(self, medium=config.interaction_medium):
 
         info(2, 'Opening HDF5 file', config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
@@ -163,8 +163,8 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             from MCEq.misc import energy_grid
             ca = mceq_db['common'].attrs
-            self.version = (mceq_db.attrs['version'] 
-                if 'version' in mceq_db.attrs else '1.0.0')
+            self.version = (mceq_db.attrs['version']
+                            if 'version' in mceq_db.attrs else '1.0.0')
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca['e_grid'])
             self._energy_grid = energy_grid(
@@ -172,6 +172,8 @@ class HDF5Backend(object):
                 ca['e_bins'][self.min_idx:self.max_idx + 1],
                 ca['widths'][self._cuts], self.max_idx - self.min_idx)
             self.dim_full = ca['e_dim']
+
+        self.medium = medium
 
     @property
     def energy_grid(self):
@@ -320,9 +322,10 @@ class HDF5Backend(object):
             with h5py.File(self.em_fname, 'r') as em_db:
                 info(2, 'Injecting EmCA matrices into interaction_db.')
                 self._check_subgroup_exists(em_db, 'electromagnetic')
+                self._check_subgroup_exists(em_db['electromagnetic'], self.medium)
                 em_index = self._gen_db_dictionary(
-                    em_db['electromagnetic']['emca_mats'],
-                    em_db['electromagnetic']['emca_mats' + '_indptrs'])
+                    em_db['electromagnetic'][self.medium]['emca_mats'],
+                    em_db['electromagnetic'][self.medium]['emca_mats' + '_indptrs'])
                 int_index['parents'] = sorted(int_index['parents'] +
                                               em_index['parents'])
                 int_index['particles'] = sorted(
@@ -385,8 +388,9 @@ class HDF5Backend(object):
 
         mname = normalize_hadronic_model_name(interaction_model_name)
         with h5py.File(self.had_fname, 'r') as mceq_db:
-            self._check_subgroup_exists(mceq_db['cross_sections'], mname)
-            cs_db = mceq_db['cross_sections'][mname]
+            self._check_subgroup_exists(mceq_db['cross_sections'], self.medium)
+            self._check_subgroup_exists(mceq_db['cross_sections'][self.medium], mname)
+            cs_db = mceq_db['cross_sections'][self.medium][mname]
             cs_data = cs_db[:]
             index_d = {}
             parents = list(cs_db.attrs['projectiles'])
@@ -398,9 +402,10 @@ class HDF5Backend(object):
             with h5py.File(self.em_fname, 'r') as em_db:
                 info(2, 'Injecting EmCA matrices into interaction_db.')
                 self._check_subgroup_exists(em_db, 'electromagnetic')
-                em_cs = em_db["electromagnetic"]['cs'][:]
+                self._check_subgroup_exists(em_db['electromagnetic'], self.medium)
+                em_cs = em_db["electromagnetic"][self.medium]['cs'][:]
                 em_parents = list(
-                    em_db["electromagnetic"]['cs'].attrs['projectiles'])
+                    em_db["electromagnetic"][self.medium]['cs'].attrs['projectiles'])
 
                 for ip, p in enumerate(em_parents):
                     if p in index_d:
@@ -411,11 +416,11 @@ class HDF5Backend(object):
 
         return {'parents': parents, 'index_d': index_d}
 
-    def continuous_loss_db(self, medium='air'):
+    def continuous_loss_db(self):
 
         with h5py.File(self.had_fname, 'r') as mceq_db:
-            self._check_subgroup_exists(mceq_db['continuous_losses'], medium)
-            cl_db = mceq_db['continuous_losses'][medium]
+            self._check_subgroup_exists(mceq_db['continuous_losses'], self.medium)
+            cl_db = mceq_db['continuous_losses'][self.medium]
 
             index_d = {}
             generic_dedx = None
@@ -438,9 +443,11 @@ class HDF5Backend(object):
                                  hel)] = em_db["electromagnetic"]['dEdX -11'][
                                      self._cuts]
         if generic_dedx is not None:
-            return {'parents': sorted(list(index_d)), 'index_d': index_d, 'generic': generic_dedx}
+            return {'parents': sorted(list(index_d)),
+                    'index_d': index_d, 'generic': generic_dedx}
         else:
             return {'parents': sorted(list(index_d)), 'index_d': index_d}
+
 
 class Interactions(object):
     """Class for managing the dictionary of interaction yield matrices.
@@ -480,7 +487,7 @@ class Interactions(object):
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
         disabled_particles = config.adv_set['disabled_particles']
-        self.parents = [p for p in index['parents'] 
+        self.parents = [p for p in index['parents']
                         if p[0] not in disabled_particles]
         self.relations = index['relations']
         self.index_d = index['index_d']
@@ -489,7 +496,7 @@ class Interactions(object):
         # Advanced options
 
         if parent_list is not None:
-            self.parents = [p for p in self.parents if p in parent_list and p[0] 
+            self.parents = [p for p in self.parents if p in parent_list and p[0]
                             not in disabled_particles]
         if (config.adv_set['disable_charm_pprod']):
             self.parents = [
@@ -505,15 +512,15 @@ class Interactions(object):
                 p for p in self.parents
                 if p[0] in config.adv_set['allowed_projectiles']
             ]
-        
+
         self.particles = []
         for p in list(self.relations):
             if p not in self.parents:
                 _ = self.relations.pop(p, None)
                 continue
             self.particles.append(p)
-            self.particles += [d for d in self.relations[p] 
-                                if d not in disabled_particles]
+            self.particles += [d for d in self.relations[p]
+                               if d not in disabled_particles]
         self.particles = sorted(list(set(self.particles)))
         if config.adv_set['disable_direct_leptons']:
             for p in list(self.relations):
@@ -524,13 +531,12 @@ class Interactions(object):
         if len(disabled_particles) > 0:
             for p in list(self.relations):
                 self.relations[p] = [
-                    c for c in self.relations[p] if c[0] not in 
+                    c for c in self.relations[p] if c[0] not in
                     disabled_particles
                 ]
         if not self.particles:
             info(2, 'None of the parent_list particles interact. Returning custom list.')
             self.particles = parent_list
-
 
     def __getitem__(self, key):
         return self.get_matrix(*key)
@@ -938,7 +944,7 @@ class ContinuousLosses(object):
       material (str): name of the material (not fully implemented)
     """
 
-    def __init__(self, mceq_hdf_db, material=config.dedx_material):
+    def __init__(self, mceq_hdf_db):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
@@ -949,7 +955,7 @@ class ContinuousLosses(object):
         #: Dictionary containing the distribuiton matrices
         self.index_d = None
         # Load defaults
-        self.load_db(material)
+        self.load_db()
 
     def __getitem__(self, parent):
         """Return the cross section in :math:`\\text{cm}^2` as
@@ -960,13 +966,13 @@ class ContinuousLosses(object):
         """Defines the `in` operator to look for particles"""
         return key in self.parents
 
-    def load_db(self, material):
+    def load_db(self):
         from scipy.interpolate import InterpolatedUnivariateSpline
         # Load tables and index from file
-        index = self.mceq_db.continuous_loss_db(material)
+        index = self.mceq_db.continuous_loss_db()
         self.parents = index['parents']
         self.index_d = index['index_d']
         if 'generic' not in index and config.generic_losses_all_charged:
             raise Exception('New data file needed to support generic losses.')
         self.generic_spl = InterpolatedUnivariateSpline(
-            np.log(index['generic'][0]), np.log(index['generic'][1]), k=1) 
+            np.log(index['generic'][0]), np.log(index['generic'][1]), k=1)
