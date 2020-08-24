@@ -10,11 +10,29 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 #: Matrix with x_lab=E_child/E_parent values
 _xmat = None
 
+target_masses = {
+    #<A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    'air': sum([f[0]*f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    'water' : 1./3.*(2. + 16.),
+    'ice' : 1./3.*(2. + 16.),
+    'co2' : 1./3.*(12. + 2.*16.),
+    'rock' : 22.,
+    'hydrogen' : 1.
+}
+
 def normalize_hadronic_model_name(name):
     import re
     """Converts hadronic model name into standard form"""
     return re.sub('[-.]', '', name).upper()
 
+def A_target(mat=config.A_target):
+    #: By default all particle production matrices are calculated for air targets
+    #: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
+    #: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    if mat.lower() == 'auto':
+        return target_masses[mat.lower()]
+    else:
+        return float(mat)
 
 def theta_deg(cos_theta):
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees.
