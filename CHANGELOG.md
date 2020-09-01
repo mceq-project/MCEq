@@ -1,5 +1,12 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.3.0:
+- Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen` (see ...)
+- Update to air interaction cross section, which is now consistently computed for mixture of N, O and Ar
+- `A_target = 'auto'` will pic correct mass number for the selected medium
+- Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
+
+
 Version 1.2.1:
 - Some cleanup and new convenience functions on MCEqParticle
 - Autodetection of leading eigenvalues setting 
