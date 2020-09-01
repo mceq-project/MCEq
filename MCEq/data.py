@@ -297,7 +297,9 @@ class HDF5Backend(object):
         info(10, 'Generating interaction db. mname={0}'.format(mname))
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['hadronic_interactions'],
-                                        mname)
+                                        self.medium)
+            self._check_subgroup_exists(
+                mceq_db['hadronic_interactions'][self.medium], mname)
             if 'SIBYLL21' in mname:
                 eqv = equivalences['SIBYLL21']
             elif 'SIBYLL23' in mname:
@@ -313,8 +315,8 @@ class HDF5Backend(object):
             elif 'PYTHIA8' in mname:
                 eqv = equivalences['PYTHIA8']
             int_index = self._gen_db_dictionary(
-                mceq_db['hadronic_interactions'][mname],
-                mceq_db['hadronic_interactions'][mname + '_indptrs'],
+                mceq_db['hadronic_interactions'][self.medium][mname],
+                mceq_db['hadronic_interactions'][self.medium][mname + '_indptrs'],
                 equivalences=eqv)
 
         # Append electromagnetic interaction matrices from EmCA
