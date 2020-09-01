@@ -183,14 +183,6 @@ muon_helicity_dependence = True
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
 
-#: This is not used in the code as before, instead the low energy
-#: extension is compiled into the HDF backend files.
-low_energy_extension = {
-    "he_le_transition": 80,  # GeV
-    "nbins_interp": 3,
-    "use_unknown_cs": True,
-}
-
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
     #: Disable particle production by all hadrons, except nucleons
