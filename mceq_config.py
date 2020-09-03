@@ -78,7 +78,7 @@ env_name = "air"
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
-e_min = 1.
+e_min = .1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
@@ -158,6 +158,9 @@ enable_energy_loss = True
 #: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
 generic_losses_all_charged = False
 
+#: Fall-back to air production matrices if medium not included in data file
+fallback_to_air_cs = True
+
 #: enable EM ionization loss for electrons and positrons
 enable_em_ion = True
 
@@ -204,7 +207,7 @@ adv_set = {
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
 
     #: Disable particle (production) 
-    "disabled_particles": [], #20, 19, 18, 17, 97, 98, 99, 101, 102, 103
+    "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
 
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
