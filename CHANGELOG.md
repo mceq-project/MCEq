@@ -5,6 +5,9 @@ Version 1.3.0:
 - Update to air interaction cross section, which is now consistently computed for mixture of N, O and Ar
 - `A_target = 'auto'` will pic correct mass number for the selected medium
 - Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
+- Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
+- Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`
+
 
 
 Version 1.2.1:
