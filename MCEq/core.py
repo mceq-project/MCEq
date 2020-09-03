@@ -36,14 +36,14 @@ class MCEqRun(object):
         :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
-      adv_set (dict): advanced settings, see :mod:`mceq_config`
-      obs_ids (list): list of particle name strings. Those lepton decay
-        products will be scored in the special ``obs_`` categories
+      medium (string): "air", "water", "rock", "co2", "hydrogen"
+      particle_list (list): Construct system for only these partices, ex.  
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
 
-        self._mceq_db = MCEq.data.HDF5Backend()
+        self.medium = kwargs.pop('medium', config.interaction_medium)
+        self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
@@ -59,8 +59,7 @@ class MCEqRun(object):
             mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db,
-                                                       material=config.interaction_medium)
+        self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db)
 
         #: Interface to decay tables of the HDF5 database
         self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
@@ -365,7 +364,7 @@ class MCEqRun(object):
             self._particle_list = self._interactions.particles + self._decays.particles
             # Create particle database
             self.pman = ParticleManager(self._particle_list, self._energy_grid,
-                                        self._int_cs)
+                                        self._int_cs, self.medium)
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
