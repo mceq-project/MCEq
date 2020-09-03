@@ -286,7 +286,7 @@ class HDF5Backend(object):
         }
 
     def _check_subgroup_exists(self, subgroup, mname):
-        available_models = list(subgroup)
+        available_models = [m for m in list(subgroup) if 'indptrs' not in m]
         if mname not in available_models:
             info(0, 'Invalid choice/model', mname)
             info(0, 'Choose from:\n', '\n'.join(available_models))
@@ -298,8 +298,19 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['hadronic_interactions'],
                                         self.medium)
-            self._check_subgroup_exists(
-                mceq_db['hadronic_interactions'][self.medium], mname)
+            
+            if self.medium != 'air' and config.fallback_to_air_cs and (
+                    mname not in mceq_db['hadronic_interactions'][self.medium]):
+                self._check_subgroup_exists(
+                    mceq_db['hadronic_interactions']['air'], mname)
+                info(1, ('Production matrices for {0} in {1} not found.' +
+                    'Fall-back to air.').format(mname, self.medium))
+                medium = 'air'
+            else:
+                self._check_subgroup_exists(
+                    mceq_db['hadronic_interactions']['air'], mname)
+                medium = self.medium
+
             if 'SIBYLL21' in mname:
                 eqv = equivalences['SIBYLL21']
             elif 'SIBYLL23' in mname:
@@ -315,8 +326,8 @@ class HDF5Backend(object):
             elif 'PYTHIA8' in mname:
                 eqv = equivalences['PYTHIA8']
             int_index = self._gen_db_dictionary(
-                mceq_db['hadronic_interactions'][self.medium][mname],
-                mceq_db['hadronic_interactions'][self.medium][mname + '_indptrs'],
+                mceq_db['hadronic_interactions'][medium][mname],
+                mceq_db['hadronic_interactions'][medium][mname + '_indptrs'],
                 equivalences=eqv)
 
         # Append electromagnetic interaction matrices from EmCA
@@ -371,6 +382,16 @@ class HDF5Backend(object):
                 # _ = dec_index['index_d'].pop(((321,0),(14,0)))
                 # _ = dec_index['index_d'].pop(((-321,0),(-14,0)))
 
+                # Add polarized muon to electron decays (we use the non-polarized
+                # 3-body decay distribution, what is maybe inappropriate
+                # but better than nothing)
+                info(5, 'Copy muon->electron decay to polarised muons.')
+                dec_index['index_d'][((-13, 1), (-11,1))] = dec_index['index_d'][((-13, 0), (-11,0))]
+                dec_index['index_d'][((-13, -1), (-11,-1))] = dec_index['index_d'][((-13, 0), (-11,0))]
+                dec_index['index_d'][((13, 1), (11,1))] = dec_index['index_d'][((13, 0), (11,0))]
+                dec_index['index_d'][((13, -1), (11,-1))] = dec_index['index_d'][((13, 0), (11,0))]
+
+
                 dec_index['relations'] = defaultdict(lambda: [])
                 dec_index['particles'] = []
 
@@ -383,16 +404,24 @@ class HDF5Backend(object):
                 dec_index['parents'] = sorted(list(dec_index['relations']))
                 dec_index['particles'] = sorted(
                     list(set(dec_index['particles'])))
-
         return dec_index
 
     def cs_db(self, interaction_model_name):
 
         mname = normalize_hadronic_model_name(interaction_model_name)
+        medium = self.medium
+        if 'SIBYLL23C' in mname:
+            info(5, 'SIBYLL23C cross sections replaced by 23D.')
+            mname = 'SIBYLL23D'
+        
+        if medium == 'air-legacy' and 'SIBYLL23' not in mname:
+            info(5, 'air-legacy target replaced by air for', mname)
+            medium = 'air'
+
         with h5py.File(self.had_fname, 'r') as mceq_db:
-            self._check_subgroup_exists(mceq_db['cross_sections'], self.medium)
-            self._check_subgroup_exists(mceq_db['cross_sections'][self.medium], mname)
-            cs_db = mceq_db['cross_sections'][self.medium][mname]
+            self._check_subgroup_exists(mceq_db['cross_sections'], medium)
+            self._check_subgroup_exists(mceq_db['cross_sections'][medium], mname)
+            cs_db = mceq_db['cross_sections'][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
             parents = list(cs_db.attrs['projectiles'])
@@ -404,10 +433,10 @@ class HDF5Backend(object):
             with h5py.File(self.em_fname, 'r') as em_db:
                 info(2, 'Injecting EmCA matrices into interaction_db.')
                 self._check_subgroup_exists(em_db, 'electromagnetic')
-                self._check_subgroup_exists(em_db['electromagnetic'], self.medium)
-                em_cs = em_db["electromagnetic"][self.medium]['cs'][:]
+                self._check_subgroup_exists(em_db['electromagnetic'], medium)
+                em_cs = em_db["electromagnetic"][medium]['cs'][:]
                 em_parents = list(
-                    em_db["electromagnetic"][self.medium]['cs'].attrs['projectiles'])
+                    em_db["electromagnetic"][medium]['cs'].attrs['projectiles'])
 
                 for ip, p in enumerate(em_parents):
                     if p in index_d:
@@ -439,10 +468,10 @@ class HDF5Backend(object):
                     self._check_subgroup_exists(em_db, 'electromagnetic')
                     for hel in [0, 1, -1]:
                         index_d[(11,
-                                 hel)] = em_db["electromagnetic"]['dEdX 11'][
+                                 hel)] = em_db["electromagnetic"][self.medium]['dEdX 11'][
                                      self._cuts]
                         index_d[(-11,
-                                 hel)] = em_db["electromagnetic"]['dEdX -11'][
+                                 hel)] = em_db["electromagnetic"][self.medium]['dEdX -11'][
                                      self._cuts]
         if generic_dedx is not None:
             return {'parents': sorted(list(index_d)),
