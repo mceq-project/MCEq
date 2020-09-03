@@ -3,7 +3,7 @@ import six
 from math import copysign
 import numpy as np
 import mceq_config as config
-from MCEq.misc import info, print_in_rows, getAZN
+from MCEq.misc import info, print_in_rows, getAZN, average_A_target
 
 from particletools.tables import PYTHIAParticleData
 info(5, 'Initialization of PYTHIAParticleData object')
@@ -41,12 +41,14 @@ class MCEqParticle(object):
       cs_db (object, optional): reference to an instance of
                                 :class:`InteractionYields`
     """
+
     def __init__(self,
                  pdg_id,
                  helicity,
                  energy_grid=None,
                  cs_db=None,
-                 init_pdata_defaults=True):
+                 init_pdata_defaults=True,
+                 A_target=average_A_target()):
 
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
@@ -117,7 +119,7 @@ class MCEqParticle(object):
         self.decay_dists = {}
 
         # A_target
-        self.A_target = config.A_target
+        self.A_target = A_target
 
         if init_pdata_defaults:
             self._init_defaults_from_pythia_database()
@@ -235,19 +237,19 @@ class MCEqParticle(object):
         if child in self.hadr_secondaries:
             info(1, 'Child {0} has been already added.'.format(child.name))
             return
-        
+
         self.hadr_secondaries.append(child)
         self.hadr_yields[child] = int_matrix
-    
+
     def add_decay_channel(self, child, dec_matrix, force=False):
         """Add a decay channel.
-        
+
         The branching ratios are not renormalized and one needs to take care
         of this externally.
         """
         if self.is_stable:
             raise Exception('Cannot add decay channel to stable particle.')
-        
+
         if child in self.children and not force:
             info(1, 'Child {0} has been already added.'.format(child.name))
             return
@@ -513,7 +515,7 @@ class MCEqParticle(object):
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        elab_dist = m[:eidx + 1, eidx]  / self._energy_grid.w[eidx]
+        elab_dist = m[:eidx + 1, eidx] / self._energy_grid.w[eidx]
 
         return ekin_grid[:eidx + 1], elab_dist
 
@@ -539,7 +541,8 @@ class MCEqParticle(object):
             (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
         if not hasattr(self, '_ptav_sib23c'):
-            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
+            # Load spline of average pt distribution as a funtion of log(E_lab) from
+            # sib23c
             import pickle
             from os.path import join
             self._ptav_sib23c = pickle.load(
@@ -629,8 +632,8 @@ class MCEqParticle(object):
             self.is_mixed = False
             self.is_resonance = False
             return
-            
-        # If particle is forced to be a "resonance" 
+
+        # If particle is forced to be a "resonance"
         if (np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]):
             self.mix_idx = d - 1
             self.E_mix = self._energy_grid.c[self.mix_idx]
@@ -641,7 +644,7 @@ class MCEqParticle(object):
             # This is lambda_dec / lambda_int
             threshold = np.zeros_like(inv_intlen)
             mask = inv_declen != 0.
-            threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask] 
+            threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
             mask = np.where(threshold > cross_over)
             if len(mask[0]) > 0:
                 self.mix_idx = np.where(threshold > cross_over)[0][0]
@@ -717,7 +720,8 @@ class ParticleManager(object):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-    def __init__(self, pdg_id_list, energy_grid, cs_db, mod_table=None):
+
+    def __init__(self, pdg_id_list, energy_grid, cs_db, medium=config.interaction_medium):
         # (dict) Dimension of primary grid
         self._energy_grid = energy_grid
         # Particle index shortcuts
@@ -750,6 +754,8 @@ class ParticleManager(object):
         self.current_hadronic_model = None
         # Cross section database
         self._cs_db = cs_db
+        # Medium
+        self._medium = medium
         # Dictionary to save te tracking particle config
         self.tracking_relations = []
         # Save the tracking relations requested by default tracking
@@ -797,8 +803,8 @@ class ParticleManager(object):
         each projectile particle"""
 
         info(5, 'Setting hadronic secondaries for particles.')
-        if (self.current_hadronic_model == hadronic_db.iam and 
-            not force and updated_parent_list is None):
+        if (self.current_hadronic_model == hadronic_db.iam and
+                not force and updated_parent_list is None):
             info(10, 'Same hadronic model not applied to particles.')
             return
         if updated_parent_list is not None:
@@ -819,12 +825,13 @@ class ParticleManager(object):
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
-            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:# and abs(p.pdg_id[0]) in [211, 2212]:
+            # and abs(p.pdg_id[0]) in [211, 2212]:
+            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
                 # Stopping power dEdX is almost the same for all charged particles.
                 # What changes is the gamma factor. We interpolate the dEdX tables
-                # stored for muons to different gamma factor grids. 
+                # stored for muons to different gamma factor grids.
                 # Compute gamma-1 from kinetic energy
-                gamma_p = self._energy_grid.c/p.mass
+                gamma_p = self._energy_grid.c / p.mass
                 p.dEdX = -np.exp(contloss_db.generic_spl(np.log(gamma_p)))
                 p.has_contloss = True
 
@@ -991,7 +998,8 @@ class ParticleManager(object):
 
         # Initialize particle objects
         particle_list = [
-            MCEqParticle(pdg, hel, self._energy_grid, self._cs_db)
+            MCEqParticle(pdg, hel, self._energy_grid, self._cs_db,
+                         A_target=average_A_target(self._medium))
             for pdg, hel in particles
         ]
 
@@ -1018,7 +1026,7 @@ class ParticleManager(object):
         self._update_particle_tables()
 
     def add_new_particle(self, new_mceq_particle):
-        
+
         if new_mceq_particle in self.all_particles:
             info(0, 'Particle {0}/{1} has already been added. Use it.'.format(
                 new_mceq_particle.name, new_mceq_particle.pdg_id
@@ -1109,9 +1117,9 @@ class ParticleManager(object):
         self.track_leptons_from([
             p.pdg_id for p in self.all_particles if p.ctau < config.prompt_ctau
         ],
-                                'prcas_',
-                                exclude_em=True,
-                                use_helicities=False)
+            'prcas_',
+            exclude_em=True,
+            use_helicities=False)
         # Track leptons from interaction vertices (also prompt)
         self.track_leptons_from(
             [p.pdg_id for p in self.all_particles if p.is_projectile],

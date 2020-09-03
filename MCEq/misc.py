@@ -27,7 +27,7 @@ def normalize_hadronic_model_name(name):
     return re.sub('[-.]', '', name).upper()
 
 
-def A_target(mat=config.A_target):
+def average_A_target(mat=config.A_target):
     """Average target mass number.
 
     For air <A> = 14.6568 (using mass fractions from
