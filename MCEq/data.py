@@ -339,12 +339,36 @@ class HDF5Backend(object):
                 em_index = self._gen_db_dictionary(
                     em_db['electromagnetic'][self.medium]['emca_mats'],
                     em_db['electromagnetic'][self.medium]['emca_mats' + '_indptrs'])
-                int_index['parents'] = sorted(int_index['parents'] +
-                                              em_index['parents'])
-                int_index['particles'] = sorted(
-                    list(set(int_index['particles'] + em_index['particles'])))
-                int_index['relations'].update(em_index['relations'])
-                int_index['index_d'].update(em_index['index_d'])
+            
+            if config.muon_helicity_dependence:
+                # This is only very approximately valid and is done for consistency. Typically
+                # electrons would quickly depolarize due to multiple scattering but this requires
+                # additional matrices for (-11,1) -> (-11,0) etc. that are not available now.
+
+                info(5, 'Copy bremsstrahlung and photon emission to polarised electrons.')
+                for h in [-1,1]:
+                    em_index['index_d'][((-11, h), (-11,h))] = em_index['index_d'][((-11, 0), (-11,0))]
+                    em_index['index_d'][((-11, h), (22,0))] = em_index['index_d'][((-11, 0), (22,0))]
+                    em_index['parents'].append((-11, h))
+                    em_index['index_d'][((11, h), (11,h))] = em_index['index_d'][((11, 0), (11,0))]
+                    em_index['index_d'][((11, h), (22,0))] = em_index['index_d'][((11, 0), (22,0))]
+                    em_index['parents'].append((11, h))
+
+                em_index['relations'] = defaultdict(lambda: [])
+                em_index['particles'] = []
+
+                for idx_tup in em_index['index_d']:
+                    parent, child = idx_tup
+                    em_index['relations'][parent].append(child)
+                    em_index['particles'].append(parent)
+                    em_index['particles'].append(child)
+
+            int_index['parents'] = sorted(int_index['parents'] +
+                                            em_index['parents'])
+            int_index['particles'] = sorted(
+                list(set(int_index['particles'] + em_index['particles'])))
+            int_index['relations'].update(em_index['relations'])
+            int_index['index_d'].update(em_index['index_d'])
 
         if int_index['description'] is not None:
             int_index['description'] += '\nInteraction model name: ' + mname
@@ -462,17 +486,17 @@ class HDF5Backend(object):
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db[k][0], cl_db[k][1])
-            if config.enable_em:
-                with h5py.File(self.em_fname, 'r') as em_db:
-                    info(2, 'Injecting EmCA matrices into interaction_db.')
-                    self._check_subgroup_exists(em_db, 'electromagnetic')
-                    for hel in [0, 1, -1]:
-                        index_d[(11,
-                                 hel)] = em_db["electromagnetic"][self.medium]['dEdX 11'][
-                                     self._cuts]
-                        index_d[(-11,
-                                 hel)] = em_db["electromagnetic"][self.medium]['dEdX -11'][
-                                     self._cuts]
+            # if config.enable_em:
+            #     with h5py.File(self.em_fname, 'r') as em_db:
+            #         info(2, 'Injecting EmCA matrices into interaction_db.')
+            #         self._check_subgroup_exists(em_db, 'electromagnetic')
+            #         for hel in [0, 1, -1]:
+            #             index_d[(11,
+            #                      hel)] = em_db["electromagnetic"][self.medium]['dEdX 11'][
+            #                          self._cuts]
+            #             index_d[(-11,
+            #                      hel)] = em_db["electromagnetic"][self.medium]['dEdX -11'][
+            #                          self._cuts]
         if generic_dedx is not None:
             return {'parents': sorted(list(index_d)),
                     'index_d': index_d, 'generic': generic_dedx}
@@ -901,8 +925,6 @@ class InteractionCrossSections(object):
         self.index_d = None
         #: (str) Interaction Model name
         self.iam = normalize_hadronic_model_name(interaction_model)
-        # Load defaults
-        self.load(interaction_model)
 
     def __getitem__(self, parent):
         """Return the cross section in :math:`\\text{cm}^2` as a dictionary
