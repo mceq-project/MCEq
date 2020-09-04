@@ -70,6 +70,9 @@ len_target = 1000.
 env_density = 0.001225
 env_name = "air"
 
+#: Check if densities requested outside of target dimensions
+except_out_of_bounds = False
+
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
