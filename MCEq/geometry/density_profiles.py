@@ -98,9 +98,9 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1],
-                                       h_intp[::-1],
-                                       k=2,
-                                       s=0.0)
+                                        h_intp[::-1],
+                                        k=2,
+                                        s=0.0)
 
     @property
     def max_X(self):
@@ -122,12 +122,14 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if not hasattr(self, '_s_h2X'):
             self.set_theta(0)
         return self._s_h2X
+
     @property
     def s_X2rho(self):
         """Spline for conversion from depth to density."""
         if not hasattr(self, '_s_X2rho'):
             self.set_theta(0)
         return self._s_X2rho
+
     @property
     def s_lX2h(self):
         """Spline for conversion from depth to altitude."""
@@ -275,15 +277,15 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             ("ANTARES/KM3NeT-ORCA", 'Winter'),
             ("KM3NeT-ARCA", 'Summer'),
             ("KM3NeT-ARCA", 'Winter'),
-            ("KM3NeT",None),
-            ('SouthPole','December'),
-            ('PL_SouthPole','January'),
-            ('PL_SouthPole','August'),
+            ("KM3NeT", None),
+            ('SouthPole', 'December'),
+            ('PL_SouthPole', 'January'),
+            ('PL_SouthPole', 'August'),
         ]
         assert (location, season) in cka_atmospheres, \
             '{0}/{1} not available for CorsikaAtmsophere'.format(
                 location, season
-            )
+        )
         self.init_parameters(location, season)
         import MCEq.geometry.corsikaatm.corsikaatm as corsika_acc
         self.corsika_acc = corsika_acc
@@ -346,11 +348,14 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             _thickl = np.array(
                 [1055.858707, 641.755364, 272.720974, 2.480633, 0.001280])
             _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-        elif location == "KM3NeT": # averaged over detector and season
-            _aatm = np.array([-141.31449999999998, -8.256029999999999, 0.6132505, -0.025998975, 0.4024275])
-            _batm = np.array([1153.0349999999999, 1263.3325, 1257.0724999999998, 404.85974999999996, 1.0])
+        elif location == "KM3NeT":  # averaged over detector and season
+            _aatm = np.array([-141.31449999999998, -8.256029999999999,
+                              0.6132505, -0.025998975, 0.4024275])
+            _batm = np.array([1153.0349999999999, 1263.3325,
+                              1257.0724999999998, 404.85974999999996, 1.0])
             _catm = np.array([967990.75, 668591.75, 636790.0, 814070.75, 21426175.0])
-            _thickl = np.array([1011.8521512499999, 275.84507575000003, 51.0230705, 2.983134, 0.21927724999999998])
+            _thickl = np.array([1011.8521512499999, 275.84507575000003,
+                                51.0230705, 2.983134, 0.21927724999999998])
             _hlay = np.array([0.0, 993750.0, 2081250.0, 4150000.0, 6877500.0])
         elif location == "ANTARES/KM3NeT-ORCA":
             if season == 'Summer':
@@ -363,20 +368,23 @@ class CorsikaAtmosphere(EarthsAtmosphere):
                 _aatm = np.array([-132.16, -2.4787, 0.298031, -0.0220264, 0.348021])
                 _batm = np.array([1120.45, 1203.97, 1163.28, 360.027, 1.0])
                 _catm = np.array([933697.0, 643957.0, 636790.0, 804486.0, 23109000.0])
-                _thickl = np.array([988.431172, 273.033464, 37.185105, 1.162987, 0.192998])
+                _thickl = np.array(
+                    [988.431172, 273.033464, 37.185105, 1.162987, 0.192998])
                 _hlay = np.array([0, 9.5e5, 22.0e5, 47.0e5, 68.2e5])
         elif location == "KM3NeT-ARCA":
             if season == 'Summer':
                 _aatm = np.array([-157.857, -28.7524, 0.790275, -0.0286999, 0.481114])
                 _batm = np.array([1190.44, 1171.0, 1344.78, 445.357, 1.0])
                 _catm = np.array([1006100.0, 758614.0, 636790.0, 817384.0, 16886800.0])
-                _thickl = np.array([1032.679434, 328.978681, 80.601135, 4.420745, 0.264112])
+                _thickl = np.array(
+                    [1032.679434, 328.978681, 80.601135, 4.420745, 0.264112])
                 _hlay = np.array([0, 9.0e5, 18.0e5, 38.0e5, 68.2e5])
             elif season == 'Winter':
                 _aatm = np.array([-116.391, 3.5938, 0.474803, -0.0246031, 0.280225])
                 _batm = np.array([1155.63, 1501.57, 1271.31, 398.512, 1.0])
                 _catm = np.array([933697.0, 594398.0, 636790.0, 810924.0, 29618400.0])
-                _thickl = np.array([1039.346286, 194.901358, 45.759249, 2.060083, 0.142817])
+                _thickl = np.array(
+                    [1039.346286, 194.901358, 45.759249, 2.060083, 0.142817])
                 _hlay = np.array([0, 12.25e5, 21.25e5, 43.0e5, 70.5e5])
         elif location == 'SouthPole':
             if season == 'December':
@@ -525,7 +533,6 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         return thickl
 
 
-
 class IsothermalAtmosphere(EarthsAtmosphere):
     """Isothermal model of the atmosphere.
 
@@ -574,6 +581,7 @@ class IsothermalAtmosphere(EarthsAtmosphere):
           float: column depth :math:`T(h_{cm})` in g/cm**2
         """
         return self.X0 * np.exp(-h_cm / self.hiso_cm)
+
 
 class MSIS00Atmosphere(EarthsAtmosphere):
     """Wrapper class for a python interface to the NRLMSISE-00 model.
@@ -1159,18 +1167,12 @@ class GeneralizedTarget(object):
         Raises:
             Exception: If requested depth exceeds target.
         """
-        X = np.atleast_1d(X)
-        # allow for some small constant extrapolation for odepack solvers
-        if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
-            X[-1] = self.max_X
-        if np.min(X) < 0. or np.max(X) > self.max_X:
-            # return self.get_density(self.s_X2h(self.max_X))
-            info(0, 'Depth {0:4.3f} exceeds target dimensions {1:4.3f}'.format(
-                np.max(X), self.max_X
-            ))
-            raise Exception('Invalid input')
 
-        return self.get_density(self.s_X2h(X))
+        if config.except_out_of_bounds and (np.min(X) < 0. or np.max(X) > self.max_X):
+            raise Exception('Depth {0:4.3f} exceeds target dimensions {1:4.3f}'.format(
+                np.max(X), self.max_X))
+
+        return self.densities[np.digitize(X, self.X_int[1:])]
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
@@ -1194,21 +1196,15 @@ class GeneralizedTarget(object):
            float: density in g/cm**3
 
         Raises:
-            Exception: If requested position exceeds target length.
+            Exception: If requested depth exceeds target.
         """
-        l_cm = np.atleast_1d(l_cm)
-        res = np.zeros_like(l_cm)
 
-        if np.min(l_cm) < 0 or np.max(l_cm) > self.len_target:
-            raise Exception("GeneralizedTarget::get_density(): " +
-                            "requested position exceeds target legth.")
-        for i, li in enumerate(l_cm):
-            bi = 0
-            while not (li >= self.start_bounds[bi]
-                       and li <= self.end_bounds[bi]):
-                bi += 1
-            res[i] = self.densities[bi]
-        return res
+        if config.except_out_of_bounds and (
+                np.min(l_cm) < 0. or np.max(l_cm) > self.len_target):
+            raise Exception('Position {0:4.3f} exceeds target dimensions {1:4.3f}'.format(
+                np.max(l_cm), self.len_target))
+
+        return self.densities[np.digitize(l_cm, self.end_bounds)]
 
     def draw_materials(self, axes=None, logx=False):
         """Makes a plot of depth and density profile as a function
@@ -1282,9 +1278,9 @@ if __name__ == '__main__':
         ("KM3NeT-ARCA", 'Summer'),
         ("KM3NeT-ARCA", 'Winter'),
         ("KM3NeT", None),
-        ('SouthPole','December'),
-        ('PL_SouthPole','January'),
-        ('PL_SouthPole','August'),
+        ('SouthPole', 'December'),
+        ('PL_SouthPole', 'January'),
+        ('PL_SouthPole', 'August'),
     ]
     cka_surf_100 = []
     for loc, season in cka_atmospheres:
@@ -1292,10 +1288,10 @@ if __name__ == '__main__':
         cka_obj.set_theta(0.0)
         x_vec = np.linspace(0, cka_obj.max_X, 5000)
         plt.plot(x_vec,
-                1 / cka_obj.r_X2rho(x_vec),
-                lw=1.5,
-                label='{0}/{1}'.format(loc, season) if season is not None
-                    else '{0}'.format(loc))
+                 1 / cka_obj.r_X2rho(x_vec),
+                 lw=1.5,
+                 label='{0}/{1}'.format(loc, season) if season is not None
+                 else '{0}'.format(loc))
         cka_surf_100.append((cka_obj.max_X, 1. / cka_obj.r_X2rho(100.)))
     print(cka_surf_100)
     plt.ylabel(r'Density $\rho$ (g/cm$^3$)')
@@ -1325,9 +1321,9 @@ if __name__ == '__main__':
         msis_obj.set_theta(0.0)
         x_vec = np.linspace(0, msis_obj.max_X, 5000)
         plt.plot(x_vec,
-                1 / msis_obj.r_X2rho(x_vec),
-                lw=1.5,
-                label='{0}'.format(loc))
+                 1 / msis_obj.r_X2rho(x_vec),
+                 lw=1.5,
+                 label='{0}'.format(loc))
         msis_surf_100.append((msis_obj.max_X, 1. / msis_obj.r_X2rho(100.)))
     print(msis_surf_100)
     plt.ylabel(r'Density $\rho$ (g/cm$^3$)')
