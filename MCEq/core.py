@@ -276,7 +276,7 @@ class MCEqRun(object):
                     raise Exception(
                         'Requested particle {0} not found.'.format(particle_name))
                 else:
-                    info(10,
+                    info(1,
                          'Requested particle {0} not found.'.format(particle_name))
 
         # When returning in Etot, interpolate on different grid
@@ -836,6 +836,8 @@ class MCEqRun(object):
         ri = self.density_model.r_X2rho
         max_lint = self.matrix_builder.max_lint
         max_ldec = self.matrix_builder.max_ldec
+        dXmax = config.dXmax
+
         info(2, 'X_surface = {0:7.2f}g/cm2'.format(max_X))
 
         dX_vec = []
@@ -849,35 +851,38 @@ class MCEqRun(object):
                     and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
 
-            def delta_X(X):
-                return config.stability_margin / (max_ldec * ri(X))
+            def delta_X(X, inv_rho):
+                return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
+
         elif config.leading_process == 'interactions':
             info(2, "using interactions as leading eigenvalues")
 
-            def delta_X(X):
-                return config.stability_margin / max_lint
+            def delta_X(X, inv_rho):
+                return min(config.stability_margin / max_lint, dXmax)
         else:
-            def delta_X(X):
+            def delta_X(X, inv_rho):
                 dX = min(
-                    config.stability_margin / (max_ldec * ri(X)),
-                    config.stability_margin / max_lint)
+                    config.stability_margin / (max_ldec * inv_rho),
+                    config.stability_margin / max_lint, dXmax)
                 # if dX/self.density_model.max_X < 1e-7:
                 #     raise Exception(
                 # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
                 # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
                 return dX
 
-        dXmax = config.dXmax
+        len_int_grid = len(int_grid)
+        enable_int_grid = np.any(int_grid)
         while X < max_X:
-            dX = min(delta_X(X), dXmax)
-            if (np.any(int_grid) and (grid_step < len(int_grid))
+            inv_rho = ri(X)
+            dX = delta_X(X, inv_rho)
+            if (enable_int_grid and (grid_step < len_int_grid)
                     and (X + dX >= int_grid[grid_step])):
                 dX = int_grid[grid_step] - X
                 grid_idcs.append(step)
                 grid_step += 1
             dX_vec.append(dX)
-            rho_inv_vec.append(ri(X))
-            X = X + dX
+            rho_inv_vec.append(inv_rho)
+            X += dX
             step += 1
 
         # Integrate
