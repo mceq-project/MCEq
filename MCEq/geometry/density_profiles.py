@@ -1293,7 +1293,6 @@ if __name__ == '__main__':
                  label='{0}/{1}'.format(loc, season) if season is not None
                  else '{0}'.format(loc))
         cka_surf_100.append((cka_obj.max_X, 1. / cka_obj.r_X2rho(100.)))
-    print(cka_surf_100)
     plt.ylabel(r'Density $\rho$ (g/cm$^3$)')
     plt.xlabel(r'Depth (g/cm$^2$)')
     plt.legend(loc='upper left')
@@ -1325,7 +1324,6 @@ if __name__ == '__main__':
                  lw=1.5,
                  label='{0}'.format(loc))
         msis_surf_100.append((msis_obj.max_X, 1. / msis_obj.r_X2rho(100.)))
-    print(msis_surf_100)
     plt.ylabel(r'Density $\rho$ (g/cm$^3$)')
     plt.xlabel(r'Depth (g/cm$^2$)')
     plt.legend(loc='upper left')

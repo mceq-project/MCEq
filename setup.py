@@ -7,7 +7,6 @@ from distutils.command import build_ext
 def get_export_symbols(self, ext):
     """From https://bugs.python.org/issue35893"""
     parts = ext.name.split(".")
-    # print('parts', parts)
     if parts[-1] == "__init__":
         initfunc_name = "PyInit_" + parts[-2]
     else:

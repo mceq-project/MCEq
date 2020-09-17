@@ -159,8 +159,9 @@ class MCEqRun(object):
 
         order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
         if order_i != order and not only_available:
-            print(order_i, order)
-            raise Exception("The orders of the state vecs. don't match")
+            raise Exception(
+                "The orders of the state vecs don't match {0}!={1}".format(
+                    order_i, order))
         elif order_i != order and only_available:
             for pidx, pname in order:
                 if pname in self.pman.pname2pref:

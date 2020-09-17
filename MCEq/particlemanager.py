@@ -291,7 +291,6 @@ class MCEqParticle(object):
         for c in self.children:
             children_d[c.pdg_id] = c
         if tracking_particle.pdg_id not in list(children_d):
-            print(tracking_particle.pdg_id, tracking_particle.name, list(children_d))
             info(
                 17, 'Parent particle {0} does not decay into {1}'.format(
                     self.name, tracking_particle.name))
@@ -311,7 +310,6 @@ class MCEqParticle(object):
                 17, 'Parent particle {0} does not produce {1} at the vertex'.
                 format(self.name, tracking_particle.name))
             return False
-        print('requested', tracking_particle.name)
         # Copy the decay distribution from original PDG
         self.hadr_secondaries.append(tracking_particle)
         self.hadr_yields[tracking_particle] = self.hadr_yields[secondaries_d[
