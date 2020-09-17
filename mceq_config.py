@@ -147,8 +147,9 @@ stability_margin = 0.95
 hybrid_crossover = 0.5
 
 #: Maximal integration step dX in g/cm2. No limit necessary in most cases,
-#: use for debugging purposes when searching for stability issues.
-dXmax = 10.
+#: use for debugging purposes when searching for stability issues, especially
+#: if e_min is < 1 GeV.
+dXmax = 1.
 
 #: Enable default tracking particles, such as pi_numu, pr_mu+, etc.
 #: If only total fluxes are of interest, disable this feature to gain
@@ -159,7 +160,7 @@ enable_default_tracking = True
 enable_energy_loss = True
 
 #: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
-generic_losses_all_charged = False
+generic_losses_all_charged = True
 
 #: Fall-back to air production matrices if medium not included in data file
 fallback_to_air_cs = True
@@ -169,7 +170,7 @@ enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
-average_loss_operator = True
+average_loss_operator = False
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
