@@ -870,8 +870,9 @@ class MCEqRun(object):
                 # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
                 return dX
 
-        len_int_grid = len(int_grid)
+        
         enable_int_grid = np.any(int_grid)
+        len_int_grid = len(int_grid) if enable_int_grid else 0
         while X < max_X:
             inv_rho = ri(X)
             dX = delta_X(X, inv_rho)
