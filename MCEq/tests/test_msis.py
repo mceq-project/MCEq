@@ -221,6 +221,4 @@ def test_msis():
         outbuf += "\n"
     outbuf += "\n"
 
-    # print(outbuf)
-
     assert outbuf.strip() == result_expected.strip()

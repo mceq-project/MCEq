@@ -22,7 +22,7 @@ if config.has_mkl:
 
 
 mceq = MCEqRun(
-    interaction_model='SIBYLL23C',
+    interaction_model='SIBYLL23D',
     theta_deg=0.,
     primary_model=(pm.HillasGaisser2012, 'H3a'))
 
@@ -57,9 +57,8 @@ def test_switch_interaction_models():
         'QGSJETII04',
         'SIBYLL21',
         'SIBYLL23',
-        'SIBYLL23C03',
         'SIBYLL23C',
-        'SIBYLL23CPP']
+        'SIBYLL23D']
     count_part = []
     for m in mlist:
         mceq.set_interaction_model(m)
@@ -70,7 +69,7 @@ def test_switch_interaction_models():
 def test_single_primary():
     energies = [1e3, 1e6, 1e9, 5e10]
     nmu, nnumu, nnue = [], [], []
-    mceq.set_interaction_model('SIBYLL23C')
+    mceq.set_interaction_model('SIBYLL23D')
     mceq.set_theta_deg(0.)
     for e in energies:
         mceq.set_single_primary_particle(E=e, pdg_id=2212)
@@ -87,6 +86,7 @@ def test_single_primary():
             np.sum(
                 mceq.get_solution('nue', mag=0, integrate=True) +
                 mceq.get_solution('antinue', mag=0, integrate=True)))
+    
     assert format_8_digits(nmu) == ['2.03134720e+01', '1.20365838e+04', '7.09254150e+06', '2.63982133e+08']
     assert format_8_digits(nnumu) == ['6.80367347e+01', '2.53158948e+04', '1.20884925e+07', '4.14935240e+08']
     assert format_8_digits(nnue) == ['2.36908717e+01', '6.91213253e+03', '2.87396649e+06', '9.27683105e+07']
