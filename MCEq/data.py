@@ -397,10 +397,10 @@ class HDF5Backend(object):
 
                 # Remove manually TODO: Kaon decays to muons assumed
                 # only two-body
-                _ = dec_index['index_d'].pop(((211, 0), (-13, 0)))
-                _ = dec_index['index_d'].pop(((-211, 0), (13, 0)))
-                _ = dec_index['index_d'].pop(((321, 0), (-13, 0)))
-                _ = dec_index['index_d'].pop(((-321, 0), (13, 0)))
+                _ = dec_index['index_d'].pop(((211, 0), (-13, 0)), None)
+                _ = dec_index['index_d'].pop(((-211, 0), (13, 0)), None)
+                _ = dec_index['index_d'].pop(((321, 0), (-13, 0)), None)
+                _ = dec_index['index_d'].pop(((-321, 0), (13, 0)), None)
                 # _ = dec_index['index_d'].pop(((211,0),(14,0)))
                 # _ = dec_index['index_d'].pop(((-211,0),(-14,0)))
                 # _ = dec_index['index_d'].pop(((321,0),(14,0)))
@@ -410,11 +410,13 @@ class HDF5Backend(object):
                 # 3-body decay distribution, what is maybe inappropriate
                 # but better than nothing)
                 info(5, 'Copy muon->electron decay to polarised muons.')
-                dec_index['index_d'][((-13, 1), (-11,1))] = dec_index['index_d'][((-13, 0), (-11,0))]
-                dec_index['index_d'][((-13, -1), (-11,-1))] = dec_index['index_d'][((-13, 0), (-11,0))]
-                dec_index['index_d'][((13, 1), (11,1))] = dec_index['index_d'][((13, 0), (11,0))]
-                dec_index['index_d'][((13, -1), (11,-1))] = dec_index['index_d'][((13, 0), (11,0))]
-
+                try:
+                    dec_index['index_d'][((-13, 1), (-11,1))] = dec_index['index_d'][((-13, 0), (-11,0))]
+                    dec_index['index_d'][((-13, -1), (-11,-1))] = dec_index['index_d'][((-13, 0), (-11,0))]
+                    dec_index['index_d'][((13, 1), (11,1))] = dec_index['index_d'][((13, 0), (11,0))]
+                    dec_index['index_d'][((13, -1), (11,-1))] = dec_index['index_d'][((13, 0), (11,0))]
+                except KeyError:
+                    info(0, 'Error copying muon->electron decays for polarized muons')
 
                 dec_index['relations'] = defaultdict(lambda: [])
                 dec_index['particles'] = []
