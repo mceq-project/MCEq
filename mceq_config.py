@@ -59,9 +59,9 @@ interaction_medium = 'air'
 A_target = 'auto'
 
 #: parameters for EarthGeometry
-r_E = 6391.e3  # Earth radius in m
-h_obs = 0.  # observation level in m
-h_atm = 112.8e3  # top of the atmosphere in m
+r_E = 6391.e5  # Earth radius in cm
+h_obs = 0.  # observation level in cm
+h_atm = 112.8e5  # top of the atmosphere in cm
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]

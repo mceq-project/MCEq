@@ -86,7 +86,7 @@ class EarthGeometry(object):
         ax.yaxis.set_ticks_position('left')
         plt.show()
 
-    Attributes:
+    Args:
       h_obs (float): observation level height [cm]
       h_atm (float): top of the atmosphere [cm]
       r_E (float): radius Earth [cm]
@@ -94,13 +94,34 @@ class EarthGeometry(object):
       r_obs (float): radius at observation level [cm]
 
     """
-    def __init__(self):
 
-        self.h_obs = config.h_obs * 1e2  # cm
-        self.h_atm = config.h_atm * 1e2  # cm
-        self.r_E = config.r_E * 1e2  # cm
+    def __init__(self, r_E=config.r_E, h_obs=config.h_obs, h_atm=config.h_atm):
+
+        self.h_atm = h_atm  # cm
+        self.r_E = r_E  # cm
+        #: radius at top of the atmosphere  [cm]
         self.r_top = self.r_E + self.h_atm
+        self.set_h_obs(h_obs)        
+
+    def set_h_obs(self, h_obs):
+        r"""Set elevation of observation level in cm.
+        """
+        if h_obs >= self.r_top:
+            raise Exception(
+            'Observation level can not be above atmospheric boundary.' 
+        )
+        self.h_obs = h_obs  # cm
+        #: radius at observation level [cm]
         self.r_obs = self.r_E + self.h_obs
+        self.theta_max_rad = max(np.pi/2., np.pi - np.arcsin(self.r_E/self.r_obs))
+        self.theta_max_deg = np.rad2deg(self.theta_max_rad)
+
+    def _check_angles(self, theta):
+        r"""Checks if angles in valid range."""
+        if np.any(np.atleast_1d(theta) > self.theta_max_rad):
+            raise Exception(
+                'Zenith angle above max. {0:4.1f} requested'.format(
+                    self.theta_max_deg))
 
     def _A_1(self, theta):
         r"""Segment length :math:`A1(\theta)` in cm.
@@ -116,6 +137,7 @@ class EarthGeometry(object):
         r"""Returns path length in [cm] for given zenith
         angle :math:`\theta` [rad].
         """
+        self._check_angles(theta)
         return (np.sqrt(self.r_top**2 - self._A_2(theta)**2) -
                 self._A_1(theta))
 
@@ -123,12 +145,14 @@ class EarthGeometry(object):
         r"""Returns the zenith angle at atmospheric boarder
         :math:`\cos(\theta^*)` in [rad] as a function of zenith at detector.
         """
+        self._check_angles(theta)
         return (self._A_1(theta) + self.l(theta)) / self.r_top
 
     def h(self, dl, theta):
         r"""Height above surface at distance :math:`dl` counted from the beginning
         of path :math:`l(\theta)` in cm.
         """
+        self._check_angles(theta)
         return np.sqrt(
             self._A_2(theta)**2 +
             (self._A_1(theta) + self.l(theta) - dl)**2) - self.r_E
@@ -137,6 +161,7 @@ class EarthGeometry(object):
         r"""Distance :math:`dl` covered along path :math:`l(\theta)`
         as a function of current height. Inverse to :func:`h`.
         """
+        self._check_angles(theta)
         return (self._A_1(theta) + self.l(theta) -
                 np.sqrt((h + self.r_E)**2 - self._A_2(theta)**2))
 
