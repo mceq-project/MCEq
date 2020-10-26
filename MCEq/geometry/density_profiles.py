@@ -33,7 +33,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self.thrad = None
         self.theta_deg = None
         self._max_den = config.max_density
-        self.max_theta = 90.
+        self.max_theta = self.geom.theta_max_deg
         self.location = None
         self.season = None
 
@@ -94,8 +94,12 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         # Interpolate with bi-splines without smoothing
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
-
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        # This is an incomplete workaround for non-monothonic elevations for
+        # upgoing trajectories. 
+        if not self.theta_deg > 90.:
+            self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        else:
+            self._s_h2X = None
         self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1],
                                         h_intp[::-1],
@@ -159,6 +163,14 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self.thrad = theta_rad(theta_deg)
         self.theta_deg = theta_deg
         self.calculate_density_spline()
+
+    def set_h_obs(self, h_obs):
+            """Set the elevation of the observation (detector) level in cm."""
+
+            self.geom.set_h_obs(h_obs)
+            self.max_theta = self.geom.theta_max_deg
+            self.theta_deg = None
+            
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
