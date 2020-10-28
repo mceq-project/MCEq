@@ -1061,14 +1061,11 @@ class GeneralizedTarget(object):
 
     def set_length(self, new_length_cm):
         """Updates the total length of the target.
-
-        Usually the length is set
         """
         if new_length_cm < self.mat_list[-1][0]:
             raise Exception(
-                "GeneralizedTarget::set_length(): " +
-                "can not set length below lower boundary of last " +
-                "material.")
+                "can not set length below lower boundary of last material."
+                )
         self.len_target = new_length_cm
         self.mat_list[-1][1] = new_length_cm
         self._update_variables()
@@ -1087,8 +1084,7 @@ class GeneralizedTarget(object):
         """
 
         if start_position_cm < 0. or start_position_cm > self.len_target:
-            raise Exception("GeneralizedTarget::add_material(): " +
-                            "distance exceeds target dimensions.")
+            raise Exception("distance exceeds target dimensions.")
         elif (start_position_cm == self.mat_list[-1][0]
               and self.mat_list[-1][-1] == self.env_name):
             self.mat_list[-1] = [
@@ -1096,8 +1092,7 @@ class GeneralizedTarget(object):
             ]
 
         elif start_position_cm <= self.mat_list[-1][0]:
-            raise Exception("GeneralizedTarget::add_material(): " +
-                            "start_position_cm is ahead of previous material.")
+            raise Exception("start_position_cm is ahead of previous material.")
 
         else:
             self.mat_list[-1][1] = start_position_cm
@@ -1105,11 +1100,9 @@ class GeneralizedTarget(object):
                 [start_position_cm, self.len_target, density, name])
 
         info(2,
-             ("{0}::add_material(): Material '{1}' added. " +
-              "location on path {2} to {3} m").format(self.__class__.__name__,
-                                                      name,
-                                                      self.mat_list[-1][0],
-                                                      self.mat_list[-1][1]))
+             ("Material '{0}' added between {1:4.1f} and {2:4.1f} m").format(name,
+                                                      self.mat_list[-1][0]/1e2,
+                                                      self.mat_list[-1][1]/1e2))
 
         self._update_variables()
 
@@ -1121,8 +1114,7 @@ class GeneralizedTarget(object):
             NotImplementedError: always
         """
 
-        raise NotImplementedError('GeneralizedTarget::set_theta(): Method' +
-                                  'not defined for this target class.')
+        raise NotImplementedError('Method not defined for this target class.')
 
     def _integrate(self):
         """Walks through material list and computes the depth along the
