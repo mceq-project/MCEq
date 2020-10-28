@@ -163,11 +163,15 @@ class MCEqRun(object):
                 "The orders of the state vecs don't match {0}!={1}".format(
                     order_i, order))
         elif order_i != order and only_available:
+            particles_requested = [o[1] for o in order_i]
             for pidx, pname in order:
                 if pname in self.pman.pname2pref:
                     p = self.pman.pname2pref[pname]
-                    self._phi0[p.lidx:p.uidx] = state_vec[
-                        pidx * self.dim:(pidx + 1) * self.dim]
+                    self._phi0[p.lidx:p.uidx] *= 0.
+                    if pname in particles_requested:
+                        self._phi0[p.lidx:p.uidx] = state_vec[
+                            pidx * self.dim:(pidx + 1) * self.dim]
+                
         else:
             self._phi0[:] = state_vec[:]
 
