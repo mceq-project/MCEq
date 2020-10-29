@@ -7,7 +7,9 @@ Version 1.3.0:
 - Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
 - Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
 - Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`
-
+- MCEqRun.density_model.set_h_obs can be used to change observation level altitude
+- Zenith angles > 90 accepted for h_obs > 0 (since upgoing cascades from below the horizon can develop)
+- deprecation warning forced for config access via dictionary (instead of module)
 
 
 Version 1.2.1:

@@ -314,20 +314,17 @@ class MCEqConfigCompatibility(dict):
 
     def __init__(self, namespace):
         self.__dict__.update(namespace)
-        if debug_level > 1:
-            warn_str = ("Config dictionary is deprecated. " +
-                        "Use config.variable instead of config['variable']")
-            warnings.warn(warn_str, FutureWarning)
+        warn_str = ("Config dictionary is deprecated. " +
+                    "Use 'import mceq_config as config' instead of " +
+                    "'from mceq_config import config'; and " + 
+                    "'config.variable instead of config['variable']")
+        warnings.warn(warn_str, FutureWarning)
 
     def __setitem__(self, key, value):
         key = key.lower()
         if key not in self.__dict__:
             raise Exception('Unknown config key', key)
         return super(MCEqConfigCompatibility, self).__setitem__(key, value)
-
-
-
-# globals()['enable_muon_energy_loss'] = globals()['enable_energy_loss']
 
 config = MCEqConfigCompatibility(globals())
 
