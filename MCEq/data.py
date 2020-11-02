@@ -298,13 +298,13 @@ class HDF5Backend(object):
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['hadronic_interactions'],
                                         self.medium)
-            
+
             if self.medium != 'air' and config.fallback_to_air_cs and (
                     mname not in mceq_db['hadronic_interactions'][self.medium]):
                 self._check_subgroup_exists(
                     mceq_db['hadronic_interactions']['air'], mname)
                 info(1, ('Production matrices for {0} in {1} not found.' +
-                    'Fall-back to air.').format(mname, self.medium))
+                         'Fall-back to air.').format(mname, self.medium))
                 medium = 'air'
             else:
                 self._check_subgroup_exists(
@@ -339,19 +339,24 @@ class HDF5Backend(object):
                 em_index = self._gen_db_dictionary(
                     em_db['electromagnetic'][self.medium]['emca_mats'],
                     em_db['electromagnetic'][self.medium]['emca_mats' + '_indptrs'])
-            
+
             if config.muon_helicity_dependence:
                 # This is only very approximately valid and is done for consistency. Typically
                 # electrons would quickly depolarize due to multiple scattering but this requires
-                # additional matrices for (-11,1) -> (-11,0) etc. that are not available now.
+                # additional matrices for (-11,1) -> (-11,0) etc. that are not available
+                # now.
 
                 info(5, 'Copy bremsstrahlung and photon emission to polarised electrons.')
-                for h in [-1,1]:
-                    em_index['index_d'][((-11, h), (-11,h))] = em_index['index_d'][((-11, 0), (-11,0))]
-                    em_index['index_d'][((-11, h), (22,0))] = em_index['index_d'][((-11, 0), (22,0))]
+                for h in [-1, 1]:
+                    em_index['index_d'][((-11, h), (-11, h))
+                                        ] = em_index['index_d'][((-11, 0), (-11, 0))]
+                    em_index['index_d'][((-11, h), (22, 0))
+                                        ] = em_index['index_d'][((-11, 0), (22, 0))]
                     em_index['parents'].append((-11, h))
-                    em_index['index_d'][((11, h), (11,h))] = em_index['index_d'][((11, 0), (11,0))]
-                    em_index['index_d'][((11, h), (22,0))] = em_index['index_d'][((11, 0), (22,0))]
+                    em_index['index_d'][((11, h), (11, h))
+                                        ] = em_index['index_d'][((11, 0), (11, 0))]
+                    em_index['index_d'][((11, h), (22, 0))
+                                        ] = em_index['index_d'][((11, 0), (22, 0))]
                     em_index['parents'].append((11, h))
 
                 em_index['relations'] = defaultdict(lambda: [])
@@ -364,7 +369,7 @@ class HDF5Backend(object):
                     em_index['particles'].append(child)
 
             int_index['parents'] = sorted(int_index['parents'] +
-                                            em_index['parents'])
+                                          em_index['parents'])
             int_index['particles'] = sorted(
                 list(set(int_index['particles'] + em_index['particles'])))
             int_index['relations'].update(em_index['relations'])
@@ -411,10 +416,14 @@ class HDF5Backend(object):
                 # but better than nothing)
                 info(5, 'Copy muon->electron decay to polarised muons.')
                 try:
-                    dec_index['index_d'][((-13, 1), (-11,1))] = dec_index['index_d'][((-13, 0), (-11,0))]
-                    dec_index['index_d'][((-13, -1), (-11,-1))] = dec_index['index_d'][((-13, 0), (-11,0))]
-                    dec_index['index_d'][((13, 1), (11,1))] = dec_index['index_d'][((13, 0), (11,0))]
-                    dec_index['index_d'][((13, -1), (11,-1))] = dec_index['index_d'][((13, 0), (11,0))]
+                    dec_index['index_d'][((-13, 1), (-11, 1))
+                                         ] = dec_index['index_d'][((-13, 0), (-11, 0))]
+                    dec_index['index_d'][((-13, -1), (-11, -1))
+                                         ] = dec_index['index_d'][((-13, 0), (-11, 0))]
+                    dec_index['index_d'][((13, 1), (11, 1))
+                                         ] = dec_index['index_d'][((13, 0), (11, 0))]
+                    dec_index['index_d'][((13, -1), (11, -1))
+                                         ] = dec_index['index_d'][((13, 0), (11, 0))]
                 except KeyError:
                     info(0, 'Error copying muon->electron decays for polarized muons')
 
@@ -439,7 +448,7 @@ class HDF5Backend(object):
         if 'SIBYLL23C' in mname:
             info(5, 'SIBYLL23C cross sections replaced by 23D.')
             mname = 'SIBYLL23D'
-        
+
         if medium == 'air-legacy' and 'SIBYLL23' not in mname:
             info(5, 'air-legacy target replaced by air for', mname)
             medium = 'air'
