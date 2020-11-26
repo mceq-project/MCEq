@@ -180,7 +180,8 @@ class MCEqRun(object):
                      mag=0.,
                      grid_idx=None,
                      integrate=False,
-                     return_as=config.return_as):
+                     return_as=config.return_as,
+                     dont_sum_helicities=False):
         """Retrieves solution of the calculation on the energy grid.
 
         Some special prefixes are accepted for lepton names:
@@ -228,7 +229,13 @@ class MCEqRun(object):
         def sum_lr(lep_str, prefix):
             result = np.zeros(self.dim)
             nsuccess = 0
-            for ls in lep_str, lep_str + '_l', lep_str + '_r':
+            
+            if dont_sum_helicities:
+                sum_over = [lep_str]
+            else:
+                sum_over = [lep_str, lep_str + '_l', lep_str + '_r']
+
+            for ls in sum_over:
                 if prefix + ls not in ref:
                     info(
                         15, 'No separate left and right handed particles,',

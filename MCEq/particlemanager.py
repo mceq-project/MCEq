@@ -214,12 +214,14 @@ class MCEqParticle(object):
         self.current_hadronic_model = hadronic_db.iam
         # Collect MCEqParticle references to children
         # instead of PDG ID as index
+        # Also copy over tracking relations if they exist
+        tracking_relations = [tr_ref for tr_ref in self.hadr_secondaries if tr_ref.is_tracking]
         if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
             self.hadr_secondaries = [
                 pmanager.pdg2pref[pid]
                 for pid in hadronic_db.relations[self.pdg_id]
-            ]
+            ] + tracking_relations
             self.hadr_yields = {}
             for s in self.hadr_secondaries:
                 self.hadr_yields[s] = hadronic_db.get_matrix(
@@ -228,6 +230,14 @@ class MCEqParticle(object):
             self.is_projectile = False
             self.hadr_secondaries = []
             self.hadr_yields = {}
+        
+        if self.is_tracking:
+            # Copy properties of the original particle for tracking
+            orig_part = pmanager.pdg2pref[self.pdg_id]
+            self.is_projectile = orig_part.is_projectile
+            if orig_part in orig_part.hadr_secondaries:
+                self.hadr_secondaries.append(self)
+                self.hadr_yields[self] = orig_part.hadr_yields[orig_part]
 
     def add_hadronic_production_channel(self, child, int_matrix):
         """Add a new particle that is produced in hadronic interactions.
@@ -310,7 +320,7 @@ class MCEqParticle(object):
                 17, 'Parent particle {0} does not produce {1} at the vertex'.
                 format(self.name, tracking_particle.name))
             return False
-        # Copy the decay distribution from original PDG
+        # Copy the interaction matrix from original PDG
         self.hadr_secondaries.append(tracking_particle)
         self.hadr_yields[tracking_particle] = self.hadr_yields[secondaries_d[
             tracking_particle.pdg_id]]
@@ -950,8 +960,10 @@ class ParticleManager(object):
                 continue
 
             if not from_interactions:
+                info(15, 'Child {0} tracks decays'.format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_decays
             else:
+                info(15, 'Child {0} tracks interactions'.format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_interactions
 
             # Check if the tracking is successful. If not the particle is not

@@ -339,25 +339,20 @@ class HDF5Backend(object):
                 em_index = self._gen_db_dictionary(
                     em_db['electromagnetic'][self.medium]['emca_mats'],
                     em_db['electromagnetic'][self.medium]['emca_mats' + '_indptrs'])
-
             if config.muon_helicity_dependence:
-                # This is only very approximately valid and is done for consistency. Typically
+                # This is only approximately valid and is done for consistency. Typically
                 # electrons would quickly depolarize due to multiple scattering but this requires
                 # additional matrices for (-11,1) -> (-11,0) etc. that are not available
                 # now.
-
-                info(5, 'Copy bremsstrahlung and photon emission to polarised electrons.')
-                for h in [-1, 1]:
-                    em_index['index_d'][((-11, h), (-11, h))
-                                        ] = em_index['index_d'][((-11, 0), (-11, 0))]
-                    em_index['index_d'][((-11, h), (22, 0))
-                                        ] = em_index['index_d'][((-11, 0), (22, 0))]
-                    em_index['parents'].append((-11, h))
-                    em_index['index_d'][((11, h), (11, h))
-                                        ] = em_index['index_d'][((11, 0), (11, 0))]
-                    em_index['index_d'][((11, h), (22, 0))
-                                        ] = em_index['index_d'][((11, 0), (22, 0))]
-                    em_index['parents'].append((11, h))
+                from itertools import product
+                
+                info(5, 'Copy bremsstrahlung and photon emission to polarised electrons and muons.')
+                for pid, h in product([11, -11, 13, -13], [-1, 1]):
+                    em_index['index_d'][((pid, h), (pid, h))
+                                        ] = em_index['index_d'][((pid, 0), (pid, 0))]
+                    em_index['index_d'][((pid, h), (22, 0))
+                                        ] = em_index['index_d'][((pid, 0), (22, 0))]
+                    em_index['parents'].append((pid, h))
 
                 em_index['relations'] = defaultdict(lambda: [])
                 em_index['particles'] = []
@@ -415,17 +410,14 @@ class HDF5Backend(object):
                 # 3-body decay distribution, what is maybe inappropriate
                 # but better than nothing)
                 info(5, 'Copy muon->electron decay to polarised muons.')
-                try:
-                    dec_index['index_d'][((-13, 1), (-11, 1))
-                                         ] = dec_index['index_d'][((-13, 0), (-11, 0))]
-                    dec_index['index_d'][((-13, -1), (-11, -1))
-                                         ] = dec_index['index_d'][((-13, 0), (-11, 0))]
-                    dec_index['index_d'][((13, 1), (11, 1))
-                                         ] = dec_index['index_d'][((13, 0), (11, 0))]
-                    dec_index['index_d'][((13, -1), (11, -1))
-                                         ] = dec_index['index_d'][((13, 0), (11, 0))]
-                except KeyError:
-                    info(0, 'Error copying muon->electron decays for polarized muons')
+                from itertools import product
+                for sign, hel in product([1, -1], [1, -1]):
+                    try:
+                        dec_index['index_d'][((sign * 13, hel), (sign * 11, hel))
+                                             ] = dec_index['index_d'][((sign * 13, 0), (sign * 11, 0))]
+                    except KeyError:
+                        info(0, 'Error copying muon->electron decays for polarized muons',
+                             (sign * 13, hel), (sign * 11, hel))
 
                 dec_index['relations'] = defaultdict(lambda: [])
                 dec_index['particles'] = []
