@@ -36,7 +36,7 @@ class MCEqRun(object):
         :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
-      medium (string): "air", "water", "rock", "co2", "hydrogen"
+      medium (string): "air", "water", "rock", "co2", "hydrogen", "iron"
       particle_list (list): Construct system for only these partices, ex.  
     """
 
@@ -169,8 +169,11 @@ class MCEqRun(object):
                     p = self.pman.pname2pref[pname]
                     self._phi0[p.lidx:p.uidx] *= 0.
                     if pname in particles_requested:
-                        self._phi0[p.lidx:p.uidx] = state_vec[
-                            pidx * self.dim:(pidx + 1) * self.dim]
+                        try:
+                            self._phi0[p.lidx:p.uidx] = state_vec[
+                                pidx * self.dim:(pidx + 1) * self.dim]
+                        except ValueError:
+                            raise Exception('Error when setting state for', p.name)
                 
         else:
             self._phi0[:] = state_vec[:]
