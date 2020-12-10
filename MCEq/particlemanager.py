@@ -856,14 +856,13 @@ class ParticleManager(object):
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
-            # and abs(p.pdg_id[0]) in [211, 2212]:
             elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
                 # Stopping power dEdX is almost the same for all charged particles.
-                # What changes is the gamma factor. We interpolate the dEdX tables
-                # stored for muons to different gamma factor grids.
-                # Compute gamma-1 from kinetic energy
-                gamma_p = self._energy_grid.c / p.mass
-                p.dEdX = -np.exp(contloss_db.generic_spl(np.log(gamma_p)))
+                # What changes is gamm*beta. We interpolate the dEdX tables
+                # stored for protons to different energy grids.
+                # Compute beta*gamma from kinetic energy
+                betagamma_p = np.sqrt((self._energy_grid.c + p.mass)**2 - p.mass**2)/p.mass 
+                p.dEdX = -np.exp(contloss_db.generic_spl(np.log(betagamma_p)))
                 p.has_contloss = True
 
     def add_tracking_particle(self,
