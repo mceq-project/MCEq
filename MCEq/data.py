@@ -478,17 +478,25 @@ class HDF5Backend(object):
 
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['continuous_losses'], self.medium)
-            cl_db = mceq_db['continuous_losses'][self.medium]
-
+            if config.enable_em or not config.enable_cont_rad_loss:
+                loss_case = 'ionization'
+            else:
+                loss_case = 'total'
+            print(mceq_db['continuous_losses'][self.medium].keys())
+            cl_db = mceq_db['continuous_losses'][self.medium][loss_case]
+            # No rad losses for hadrons implememented
+            cl_db_hadrons = mceq_db['continuous_losses'][self.medium]['total']
             index_d = {}
             generic_dedx = None
+
             for k in list(cl_db):
                 if k != 'hadron':
                     for hel in [0, 1, -1]:
                         index_d[(int(k), hel)] = cl_db[k][self._cuts]
                 else:
                     # Tuple (boost, dEdx)
-                    generic_dedx = (cl_db[k][0], cl_db[k][1])
+                    generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
+                    
             # if config.enable_em:
             #     with h5py.File(self.em_fname, 'r') as em_db:
             #         info(2, 'Injecting EmCA matrices into interaction_db.')

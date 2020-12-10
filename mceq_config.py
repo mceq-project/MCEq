@@ -49,7 +49,7 @@ prompt_ctau = 0.123
 #: resonance approximation. Default value: air at the surface
 max_density = 0.001225
 #: Material for interaction lengths, ionization and radiation (=continuous) loss terms
-#: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen'
+#: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen', 'iron'
 interaction_medium = 'air'
 
 #: Average target mass (for interaction length calculations)
@@ -161,6 +161,10 @@ enable_energy_loss = True
 
 #: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
 generic_losses_all_charged = True
+
+#: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
+#: electromagnetic cross sections available 
+enable_cont_rad_loss = True
 
 #: Fall-back to air production matrices if medium not included in data file
 fallback_to_air_cs = True

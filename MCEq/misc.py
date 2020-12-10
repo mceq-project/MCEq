@@ -17,7 +17,8 @@ _target_masses = {
     'ice': 1. / 3. * (2. + 16.),
     'co2': 1. / 3. * (12. + 2. * 16.),
     'rock': 22.,
-    'hydrogen': 1.
+    'hydrogen': 1.,
+    'iron': 26.
 }
 
 
