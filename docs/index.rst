@@ -142,7 +142,7 @@ The current citation for the MCEq is:
 
 In :ref:`citations` is the list for the physical models.
 
-Changes to physics between version 1.1.X and 1.2.X 
+Physics changes between version 1.1.X and 1.2.X 
 ..................................................
 
 Due to a bug found in the decay table generation for the "new" MCEq versions

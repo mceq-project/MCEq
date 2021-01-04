@@ -24,10 +24,10 @@ print_module = False
 data_dir = path.join(base_path, 'MCEq', 'data')
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
+mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai_Max.h5"
+em_db_fname = "mceq_db_EM_Tsai_Full_v131.h5"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -366,7 +366,8 @@ if not path.isfile(path.join(data_dir, mceq_db_fname)):
         print(url)
     _download_file(url, path.join(data_dir, mceq_db_fname))
 
-if path.isfile(path.join(data_dir, 'mceq_db_lext_dpm191.h5')):
-    import os
-    print('Removing previous database {0}.'.format('mceq_db_lext_dpm191.h5'))
-    os.unlink(path.join(data_dir, 'mceq_db_lext_dpm191.h5'))
+for fn in ['mceq_db_lext_dpm191.h5', 'mceq_db_lext_dpm191_v12.h5']:
+    if path.isfile(path.join(data_dir, fn)):
+        import os
+        print('Removing previous database {0}.'.format(fn))
+        os.unlink(path.join(data_dir, fn))

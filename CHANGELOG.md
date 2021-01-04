@@ -7,10 +7,10 @@ Version 1.3.1:
 - The pre-averaged cross section for air in SIBYLL2.3 models can be selected with medium='air-legacy'
 - `A_target = 'auto'` will pic correct mass number for the selected medium
 - Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
-- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremstrahlung) are included in the continuous loss terms or handled by an EM model 
+- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model 
 - Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
 - MCEqRun.density_model.set_h_obs can be used to change observation level altitude
-- Zenith angles > 90 accepted for h_obs > 0 (since upgoing cascades can develop from below the horizon)
+- Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
 - deprecation warning forced for config access via dictionary (instead of module)
 
 
