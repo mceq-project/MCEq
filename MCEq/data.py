@@ -296,11 +296,10 @@ class HDF5Backend(object):
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, 'Generating interaction db. mname={0}'.format(mname))
         with h5py.File(self.had_fname, 'r') as mceq_db:
-            self._check_subgroup_exists(mceq_db['hadronic_interactions'],
-                                        self.medium)
+            if ((self.medium not in mceq_db['hadronic_interactions'] or
+                    mname not in mceq_db['hadronic_interactions'][self.medium]) and
+                    config.fallback_to_air_cs):
 
-            if self.medium != 'air' and config.fallback_to_air_cs and (
-                    mname not in mceq_db['hadronic_interactions'][self.medium]):
                 self._check_subgroup_exists(
                     mceq_db['hadronic_interactions']['air'], mname)
                 info(1, ('Production matrices for {0} in {1} not found.' +
@@ -332,6 +331,10 @@ class HDF5Backend(object):
 
         # Append electromagnetic interaction matrices from EmCA
         if config.enable_em:
+            if medium == 'ice':
+                info(5, 'Electromagnetic cross sections for ice replaced by water.')
+                medium = 'water'
+
             with h5py.File(self.em_fname, 'r') as em_db:
                 info(2, 'Injecting EmCA matrices into interaction_db.')
                 self._check_subgroup_exists(em_db, 'electromagnetic')
@@ -444,6 +447,9 @@ class HDF5Backend(object):
         if medium == 'air-legacy' and 'SIBYLL23' not in mname:
             info(5, 'air-legacy target replaced by air for', mname)
             medium = 'air'
+        elif medium == 'ice':
+            info(5, 'ice target replaced by water for', mname)
+            medium = 'water'
 
         with h5py.File(self.had_fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['cross_sections'], medium)
@@ -482,7 +488,6 @@ class HDF5Backend(object):
                 loss_case = 'ionization'
             else:
                 loss_case = 'total'
-            print(mceq_db['continuous_losses'][self.medium].keys())
             cl_db = mceq_db['continuous_losses'][self.medium][loss_case]
             # No rad losses for hadrons implememented
             cl_db_hadrons = mceq_db['continuous_losses'][self.medium]['total']
