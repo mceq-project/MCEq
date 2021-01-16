@@ -30,14 +30,16 @@ class MCEqRun(object):
 
 
     Args:
-      interaction_model (string): PDG ID of the particle
-      density_model (string,sting,string): model type, location, season
+      interaction_model (string): interaction model name, e.g. SIBYLL-2.3D
       primary_model (class, param_tuple): classes derived from
         :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
         measured positively from vertical direction
-      medium (string): "air", "water", "rock", "co2", "hydrogen", "iron"
-      particle_list (list): Construct system for only these partices, ex.  
+      medium (string, optional): "air", "water", "rock", "co2", "hydrogen", "iron"
+      density_model (instance or tuple): Instance of initialized density model or
+        tuple of strings, such as ('CORSIKA', ('BK_USStd', None))  
+      particle_list (list, optional): Construct a system for only these partices
+        including their decay products.  
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
