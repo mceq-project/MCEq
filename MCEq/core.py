@@ -455,16 +455,17 @@ class MCEqRun(object):
         except AttributeError:
             self.finalize_pmodel = True
 
-        # Save initial condition
+        # Set initial condition
         minimal_energy = 3.
-        if (2212, 0) in self.pman:
-            e_tot = self._energy_grid.c + self.pman[(2212, 0)].mass
+        if (2212, 0) in self.pman and (2112, 0) in self.pman:
+            e_tot = self._energy_grid.c + 0.5*(
+                self.pman[(2212, 0)].mass + self.pman[(2112, 0)].mass)
         else:
             info(
                 10,
                 'No protons in eqn system, quering primary flux with kinetic energy.'
             )
-            e_tot = self._energy_grid.c
+            e_tot = self._energy_grid.c + 0.93892
 
         min_idx = np.argmin(np.abs(e_tot - minimal_energy))
         self._phi0 *= 0

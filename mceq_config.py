@@ -151,6 +151,12 @@ hybrid_crossover = 0.5
 #: if e_min is < 1 GeV.
 dXmax = 1.
 
+#: Minimal CR nucleon energy in primary model. If (low energy) 
+#: hadronic interaction model doesn't properly implement interactions
+#: or cross sections, nucleons can "drop through" without cascading
+
+minimal_primary_energy = 3.
+
 #: Enable default tracking particles, such as pi_numu, pr_mu+, etc.
 #: If only total fluxes are of interest, disable this feature to gain
 #: performance since the eqution system becomes smaller and sparser
