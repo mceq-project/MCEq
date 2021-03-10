@@ -456,7 +456,7 @@ class MCEqRun(object):
             self.finalize_pmodel = True
 
         # Set initial condition
-        minimal_energy = 3.
+        minimal_energy = config.minimal_primary_energy
         if (2212, 0) in self.pman and (2112, 0) in self.pman:
             e_tot = self._energy_grid.c + 0.5*(
                 self.pman[(2212, 0)].mass + self.pman[(2112, 0)].mass)
