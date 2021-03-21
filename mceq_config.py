@@ -99,13 +99,13 @@ integrator = "euler"
 #: euler kernel implementation (numpy/MKL/CUDA).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "numpy"
+kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
-#: CUDA Floating point precision (default 32-bit 'float')
-cuda_fp_precision = 32
+#: Floating point precision (default 32-bit 'float')
+floatlen = 'float64'
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
@@ -287,13 +287,21 @@ except ImportError:
     has_cuda = False
 
 # CUDA is usually fastest, then MKL. Fallback to numpy.
-if has_cuda:
-    kernel_config = 'CUDA'
-elif has_mkl:
-    kernel_config = 'MKL'
+if kernel_config == "auto":
+    if has_cuda:
+        kernel_config = 'cuda'
+    elif has_mkl:
+        kernel_config = 'mkl'
+        floatlen = 'float64'
+    else:
+        kernel_config = 'numpy'
 else:
-    kernel_config = 'numpy'
-if debug_level >= 2:
+    if kernel_config.lower() == "cuda" and not has_cuda:
+        raise Exception("CUDA unavailable. Make sure cupy is installed.")
+    elif kernel_config.lower() == "mkl" and not has_mkl:
+        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+
+if debug_level >= 2 and kernel_config == "auto":
     print('Auto-detected {0} solver.'.format(kernel_config))
 
 def set_mkl_threads(nthreads):

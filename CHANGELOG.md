@@ -1,5 +1,11 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.3.3:
+- Initialization moved almost entirely to GPU if available, matrix construction may be x2-x3 faster before
+- Config defaults "auto" setting for `kernel_config` and respects other custom settings
+- GPU sparse solver simplified
+- Floating point precision defaults always to fp32 (see `config.floatlen`). MKL doesn't work with fp32 for some reason.
+
 Version 1.3.1:
 - Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen | iron`
 - Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`

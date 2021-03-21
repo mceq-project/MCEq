@@ -48,6 +48,7 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     return phc, np.array(grid_sol)
 
+
 class CUDASparseContext(object):
     """This class handles the transfer between CPU and GPU memory, and the calling
     of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
@@ -55,21 +56,15 @@ class CUDASparseContext(object):
     """
 
     def __init__(self, int_m, dec_m, device_id=0):
-
-        if config.cuda_fp_precision == 32:
-            self.fl_pr = np.float32
-        elif config.cuda_fp_precision == 64:
-            self.fl_pr = np.float64
-        else:
-            raise Exception(
-                "CUDASparseContext(): Unknown precision specified.")
         # Setup GPU stuff and upload data to it
         try:
             import cupy as cp
             import cupyx.scipy as cpx
+            from cupy.cusparse import csrmv
             self.cp = cp
             self.cpx = cpx
             self.cubl = cp.cuda.cublas
+            self.csrmv = csrmv
         except ImportError:
             raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
                             "installed.\nCan not use GPU.")
@@ -80,10 +75,10 @@ class CUDASparseContext(object):
 
     def set_matrices(self, int_m, dec_m):
         """Upload sparce matrices to GPU memory"""
-        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
-        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
+        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=config.floatlen)
+        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=config.floatlen)
         self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0],
-                                          dtype=self.fl_pr)
+                                          dtype=config.floatlen)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -102,7 +97,7 @@ class CUDASparseContext(object):
 
     def set_phi(self, phi):
         """Uploads initial condition to GPU memory."""
-        self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
+        self.cu_curr_phi = self.cp.asarray(phi, dtype=config.floatlen)
 
     def get_phi(self):
         """Downloads current solution from GPU memory."""
@@ -111,19 +106,22 @@ class CUDASparseContext(object):
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        self.cp.cusparse.csrmv(a=self.cu_int_m,
-                               x=self.cu_curr_phi,
-                               y=self.cu_delta_phi,
-                               alpha=1.,
-                               beta=0.)
-        self.cp.cusparse.csrmv(a=self.cu_dec_m,
-                               x=self.cu_curr_phi,
-                               y=self.cu_delta_phi,
-                               alpha=rho_inv,
-                               beta=1.)
-        self.cubl.saxpy(self.cubl_handle, self.cu_delta_phi.shape[0], dX,
-                        self.cu_delta_phi.data.ptr, 1,
-                        self.cu_curr_phi.data.ptr, 1)
+        self.cu_delta_phi = self.cu_int_m.dot(self.cu_curr_phi)
+        self.cu_delta_phi += rho_inv * self.cu_dec_m.dot(self.cu_curr_phi)
+        self.cu_curr_phi += dX * self.cu_delta_phi
+        # self.csrmv(a=self.cu_int_m,
+        #             x=self.cu_curr_phi,
+        #             y=self.cu_delta_phi,
+        #             alpha=1.,
+        #             beta=0.)
+        # self.csrmv(a=self.cu_dec_m,
+        #             x=self.cu_curr_phi,
+        #             y=self.cu_delta_phi,
+        #             alpha=rho_inv,
+        #             beta=1.)
+        # self.cubl.saxpy(self.cubl_handle, self.cu_delta_phi.shape[0], dX,
+        #                 self.cu_delta_phi.data.ptr, 1,
+        #                 self.cu_curr_phi.data.ptr, 1)
 
 
 def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
@@ -197,14 +195,24 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     gemv = None
     axpy = None
     np_fl = None
-    from ctypes import c_double as fl_pr
-    # sparse CSR-matrix x dense vector
-    gemv = mkl.mkl_dcsrmv
-    # dense vector + dense vector
-    axpy = mkl.cblas_daxpy
-    np_fl = np.float64
+    if config.floatlen == 'float64':
+        from ctypes import c_double as fl_pr
+        # sparse CSR-matrix x dense vector
+        gemv = mkl.mkl_dcsrmv
+        # dense vector + dense vector
+        axpy = mkl.cblas_daxpy
+        np_fl = np.float64
+    else:
+        from ctypes import c_float as fl_pr
+        # sparse CSR-matrix x dense vector
+        gemv = mkl.mkl_dcsrmv
+        # dense vector + dense vector
+        axpy = mkl.cblas_daxpy
+        np_fl = np.float32
+    
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
+    print(type(int_m.data))
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
     int_m_ci = int_m.indices.ctypes.data_as(POINTER(c_int))
     int_m_pb = int_m.indptr[:-1].ctypes.data_as(POINTER(c_int))

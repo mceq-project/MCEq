@@ -2,9 +2,9 @@
 import six
 import numpy as np
 import h5py
-from collections import defaultdict
-import mceq_config as config
 from os.path import join, isfile
+from collections import defaultdict
+from MCEq import *
 from .misc import normalize_hadronic_model_name, info
 
 # TODO: Convert this to some functional generic class. Very erro prone to
@@ -170,8 +170,8 @@ class HDF5Backend(object):
             self._energy_grid = energy_grid(
                 ca['e_grid'][self._cuts],
                 ca['e_bins'][self.min_idx:self.max_idx + 1],
-                ca['widths'][self._cuts], self.max_idx - self.min_idx)
-            self.dim_full = ca['e_dim']
+                ca['widths'][self._cuts], int(self.max_idx - self.min_idx))
+            self.dim_full = int(ca['e_dim'])
 
         self.medium = medium
 
@@ -190,7 +190,6 @@ class HDF5Backend(object):
         return min_idx, max_idx, slice(slice0, slice1)
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
-
         from scipy.sparse import csr_matrix
         index_d = {}
         relations = defaultdict(lambda: [])
@@ -199,7 +198,7 @@ class HDF5Backend(object):
             description = hdf_root.attrs['description']
         else:
             description = None
-        mat_data = hdf_root[:, :]
+        mat_data = np.asarray(hdf_root[:, :], dtype=floatlen)
         indptr_data = indptrs[:]
         len_data = hdf_root.attrs['len_data']
         if hdf_root.attrs['tuple_idcs'].shape[1] == 4:
@@ -243,13 +242,12 @@ class HDF5Backend(object):
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = (csr_matrix(
+            index_d[(parent_pdg, child_pdg)] = asarray((csr_matrix(
                 (mat_data[0, read_idx:read_idx + len_data[tupidx]],
                  mat_data[1, read_idx:read_idx + len_data[tupidx]],
                  indptr_data[tupidx, :]),
-                shape=(self.dim_full, self.dim_full
-                       ))[self._cuts, self.min_idx:self.max_idx]).toarray()
-
+                shape=(self.dim_full, self.dim_full))[
+                    self._cuts, self.min_idx:self.max_idx]).toarray())
             relations[parent_pdg].append(child_pdg)
 
             info(20,
@@ -348,7 +346,7 @@ class HDF5Backend(object):
                 # additional matrices for (-11,1) -> (-11,0) etc. that are not available
                 # now.
                 from itertools import product
-                
+
                 info(5, 'Copy bremsstrahlung and photon emission to polarised electrons and muons.')
                 for pid, h in product([11, -11, 13, -13], [-1, 1]):
                     em_index['index_d'][((pid, h), (pid, h))
@@ -501,7 +499,7 @@ class HDF5Backend(object):
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
-                    
+
             # if config.enable_em:
             #     with h5py.File(self.em_fname, 'r') as em_db:
             #         info(2, 'Injecting EmCA matrices into interaction_db.')
@@ -643,7 +641,7 @@ class Interactions(object):
         # Set lower triangular indices to 0. (should be not necessary)
         modmat[np.tril_indices(self.energy_grid.d, -1)] = 0.
 
-        return modmat
+        return asarray(modmat)
 
     def _set_mod_pprod(self, prim_pdg, sec_pdg, x_func, args):
         """Sets combination of parent/secondary for error propagation.

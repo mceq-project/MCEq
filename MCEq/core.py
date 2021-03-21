@@ -2,7 +2,7 @@ import os
 import six
 from time import time
 import numpy as np
-import mceq_config as config
+from MCEq import *
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
@@ -37,9 +37,9 @@ class MCEqRun(object):
         measured positively from vertical direction
       medium (string, optional): "air", "water", "rock", "co2", "hydrogen", "iron"
       density_model (instance or tuple): Instance of initialized density model or
-        tuple of strings, such as ('CORSIKA', ('BK_USStd', None))  
+        tuple of strings, such as ('CORSIKA', ('BK_USStd', None))
       particle_list (list, optional): Construct a system for only these partices
-        including their decay products.  
+        including their decay products.
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
@@ -176,7 +176,7 @@ class MCEqRun(object):
                                 pidx * self.dim:(pidx + 1) * self.dim]
                         except ValueError:
                             raise Exception('Error when setting state for', p.name)
-                
+
         else:
             self._phi0[:] = state_vec[:]
 
@@ -234,7 +234,7 @@ class MCEqRun(object):
         def sum_lr(lep_str, prefix):
             result = np.zeros(self.dim)
             nsuccess = 0
-            
+
             if dont_sum_helicities:
                 sum_over = [lep_str]
             else:
@@ -458,14 +458,12 @@ class MCEqRun(object):
         # Set initial condition
         minimal_energy = config.minimal_primary_energy
         if (2212, 0) in self.pman and (2112, 0) in self.pman:
-            e_tot = self._energy_grid.c + 0.5*(
+            e_tot = self._energy_grid.c + 0.5 * (
                 self.pman[(2212, 0)].mass + self.pman[(2112, 0)].mass)
         else:
-            info(
-                10,
-                'No protons in eqn system, quering primary flux with kinetic energy.'
+            raise Exception(
+                'No nucleons in eqn system, primary flux model can not be used.'
             )
-            e_tot = self._energy_grid.c + 0.93892
 
         min_idx = np.argmin(np.abs(e_tot - minimal_energy))
         self._phi0 *= 0
@@ -888,7 +886,6 @@ class MCEqRun(object):
                 # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
                 return dX
 
-        
         enable_int_grid = np.any(int_grid)
         len_int_grid = len(int_grid) if enable_int_grid else 0
         while X < max_X:
@@ -1093,7 +1090,8 @@ class MatrixBuilder(object):
                     self.max_lint,
                     np.max(parent.inverse_interaction_length())
                 ])
-                self.C_blocks[idx] *= parent.inverse_interaction_length()
+                self.C_blocks[idx] *= asarray(
+                    parent.inverse_interaction_length(), dtype=floatlen)
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
                 pid = abs(parent.pdg_id[0])
@@ -1126,7 +1124,9 @@ class MatrixBuilder(object):
                 self.max_ldec = max(
                     [self.max_ldec,
                      np.max(parent.inverse_decay_length())])
-                self.D_blocks[idx] *= parent.inverse_decay_length()
+
+                self.D_blocks[idx] *= asarray(parent.inverse_decay_length(),
+                                              dtype=floatlen)
 
             self.dec_m = self._csr_from_blocks(self.D_blocks)
 
@@ -1152,16 +1152,16 @@ class MatrixBuilder(object):
             'Averaging continuous loss using {0} intermediate steps.'.format(
                 n_steps))
 
-        op_step = np.eye(
+        op_step = eye(
             self._energy_grid.d) + op_mat * config.loss_step_for_average
-        return np.linalg.matrix_power(op_step, n_steps) - np.eye(
+        return linalg.matrix_power(op_step, n_steps) - eye(
             self._energy_grid.d)
 
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
-        op_mat = -np.diag(1 / self._energy_grid.c).dot(
-            self.op_matrix.dot(np.diag(self._pman[pdg_id].dEdX)))
+        op_mat = -diag(1 / self._energy_grid.c).dot(
+            self.op_matrix.dot(diag(self._pman[pdg_id].dEdX)))
 
         if config.average_loss_operator:
             return self._average_operator(op_mat)
@@ -1171,18 +1171,18 @@ class MatrixBuilder(object):
     @property
     def dim(self):
         """Energy grid (dimension)"""
-        return self._pman.dim
+        return int(self._pman.dim)
 
     @property
     def dim_states(self):
         """Number of cascade particles times dimension of grid
         (dimension of the equation system)"""
-        return self._pman.dim_states
+        return int(self._pman.dim_states)
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
         """
-        return np.zeros((self._pman.dim, self._pman.dim))
+        return zeros((self._pman.dim, self._pman.dim), dtype=floatlen)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1192,9 +1192,8 @@ class MatrixBuilder(object):
             It's super pain the a** to construct a properly indexed sparse matrix
             directly from the blocks, since bmat totally messes up the order.
         """
-        from scipy.sparse import csr_matrix
+        new_mat = zeros((self.dim_states, self.dim_states), dtype=floatlen)
 
-        new_mat = np.zeros((self.dim_states, self.dim_states))
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
@@ -1252,7 +1251,7 @@ class MatrixBuilder(object):
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     self._follow_chains(p,
-                                        np.diag(np.ones((self.dim))),
+                                        diag(ones(self.dim)).astype(floatlen),
                                         p,
                                         p.hadridx,
                                         self.D_blocks,
@@ -1330,29 +1329,29 @@ class MatrixBuilder(object):
         denom_rightmost = denom_leftmost
 
         h = np.log(self._energy_grid.b[1:] / self._energy_grid.b[:-1])
-        dim_e = self._energy_grid.d
+        dim_e = int(self._energy_grid.d)
         last = dim_e - 1
 
-        op_matrix = np.zeros((dim_e, dim_e))
-        op_matrix[0, np.asarray(diags_leftmost)] = np.asarray(
+        op_matrix = zeros((dim_e, dim_e), dtype=floatlen)
+        op_matrix[0, asarray(diags_leftmost)] = asarray(
             coeffs_leftmost) / (denom_leftmost * h[0])
         op_matrix[1, 1 +
-                  np.asarray(diags_left_1)] = np.asarray(coeffs_left_1) / (
+                  asarray(diags_left_1)] = asarray(coeffs_left_1) / (
                       denom_left_1 * h[1])
         op_matrix[2, 2 +
-                  np.asarray(diags_left_2)] = np.asarray(coeffs_left_2) / (
+                  asarray(diags_left_2)] = asarray(coeffs_left_2) / (
                       denom_left_2 * h[2])
-        op_matrix[last, last + np.asarray(diags_rightmost)] = np.asarray(
+        op_matrix[last, last + asarray(diags_rightmost)] = asarray(
             coeffs_rightmost) / (denom_rightmost * h[last])
         op_matrix[last - 1, last - 1 +
-                  np.asarray(diags_right_1)] = np.asarray(coeffs_right_1) / (
+                  asarray(diags_right_1)] = asarray(coeffs_right_1) / (
                       denom_right_1 * h[last - 1])
         op_matrix[last - 2, last - 2 +
-                  np.asarray(diags_right_2)] = np.asarray(coeffs_right_2) / (
+                  asarray(diags_right_2)] = asarray(coeffs_right_2) / (
                       denom_right_2 * h[last - 2])
         for row in range(3, dim_e - 3):
             op_matrix[row, row +
-                      np.asarray(diags)] = np.asarray(coeffs) / (denom *
-                                                                 h[row])
+                      asarray(diags)] = asarray(coeffs) / (denom *
+                                                           h[row])
 
         self.op_matrix = op_matrix

@@ -199,10 +199,9 @@ class MCEqParticle(object):
             # self._interaction_threshold()
         else:
             self.can_interact = False
-        
+
         self._critical_energy()
         self._calculate_mixing_energy()
-
 
     def set_hadronic_channels(self, hadronic_db, pmanager):
         """Changes the hadronic interaction model.
@@ -215,7 +214,8 @@ class MCEqParticle(object):
         # Collect MCEqParticle references to children
         # instead of PDG ID as index
         # Also copy over tracking relations if they exist
-        tracking_relations = [tr_ref for tr_ref in self.hadr_secondaries if tr_ref.is_tracking]
+        tracking_relations = [
+            tr_ref for tr_ref in self.hadr_secondaries if tr_ref.is_tracking]
         if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
             self.hadr_secondaries = [
@@ -230,7 +230,7 @@ class MCEqParticle(object):
             self.is_projectile = False
             self.hadr_secondaries = []
             self.hadr_yields = {}
-        
+
         if self.is_tracking:
             # Copy properties of the original particle for tracking
             orig_part = pmanager.pdg2pref[self.pdg_id]
@@ -614,7 +614,7 @@ class MCEqParticle(object):
             self.E_crit = np.inf
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
-    
+
     def _interaction_threshold(self):
         """Finds minimal energy grid idx where interaction cross sections
         becomes > 0.
@@ -622,7 +622,7 @@ class MCEqParticle(object):
         Only for interacting particles.
         """
         if self.can_interact:
-            self.int_idx = (self.cs!=0).argmax()
+            self.int_idx = (self.cs != 0).argmax()
             info(10, 'Interaction threshold for {0} is {1:5.3f} GeV'.format(
                 self.name, self._energy_grid.c[self.int_idx]
             ))
@@ -702,7 +702,7 @@ class MCEqParticle(object):
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
-        
+
         self.mix_idx = max(self.int_idx, self.mix_idx)
 
         assert self.E_mix == self._energy_grid.c[self.mix_idx]
@@ -861,7 +861,8 @@ class ParticleManager(object):
                 # What changes is gamm*beta. We interpolate the dEdX tables
                 # stored for protons to different energy grids.
                 # Compute beta*gamma from kinetic energy
-                betagamma_p = np.sqrt((self._energy_grid.c + p.mass)**2 - p.mass**2)/p.mass 
+                betagamma_p = np.sqrt(
+                    (self._energy_grid.c + p.mass)**2 - p.mass**2) / p.mass
                 p.dEdX = -np.exp(contloss_db.generic_spl(np.log(betagamma_p)))
                 p.has_contloss = True
 
@@ -899,10 +900,10 @@ class ParticleManager(object):
 
         for p in parent_list:
             if (p, child_pdg, alias_name,
-                    from_interactions) in self._tracking_requested:
+                    from_interactions, include_antiparticle) in self._tracking_requested:
                 continue
             self._tracking_requested.append(
-                (p, child_pdg, alias_name, from_interactions))
+                (p, child_pdg, alias_name, from_interactions, include_antiparticle))
 
         # Check if tracking particle with the alias not yet defined
         # and create new one of necessary
@@ -935,7 +936,7 @@ class ParticleManager(object):
                                     tracking_particle.helicity)
             tracking_particle.unique_pdg_id = unique_child_pdg
             info(10, 'Creating new tracking particle {0} with unique ID {1}'.
-                format(tracking_particle.name, unique_child_pdg))
+                 format(tracking_particle.name, unique_child_pdg))
 
         # Track if attempt to add the tracking particle succeeded at least once
         track_success = False
@@ -996,7 +997,7 @@ class ParticleManager(object):
 
         Args:
 
-            parent_pdg_list (list): PDG IDs of parent particles 
+            parent_pdg_list (list): PDG IDs of parent particles
                                     that leptons originate from
             prefix (list): prefix for each lepton name that will be
                            identified as coming from these parent particles
@@ -1140,11 +1141,11 @@ class ParticleManager(object):
         # Clear tracking_relations for this initialization
         self.tracking_relations = []
 
-        for pid, cid, alias, int_dec in self._tracking_requested:
+        for pid, cid, alias, int_dec, incl_anti in self._tracking_requested:
             if pid not in self.pdg2pref:
                 info(15, 'Can not restore {0}, since not in particle list.')
                 continue
-            self.add_tracking_particle([pid], cid, alias, int_dec)
+            self.add_tracking_particle([pid], cid, alias, int_dec, incl_anti)
 
     def _init_default_tracking(self):
         """Add default tracking particles for leptons from pi, K, and mu"""
