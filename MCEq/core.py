@@ -50,7 +50,7 @@ class MCEqRun(object):
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         # Save atmospheric parameters
-        self.density_config = kwargs.pop('density_model', config.density_model)
+        self.density_model = kwargs.pop('density_model', config.density_model)
         self.theta_deg = theta_deg
 
         #: Interface to interaction tables of the HDF5 database
@@ -618,7 +618,7 @@ class MCEqRun(object):
 
         self._phi0[self.pman[pdg_id].lidx:self.pman[pdg_id].uidx] += spectrum
 
-    def set_density_model(self, density_config):
+    def set_density_model(self, density_model_or_config):
         """Sets model of the atmosphere.
 
         To choose, for example, a CORSIKA parametrization for the Southpole in January,
@@ -629,21 +629,21 @@ class MCEqRun(object):
         More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
 
-        From version 1.2 and above, the `density_config` parameter can be a reference to
+        From version 1.2 and above, the `density_model_or_config` parameter can be a reference to
         an instance of a density class directly. The class has to be derived either from
         :class:`MCEq.geometry.density_profiles.EarthsAtmosphere` or
         :class:`MCEq.geometry.density_profiles.GeneralizedTarget`.
 
         Args:
-          density_config (tuple of strings): (parametrization type, arguments)
+          density_model_or_config (obj or tuple of strings): (parametrization type, arguments)
         """
         import MCEq.geometry.density_profiles as dprof
 
         # Check if string arguments or an instance of the density class is provided
-        if not isinstance(density_config, (dprof.EarthsAtmosphere,
+        if not isinstance(density_model_or_config, (dprof.EarthsAtmosphere,
                                            dprof.GeneralizedTarget)):
 
-            base_model, model_config = density_config
+            base_model, model_config = density_model_or_config
 
             available_models = [
                 'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
@@ -671,15 +671,16 @@ class MCEqRun(object):
                 self.density_model = dprof.GeneralizedTarget()
             else:
                 raise Exception('Unknown atmospheric base model.')
-            self.density_config = density_config
-
         else:
-            self.density_model = density_config
-            self.density_config = density_config
+            self.density_model = density_model_or_config
 
         if self.theta_deg is not None and isinstance(
                 self.density_model, dprof.EarthsAtmosphere):
-            self.set_theta_deg(self.theta_deg)
+            if self.theta_deg is None:
+                info(1, 'Using default zenith angle theta=0.')
+                self.set_theta_deg(0)
+            else:
+                self.set_theta_deg(self.theta_deg)
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
         else:
@@ -954,7 +955,8 @@ class MCEqRun(object):
         return (self.n_particles('e+', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff) +
                 self.n_particles('e-', grid_idx=grid_idx, min_energy_cutoff=min_energy_cutoff))
 
-    def z_factor(self, projectile_pdg, secondary_pdg, definition='primary_e'):
+    def z_factor(self, projectile_pdg, secondary_pdg,
+                 definition='primary_e', min_energy=.3, use_cs_scaling=True):
         """Energy dependent Z-factor according to Thunman et al. (1996)"""
 
         proj = self.pman[projectile_pdg]
@@ -980,24 +982,36 @@ class MCEqRun(object):
         proj_cs = proj.inel_cross_section()
         zfac = np.zeros_like(self.e_grid)
 
+        if config.has_cuda:
+            import cupy
+            smat = cupy.asnumpy(smat)
+            proj_cs = cupy.asnumpy(proj_cs)
         # Definition wrt CR energy (different from Thunman) on x-axis
         if definition == 'primary_e':
-            min_energy = 2.
             for p_eidx, e in enumerate(self.e_grid):
                 if e < min_energy:
                     min_idx = p_eidx + 1
                     continue
+                nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx:p_eidx + 1]
+                if use_cs_scaling:
+                    cs_fac = proj_cs[p_eidx] / proj_cs[min_idx:p_eidx + 1]
+                else:
+                    cs_fac = 1.
                 zfac[p_eidx] = np.sum(
-                    smat[min_idx:p_eidx + 1, p_eidx] * nuc_flux[p_eidx] /
-                    nuc_flux[min_idx:p_eidx + 1] * proj_cs[p_eidx] /
-                    proj_cs[min_idx:p_eidx + 1])
+                    smat[min_idx:p_eidx + 1, p_eidx] * nuc_fac * cs_fac)
             return zfac
         else:
             # Like in Thunman et al. 1996
-            for p_eidx, _ in enumerate(self.e_grid):
-                zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] *
-                                      nuc_flux[p_eidx:] / nuc_flux[p_eidx] *
-                                      proj_cs[p_eidx:] / proj_cs[p_eidx])
+            for p_eidx, e in enumerate(self.e_grid):
+                if e < min_energy:
+                    min_idx = p_eidx + 1
+                    continue
+                nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx:p_eidx + 1]
+                if use_cs_scaling:
+                    cs_fac = proj_cs[p_eidx] / proj_cs[min_idx:p_eidx + 1]
+                else:
+                    cs_fac = 1.
+                zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
             return zfac
 
     def decay_z_factor(self, parent_pdg, child_pdg):
