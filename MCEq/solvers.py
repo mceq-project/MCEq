@@ -60,25 +60,26 @@ class CUDASparseContext(object):
         try:
             import cupy as cp
             import cupyx.scipy as cpx
-            from cupy.cusparse import csrmv
+            from cupy.cusparse import spmv
             self.cp = cp
             self.cpx = cpx
-            self.cubl = cp.cuda.cublas
-            self.csrmv = csrmv
         except ImportError:
             raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
                             "installed.\nCan not use GPU.")
 
         cp.cuda.Device(config.cuda_gpu_id).use()
-        self.cubl_handle = self.cubl.create()
         self.set_matrices(int_m, dec_m)
 
     def set_matrices(self, int_m, dec_m):
         """Upload sparce matrices to GPU memory"""
-        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=config.floatlen)
-        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=config.floatlen)
-        self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0],
-                                          dtype=config.floatlen)
+        if self.cpx.sparse.isspmatrix_csr(int_m):
+            self.cu_int_m = int_m
+        else:
+            self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=config.floatlen)
+        if self.cpx.sparse.isspmatrix_csr(dec_m):
+            self.cu_dec_m = dec_m
+        else:
+            self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=config.floatlen)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -106,22 +107,9 @@ class CUDASparseContext(object):
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        self.cu_delta_phi = self.cu_int_m.dot(self.cu_curr_phi)
-        self.cu_delta_phi += rho_inv * self.cu_dec_m.dot(self.cu_curr_phi)
-        self.cu_curr_phi += dX * self.cu_delta_phi
-        # self.csrmv(a=self.cu_int_m,
-        #             x=self.cu_curr_phi,
-        #             y=self.cu_delta_phi,
-        #             alpha=1.,
-        #             beta=0.)
-        # self.csrmv(a=self.cu_dec_m,
-        #             x=self.cu_curr_phi,
-        #             y=self.cu_delta_phi,
-        #             alpha=rho_inv,
-        #             beta=1.)
-        # self.cubl.saxpy(self.cubl_handle, self.cu_delta_phi.shape[0], dX,
-        #                 self.cu_delta_phi.data.ptr, 1,
-        #                 self.cu_curr_phi.data.ptr, 1)
+        cu_delta_phi = self.cu_int_m.dot(self.cu_curr_phi)
+        cu_delta_phi += rho_inv * self.cu_dec_m.dot(self.cu_curr_phi)
+        self.cu_curr_phi += dX * cu_delta_phi
 
 
 def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
@@ -227,7 +215,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     phi = npphi.ctypes.data_as(POINTER(fl_pr))
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
-
+    
     trans = byref(c_char(b'n'))
     npmatd = np.chararray(6)
     npmatd[0] = b'G'
