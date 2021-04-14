@@ -105,7 +105,7 @@ kernel_config = "auto"
 cuda_gpu_id = 0
 
 #: Floating point precision (default 32-bit 'float')
-floatlen = 'float64'
+floatlen = 'float32'
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
