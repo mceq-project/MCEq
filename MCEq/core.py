@@ -100,7 +100,7 @@ class MCEqRun(object):
 
         # Set atmosphere and geometry
         self.integration_path, self.int_grid, self.grid_var = None, None, None
-        self.set_density_model(self.density_config)
+        self.set_density_model(self.density_model)
 
         # Set initial flux condition
         if primary_model is not None:
