@@ -208,6 +208,12 @@ adv_set = {
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
 
+    #: repair DPMJET-III K0S/L: due to a bug in matrix generation the
+    # matrices are not properly populated. As an intermediate fix, K0S/L
+    # are approximated from a mixture of K+,K- distributions. In future
+    # DPMEJET versions, this bug will be resolved and the parameter is temporal.
+    "fix_dpmjet_neutral_kaons": True,
+
     #: Disable resonance/prompt contribution (this group of options
     #: is either obsolete or needs maintenance.)
     #: "disable_resonance_decay" : False,

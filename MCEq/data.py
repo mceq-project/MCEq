@@ -552,6 +552,7 @@ class Interactions(object):
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
+        from itertools import product
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
@@ -581,6 +582,23 @@ class Interactions(object):
                 p for p in self.parents
                 if p[0] in config.adv_set['allowed_projectiles']
             ]
+        
+        if config.adv_set["fix_dpmjet_neutral_kaons"] and 'DPMJET' in self.iam:
+            # Fix bug in DPMJET-III K0 production matrices
+            # The numbers for the mixture of K= and K- are obtained
+            # from fitting the true zfactors for DPMJET-III with
+            # a sum of K+ and K-. The different values are expected
+            # from quark counting rules. This bug will be resolved
+            # in future versions.
+            for proj in [2212, 2112]:
+                info(3, 'Applying fix for neutral kaons in DPMJET.')
+                self.index_d[((proj, 0), (310, 0))] = 0.5 * (
+                    0.84 * self.index_d[((proj, 0), (321, 0))] +
+                    1.09 * self.index_d[((proj, 0), (-321, 0))]
+                )
+                self.index_d[((proj, 0), (130, 0))] = np.copy(
+                    self.index_d[((proj, 0), (310, 0))]
+                )
 
         self.particles = []
         for p in list(self.relations):
