@@ -1,12 +1,20 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.3.4:
+
+- DPMJET-III K0 bug discovered and worked around. K0S/L matrices were not generated properly. The workaround is to construct K0 distributions from a sum of K+ and K- with proportions determined from a fit of the Zfactors to the true K0S/L distributions. K0S is equal to K0L by definition in all of the models.
+- Source dist fix. Package should now compile under Python 3.9 or other custom platforms easily via pip.
+
+
 Version 1.3.3:
+
 - Initialization moved almost entirely to GPU if available, matrix construction may be x2-x3 faster before
 - Config defaults "auto" setting for `kernel_config` and respects other custom settings
 - GPU sparse solver simplified
 - Floating point precision defaults always to fp32 (see `config.floatlen`). MKL doesn't work with fp32 for some reason.
 
 Version 1.3.1:
+
 - Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen | iron`
 - Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`
 - Update to air interaction cross section, which is now consistently computed for mixture of N, O and Ar
@@ -19,8 +27,8 @@ Version 1.3.1:
 - Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
 - deprecation warning forced for config access via dictionary (instead of module)
 
-
 Version 1.2.1:
+
 - Some cleanup and new convenience functions on MCEqParticle
 - Autodetection of leading eigenvalues setting 
 - Mixing energy more robustly calculated
@@ -29,6 +37,7 @@ Version 1.2.1:
 - get_AZN function fixed to return integers only (thx Max)
 
 Version 1.2.0:
+
 - New data tables: physics will be affected mostly low energies < 30 GeV and minor
 corrections can be visible for particle ratios at higher energies.
 [See dedicated doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
@@ -74,20 +83,24 @@ may have generated some confusion. Other changes include:
 - tests for atmospheres
 
 Version 1.0.9:
+
 - disable_decays flag in advanced options fixed
 - threshold energy not used in n_mu, n_e
 - new generic function 'n_particles' for arbitrary particle types
 - new config option dedx_material
 
 Version 1.0.8:
+
 - Fixed a Python3 compatibility issue in density profiles
 - Cross checked and corrected the functionality of "disabled particles" in config file
 - Version tagged for paper submission
 
 Version 1.0.6 and 1.0.7:
+
 - A few typos corrected
 
 Version 1.0.5:
+
 - Check added to make sure depth grids are strictly increasing
 - Tutorial updated to reflect this fact
 - New advanced variable in config "stability_margin"

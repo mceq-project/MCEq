@@ -72,7 +72,10 @@ setup(
         'MCEq.geometry.nrlmsise00', 'MCEq.geometry.corsikaatm'],
     setup_requires=[] + pytest_runner,
     package_data={
-        'MCEq': ['data/README.md'],
+        'MCEq': [
+            'data/README.md',
+            'geometry/nrlmsise00/nrlmsise-00.h'
+        ],
     },
     install_requires=[
         'six',
