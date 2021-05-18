@@ -185,8 +185,8 @@ class HDF5Backend(object):
         if config.e_min is not None:
             min_idx = slice0 = np.argmin(np.abs(e_centers - config.e_min))
         if config.e_max is not None:
-            max_idx = slice1 = np.argmin(
-                np.abs(e_centers - config.e_max)) + 1
+            e_max = min(1e15, config.e_max)
+            max_idx = slice1 = np.argmin(np.abs(e_centers - e_max)) + 1
         return min_idx, max_idx, slice(slice0, slice1)
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
