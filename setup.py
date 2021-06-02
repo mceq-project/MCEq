@@ -74,7 +74,6 @@ setup(
     package_data={
         'MCEq': [
             'data/README.md',
-            'geometry/nrlmsise00/nrlmsise-00.h',
             'geometry/nrlmsise00/nrlmsise-00.h'
         ],
     },
