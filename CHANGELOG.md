@@ -1,4 +1,9 @@
-Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+
+Version 1.3.5:
+
+- Code formatter changed to black
+- Additional functions to help returning total momentum or energy spectra (instead of kinetic)
 
 Version 1.3.4:
 
