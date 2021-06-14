@@ -1,4 +1,3 @@
-
 from __future__ import print_function
 from collections import namedtuple
 import numpy as np
@@ -12,20 +11,21 @@ _xmat = None
 
 _target_masses = {
     # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    'air': sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
-    'water': 1. / 3. * (2. + 16.),
-    'ice': 1. / 3. * (2. + 16.),
-    'co2': 1. / 3. * (12. + 2. * 16.),
-    'rock': 22.,
-    'hydrogen': 1.,
-    'iron': 26.
+    "air": sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    "water": 1.0 / 3.0 * (2.0 + 16.0),
+    "ice": 1.0 / 3.0 * (2.0 + 16.0),
+    "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
+    "rock": 22.0,
+    "hydrogen": 1.0,
+    "iron": 26.0,
 }
 
 
 def normalize_hadronic_model_name(name):
     import re
+
     """Converts hadronic model name into standard form"""
-    return re.sub('[-.]', '', name).upper()
+    return re.sub("[-.]", "", name).upper()
 
 
 def average_A_target(mat=config.A_target):
@@ -36,27 +36,26 @@ def average_A_target(mat=config.A_target):
     Other media supported are co2, rock, ice, water and hydrogen.
     """
 
-    if isinstance(mat, str) and mat.lower() == 'auto':
+    if isinstance(mat, str) and mat.lower() == "auto":
         return _target_masses[config.interaction_medium.lower()]
     elif isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
     elif isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
     else:
-        raise Exception('mceq_config.A_target is expected to be a ' +
-                        'number or one of {0} or "auto"'.format(
-                            ', '.join(_target_masses.keys())))
+        raise Exception(
+            "mceq_config.A_target is expected to be a "
+            + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+        )
 
 
 def theta_deg(cos_theta):
-    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees.
-    """
+    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
     return np.rad2deg(np.arccos(cos_theta))
 
 
 def theta_rad(theta):
-    """Converts :math:`\\theta` from rad to degrees.
-    """
+    """Converts :math:`\\theta` from rad to degrees."""
     return np.deg2rad(theta)
 
 
@@ -67,8 +66,8 @@ def gen_xmat(energy_grid):
     if _xmat is None or _xmat.shape != dims:
         _xmat = np.zeros(dims)
         for eidx in range(energy_grid.d):
-            xvec = energy_grid.c[:eidx + 1] / energy_grid.c[eidx]
-            _xmat[:eidx + 1, eidx] = xvec
+            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
+            _xmat[: eidx + 1, eidx] = xvec
     return _xmat
 
 
@@ -82,10 +81,11 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     ls = len(str_list)
     n_full_length = int(ls / n_cols)
     n_rest = ls % n_cols
-    print_str = '\n'
+    print_str = "\n"
     for i in range(n_full_length):
-        print_str += ('"{:}", ' * n_cols).format(*str_list[i * n_cols:(i + 1) *
-                                                           n_cols]) + '\n'
+        print_str += ('"{:}", ' * n_cols).format(
+            *str_list[i * n_cols : (i + 1) * n_cols]
+        ) + "\n"
     print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
 
     print(print_str.strip()[:-1])
@@ -94,8 +94,9 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
 def is_charm_pdgid(pdgid):
     """Returns True if particle ID belongs to a heavy (charm) hadron."""
 
-    return ((abs(pdgid) > 400 and abs(pdgid) < 500)
-            or (abs(pdgid) > 4000 and abs(pdgid) < 5000))
+    return (abs(pdgid) > 400 and abs(pdgid) < 500) or (
+        abs(pdgid) > 4000 and abs(pdgid) < 5000
+    )
 
 
 def _get_closest(value, in_list):
@@ -203,7 +204,7 @@ def caller_name(skip=2):
     start = 0 + skip
 
     if len(stack) < start + 1:
-        return ''
+        return ""
 
     parentframe = stack[start][0]
 
@@ -213,21 +214,21 @@ def caller_name(skip=2):
         module = inspect.getmodule(parentframe)
         # `modname` can be None when frame is executed directly in console
         if module:
-            name.append(module.__name__ + '.')
+            name.append(module.__name__ + ".")
 
     # detect classname
-    if 'self' in parentframe.f_locals:
+    if "self" in parentframe.f_locals:
         # I don't know any way to detect call from the object method
         # there seems to be no way to detect static method call - it will
         # be just a function call
 
-        name.append(parentframe.f_locals['self'].__class__.__name__ + '::')
+        name.append(parentframe.f_locals["self"].__class__.__name__ + "::")
 
     codename = parentframe.f_code.co_name
-    if codename != '<module>':  # top level usually
-        name.append(codename + '(): ')  # function or a method
+    if codename != "<module>":  # top level usually
+        name.append(codename + "(): ")  # function or a method
     else:
-        name.append(': ')  # If called from module scope
+        name.append(": ")  # If called from module scope
 
     del parentframe
     return "".join(name)
@@ -251,21 +252,21 @@ def info(min_dbg_level, *message, **kwargs):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-    condition = kwargs.pop('condition', min_dbg_level <= config.debug_level)
+    condition = kwargs.pop("condition", min_dbg_level <= config.debug_level)
     # Dont' process the if the function if nothing will happen
     if not (condition or config.override_debug_fcn):
         return
 
-    blank_caller = kwargs.pop('blank_caller', False)
-    no_caller = kwargs.pop('no_caller', False)
+    blank_caller = kwargs.pop("blank_caller", False)
+    no_caller = kwargs.pop("no_caller", False)
     if config.override_debug_fcn and min_dbg_level < config.override_max_level:
-        fcn_name = caller_name(skip=2).split('::')[-1].split('():')[0]
+        fcn_name = caller_name(skip=2).split("::")[-1].split("():")[0]
         if fcn_name in config.override_debug_fcn:
             min_dbg_level = 0
 
     if condition and min_dbg_level <= config.debug_level:
         message = [str(m) for m in message]
-        cname = caller_name() if not no_caller else ''
+        cname = caller_name() if not no_caller else ""
         if blank_caller:
-            cname = len(cname) * ' '
+            cname = len(cname) * " "
         print(cname + " ".join(message))

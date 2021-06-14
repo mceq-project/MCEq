@@ -1,4 +1,3 @@
-
 import numpy as np
 import mceq_config as config
 from MCEq.misc import info
@@ -27,9 +26,10 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     ric = rho_inv
     phc = phi
 
-    dXaccum = 0.
+    dXaccum = 0.0
 
     from time import time
+
     start = time()
 
     for step in range(nsteps):
@@ -37,14 +37,16 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
         dXaccum += dxc[step]
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
+    )
 
     return phc, np.array(grid_sol)
 
@@ -61,11 +63,14 @@ class CUDASparseContext(object):
             import cupy as cp
             import cupyx.scipy as cpx
             from cupy.cusparse import spmv
+
             self.cp = cp
             self.cpx = cpx
         except ImportError:
-            raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
-                            "installed.\nCan not use GPU.")
+            raise Exception(
+                "solv_CUDA_sparse(): Numbapro CUDA libaries not "
+                + "installed.\nCan not use GPU."
+            )
 
         cp.cuda.Device(config.cuda_gpu_id).use()
         self.set_matrices(int_m, dec_m)
@@ -136,6 +141,7 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     grid_step = 0
 
     from time import time
+
     start = time()
     if len(grid_idcs) > 0:
         c.alloc_grid_sol(phi.shape[0], len(grid_idcs))
@@ -143,14 +149,16 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     for step in range(nsteps):
         c.solve_step(rho_inv[step], dX[step])
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             c.dump_sol()
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
+    )
 
     return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
 
@@ -183,8 +191,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     gemv = None
     axpy = None
     np_fl = None
-    if config.floatlen == 'float64':
+    if config.floatlen == "float64":
         from ctypes import c_double as fl_pr
+
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_dcsrmv
         # dense vector + dense vector
@@ -192,12 +201,12 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         np_fl = np.float64
     else:
         from ctypes import c_float as fl_pr
+
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_dcsrmv
         # dense vector + dense vector
         axpy = mkl.cblas_daxpy
         np_fl = np.float32
-    
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     print(type(int_m.data))
@@ -215,43 +224,68 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     phi = npphi.ctypes.data_as(POINTER(fl_pr))
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
-    
-    trans = byref(c_char(b'n'))
+
+    trans = byref(c_char(b"n"))
     npmatd = np.chararray(6)
-    npmatd[0] = b'G'
-    npmatd[3] = b'C'
+    npmatd[0] = b"G"
+    npmatd[3] = b"C"
     matdsc = npmatd.ctypes.data_as(POINTER(c_char))
     m = byref(c_int(int_m.shape[0]))
-    cdzero = byref(fl_pr(0.))
-    cdone = byref(fl_pr(1.))
+    cdzero = byref(fl_pr(0.0))
+    cdone = byref(fl_pr(1.0))
     cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
 
     from time import time
+
     start = time()
 
     for step in range(nsteps):
         # delta_phi = int_m.dot(phi)
-        gemv(trans, m, m, cdone,
-             matdsc, int_m_data, int_m_ci, int_m_pb, int_m_pe, phi,
-             cdzero, delta_phi)
+        gemv(
+            trans,
+            m,
+            m,
+            cdone,
+            matdsc,
+            int_m_data,
+            int_m_ci,
+            int_m_pb,
+            int_m_pe,
+            phi,
+            cdzero,
+            delta_phi,
+        )
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(trans, m, m, byref(fl_pr(rho_inv[step])),
-             matdsc, dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe, phi,
-             cdone, delta_phi)
+        gemv(
+            trans,
+            m,
+            m,
+            byref(fl_pr(rho_inv[step])),
+            matdsc,
+            dec_m_data,
+            dec_m_ci,
+            dec_m_pb,
+            dec_m_pe,
+            phi,
+            cdone,
+            delta_phi,
+        )
         # phi = delta_phi * dX + phi
         axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
+    )
 
     return npphi, np.asarray(grid_sol)
 

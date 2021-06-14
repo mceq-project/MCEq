@@ -3,6 +3,7 @@ import sys
 import platform
 import os.path as path
 import warnings
+
 base_path = path.dirname(path.abspath(__file__))
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
@@ -21,7 +22,7 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = path.join(base_path, 'MCEq', 'data')
+data_dir = path.join(base_path, "MCEq", "data")
 
 #: File name of the MCEq database
 mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"
@@ -38,7 +39,7 @@ em_db_fname = "mceq_db_EM_Tsai_Full_v131.h5"
 #: 'total energy' else 'kinetic energy'
 return_as = "kinetic energy"
 #: Atmospheric model in the format: (model, (arguments))
-density_model = ('CORSIKA', ('BK_USStd', None))
+density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC',('SouthPole','January'))
 #: density_model = ('GeneralizedTarget', None)
 
@@ -50,22 +51,22 @@ prompt_ctau = 0.123
 max_density = 0.001225
 #: Material for interaction lengths, ionization and radiation (=continuous) loss terms
 #: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen', 'iron'
-interaction_medium = 'air'
+interaction_medium = "air"
 
 #: Average target mass (for interaction length calculations)
 #: Change parameter only in combination with interaction model setting.
 #: By default, secondary particle production matrices are calculated for air targets
 #: If set to 'auto', use default according to the "interaction_medium" settings below
-A_target = 'auto'
+A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6391.e5  # Earth radius in cm
-h_obs = 0.  # observation level in cm
+r_E = 6391.0e5  # Earth radius in cm
+h_obs = 0.0  # observation level in cm
 h_atm = 112.8e5  # top of the atmosphere in cm
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]
-len_target = 1000.
+len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
@@ -81,7 +82,7 @@ except_out_of_bounds = False
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
-e_min = .1
+e_min = 0.1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
@@ -105,22 +106,22 @@ kernel_config = "auto"
 cuda_gpu_id = 0
 
 #: Floating point precision (default 32-bit 'float')
-floatlen = 'float32'
+floatlen = "float32"
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
 #: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL. 
+#: numpy is linked to MKL.
 mkl_threads = 8
 
 #: parameters for the odepack integrator. More details at
 #: http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
 ode_params = {
-    'name': 'lsoda',
-    'method': 'bdf',
-    'nsteps': 1000,
+    "name": "lsoda",
+    "method": "bdf",
+    "nsteps": 1000,
     # 'max_step': 10.0,
-    'rtol': 0.01
+    "rtol": 0.01,
 }
 
 # =========================================================================
@@ -149,13 +150,13 @@ hybrid_crossover = 0.5
 #: Maximal integration step dX in g/cm2. No limit necessary in most cases,
 #: use for debugging purposes when searching for stability issues, especially
 #: if e_min is < 1 GeV.
-dXmax = 1.
+dXmax = 1.0
 
-#: Minimal CR nucleon energy in primary model. If (low energy) 
+#: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
 #: or cross sections, nucleons can "drop through" without cascading
 
-minimal_primary_energy = 3.
+minimal_primary_energy = 3.0
 
 #: Enable default tracking particles, such as pi_numu, pr_mu+, etc.
 #: If only total fluxes are of interest, disable this feature to gain
@@ -169,7 +170,7 @@ enable_energy_loss = True
 generic_losses_all_charged = True
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
-#: electromagnetic cross sections available 
+#: electromagnetic cross sections available
 enable_cont_rad_loss = True
 
 #: Fall-back to air production matrices if medium not included in data file
@@ -204,20 +205,16 @@ assume_nucleon_interactions_for_exotics = True
 adv_set = {
     #: Disable particle production by all hadrons, except nucleons
     "disable_interactions_of_unstable": False,
-
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
-
     #: repair DPMJET-III K0S/L: due to a bug in matrix generation the
     # matrices are not properly populated. As an intermediate fix, K0S/L
     # are approximated from a mixture of K+,K- distributions. In future
     # DPMEJET versions, this bug will be resolved and the parameter is temporal.
     "fix_dpmjet_neutral_kaons": True,
-
     #: Disable resonance/prompt contribution (this group of options
     #: is either obsolete or needs maintenance.)
     #: "disable_resonance_decay" : False,
-
     #: Allow only those particles to be projectiles (incl. anti-particles)
     #: Faster initialization,
     #: For inclusive lepton flux computations:
@@ -225,33 +222,24 @@ adv_set = {
     #: Might be different for yields (set_single_primary_particle)
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
-
-    #: Disable particle (production) 
+    #: Disable particle (production)
     "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
-
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
-
     #: Difficult to explain parameter
-    'disable_leading_mesons': False,
-
+    "disable_leading_mesons": False,
     #: Do not apply mixing to these particles
     "exclude_from_mixing": [13],
-
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
-
     #: Force particles to be treated as resonance
     "force_resonance": [],
-
     #: Disable mixing between resonance approx. and full propagation
-    "no_mixing": False
+    "no_mixing": False,
 }
 
 #: Particles for compact mode
-standard_particles = [
-    11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431
-]
+standard_particles = [11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431]
 
 #: Anti-particles
 standard_particles += [-pid for pid in standard_particles]
@@ -268,13 +256,13 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: determine shared library extension and MKL path
 pf = platform.platform()
 
-if 'Linux' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.so')
-elif 'Darwin' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.dylib')
+if "Linux" in pf:
+    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.so")
+elif "Darwin" in pf:
+    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.dylib")
 else:
     # Windows case
-    mkl_path = path.join(sys.prefix, 'Library', 'bin', 'mkl_rt.dll')
+    mkl_path = path.join(sys.prefix, "Library", "bin", "mkl_rt.dll")
 
 # mkl library handler
 mkl = None
@@ -288,6 +276,7 @@ else:
 # Look for cupy module
 try:
     import cupy
+
     has_cuda = True
 except ImportError:
     has_cuda = False
@@ -295,12 +284,12 @@ except ImportError:
 # CUDA is usually fastest, then MKL. Fallback to numpy.
 if kernel_config == "auto":
     if has_cuda:
-        kernel_config = 'cuda'
+        kernel_config = "cuda"
     elif has_mkl:
-        kernel_config = 'mkl'
-        floatlen = 'float64'
+        kernel_config = "mkl"
+        floatlen = "float64"
     else:
-        kernel_config = 'numpy'
+        kernel_config = "numpy"
 else:
     if kernel_config.lower() == "cuda" and not has_cuda:
         raise Exception("CUDA unavailable. Make sure cupy is installed.")
@@ -308,21 +297,23 @@ else:
         raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
 
 if debug_level >= 2 and kernel_config == "auto":
-    print('Auto-detected {0} solver.'.format(kernel_config))
+    print("Auto-detected {0} solver.".format(kernel_config))
+
 
 def set_mkl_threads(nthreads):
     global mkl_threads, mkl
     from ctypes import cdll, c_int, byref
+
     mkl = cdll.LoadLibrary(mkl_path)
     # Set number of threads
     mkl_threads = nthreads
     mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     if debug_level >= 5:
-        print('MKL threads limited to {0}'.format(nthreads))
+        print("MKL threads limited to {0}".format(nthreads))
+
 
 if has_mkl:
     set_mkl_threads(mkl_threads)
-
 
 
 # Compatibility layer for dictionary access to config attributes
@@ -338,17 +329,20 @@ class MCEqConfigCompatibility(dict):
 
     def __init__(self, namespace):
         self.__dict__.update(namespace)
-        warn_str = ("Config dictionary is deprecated. " +
-                    "Use 'import mceq_config as config' instead of " +
-                    "'from mceq_config import config'; and " + 
-                    "'config.variable instead of config['variable']")
+        warn_str = (
+            "Config dictionary is deprecated. "
+            + "Use 'import mceq_config as config' instead of "
+            + "'from mceq_config import config'; and "
+            + "'config.variable instead of config['variable']"
+        )
         warnings.warn(warn_str, FutureWarning)
 
     def __setitem__(self, key, value):
         key = key.lower()
         if key not in self.__dict__:
-            raise Exception('Unknown config key', key)
+            raise Exception("Unknown config key", key)
         return super(MCEqConfigCompatibility, self).__setitem__(key, value)
+
 
 config = MCEqConfigCompatibility(globals())
 
@@ -364,12 +358,16 @@ def _download_file(url, outfile):
     r = requests.get(url, stream=True)
 
     # Total size in bytes.
-    total_size = int(r.headers.get('content-length', 0))
+    total_size = int(r.headers.get("content-length", 0))
     block_size = 1024 * 1024
     wrote = 0
-    with open(outfile, 'wb') as f:
-        for data in tqdm(r.iter_content(block_size), total=math.ceil(total_size // block_size),
-                         unit='MB', unit_scale=True):
+    with open(outfile, "wb") as f:
+        for data in tqdm(
+            r.iter_content(block_size),
+            total=math.ceil(total_size // block_size),
+            unit="MB",
+            unit_scale=True,
+        ):
             wrote = wrote + len(data)
             f.write(data)
     if total_size != 0 and wrote != total_size:
@@ -377,17 +375,18 @@ def _download_file(url, outfile):
 
 
 # Download database file from github
-base_url = 'https://github.com/afedynitch/MCEq/releases/download/'
-release_tag = 'builds_on_azure/'
+base_url = "https://github.com/afedynitch/MCEq/releases/download/"
+release_tag = "builds_on_azure/"
 url = base_url + release_tag + mceq_db_fname
 if not path.isfile(path.join(data_dir, mceq_db_fname)):
-    print('Downloading for mceq database file {0}.'.format(mceq_db_fname))
+    print("Downloading for mceq database file {0}.".format(mceq_db_fname))
     if debug_level >= 2:
         print(url)
     _download_file(url, path.join(data_dir, mceq_db_fname))
 
-for fn in ['mceq_db_lext_dpm191.h5', 'mceq_db_lext_dpm191_v12.h5']:
+for fn in ["mceq_db_lext_dpm191.h5", "mceq_db_lext_dpm191_v12.h5"]:
     if path.isfile(path.join(data_dir, fn)):
         import os
-        print('Removing previous database {0}.'.format(fn))
+
+        print("Removing previous database {0}.".format(fn))
         os.unlink(path.join(data_dir, fn))

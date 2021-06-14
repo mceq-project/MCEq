@@ -21,6 +21,7 @@ from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
 from six import with_metaclass
 
+
 class CharmModel(with_metaclass(ABCMeta)):
     """Abstract class, from which implemeted charm models can inherit.
 
@@ -44,8 +45,9 @@ class CharmModel(with_metaclass(ABCMeta)):
         Raises:
             NotImplementedError:
         """
-        raise NotImplementedError("CharmModel::get_yield_matrix(): " +
-                                  "Base class called.")
+        raise NotImplementedError(
+            "CharmModel::get_yield_matrix(): " + "Base class called."
+        )
 
 
 class MRS_charm(CharmModel):
@@ -85,9 +87,9 @@ class MRS_charm(CharmModel):
     """
 
     #: fractions of cross-section wrt to D0 cross-section
-    cs_scales = {421: 1., 411: 0.5, 431: 0.15, 4122: 0.45}
+    cs_scales = {421: 1.0, 411: 0.5, 431: 0.15, 4122: 0.45}
     #: D0 cross-section wrt to the ccbar cross-section
-    D0_scale = 1. / 2.1
+    D0_scale = 1.0 / 2.1
 
     #: hadron projectiles, which are allowed to produce charm
     allowed_proj = [2212, -2212, 2112, -2112, 211, -211, 321, -321]
@@ -99,11 +101,11 @@ class MRS_charm(CharmModel):
 
         # inverted fragmentation functions
         self.lambda_c_frag = lambda xhad: 1 / 1.47 * xhad
-        self.d_frag = lambda xhad: 4. / 3. * xhad
+        self.d_frag = lambda xhad: 4.0 / 3.0 * xhad
 
         self.e_grid = e_grid
         self.d = e_grid.size
-        self.no_prod = np.zeros(self.d**2).reshape(self.d, self.d)
+        self.no_prod = np.zeros(self.d ** 2).reshape(self.d, self.d)
         self.siginel = csm.get_cs(2212, mbarn=True)
 
     def sigma_cc(self, E):
@@ -114,10 +116,10 @@ class MRS_charm(CharmModel):
           limitations of the parameterization.
         """
         from scipy.integrate import quad
+
         E = np.asarray(E)
         if E.size > 1:
-            return 2 * np.array(
-                [quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E])
+            return 2 * np.array([quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E])
         else:
             return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
 
@@ -138,19 +140,18 @@ class MRS_charm(CharmModel):
         beta = 0.05 - 0.016 * np.log(E / 10e4)
         n, A = None, None
         if E < 1e4:
-            return 0.
+            return 0.0
         elif E >= 1e4 and E < 1e8:
             n = 7.6 + 0.025 * np.log(E / 1e4)
-            A = 140 + (11. * np.log(E / 1e2))**1.65
+            A = 140 + (11.0 * np.log(E / 1e2)) ** 1.65
         elif E >= 1e8 and E <= 1e11:
             n = 7.6 + 0.012 * np.log(E / 1e4)
-            A = 4100. + 245. * np.log(E / 1e8)
+            A = 4100.0 + 245.0 * np.log(E / 1e8)
         else:
             raise Exception("MRS_charm()::out of range")
         res = np.zeros_like(x)
         ran = (x > 0.01) & (x < 0.7)
-        res[ran] = np.array(A * x[ran]**
-                            (beta - 1.) * (1 - x[ran]**1.2)**n / 1e3)
+        res[ran] = np.array(A * x[ran] ** (beta - 1.0) * (1 - x[ran] ** 1.2) ** n / 1e3)
         return res
 
     def D_dist(self, x, E, mes):
@@ -196,14 +197,12 @@ class MRS_charm(CharmModel):
         """
         # TODO: Make this function a member of the base class!
 
-        if (proj not in self.allowed_proj) or (
-                abs(sec) not in self.allowed_sec):
+        if (proj not in self.allowed_proj) or (abs(sec) not in self.allowed_sec):
             return self.no_prod
 
         self.xdist = None
 
-        if abs(sec) == 4122 and \
-            ((np.sign(proj) != np.sign(sec)) or abs(proj) < 1000):
+        if abs(sec) == 4122 and ((np.sign(proj) != np.sign(sec)) or abs(proj) < 1000):
             return self.no_prod
         else:
             self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
@@ -216,7 +215,7 @@ class MRS_charm(CharmModel):
         for i, e in enumerate(self.e_grid):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
 
-        info(3, 'returning matrix for ({0},{1})'.format(proj, sec))
+        info(3, "returning matrix for ({0},{1})".format(proj, sec))
 
         return m_out
 
@@ -231,7 +230,7 @@ class MRS_charm(CharmModel):
         """
         import matplotlib.pyplot as plt
 
-        xvec = np.linspace(0.0001, 1., 20)
+        xvec = np.linspace(0.0001, 1.0, 20)
 
         # Energy for plotting inclusive cross-sections
         eprobe = 1e7
@@ -239,44 +238,32 @@ class MRS_charm(CharmModel):
         plt.figure(figsize=(8.5, 4))
         plt.subplot(121)
         plt.semilogy(
-            xvec,
-            xvec * self.dsig_dx(xvec, eprobe),
-            lw=1.5,
-            label=r'$c$-quark')
+            xvec, xvec * self.dsig_dx(xvec, eprobe), lw=1.5, label=r"$c$-quark"
+        )
         plt.semilogy(
-            xvec,
-            xvec * self.D_dist(xvec, eprobe, 421),
-            lw=1.5,
-            label=r'$D^0$')
+            xvec, xvec * self.D_dist(xvec, eprobe, 421), lw=1.5, label=r"$D^0$"
+        )
         plt.semilogy(
-            xvec,
-            xvec * self.D_dist(xvec, eprobe, 411),
-            lw=1.5,
-            label=r'$D^+$')
+            xvec, xvec * self.D_dist(xvec, eprobe, 411), lw=1.5, label=r"$D^+$"
+        )
         plt.semilogy(
-            xvec,
-            xvec * self.D_dist(xvec, eprobe, 431),
-            lw=1.5,
-            label=r'$Ds^+$')
+            xvec, xvec * self.D_dist(xvec, eprobe, 431), lw=1.5, label=r"$Ds^+$"
+        )
         plt.semilogy(
-            xvec,
-            xvec * self.LambdaC_dist(xvec, 1e4),
-            lw=1.5,
-            label=r'$\Lambda_C^+$')
+            xvec, xvec * self.LambdaC_dist(xvec, 1e4), lw=1.5, label=r"$\Lambda_C^+$"
+        )
         plt.legend()
-        plt.xlabel(r'$x_F$')
-        plt.ylabel(r'inclusive $\sigma$ [mb]')
+        plt.xlabel(r"$x_F$")
+        plt.ylabel(r"inclusive $\sigma$ [mb]")
 
         plt.subplot(122)
         evec = np.logspace(4, 11, 100)
         plt.loglog(
-            np.sqrt(evec),
-            self.sigma_cc(evec),
-            lw=1.5,
-            label=r'$\sigma_{c\bar{c}}$')
+            np.sqrt(evec), self.sigma_cc(evec), lw=1.5, label=r"$\sigma_{c\bar{c}}$"
+        )
         plt.legend()
-        plt.xlabel(r'$\sqrt{s}$ [GeV]')
-        plt.ylabel(r'$\sigma_{c\bar{c}}$ [mb]')
+        plt.xlabel(r"$\sqrt{s}$ [GeV]")
+        plt.ylabel(r"$\sigma_{c\bar{c}}$ [mb]")
         plt.tight_layout()
 
 
@@ -318,7 +305,7 @@ class WHR_charm(MRS_charm):
     def __init__(self, e_grid, csm):
         import pickle
 
-        self.sig_table = pickle.load(open('references/logan_charm.ppl', 'rb'))
+        self.sig_table = pickle.load(open("references/logan_charm.ppl", "rb"))
         self.e_idcs = {}
         for i, e in enumerate(e_grid):
             self.e_idcs[e] = i
@@ -336,6 +323,6 @@ class WHR_charm(MRS_charm):
         Returns:
           float: :math:`\\sigma_{c\\bar{c}}` in mb
         """
-        res = self.sig_table[self.e_idcs[E]](x) * 1e-3  #mub -> mb
-        res[res < 0] = 0.
+        res = self.sig_table[self.e_idcs[E]](x) * 1e-3  # mub -> mb
+        res[res < 0] = 0.0
         return res

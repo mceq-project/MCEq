@@ -3,6 +3,7 @@ import mceq_config as config
 if config.kernel_config.lower() == "cuda":
     import cupy
     import cupyx
+
     zeros = cupy.zeros
     ones = cupy.ones
     eye = cupy.eye
@@ -14,6 +15,7 @@ if config.kernel_config.lower() == "cuda":
 else:
     import numpy as np
     from scipy.sparse import csr_matrix
+
     zeros = np.zeros
     ones = np.ones
     eye = np.eye

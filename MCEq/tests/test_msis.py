@@ -1,7 +1,6 @@
 from __future__ import print_function
 
-result_expected = \
-"""6.665177E+05 1.138806E+08 1.998211E+07 4.022764E+05 3.557465E+03 4.074714E-15 3.475312E+04 4.095913E+06 2.667273E+04 1.250540E+03 1.241416E+03 
+result_expected = """6.665177E+05 1.138806E+08 1.998211E+07 4.022764E+05 3.557465E+03 4.074714E-15 3.475312E+04 4.095913E+06 2.667273E+04 1.250540E+03 1.241416E+03 
 3.407293E+06 1.586333E+08 1.391117E+07 3.262560E+05 1.559618E+03 5.001846E-15 4.854208E+04 4.380967E+06 6.956682E+03 1.166754E+03 1.161710E+03 
 1.123767E+05 6.934130E+04 4.247105E+01 1.322750E-01 2.618848E-05 2.756772E-18 2.016750E+04 5.741256E+03 2.374394E+04 1.239892E+03 1.239891E+03 
 5.411554E+07 1.918893E+11 6.115826E+12 1.225201E+12 6.023212E+10 3.584426E-10 1.059880E+07 2.615737E+05 2.819879E-42 1.027318E+03 2.068878E+02 
@@ -89,10 +88,16 @@ ANM 0    0.000e+00   0.000e+00   0.000e+00   0.000e+00   0.000e+00
 RHO      1.261e-03   4.059e-04   1.951e-05   1.295e-06   1.148e-07
 """
 
+
 def test_msis():
-    from ctypes import (c_int, c_double, pointer, byref)
+    from ctypes import c_int, c_double, pointer, byref
     from MCEq.geometry.nrlmsise00.nrlmsise00 import (
-        msis, nrlmsise_output, nrlmsise_input, nrlmsise_flags, ap_array)
+        msis,
+        nrlmsise_output,
+        nrlmsise_input,
+        nrlmsise_flags,
+        ap_array,
+    )
 
     output = [nrlmsise_output() for i in range(17)]
     inp = [nrlmsise_input() for i in range(17)]
@@ -101,7 +106,7 @@ def test_msis():
 
     # Inp values
     for i in range(7):
-        aph.a[i] = c_double(100.)
+        aph.a[i] = c_double(100.0)
 
     flags.switches[0] = c_int(0)
 
@@ -111,51 +116,75 @@ def test_msis():
     for i in range(17):
         inp[i].doy = c_int(172)  # Day of year
         inp[i].year = c_int(0)  # No effect
-        inp[i].sec = c_double(29000.)
-        inp[i].alt = c_double(400.)
-        inp[i].g_lat = c_double(60.)
-        inp[i].g_long = c_double(-70.)
-        inp[i].lst = c_double(16.)
-        inp[i].f107A = c_double(150.)
-        inp[i].f107 = c_double(150.)
-        inp[i].ap = c_double(4.)
+        inp[i].sec = c_double(29000.0)
+        inp[i].alt = c_double(400.0)
+        inp[i].g_lat = c_double(60.0)
+        inp[i].g_long = c_double(-70.0)
+        inp[i].lst = c_double(16.0)
+        inp[i].f107A = c_double(150.0)
+        inp[i].f107 = c_double(150.0)
+        inp[i].ap = c_double(4.0)
 
     inp[1].doy = c_int(81)
-    inp[2].sec = c_double(75000.)
-    inp[2].alt = c_double(1000.)
-    inp[3].alt = c_double(100.)
-    inp[10].alt = c_double(0.)
-    inp[11].alt = c_double(10.)
-    inp[12].alt = c_double(30.)
-    inp[13].alt = c_double(50.)
-    inp[14].alt = c_double(70.)
-    inp[16].alt = c_double(100.)
-    inp[4].g_lat = c_double(0.)
-    inp[5].g_long = c_double(0.)
-    inp[6].lst = c_double(4.)
-    inp[7].f107A = c_double(70.)
-    inp[8].f107 = c_double(180.)
-    inp[9].ap = c_double(40.)
+    inp[2].sec = c_double(75000.0)
+    inp[2].alt = c_double(1000.0)
+    inp[3].alt = c_double(100.0)
+    inp[10].alt = c_double(0.0)
+    inp[11].alt = c_double(10.0)
+    inp[12].alt = c_double(30.0)
+    inp[13].alt = c_double(50.0)
+    inp[14].alt = c_double(70.0)
+    inp[16].alt = c_double(100.0)
+    inp[4].g_lat = c_double(0.0)
+    inp[5].g_long = c_double(0.0)
+    inp[6].lst = c_double(4.0)
+    inp[7].f107A = c_double(70.0)
+    inp[8].f107 = c_double(180.0)
+    inp[9].ap = c_double(40.0)
     inp[15].ap_a = pointer(aph)
     inp[16].ap_a = pointer(aph)
     for i in range(15):
         #     msis.gtd7(byref(inp[i]), byref(flags), byref(output[i]))
-        msis.gtd7_py(inp[i].year, inp[i].doy, inp[i].sec, inp[i].alt, inp[i].g_lat,
-                    inp[i].g_long, inp[i].lst, inp[i].f107A, inp[i].f107,
-                    inp[i].ap, inp[15].ap_a, byref(flags), byref(output[i]))
+        msis.gtd7_py(
+            inp[i].year,
+            inp[i].doy,
+            inp[i].sec,
+            inp[i].alt,
+            inp[i].g_lat,
+            inp[i].g_long,
+            inp[i].lst,
+            inp[i].f107A,
+            inp[i].f107,
+            inp[i].ap,
+            inp[15].ap_a,
+            byref(flags),
+            byref(output[i]),
+        )
     flags.switches[9] = -1
     for i in range(15, 17):
-        msis.gtd7_py(inp[i].year, inp[i].doy, inp[i].sec, inp[i].alt, inp[i].g_lat,
-                    inp[i].g_long, inp[i].lst, inp[i].f107A, inp[i].f107,
-                    inp[i].ap, inp[15].ap_a, byref(flags), byref(output[i]))
+        msis.gtd7_py(
+            inp[i].year,
+            inp[i].doy,
+            inp[i].sec,
+            inp[i].alt,
+            inp[i].g_lat,
+            inp[i].g_long,
+            inp[i].lst,
+            inp[i].f107A,
+            inp[i].f107,
+            inp[i].ap,
+            inp[15].ap_a,
+            byref(flags),
+            byref(output[i]),
+        )
     #     msis.gtd7(byref(inp[i]), byref(flags), byref(output[i]))
     # output type 1
     outbuf = ""
     for i in range(17):
         for j in range(9):
-            outbuf += '{0:E} '.format(output[i].d[j])
-        outbuf += '{0:E} '.format(output[i].t[0])
-        outbuf += '{0:E} \n'.format(output[i].t[1])
+            outbuf += "{0:E} ".format(output[i].d[j])
+        outbuf += "{0:E} ".format(output[i].t[0])
+        outbuf += "{0:E} \n".format(output[i].t[1])
 
     # output type 2
     for i in range(3):
