@@ -1,4 +1,4 @@
-# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions
 
 Version 1.3.5:
 
@@ -10,7 +10,6 @@ Version 1.3.4:
 
 - DPMJET-III K0 bug discovered and worked around. K0S/L matrices were not generated properly. The workaround is to construct K0 distributions from a sum of K+ and K- with proportions determined from a fit of the Zfactors to the true K0S/L distributions. K0S is equal to K0L by definition in all of the models.
 - Source dist fix. Package should now compile under Python 3.9 or other custom platforms easily via pip.
-
 
 Version 1.3.3:
 
@@ -27,7 +26,7 @@ Version 1.3.1:
 - The pre-averaged cross section for air in SIBYLL2.3 models can be selected with medium='air-legacy'
 - `A_target = 'auto'` will pic correct mass number for the selected medium
 - Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
-- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model 
+- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model
 - Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
 - MCEqRun.density_model.set_h_obs can be used to change observation level altitude
 - Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
@@ -36,7 +35,7 @@ Version 1.3.1:
 Version 1.2.1:
 
 - Some cleanup and new convenience functions on MCEqParticle
-- Autodetection of leading eigenvalues setting 
+- Auto detection of leading eigenvalues setting
 - Mixing energy more robustly calculated
 - Stopping power for all charged hadrons enabled by option 'generic_losses_all_charged' (req. new data file)
 - Default minimal energy increased to 1 GeV because it's safe under all conditions (no swing)
@@ -59,7 +58,7 @@ corrections can be visible for particle ratios at higher energies.
 
 Version 1.1.3:
 
-- Added atmospheres for KM3NeT by @Kakiczi (https://github.com/Kakiczi)
+- Added atmospheres for KM3NeT by @Kakiczi (<https://github.com/Kakiczi>)
 - new keyword for MCEqRun "build_matrices"=False (to prevent matrix building on init)
 - Equivalent projectile mappings separated for SIBYLL 2.1 and 2.3  
 
@@ -130,4 +129,3 @@ General remark::
     one based on DifferentialOperators that are not part of the "C Matrix". With the new
     structure it became simpler to exchange physical models or track particle decays of
     any kind.
-
