@@ -142,7 +142,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
             self.set_theta(0)
         return self._s_lX2h
 
-    def set_theta(self, theta_deg, force_spline_calc=False):
+    def set_theta(self, theta_deg):
         """Configures geometry and initiates spline calculation for
         :math:`\\rho(X)`.
 
@@ -155,8 +155,6 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector
-          force_spline_calc (bool): forces (re-)calculation of the
-                                    spline for each call
         """
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise Exception("Zenith angle not in allowed range.")
@@ -170,7 +168,8 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         self.geom.set_h_obs(h_obs)
         self.max_theta = self.geom.theta_max_deg
-        self.theta_deg = None
+        assert self.theta_deg <= self.geom.theta_max_deg, 'Theta out of range'
+        self.calculate_density_spline()
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
