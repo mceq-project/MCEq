@@ -209,7 +209,6 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         np_fl = np.float32
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
-    print(type(int_m.data))
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
     int_m_ci = int_m.indices.ctypes.data_as(POINTER(c_int))
     int_m_pb = int_m.indptr[:-1].ctypes.data_as(POINTER(c_int))
