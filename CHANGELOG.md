@@ -4,6 +4,7 @@ Version 1.3.5:
 
 - Code formatter changed to black
 - Additional functions to help returning total momentum or energy spectra (instead of kinetic)
+- changing observation level `mceq.density_profile.set_h_obs()` triggers density spline recomputation
 
 Version 1.3.4:
 
