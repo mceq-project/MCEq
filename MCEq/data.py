@@ -638,14 +638,22 @@ class Interactions(object):
             # a sum of K+ and K-. The different values are expected
             # from quark counting rules. This bug will be resolved
             # in future versions.
-            for proj in [2212, 2112]:
+            for p in self.parents:
                 info(3, "Applying fix for neutral kaons in DPMJET.")
-                self.index_d[((proj, 0), (310, 0))] = 0.5 * (
-                    0.84 * self.index_d[((proj, 0), (321, 0))]
-                    + 1.09 * self.index_d[((proj, 0), (-321, 0))]
-                )
-                self.index_d[((proj, 0), (130, 0))] = np.copy(
-                    self.index_d[((proj, 0), (310, 0))]
+                if p[0] in [2212, 2112]:
+                    # From fit to fixed distributions
+                    self.index_d[(p, (310, 0))] = 0.5 * (
+                        0.84 * self.index_d[(p, (321, 0))]
+                        + 1.09 * self.index_d[(p, (-321, 0))]
+                    )
+                else:
+                    # Generic isospin for other primaries
+                    self.index_d[(p, (310, 0))] = 0.5 * (
+                        self.index_d[(p, (321, 0))]
+                        + self.index_d[(p, (-321, 0))]
+                    )
+                self.index_d[(p, (130, 0))] = np.copy(
+                    self.index_d[(p, (310, 0))]
                 )
 
         self.particles = []
