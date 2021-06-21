@@ -1031,7 +1031,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
             * 180.0
         )
 
-    def set_theta(self, theta_deg, force_spline_calc=True):
+    def set_theta(self, theta_deg):
 
         self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
         info(
@@ -1048,7 +1048,8 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
                 ),
             )
             theta_deg = 180.0 - theta_deg
-        MSIS00Atmosphere.set_theta(self, theta_deg, force_spline_calc=force_spline_calc)
+            
+        MSIS00Atmosphere.set_theta(self, theta_deg)
 
 
 class GeneralizedTarget(object):
