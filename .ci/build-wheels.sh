@@ -17,8 +17,9 @@ pys=(/opt/python/*/bin)
 # Print list of Python's available
 echo "All Pythons on $arch: ${pys[@]}"
 
-# Filter out Python 3.4
+# Filter out Python 3.4 and 3.10 (due to lack of other wheels)
 pys=(${pys[@]//*34*/})
+pys=(${pys[@]//*310*/})
 
 # # Filter out Python 3.8 for 32bit due to h5py failure
 if [ $arch = "i686" ];
