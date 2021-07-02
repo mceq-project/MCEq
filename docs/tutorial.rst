@@ -102,7 +102,7 @@ Changing geometrical and atmospheric parameters
 
 To change the zenith angle ::
 
-    mceq.set_zenith_deg(<zenith_angle_in_degrees>)
+    mceq.set_theta_deg(<zenith_angle_in_degrees>)
 
 Most geometries support angles between 0 (vertical) and 90 degrees.
 
