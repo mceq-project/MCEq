@@ -73,7 +73,7 @@ setup(
         'MCEq.geometry.nrlmsise00', 'MCEq.geometry.corsikaatm'],
     setup_requires=[] + pytest_runner,
     package_data={
-        'MCEq': ['data/README.md'],
+        'MCEq': ['data/README.md', "geometry/nrlmsise00/nrlmsise-00.h"],
     },
     install_requires=[
         'six',
@@ -88,8 +88,8 @@ setup(
     py_modules=['mceq_config'],
     ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={
-        'MKL': ['mkl==2019.0'],
-        'CUDA': ['cupy-cuda101==6.2.0']
+        'MKL': ['mkl==2020.0'],
+        'CUDA': ['cupy-cuda112==9.2.0']
     },
     classifiers=[
         'Programming Language :: Python',
@@ -100,6 +100,8 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
         'Topic :: Scientific/Engineering :: Physics',
         'Intended Audience :: Science/Research',
         'Development Status :: 4 - Beta',
