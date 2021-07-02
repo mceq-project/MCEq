@@ -1,5 +1,9 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.2.2:
+- Added wheels for Python 3.9 on 64 bit systems
+- Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
+
 Version 1.2.0:
 - New data tables: physics will be affected mostly low energies < 30 GeV and minor
 corrections can be visible for particle ratios at higher energies.
