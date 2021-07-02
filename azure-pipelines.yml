@@ -43,16 +43,16 @@ jobs:
         plat: manylinux2010_x86_64
         image: quay.io/pypa/manylinux2010_x86_64
         python.architecture: x64
-      # 64Bit:
-      #   arch: x86_64
-      #   plat: manylinux1_x86_64
-      #   image: $(many_linux_base)x86_64
-      #   python.architecture: x64
-      32Bit:
-        arch: i686
-        plat: manylinux1_i686
-        image: $(many_linux_base)i686
-        python.architecture: x86
+#       64Bit:
+#         arch: x86_64
+#         plat: manylinux1_x86_64
+#         image: $(many_linux_base)x86_64
+#         python.architecture: x64
+#       32Bit:
+#         arch: i686
+#         plat: manylinux1_i686
+#         image: $(many_linux_base)i686
+#         python.architecture: x86
   pool:
     vmImage: 'ubuntu-latest'
   steps:
@@ -100,20 +100,20 @@ jobs:
       Python39:
         python.version: '3.9'
         python.architecture: 'x64'
-      Python27_32:
-        python.version: '2.7'
-        python.architecture: 'x86'
-      Python36_32:
-        python.version: '3.6'
-        python.architecture: 'x86'
-      Python37_32:
-        python.version: '3.7'
-        python.architecture: 'x86'
-      Python38_32:
-        python.version: '3.8'
-        python.architecture: 'x86'
-      Python39_32:
-        python.version: '3.9'
+#       Python27_32:
+#         python.version: '2.7'
+#         python.architecture: 'x86'
+#       Python36_32:
+#         python.version: '3.6'
+#         python.architecture: 'x86'
+#       Python37_32:
+#         python.version: '3.7'
+#         python.architecture: 'x86'
+#       Python38_32:
+#         python.version: '3.8'
+#         python.architecture: 'x86'
+#       Python39_32:
+#         python.version: '3.9'
         python.architecture: 'x86'
   pool:
     vmImage: 'vs2017-win2016'
