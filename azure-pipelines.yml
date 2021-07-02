@@ -26,7 +26,7 @@ jobs:
   steps:
     - task: UsePythonVersion@0
       inputs:
-        versionSpec: '3.8'
+        versionSpec: '3.9'
     - script: |
         python -m pip install --upgrade pip
         python -m pip install setuptools
@@ -72,6 +72,8 @@ jobs:
         python.version: '3.7'
       Python38:
         python.version: '3.8'
+      Python39:
+        python.version: '3.9'
   pool:
     vmImage: 'macOS-latest'
   steps:
@@ -95,6 +97,9 @@ jobs:
       Python38:
         python.version: '3.8'
         python.architecture: 'x64'
+      Python39:
+        python.version: '3.9'
+        python.architecture: 'x64'
       Python27_32:
         python.version: '2.7'
         python.architecture: 'x86'
@@ -106,6 +111,9 @@ jobs:
         python.architecture: 'x86'
       Python38_32:
         python.version: '3.8'
+        python.architecture: 'x86'
+      Python39_32:
+        python.version: '3.9'
         python.architecture: 'x86'
   pool:
     vmImage: 'vs2017-win2016'
