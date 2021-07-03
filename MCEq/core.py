@@ -169,7 +169,7 @@ class MCEqRun(object):
         same `return_as` argument as in get_solution."""
 
         if return_as == "kinetic energy":
-            return self.e_bins, self.e_grid if return_bins else self.e_grid
+            return (self.e_bins, self.e_grid) if return_bins else self.e_grid
         elif return_as == "total energy":
             return self.etot_grid(particle_name, return_bins)
         elif return_as == "total momentum":
