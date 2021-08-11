@@ -639,6 +639,8 @@ class Interactions(object):
             # from quark counting rules. This bug will be resolved
             # in future versions.
             for p in self.parents:
+                if abs(p[0]) < 100:
+                    continue
                 info(3, "Applying fix for neutral kaons in DPMJET.")
                 if p[0] in [2212, 2112]:
                     # From fit to fixed distributions
