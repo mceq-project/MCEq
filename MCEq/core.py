@@ -1003,10 +1003,12 @@ class MCEqRun(object):
         step = 0
         grid_step = 0
         grid_idcs = []
-        if (
-            max_ldec / self.density_model.max_den > max_lint
-            and config.leading_process == "decays"
-        ):
+        assert config.leading_process in [
+            "auto",
+            "decays",
+            "interactions",
+        ], "Set leading process to auto, decays or interactions"
+        if config.leading_process == "decays":
             info(3, "using decays as leading eigenvalues")
 
             def delta_X(X, inv_rho):
@@ -1019,18 +1021,27 @@ class MCEqRun(object):
                 return min(config.stability_margin / max_lint, dXmax)
 
         else:
+            # This is the case for auto setting. If no particles in eqn system force decays
+            # as leading eigenvalues
 
-            def delta_X(X, inv_rho):
-                dX = min(
-                    config.stability_margin / (max_ldec * inv_rho),
-                    config.stability_margin / max_lint,
-                    dXmax,
-                )
-                # if dX/self.density_model.max_X < 1e-7:
-                #     raise Exception(
-                # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
-                # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
-                return dX
+            if np.allclose(max_lint, 0.0):
+
+                def delta_X(X, inv_rho):
+                    return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
+
+            else:
+
+                def delta_X(X, inv_rho):
+                    dX = min(
+                        config.stability_margin / (max_ldec * inv_rho),
+                        config.stability_margin / max_lint,
+                        dXmax,
+                    )
+                    # if dX/self.density_model.max_X < 1e-7:
+                    #     raise Exception(
+                    # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
+                    # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
+                    return dX
 
         enable_int_grid = np.any(int_grid)
         len_int_grid = len(int_grid) if enable_int_grid else 0
