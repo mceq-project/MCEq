@@ -28,7 +28,7 @@ data_dir = path.join(base_path, "MCEq", "data")
 mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai_Full_v131.h5"
+em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
 
 # =================================================================
 # Atmosphere and geometry settings
