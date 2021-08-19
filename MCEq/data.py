@@ -3,7 +3,7 @@ import numpy as np
 import h5py
 from os.path import join, isfile
 from collections import defaultdict
-from MCEq import *
+from MCEq import config, asarray
 from .misc import normalize_hadronic_model_name, info
 
 # TODO: Convert this to some functional generic class. Very erro prone to
@@ -206,7 +206,7 @@ class HDF5Backend(object):
             description = hdf_root.attrs["description"]
         else:
             description = None
-        mat_data = np.asarray(hdf_root[:, :], dtype=floatlen)
+        mat_data = np.asarray(hdf_root[:, :], dtype=config.floatlen)
         indptr_data = indptrs[:]
         len_data = hdf_root.attrs["len_data"]
         if hdf_root.attrs["tuple_idcs"].shape[1] == 4:
