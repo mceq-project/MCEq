@@ -105,8 +105,8 @@ kernel_config = "auto"
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
-#: Floating point precision (default 32-bit 'float')
-floatlen = "float32"
+#: Floating point precision (is set automatically)
+floatlen = None
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
@@ -280,41 +280,6 @@ try:
     has_cuda = True
 except ImportError:
     has_cuda = False
-
-# CUDA is usually fastest, then MKL. Fallback to numpy.
-if kernel_config == "auto":
-    if has_cuda:
-        kernel_config = "cuda"
-    elif has_mkl:
-        kernel_config = "mkl"
-        floatlen = "float64"
-    else:
-        kernel_config = "numpy"
-else:
-    if kernel_config.lower() == "cuda" and not has_cuda:
-        raise Exception("CUDA unavailable. Make sure cupy is installed.")
-    elif kernel_config.lower() == "mkl" and not has_mkl:
-        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
-
-if debug_level >= 2 and kernel_config == "auto":
-    print("Auto-detected {0} solver.".format(kernel_config))
-
-
-def set_mkl_threads(nthreads):
-    global mkl_threads, mkl
-    from ctypes import cdll, c_int, byref
-
-    mkl = cdll.LoadLibrary(mkl_path)
-    # Set number of threads
-    mkl_threads = nthreads
-    mkl.mkl_set_num_threads(byref(c_int(nthreads)))
-    if debug_level >= 5:
-        print("MKL threads limited to {0}".format(nthreads))
-
-
-if has_mkl:
-    set_mkl_threads(mkl_threads)
-
 
 # Compatibility layer for dictionary access to config attributes
 # This is deprecated and will be removed in future
