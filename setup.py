@@ -96,8 +96,8 @@ setup(
     py_modules=["mceq_config"],
     ext_modules=[libnrlmsise00, libcorsikaatm],
     extras_require={
-        'MKL': ['mkl==2020.0'],
-        'CUDA': ['cupy-cuda112==9.2.0']
+        'MKL': ['mkl>=2020.0'],
+        'CUDA': ['cupy-cuda114==9.3.0']
     },
     classifiers=[
         'Programming Language :: Python',
