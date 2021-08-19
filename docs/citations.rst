@@ -3,6 +3,19 @@
 References
 ----------
 
+There are two citations for MCEq. The first is referencing the code. The second specifically lepton flux calculations. Please cite one of these or both. Thanks.
+
+   | *Calculation of conventional and prompt lepton fluxes at very high energy*
+   | A. Fedynitch, R. Engel, T. K. Gaisser, F. Riehn, T. Stanev,
+   | EPJ Web Conf. 99 (2015) 08001
+   | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
+
+   | *Hadronic interaction model sibyll 2.3c and inclusive lepton fluxes*
+   | A. Fedynitch, F. Riehn, R. Engel, T. K. Gaisser, T. Stanev
+   | Phys.Rev.D 100 (2019) 10, 103018
+   | `arXiv:1806.04140 <http://arxiv.org/abs/1806.04140>`_
+
+
 Cosmic-ray flux parameterizations
 .................................
 
@@ -24,10 +37,17 @@ Atmosphere
 
 Hadronic interaction models
 ...........................
-* `SIBYLL-2.3c <http://inspirehep.net/record/1624702>`_:
-    | *The hadronic interaction model Sibyll 2.3c and Feynman scaling*
+* `SIBYLL-2.3d & c <https://inspirehep.net/literature/1768983>`_:
+    | *Hadronic interaction model sibyll 2.3d and extensive air showers*
     | F. Riehn, R. Engel, A. Fedynitch, T. K. Gaisser, T. Stanev
-    | PoS(ICRC2017)301
+    | Phys.Rev.D 102 (2020) 6, 063002
+    | `arXiv:1912.03300 <http://arxiv.org/abs/1912.03300>`_
+    
+* `SIBYLL-2.3c <https://inspirehep.net/literature/1677505>`_:
+    | *Hadronic interaction model sibyll 2.3c and inclusive lepton fluxes*
+    | A. Fedynitch, F. Riehn, R. Engel, T. K. Gaisser, T. Stanev
+    | Phys.Rev.D 100 (2019) 10, 103018
+    | `arXiv:1806.04140 <http://arxiv.org/abs/1806.04140>`_
 
 * `SIBYLL-2.3 <http://inspirehep.net/record/1395980>`_:
     | *A new version of the event generator Sibyll*

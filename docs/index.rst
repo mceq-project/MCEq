@@ -29,7 +29,7 @@ installed. To enable MKL by default use::
 
 More speed-up can be achieved by using the cuSPARSE library from nVidia's
 CUDA toolkit. This requires the cupy library. If cupy is detected, MCEq
-will try to use cuSPARSE as solver. To install MCEq with CUDA 10.1 support::
+will try to use cuSPARSE as solver. To install MCEq with CUDA 11.4 support::
 
     pip install MCEq[CUDA]
 
