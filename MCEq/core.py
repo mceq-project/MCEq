@@ -479,7 +479,7 @@ class MCEqRun(object):
             for con in self._restore_initial_condition:
                 con[0](*con[1:])
 
-    def set_primary_model(self, mclass, tag):
+    def set_primary_model(self, model_class_or_object, tag=None):
         """Sets primary flux model.
 
         This functions is quick and does not require re-generation of
@@ -491,12 +491,25 @@ class MCEqRun(object):
           tag (tuple): positional argument list for model class
         """
 
-        info(1, mclass.__name__, tag if tag is not None else "")
+        assert not isinstance(model_class_or_object, tuple), 'Primary model can not be supplied as tuples'
+
+        # Check if classs or object supplied
+        if not isinstance(model_class_or_object, type):
+            assert any(
+                ["PrimaryFlux" in b.__name__ for b in model_class_or_object.__class__.__bases__]
+            ), "model_class_or_object is not derived from crflux.models.PrimaryFlux"
+            info(5, 'Primary model supplied as object')
+            self.pmodel = model_class_or_object
+        else:
+            # Initialize primary model object
+            info(5, 'Primary model supplied as class')
+            self.pmodel = model_class_or_object(tag)
+        
+        info(1, 'Primary model set to {0}'.format(self.pmodel.name))
 
         # Save primary flux model for restauration after interaction model changes
-        self._restore_initial_condition = [(self.set_primary_model, mclass, tag)]
-        # Initialize primary model object
-        self.pmodel = mclass(tag)
+        self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
+        
         self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
 
         try:
