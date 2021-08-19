@@ -188,25 +188,20 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     from ctypes import c_int, c_char, POINTER, byref
     from mceq_config import mkl
 
-    gemv = None
-    axpy = None
-    np_fl = None
-    if config.floatlen == "float64":
-        from ctypes import c_double as fl_pr
+    np_fl = config.floatlen
 
+    if config.floatlen == np.float64:
+        from ctypes import c_double as fl_pr
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_dcsrmv
         # dense vector + dense vector
         axpy = mkl.cblas_daxpy
-        np_fl = np.float64
     else:
         from ctypes import c_float as fl_pr
-
         # sparse CSR-matrix x dense vector
-        gemv = mkl.mkl_dcsrmv
+        gemv = mkl.mkl_scsrmv
         # dense vector + dense vector
-        axpy = mkl.cblas_daxpy
-        np_fl = np.float32
+        axpy = mkl.cblas_saxpy
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -238,7 +233,6 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     grid_sol = []
 
     from time import time
-
     start = time()
 
     for step in range(nsteps):
@@ -272,8 +266,10 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
             cdone,
             delta_phi,
         )
+        npphi += npdelta_phi*dX[step]
         # phi = delta_phi * dX + phi
-        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
+        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
+        # print(np.sum(npphi))
 
         if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))
