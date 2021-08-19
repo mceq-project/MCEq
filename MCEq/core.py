@@ -1062,8 +1062,8 @@ class MCEqRun(object):
             step += 1
 
         # Integrate
-        dX_vec = np.array(dX_vec)
-        rho_inv_vec = np.array(rho_inv_vec)
+        dX_vec = np.array(dX_vec, dtype=config.floatlen)
+        rho_inv_vec = np.array(rho_inv_vec, dtype=config.floatlen)
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
 
@@ -1286,7 +1286,7 @@ class MatrixBuilder(object):
                     [self.max_lint, np.max(parent.inverse_interaction_length())]
                 )
                 self.C_blocks[idx] *= asarray(
-                    parent.inverse_interaction_length(), dtype=floatlen
+                    parent.inverse_interaction_length(), dtype=config.floatlen
                 )
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
@@ -1324,7 +1324,7 @@ class MatrixBuilder(object):
                 )
 
                 self.D_blocks[idx] *= asarray(
-                    parent.inverse_decay_length(), dtype=floatlen
+                    parent.inverse_decay_length(), dtype=config.floatlen
                 )
 
             self.dec_m = self._csr_from_blocks(self.D_blocks)
@@ -1379,7 +1379,7 @@ class MatrixBuilder(object):
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid."""
-        return zeros((self._pman.dim, self._pman.dim), dtype=floatlen)
+        return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1389,7 +1389,7 @@ class MatrixBuilder(object):
             It's super pain the a** to construct a properly indexed sparse matrix
             directly from the blocks, since bmat totally messes up the order.
         """
-        new_mat = zeros((self.dim_states, self.dim_states), dtype=floatlen)
+        new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
 
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
@@ -1459,7 +1459,7 @@ class MatrixBuilder(object):
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     self._follow_chains(
                         p,
-                        diag(ones(self.dim)).astype(floatlen),
+                        diag(ones(self.dim)).astype(config.floatlen),
                         p,
                         p.hadridx,
                         self.D_blocks,
@@ -1534,7 +1534,7 @@ class MatrixBuilder(object):
         dim_e = int(self._energy_grid.d)
         last = dim_e - 1
 
-        op_matrix = zeros((dim_e, dim_e), dtype=floatlen)
+        op_matrix = zeros((dim_e, dim_e), dtype=config.floatlen)
         op_matrix[0, asarray(diags_leftmost)] = asarray(coeffs_leftmost) / (
             denom_leftmost * h[0]
         )
