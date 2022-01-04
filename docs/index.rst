@@ -37,7 +37,7 @@ Alternatively, install cupy by yourself (see `cupy homepage<https://cupy.chainer
 
 Supported architectures:
 
-- Linux 32- and 64-bit
+- Linux 32- and 64-bit (x86_64 and AArch64)
 - Mac OS X
 - Windows
 

@@ -1,5 +1,7 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.2.3:
+- Binary wheel for aarch64 on linux. Thanks to @obidev
 Version 1.2.2:
 - Added wheels for Python 3.9 on 64 bit systems
 - Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
