@@ -59,6 +59,21 @@ jobs:
     - template: .ci/azure-manylinux-wheels.yml
     - template: .ci/azure-publish-dist.yml
 
+- job: ManyLinux_AArch64
+  strategy:
+    matrix:
+      64Bit2014:
+        arch: aarch64
+        plat: manylinux2014_aarch64
+        image: quay.io/pypa/manylinux2014_aarch64
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+    - script: docker run --rm --privileged hypriot/qemu-register
+      displayName: 'Registering qemu'
+    - template: .ci/azure-manylinux-wheels.yml
+    - template: .ci/azure-publish-dist.yml
+
 - job: macOS
   variables:
     python.architecture: 'x64'
