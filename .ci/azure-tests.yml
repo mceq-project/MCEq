@@ -1,6 +1,6 @@
 steps:
 - script: |
-    python -m pip install -r .ci/requirements-test.txt
+    python -m pip install --prefer-binary -r .ci/requirements-test.txt
   displayName: Install testing requirements
 
 - script: |

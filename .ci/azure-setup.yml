@@ -22,5 +22,5 @@ steps:
     mkdir -p dist
     python -m pip install --upgrade pip
     python -m pip install --upgrade pytest wheel twine setuptools
-    python -m pip install -r .ci/requirements-build.txt
+    python -m pip install -r --prefer-binary .ci/requirements-build.txt
   displayName: 'Install dependencies'
