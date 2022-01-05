@@ -40,8 +40,8 @@ jobs:
     matrix:
       64Bit2010:
         arch: x86_64
-        plat: manylinux2010_x86_64
-        image: quay.io/pypa/manylinux2010_x86_64
+        plat: manylinux2014_x86_64
+        image: quay.io/pypa/manylinux2014_x86_64
         python.architecture: x64
 #       64Bit:
 #         arch: x86_64
