@@ -45,7 +45,7 @@ echo "Using Pythons: ${pys[@]}"
 # Compile wheels
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/pip" install pip --upgrade 
-    "${PYBIN}/pip" install -r /io/$dev_requirements_file
+    "${PYBIN}/pip" install --prefer-binary -r /io/$dev_requirements_file
     "${PYBIN}/pip" wheel /io/ -w wheelhouse/
 done
 
@@ -57,7 +57,7 @@ done
 # Install packages and test
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/python" -m pip install $package_name --no-index -f /io/wheelhouse
-    "${PYBIN}/pip" install -r /io/$test_requirements_file
+    "${PYBIN}/pip" install -prefer-binary -r /io/$test_requirements_file
     if [ -d "/io/tests" ]; then
         "${PYBIN}/pytest" /io/tests
     else
