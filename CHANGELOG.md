@@ -41,6 +41,9 @@ Version 1.2.1:
 - Default minimal energy increased to 1 GeV because it's safe under all conditions (no swing)
 - get_AZN function fixed to return integers only (thx Max)
 
+Version 1.2.3:
+- Binary wheel for aarch64 on linux. Thanks to @obidev
+
 Version 1.2.2:
 - Added wheels for Python 3.9 on 64 bit systems
 - Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.

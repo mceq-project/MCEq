@@ -25,6 +25,12 @@ pys=(${pys[@]//*pypy*/})
 # Print list of Python's available
 echo "All Pythons after filtering on $arch: ${pys[@]}"
 
+# # Filter out Python 3.6 for aarch64 due to h5py failure
+if [ $arch = "aarch64" ];
+then
+    pys=(${pys[@]//*36*/})
+fi
+
 # # Filter out Python 3.8 for 32bit due to h5py failure
 if [ $arch = "i686" ];
 then
@@ -39,7 +45,7 @@ echo "Using Pythons: ${pys[@]}"
 # Compile wheels
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/pip" install pip --upgrade 
-    "${PYBIN}/pip" install -r /io/$dev_requirements_file
+    "${PYBIN}/pip" install --prefer-binary -r /io/$dev_requirements_file
     "${PYBIN}/pip" wheel /io/ -w wheelhouse/
 done
 
@@ -51,10 +57,16 @@ done
 # Install packages and test
 for PYBIN in "${pys[@]}"; do
     "${PYBIN}/python" -m pip install $package_name --no-index -f /io/wheelhouse
-    "${PYBIN}/pip" install -r /io/$test_requirements_file
+    "${PYBIN}/pip" install --prefer-binary -r /io/$test_requirements_file
     if [ -d "/io/tests" ]; then
         "${PYBIN}/pytest" /io/tests
     else
-        "${PYBIN}/pytest" --pyargs $package_name
+        if [ `uname -m` == "aarch64" ]; then
+	   # Skipping test_mceq.py as the job gets timeout on aarch64
+           cd /io/MCEq/tests
+           "${PYBIN}/pytest" test_densities.py test_msis.py
+        else
+           "${PYBIN}/pytest" --pyargs $package_name
+        fi
     fi
 done

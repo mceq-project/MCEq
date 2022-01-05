@@ -40,8 +40,8 @@ jobs:
     matrix:
       64Bit2010:
         arch: x86_64
-        plat: manylinux2010_x86_64
-        image: quay.io/pypa/manylinux2010_x86_64
+        plat: manylinux2014_x86_64
+        image: quay.io/pypa/manylinux2014_x86_64
         python.architecture: x64
 #       64Bit:
 #         arch: x86_64
@@ -56,6 +56,21 @@ jobs:
   pool:
     vmImage: 'ubuntu-latest'
   steps:
+    - template: .ci/azure-manylinux-wheels.yml
+    - template: .ci/azure-publish-dist.yml
+
+- job: ManyLinux_AArch64
+  strategy:
+    matrix:
+      64Bit2014:
+        arch: aarch64
+        plat: manylinux2014_aarch64
+        image: quay.io/pypa/manylinux2014_aarch64
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+    - script: docker run --rm --privileged hypriot/qemu-register
+      displayName: 'Registering qemu'
     - template: .ci/azure-manylinux-wheels.yml
     - template: .ci/azure-publish-dist.yml
 
