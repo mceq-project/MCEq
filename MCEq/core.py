@@ -509,8 +509,9 @@ class MCEqRun(object):
 
         # Save primary flux model for restauration after interaction model changes
         self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
-        
-        self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
+        # TODO: Maybe needs to catch the removal of the np.vectorize
+        # self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
+        self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
 
         try:
             self.dim_states
