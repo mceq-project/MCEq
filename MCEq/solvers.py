@@ -57,7 +57,7 @@ class CUDASparseContext(object):
     :func:`solv_CUDA_sparse`.
     """
 
-    def __init__(self, int_m, dec_m, device_id=0):
+    def __init__(self, int_m, dec_m, device_id=config.cuda_gpu_id):
         # Setup GPU stuff and upload data to it
         try:
             import cupy as cp
@@ -72,7 +72,7 @@ class CUDASparseContext(object):
                 + "installed.\nCan not use GPU."
             )
 
-        cp.cuda.Device(config.cuda_gpu_id).use()
+        cp.cuda.Device(device_id).use()
         self.set_matrices(int_m, dec_m)
 
     def set_matrices(self, int_m, dec_m):
