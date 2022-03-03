@@ -6,6 +6,7 @@ from MCEq import *
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
+import mceq_config as config
 
 
 class MCEqRun(object):
@@ -491,21 +492,26 @@ class MCEqRun(object):
           tag (tuple): positional argument list for model class
         """
 
-        assert not isinstance(model_class_or_object, tuple), 'Primary model can not be supplied as tuples'
+        assert not isinstance(
+            model_class_or_object, tuple
+        ), "Primary model can not be supplied as tuples"
 
         # Check if classs or object supplied
         if not isinstance(model_class_or_object, type):
             assert any(
-                ["PrimaryFlux" in b.__name__ for b in model_class_or_object.__class__.__bases__]
+                [
+                    "PrimaryFlux" in b.__name__
+                    for b in model_class_or_object.__class__.__bases__
+                ]
             ), "model_class_or_object is not derived from crflux.models.PrimaryFlux"
-            info(5, 'Primary model supplied as object')
+            info(5, "Primary model supplied as object")
             self.pmodel = model_class_or_object
         else:
             # Initialize primary model object
-            info(5, 'Primary model supplied as class')
+            info(5, "Primary model supplied as class")
             self.pmodel = model_class_or_object(tag)
-        
-        info(1, 'Primary model set to {0}'.format(self.pmodel.name))
+
+        info(1, "Primary model set to {0}".format(self.pmodel.name))
 
         # Save primary flux model for restauration after interaction model changes
         self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
@@ -901,6 +907,10 @@ class MCEqRun(object):
             kernel = MCEq.solvers.solv_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
+        elif config.kernel_config.lower() == "accelerate":
+            kernel = MCEq.solvers.solv_spacc_sparse
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+
         elif config.kernel_config.lower() == "cuda":
             kernel = MCEq.solvers.solv_CUDA_sparse
             try:
@@ -958,6 +968,10 @@ class MCEqRun(object):
 
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+
+        elif config.kernel_config.lower() == "accelerate":
+            kernel = MCEq.solvers.solv_spacc_sparse
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         elif config.kernel_config.lower() == "cuda":

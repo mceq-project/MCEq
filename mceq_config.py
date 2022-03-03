@@ -97,7 +97,7 @@ enable_em = False
 #: Selection of integrator (euler/odepack)
 integrator = "euler"
 
-#: euler kernel implementation (numpy/MKL/CUDA).
+#: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
 kernel_config = "auto"
@@ -255,11 +255,13 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: Autodetect best solver
 #: determine shared library extension and MKL path
 pf = platform.platform()
+has_accelerate = False
 
 if "Linux" in pf:
     mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.so")
-elif "Darwin" in pf:
+elif "macOS" in pf:
     mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.dylib")
+    has_accelerate = True
 else:
     # Windows case
     mkl_path = path.join(sys.prefix, "Library", "bin", "mkl_rt.dll")

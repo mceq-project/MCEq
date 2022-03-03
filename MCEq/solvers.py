@@ -192,12 +192,14 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     if config.floatlen == np.float64:
         from ctypes import c_double as fl_pr
+
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_dcsrmv
         # dense vector + dense vector
         axpy = mkl.cblas_daxpy
     else:
         from ctypes import c_float as fl_pr
+
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_scsrmv
         # dense vector + dense vector
@@ -233,6 +235,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     grid_sol = []
 
     from time import time
+
     start = time()
 
     for step in range(nsteps):
@@ -266,10 +269,74 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
             cdone,
             delta_phi,
         )
-        npphi += npdelta_phi*dX[step]
+        npphi += npdelta_phi * dX[step]
         # phi = delta_phi * dX + phi
         # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
         # print(np.sum(npphi))
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
+            grid_sol.append(np.copy(npphi))
+            grid_step += 1
+
+    info(
+        2,
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
+    )
+
+    return npphi, np.asarray(grid_sol)
+
+
+def solv_spacc_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+    # mu_loss_handler):
+    """Apple Accelerate (vecLib) implementation.
+
+    Args:
+      nsteps (int): number of integration steps
+      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      grid_idcs (list): indices at which longitudinal solutions have to be saved.
+
+    Returns:
+      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+    """
+
+    from ctypes import c_double, POINTER
+    import MCEq.spacc as spacc
+
+    dim_phi = np.int(phi.shape[0])
+    npphi = np.copy(phi)
+    phi = npphi.ctypes.data_as(POINTER(c_double))
+    npdelta_phi = np.zeros_like(npphi)
+    delta_phi = npdelta_phi.ctypes.data_as(POINTER(c_double))
+
+    spacc_int_m = spacc.SpaccMatrix(int_m)
+    spacc_dec_m = spacc.SpaccMatrix(dec_m)
+
+    grid_step = 0
+    grid_sol = []
+
+    from time import time
+
+    start = time()
+
+    for step in range(nsteps):
+
+        # delta_phi = int_m.dot(phi)
+        npdelta_phi *= 0
+        spacc_int_m.gemv_ctargs(1.0, phi, delta_phi)
+
+        # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
+        spacc_dec_m.gemv_ctargs(rho_inv[step], phi, delta_phi)
+
+        # phi = delta_phi * dX + phi
+        spacc.daxpy(dim_phi, dX[step], delta_phi, phi)
+
+        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
         if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))

@@ -1,9 +1,12 @@
 import mceq_config as config
+import MCEq.version
+
+__version__ = MCEq.version.__version__
 
 
 def set_backend(kernel_config):
     global zeros, ones, eye, diag, csr_matrix, linalg, asarray
-    assert kernel_config in ["cuda", "numpy", "mkl"]
+    assert kernel_config in ["cuda", "numpy", "mkl", "accelerate"]
 
     import numpy as np
 
@@ -52,6 +55,8 @@ def set_mkl_threads(nthreads):
 if config.kernel_config == "auto":
     if config.has_cuda:
         config.kernel_config = "cuda"
+    elif config.has_accelerate:
+        config.kernel_config = "accelerate"
     elif config.has_mkl:
         config.kernel_config = "mkl"
     else:
@@ -61,6 +66,8 @@ else:
         raise Exception("CUDA unavailable. Make sure cupy is installed.")
     elif config.kernel_config.lower() == "mkl" and not config.has_mkl:
         raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+    elif config.kernel_config.lower() == "accelerate" and not config.has_accelerate:
+        raise Exception("Apple Accelerate only available on Mac platforms.")
 
 if config.debug_level >= 2 and config.kernel_config == "auto":
     print("MCEq::__init__: Auto-detected {0} solver.".format(config.kernel_config))

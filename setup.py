@@ -37,6 +37,12 @@ libcorsikaatm = Extension(
     sources=["MCEq/geometry/corsikaatm/corsikaatm.c"],
 )
 
+libspacc = Extension(
+    "MCEq.spacc.libspacc",
+    sources=["MCEq/spacc/spacc.c"],
+    extra_link_args=["-framework", "Accelerate"]
+)
+
 
 # This method is adopted from iMinuit https://github.com/scikit-hep/iminuit
 # Getting the version number at this point is a bit tricky in Python:
@@ -78,6 +84,7 @@ setup(
         "MCEq.geometry",
         "MCEq.geometry.nrlmsise00",
         "MCEq.geometry.corsikaatm",
+        "MCEq.spacc",
     ],
     setup_requires=[] + pytest_runner,
     package_data={
@@ -94,7 +101,7 @@ setup(
         "requests",
     ],
     py_modules=["mceq_config"],
-    ext_modules=[libnrlmsise00, libcorsikaatm],
+    ext_modules=[libnrlmsise00, libcorsikaatm, libspacc],
     extras_require={
         'MKL': ['mkl>=2020.0'],
         'CUDA': ['cupy-cuda114==9.3.0']
