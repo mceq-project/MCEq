@@ -1,5 +1,11 @@
 # Changes in MCEq since moving from MCEq_classic to the 1.X.X versions
 
+Version 1.3.7:
+
+- New interface to Apple Accelerate/vecLib library for accelerated computation on Apple Silicon macs
+- Geometry/atmosphere interfaces moved to package level from redundant python source files
+- Merged AArch64 on linux support from master
+
 Version 1.3.5:
 
 - Code formatter changed to black
