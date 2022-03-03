@@ -1,4 +1,5 @@
 import sys
+import platform
 from os.path import join, dirname, abspath
 from setuptools import setup, Extension
 
@@ -16,6 +17,14 @@ def get_export_symbols(self, ext):
 
 build_ext.build_ext.get_export_symbols = get_export_symbols
 
+is_a_mac = True if "macOS" in platform.platform() else False
+
+if is_a_mac:
+    extra_compile_args = ["-arch", "arm64", "-arch", "x86_64"]
+    extra_link_args = ["-framework", "Accelerate", "-arch", "arm64", "-arch", "x86_64"]
+else:
+    extra_compile_args = []
+    extra_link_args = []
 
 # Require pytest-runner only when running tests
 needs_pytest = {"pytest", "test", "ptr"}.intersection(sys.argv)
@@ -30,19 +39,28 @@ libnrlmsise00 = Extension(
         for sf in ["nrlmsise-00_data.c", "nrlmsise-00.c"]
     ],
     include_dirs=["MCEq/geometry/nrlmsise00"],
+    extra_compile_args=extra_compile_args,
+    extra_link_args=extra_link_args,
 )
 
 libcorsikaatm = Extension(
     "MCEq.geometry.corsikaatm.libcorsikaatm",
     sources=["MCEq/geometry/corsikaatm/corsikaatm.c"],
+    extra_compile_args=extra_compile_args,
+    extra_link_args=extra_link_args,
 )
 
 libspacc = Extension(
     "MCEq.spacc.libspacc",
     sources=["MCEq/spacc/spacc.c"],
-    extra_link_args=["-framework", "Accelerate"]
+    extra_compile_args=extra_compile_args,
+    extra_link_args=extra_link_args,
 )
 
+if is_a_mac:
+    ext_modules=[libnrlmsise00, libcorsikaatm, libspacc]
+else:
+    ext_modules=[libnrlmsise00, libcorsikaatm]
 
 # This method is adopted from iMinuit https://github.com/scikit-hep/iminuit
 # Getting the version number at this point is a bit tricky in Python:
@@ -88,7 +106,7 @@ setup(
     ],
     setup_requires=[] + pytest_runner,
     package_data={
-        'MCEq': ['data/README.md', "geometry/nrlmsise00/nrlmsise-00.h"],
+        "MCEq": ["data/README.md", "geometry/nrlmsise00/nrlmsise-00.h"],
     },
     install_requires=[
         "six",
@@ -101,24 +119,22 @@ setup(
         "requests",
     ],
     py_modules=["mceq_config"],
-    ext_modules=[libnrlmsise00, libcorsikaatm, libspacc],
-    extras_require={
-        'MKL': ['mkl>=2020.0'],
-        'CUDA': ['cupy-cuda114==9.3.0']
-    },
+    ext_modules=ext_modules,
+    extras_require={"MKL": ["mkl>=2020.0"], "CUDA": ["cupy-cuda114==9.3.0"]},
     classifiers=[
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Topic :: Scientific/Engineering :: Physics',
-        'Intended Audience :: Science/Research',
-        'Development Status :: 4 - Beta',
-        'License :: OSI Approved :: BSD License'
-    ])
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Scientific/Engineering :: Physics",
+        "Intended Audience :: Science/Research",
+        "Development Status :: 4 - Beta",
+        "License :: OSI Approved :: BSD License",
+    ],
+)
