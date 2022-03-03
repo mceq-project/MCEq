@@ -299,7 +299,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             location, season
         )
         self.init_parameters(location, season)
-        import MCEq.geometry.corsikaatm.corsikaatm as corsika_acc
+        import MCEq.geometry.corsikaatm as corsika_acc
 
         self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)

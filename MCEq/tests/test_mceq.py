@@ -1,14 +1,15 @@
 from __future__ import print_function
 
 import mceq_config as config
-from MCEq.core import MCEqRun
+
+
 import crflux.models as pm
 import numpy as np
 
 import pytest
 import sys
 
-if sys.platform.startswith("win") and sys.maxsize <= 2 ** 32:
+if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 
@@ -19,11 +20,15 @@ def format_8_digits(a_list):
 config.debug_level = 1
 config.kernel_config = "numpy"
 config.cuda_gpu_id = 0
+import MCEq, MCEq.core
+
 if config.has_mkl:
-    config.set_mkl_threads(2)
+    MCEq.set_mkl_threads(2)
+
+# MCEq.set_backend("numpy")
 
 
-mceq = MCEqRun(
+mceq = MCEq.core.MCEqRun(
     interaction_model="SIBYLL23D",
     theta_deg=0.0,
     primary_model=(pm.HillasGaisser2012, "H3a"),

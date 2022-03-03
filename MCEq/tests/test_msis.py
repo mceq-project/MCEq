@@ -91,7 +91,7 @@ RHO      1.261e-03   4.059e-04   1.951e-05   1.295e-06   1.148e-07
 
 def test_msis():
     from ctypes import c_int, c_double, pointer, byref
-    from MCEq.geometry.nrlmsise00.nrlmsise00 import (
+    from MCEq.geometry.nrlmsise00 import (
         msis,
         nrlmsise_output,
         nrlmsise_input,
