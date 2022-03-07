@@ -909,7 +909,26 @@ class MCEqRun(object):
 
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+            import MCEq.spacc as spacc
+            try:
+                if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
+                    self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
+                if not np.array_equal(self._spacc_int_m.data, self.int_m.data):
+                    self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
+            except AttributeError:
+                info(10, 'Matrices not yet in Accelerate format')
+                self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
+                self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
+
+            args = (
+                nsteps,
+                dX,
+                rho_inv,
+                self._spacc_int_m,
+                self._spacc_dec_m,
+                phi0,
+                grid_idcs,
+            )
 
         elif config.kernel_config.lower() == "cuda":
             kernel = MCEq.solvers.solv_CUDA_sparse

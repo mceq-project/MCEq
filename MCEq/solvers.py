@@ -288,7 +288,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     return npphi, np.asarray(grid_sol)
 
 
-def solv_spacc_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_idcs):
     # mu_loss_handler):
     """Apple Accelerate (vecLib) implementation.
 
@@ -313,9 +313,6 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     phi = npphi.ctypes.data_as(POINTER(c_double))
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(c_double))
-
-    spacc_int_m = spacc.SpaccMatrix(int_m)
-    spacc_dec_m = spacc.SpaccMatrix(dec_m)
 
     grid_step = 0
     grid_sol = []
