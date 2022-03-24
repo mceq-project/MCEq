@@ -812,6 +812,36 @@ class MCEqRun(object):
         self.density_model.set_theta(theta_deg)
         self.integration_path = None
 
+    def inject_ddm(self, ddm):
+        """Set a DDM object as interaction model.
+
+        The argument requires a DDM model object. Calling `set_interaction_model`
+        overwrites DDM with a different model.
+        """
+
+        from .ddm import isospin_partners, isospin_symmetries
+        injected = []
+        for (prim, sec), mati in ddm.ddm_matrices.items():
+            info(5, f"Injecting DDM {prim} --> {sec}")
+            iso_part = isospin_partners[prim]
+
+            self.pman[prim].hadr_yields[self.pman[sec]] = asarray(mati)
+            info(5, "Injecting isopart", iso_part, isospin_symmetries[iso_part][sec])
+            self.pman[iso_part].hadr_yields[
+                self.pman[isospin_symmetries[iso_part][sec]]
+            ] = asarray(mati)
+            injected.append(((prim, sec), (iso_part, isospin_symmetries[iso_part][sec])))
+
+        if config.debug_level > 2:
+            s = "DDM matrices injected into MCEq:\n"
+            for ((prim, sec), (iprim, isec)) in injected:
+                s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
+            print(s)
+
+        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+            skip_decay_matrix=False
+        )
+
     def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args, delay_init=False):
         """Sets combination of projectile/secondary for error propagation.
 
