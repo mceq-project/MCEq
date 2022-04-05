@@ -233,7 +233,7 @@ class DataDrivenModel(object):
         assert n_datasets > 0, "Entry data_combinations can't be empty"
 
         if n_datasets == 1:
-            ebeam = self._unpack_coeff(prim, sec, set_idx=0)[0]
+            ebeam = self._unpack_coeff(prim, sec, spl_idx=0)[0]
             ie0 = np.argmin(np.abs(ebeam - elab_proj_centers))
             mceq_ebeam = elab_proj_centers[ie0]
             info(
@@ -256,8 +256,8 @@ class DataDrivenModel(object):
             # Loop through datasets in pairs of two and interpolate
             # between them
             for interval in range(n_datasets - 1):
-                ebeam_0 = self._unpack_coeff(prim, sec, set_idx=interval)[0]
-                ebeam_1 = self._unpack_coeff(prim, sec, set_idx=interval + 1)[0]
+                ebeam_0 = self._unpack_coeff(prim, sec, spl_idx=interval)[0]
+                ebeam_1 = self._unpack_coeff(prim, sec, spl_idx=interval + 1)[0]
 
                 ie0 = np.argmin(np.abs(ebeam_0 - elab_proj_centers))
                 ie1 = np.argmin(np.abs(ebeam_1 - elab_proj_centers))
@@ -441,19 +441,19 @@ class DataDrivenModel(object):
 
         return matrix_variations
 
-    def _unpack_coeff(self, prim, sec, ebeam=None, set_idx=None, return_set_idx=False):
+    def _unpack_coeff(self, prim, sec, ebeam=None, spl_idx=None, return_spl_idx=False):
         assert (ebeam is not None) != (
-            set_idx is not None
-        ), "Define either ebeam or set_idx"
+            spl_idx is not None
+        ), "Define either ebeam or spl_idx"
         assert (
             prim,
             sec,
         ) in self.data_combinations, f"({prim},{sec}) not in valid combinations"
         try:
             if ebeam:
-                set_idx = self.data_energy_map[(prim, sec, ebeam)]
+                spl_idx = self.data_energy_map[(prim, sec, ebeam)]
             else:
-                if set_idx >= len(self.data_combinations[(prim, sec)]):
+                if spl_idx >= len(self.data_combinations[(prim, sec)]):
                     raise KeyError
         except KeyError:
             raise Exception(
@@ -465,10 +465,10 @@ class DataDrivenModel(object):
                     ]
                 )
             )
-        ebeam, x17, tck, cov, tv, te = self.data_combinations[(prim, sec)][set_idx]
+        ebeam, x17, tck, cov, tv, te = self.data_combinations[(prim, sec)][spl_idx]
         assert len(tck) in [2, 3], "Unknown number of spline coeffs"
-        if return_set_idx:
-            return (ebeam, x17, tck, cov, tv, te), set_idx
+        if return_spl_idx:
+            return (ebeam, x17, tck, cov, tv, te), spl_idx
         return (ebeam, x17, tck, cov, tv, te)
 
     def _sort_datasets(self):
