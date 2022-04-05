@@ -77,11 +77,15 @@ class DataDrivenModel(object):
                 )
         self._sort_datasets()
 
-    def apply_tuning(self, prim, sec, ebeam, tv, te=1.0):
-        set_idx = self._unpack_coeff(prim, sec, ebeam, return_set_idx=True)[1]
+    def apply_tuning(self, prim, sec, ebeam=None, tv=1.0, te=1.0, spl_idx=None):
+        assert (ebeam is not None) or (
+            spl_idx is not None
+        ), "Either spl_idx or ebeam have to be set."
+        if spl_idx is None:
+            spl_idx = self._unpack_coeff(prim, sec, ebeam, return_spl_idx=True)[1]
 
-        self.data_combinations[(prim, sec)][set_idx][4] = tv
-        self.data_combinations[(prim, sec)][set_idx][5] = te
+        self.data_combinations[(prim, sec)][spl_idx][4] = tv
+        self.data_combinations[(prim, sec)][spl_idx][5] = te
         self._sort_datasets()
 
     def _fitfunc(self, x, tck, x17, cov, tv, te, return_error=False, gamma_zfac=None):
