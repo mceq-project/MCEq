@@ -1,8 +1,7 @@
-import os
 import six
 from time import time
 import numpy as np
-from MCEq import *
+from MCEq import asarray, zeros, csr_matrix, eye, linalg, diag, ones
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
@@ -21,7 +20,8 @@ class MCEqRun(object):
     - primary flux in :func:`MCEqRun.set_primary_model`,
     - zenith angle in :func:`MCEqRun.set_theta_deg`,
     - density profile in :func:`MCEqRun.set_density_model`,
-    - member particles of the special ``obs_`` group in :func:`MCEqRun.set_obs_particles`,
+    - member particles of the special ``obs_`` group
+        in :func:`MCEqRun.set_obs_particles`,
 
     can be made on an active instance of this class, while calling
     :func:`MCEqRun.solve` subsequently to calculate the solution
@@ -545,7 +545,7 @@ class MCEqRun(object):
         else:
             info(
                 1,
-                "Warning protons not part of equation system, can not set primary flux.",
+                "Protons not in equation system, can not set primary flux.",
             )
 
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
@@ -604,7 +604,7 @@ class MCEqRun(object):
             ),
         )
 
-        if append == False:
+        if append is False:
             self._restore_initial_condition = [
                 (self.set_single_primary_particle, E, corsika_id, pdg_id)
             ]
@@ -680,18 +680,18 @@ class MCEqRun(object):
 
         This function is an equivalent to :func:`set_single_primary_particle`. It
         allows to define an arbitrary spectrum for each available particle species
-        as initial condition for the integration. Set the `append` argument to `True`
-        for subsequent species to define initial spectra combined from different particles.
+        as initial condition for the integration. Set the `append`
+        argument to `True` for subsequent species to define initial
+        spectra combined from different particles.
 
-        The (differential) spectrum has to be distributed on the energy grid as dN/dptot, i.e.
-        divided by the bin widths and with the total momentum units in GeV(/c).
+        The (differential) spectrum has to be distributed on the energy
+        grid as dN/dptot, i.e. divided by the bin widths and with the
+        total momentum units in GeV(/c).
 
         Args:
           spectrum (np.array): spectrum dN/dptot
           pdg_id (int): PDG ID in case of a particle
         """
-
-        from MCEq.misc import getAZN_corsika, getAZN
 
         info(2, "PDG ID {0}".format(pdg_id))
 
@@ -717,16 +717,19 @@ class MCEqRun(object):
 
             mceq_instance.set_density_model(('CORSIKA', ('PL_SouthPole', 'January')))
 
-        More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
-        this method will issue a recalculation of the interpolation and the integration path.
+        More details about the choices can be found in
+        :mod:`MCEq.geometry.density_profiles`.Calling this method will
+        issue a recalculation of the interpolation and the integration path.
 
-        From version 1.2 and above, the `density_model_or_config` parameter can be a reference to
-        an instance of a density class directly. The class has to be derived either from
+        From version 1.2 and above, the `density_model_or_config`
+        parameter can be a reference to an instance of a density class
+        directly. The class has to be derived either from
         :class:`MCEq.geometry.density_profiles.EarthsAtmosphere` or
         :class:`MCEq.geometry.density_profiles.GeneralizedTarget`.
 
         Args:
-          density_model_or_config (obj or tuple of strings): (parametrization type, arguments)
+          density_model_or_config (obj or tuple of strings):
+            (parametrization type, arguments)
         """
         import MCEq.geometry.density_profiles as dprof
 
@@ -796,7 +799,8 @@ class MCEqRun(object):
         Currently only 'down-going' angles (0-90 degrees) are supported.
 
         Args:
-          atm_config (tuple of strings): (parametrization type, location string, season string)
+          atm_config (tuple of strings): (parametrization type,
+            location string, season string)
         """
         import MCEq.geometry.density_profiles as dprof
 
@@ -820,8 +824,9 @@ class MCEqRun(object):
         """
 
         from .ddm import isospin_partners, isospin_symmetries
+
         injected = []
-        for (prim, sec), mati in ddm.ddm_matrices.items():
+        for (prim, sec), mati in ddm.ddm_matrices(self).items():
             info(5, f"Injecting DDM {prim} --> {sec}")
             iso_part = isospin_partners[prim]
 
@@ -830,7 +835,9 @@ class MCEqRun(object):
             self.pman[iso_part].hadr_yields[
                 self.pman[isospin_symmetries[iso_part][sec]]
             ] = asarray(mati)
-            injected.append(((prim, sec), (iso_part, isospin_symmetries[iso_part][sec])))
+            injected.append(
+                ((prim, sec), (iso_part, isospin_symmetries[iso_part][sec]))
+            )
 
         if config.debug_level > 2:
             s = "DDM matrices injected into MCEq:\n"
@@ -906,7 +913,8 @@ class MCEqRun(object):
 
         Args:
           int_grid (list): list of depths at which results are recorded
-          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+          grid_var (str): Can be depth `X` or something else (currently
+            only `X` supported)
           kwargs (dict): Arguments are passed directly to the solver methods.
 
         """
@@ -940,13 +948,14 @@ class MCEqRun(object):
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
             import MCEq.spacc as spacc
+
             try:
                 if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
                     self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
                 if not np.array_equal(self._spacc_int_m.data, self.int_m.data):
                     self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
             except AttributeError:
-                info(10, 'Matrices not yet in Accelerate format')
+                info(10, "Matrices not yet in Accelerate format")
                 self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
                 self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
 
@@ -1003,7 +1012,8 @@ class MCEqRun(object):
           nsteps (int): number of integration steps
           dX (list): the delta_X's
           rho_inv (list): the inverse of the density at each step
-          grid_idcs (list): list of steps at which the solution is dumped into `grid_sol`
+          grid_idcs (list): list of steps at which the solution
+          is dumped into `grid_sol`
         """
 
         info(2, "Launching {0} solver".format(config.integrator))
@@ -1062,7 +1072,7 @@ class MCEqRun(object):
         self.int_grid, self.grid_var = int_grid, grid_var
         if grid_var != "X":
             raise NotImplementedError(
-                "the choice of grid variable other than the depth X are not possible, yet."
+                "Grid variables other than the depth X not supported."
             )
 
         max_X = self.density_model.max_X
@@ -1098,7 +1108,8 @@ class MCEqRun(object):
                 return min(config.stability_margin / max_lint, dXmax)
 
         else:
-            # This is the case for auto setting. If no particles in eqn system force decays
+            # This is the case for auto setting.
+            # If no particles in eqn system force decays
             # as leading eigenvalues
 
             if np.allclose(max_lint, 0.0):
@@ -1114,10 +1125,11 @@ class MCEqRun(object):
                         config.stability_margin / max_lint,
                         dXmax,
                     )
-                    # if dX/self.density_model.max_X < 1e-7:
+                    # if dX / self.density_model.max_X < 1e-7:
                     #     raise Exception(
-                    # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
-                    # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
+                    #         "Stiffness warning: dX <= 1e-7. Check configuration or"
+                    #         + 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).'
+                    #     )
                     return dX
 
         enable_int_grid = np.any(int_grid)
@@ -1474,7 +1486,8 @@ class MatrixBuilder(object):
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
                 raise Exception(
-                    "Dimension mismatch: matrix {0}x{1}, p={2}:({3},{4}), c={5}:({6},{7})".format(
+                    "Dimension mismatch: matrix "
+                    + "{0}x{1}, p={2}:({3},{4}), c={5}:({6},{7})".format(
                         self.dim_states,
                         self.dim_states,
                         rp.name,
