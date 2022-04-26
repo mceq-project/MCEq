@@ -1253,16 +1253,17 @@ class MCEqRun(object):
             smat = cupy.asnumpy(smat)
             proj_cs = cupy.asnumpy(proj_cs)
         # Definition wrt CR energy (different from Thunman) on x-axis
+        min_idx = 0
         if definition == "primary_e":
             for p_eidx, e in enumerate(self.e_grid):
                 if e < min_energy:
-                    min_idx = p_eidx + 1
+                    min_idx = p_eidx
                     continue
                 nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-                if use_cs_scaling:
-                    cs_fac = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
-                else:
-                    cs_fac = 1.0
+                assert (
+                    use_cs_scaling is False
+                ), f"cs_scaling has when definition = {definition}"
+                cs_fac = 1.0
                 zfac[p_eidx] = np.sum(
                     smat[min_idx : p_eidx + 1, p_eidx] * nuc_fac * cs_fac
                 )
@@ -1271,11 +1272,17 @@ class MCEqRun(object):
             # Like in Thunman et al. 1996
             for p_eidx, e in enumerate(self.e_grid):
                 if e < min_energy:
-                    min_idx = p_eidx + 1
+                    min_idx = p_eidx
                     continue
                 nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
                 if use_cs_scaling:
-                    cs_fac = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
+                    cs_fac = np.zeros(p_eidx - min_idx + 1)
+                    old_settings = np.seterr(all="ignore")
+                    res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
+                    np.seterr(**old_settings)
+                    cs_fac[(res > 0) & np.isfinite(res)] = res[
+                        (res > 0) & np.isfinite(res)
+                    ]
                 else:
                     cs_fac = 1.0
                 zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
