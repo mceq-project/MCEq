@@ -108,7 +108,7 @@ Most geometries support angles between 0 (vertical) and 90 degrees.
 
 To change the density profile ::
 
-    mceq.set_density_model(('MSIS00', 'Sudbury', 'June'))
+    mceq.set_density_model(('MSIS00', ('Sudbury', 'June')))
 
 Available models are:
 
