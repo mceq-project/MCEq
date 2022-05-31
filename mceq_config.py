@@ -236,6 +236,10 @@ adv_set = {
     "force_resonance": [],
     #: Disable mixing between resonance approx. and full propagation
     "no_mixing": False,
+    #: Force the interaction cross sections to a specific model
+    "forced_int_cs": None,
+    #: Replace only the meson air cross sections with that from a different model
+    "replace_meson_cross_sections_with": None,
 }
 
 #: Particles for compact mode

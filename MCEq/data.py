@@ -488,6 +488,10 @@ class HDF5Backend(object):
             info(5, "SIBYLL23C cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
+        if config.adv_set["forced_int_cs"] is not None:
+            mname = config.adv_set["forced_int_cs"]
+            info(1, "All interaction cross sections forced to", mname)
+
         if medium == "air-legacy" and "SIBYLL23" not in mname:
             info(5, "air-legacy target replaced by air for", mname)
             medium = "air"
@@ -504,6 +508,22 @@ class HDF5Backend(object):
             parents = list(cs_db.attrs["projectiles"])
             for ip, p in enumerate(parents):
                 index_d[p] = cs_data[self._cuts, ip]
+
+        if config.adv_set["replace_meson_cross_sections_with"] is not None:
+            mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
+            info(1, "Meson cross sections forced to", mname_mesons)
+            with h5py.File(self.had_fname, "r") as mceq_db:
+                self._check_subgroup_exists(mceq_db["cross_sections"], medium)
+                self._check_subgroup_exists(
+                    mceq_db["cross_sections"][medium], mname_mesons
+                )
+                mes_cs_db = mceq_db["cross_sections"][medium][mname_mesons]
+                mes_cs_data = mes_cs_db[:]
+                mes_parents = list(mes_cs_db.attrs["projectiles"])
+                for ip, p in enumerate(mes_parents):
+                    if p in index_d and (100 < abs(p) < 2000):
+                        info(1, "Meson cross sections for", p, "replaced.")
+                        index_d[p] = mes_cs_data[self._cuts, ip]
 
         # Append electromagnetic interaction cross sections from EmCA
         if config.enable_em:
@@ -651,12 +671,9 @@ class Interactions(object):
                 else:
                     # Generic isospin for other primaries
                     self.index_d[(p, (310, 0))] = 0.5 * (
-                        self.index_d[(p, (321, 0))]
-                        + self.index_d[(p, (-321, 0))]
+                        self.index_d[(p, (321, 0))] + self.index_d[(p, (-321, 0))]
                     )
-                self.index_d[(p, (130, 0))] = np.copy(
-                    self.index_d[(p, (310, 0))]
-                )
+                self.index_d[(p, (130, 0))] = np.copy(self.index_d[(p, (310, 0))])
 
         self.particles = []
         for p in list(self.relations):
@@ -1034,9 +1051,9 @@ class InteractionCrossSections(object):
     #: unit - :math:`\text{GeV} \cdot \text{cm}`
     GeVcm = GeVfm * 1e-13
     #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
-    GeV2mbarn = 10.0 * GeVfm ** 2
+    GeV2mbarn = 10.0 * GeVfm**2
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
-    mbarn2cm2 = GeVcm ** 2 / GeV2mbarn
+    mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
     def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII191"):
 
