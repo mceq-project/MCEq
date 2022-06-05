@@ -1,35 +1,7 @@
-# This workflow builds 
-# - source distribution (SDist)
-# - wheels using cibuildwheels (https://iscinumpy.dev/tags/cibuildwheel/)
-# and upload to PyPI (https://github.com/marketplace/actions/pypi-publish)
-
 name: Build_with_cibuildwheel_and_upload_to_PyPI
-
-
-# The workflow triggers on:
-
-#  - workflow_dispatch - manually trigger the workflow run using the GitHub browser interface 
-# see https://github.blog/changelog/2020-07-06-github-actions-manual-triggers-with-workflow_dispatch/
-# https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch
-
-# - push to 'master', only if changes are made to 'MCEq' directory (excluding MCEq/data/README.md)
-# see https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#example-including-branches-and-tags
-
-# - on pull request opened on a 'master' branch when a pull request that includes 
-# a change to 'MCEq' directory
-# see https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request
 
 on:
   workflow_dispatch:
-    # inputs:
-    #   artifactNameSDist:
-    #     description: 'Name of artifact for SDist'
-    #     required: true
-    #     default: 'SDist'
-    #   artifactNameWheels:
-    #     description: 'Prefix for artifacts for wheels'
-    #     required: true
-    #     default: 'wheels'
   push:
     branches:
       - master
@@ -38,8 +10,6 @@ on:
       - '!MCEq/data/README.md'
     tags:        
       - 'release**' 
-      # push tag release** (release_..., release/...) initiates upload to PyPI
-      # see also https://stackoverflow.com/a/71076957
   pull_request:
     types:
       - opened
@@ -55,17 +25,12 @@ jobs:
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v3
-          # with:
-          # # number of commits to fetch, default: "1". "0" means all history
-          #   fetch-depth: 0
 
         - name: Build SDist
           run: pipx run build --sdist
 
         - uses: actions/upload-artifact@v3
           with:
-          # name: ${{ github.event.inputs.artifactNameSDist }}
-          # If "name" is not provided, "artifact" will be used as the default name
             path: dist/*.tar.gz
             
     build_wheels:
@@ -78,49 +43,32 @@ jobs:
 
       steps:
       - uses: actions/checkout@v3
-        
-        # Building non-native architectures using emulation
-        # https://cibuildwheel.readthedocs.io/en/stable/faq/
+
       - name: Set up QEMU
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v1
         with:
           platforms: all
-
-
-         
+ 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.5.0
         env:
-          # https://cibuildwheel.readthedocs.io/en/stable/options/#examples_1
-          # Skip 32-bit builds
-          # Disable building PyPy wheels on all platforms
-          # Disable building musllinux wheels on all platforms
           CIBW_SKIP: "*-win32 *linux_i686 pp* *musllinux*"
-          # Build `universal2` wheels on an Intel runner.
           CIBW_ARCHS_MACOS: x86_64 universal2
-          # On an Linux Intel runner with qemu installed, build Intel and ARM wheels
           CIBW_ARCHS_LINUX: "auto aarch64"
-          # Skip trying to test arm64 builds on Intel Macs
-          # Will avoid testing on emulated architectures
           CIBW_TEST_SKIP: "*-macosx_arm64 *-macosx_universal2:arm64 *-*linux_{aarch64,ppc64le,s390x}"
-          # Run the package tests using 'pytest'
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: pytest {package}/MCEq/tests
       
-      # Upload built wheels to "artifact"
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
-          # name: ${{ github.event.inputs.artifactNameWheels }}_for_${{ matrix.os }}
-          # If "name" is not provided, "artifact" will be used as the default name
           path: wheelhouse/*.whl
 
     upload_all_to_PyPI:
       name: Upload to PyPI
       needs: [build_wheels, make_sdist]
       runs-on: ubuntu-latest
-      # Add a filter to the step to upload packages only on a tagged commit:
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
       steps:
         - name: Download files in artifact to "dist/" directory
@@ -129,23 +77,8 @@ jobs:
             name: artifact
             path: dist
       
-        # see https://github.com/marketplace/actions/pypi-publish:
-        # Upload Python distribution packages in the dist/ directory to PyPI:
         - name: Publish the package to PyPI
-        # "Use latest version" button on https://github.com/marketplace/actions/pypi-publish
           uses: pypa/gh-action-pypi-publish@v1.5.0
           with:
             user: __token__
-            # The secret used in ${{ secrets.PYPI_API_TOKEN }} needs 
-            # to be created  on the settings page of your project on GitHub.
-            # Saving credentials on GitHub:
-            # https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/
             password: ${{ secrets.PYPI_API_TOKEN }}
-            # packages_dir: custom-dir/ # if default target directory is not a "dist/", but some "custom-dir/"
-
-        # - name: Publish package to TestPyPI
-        #   uses: pypa/gh-action-pypi-publish@v1.5.0
-        #   with:
-        #     user: __token__
-        #     repository_url: https://test.pypi.org/legacy/
-        #     password: ${{ secrets.TEST_PYPI_API_TOKEN }}
