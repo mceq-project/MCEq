@@ -71,7 +71,7 @@ jobs:
           uses: docker/setup-qemu-action@v1
 
         - name: Set up testing command for aarch64
-          if: ${{ matrix.arch == 'aarch64' }}
+          if: ${{ (matrix.arch == 'aarch64') && !(matrix.py == 'cp36') }}
           run: |
             echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND_AARCH64 }}" >> $GITHUB_ENV
           shell: bash  
@@ -82,11 +82,11 @@ jobs:
             echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND }}" >> $GITHUB_ENV
           shell: bash
 
-        - name: Removing tests for cp36 ubuntu-latest aarch64
-          if: ${{ (matrix.os == 'ubuntu-latest') && (matrix.py == 'cp36') && (matrix.arch == 'aarch64') }}
-          run: |
-            echo "CIBW_TEST_COMMAND= " >> $GITHUB_ENV
-          shell: bash    
+        # - name: Removing tests for cp36 ubuntu-latest aarch64
+        #   if: ${{ (matrix.os == 'ubuntu-latest') && (matrix.py == 'cp36') && (matrix.arch == 'aarch64') }}
+        #   run: |
+        #     echo "CIBW_TEST_COMMAND= " >> $GITHUB_ENV
+        #   shell: bash    
 
         - name: Build wheels
           uses: pypa/cibuildwheel@v2.5.0
