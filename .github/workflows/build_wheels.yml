@@ -32,38 +32,60 @@ jobs:
         - uses: actions/upload-artifact@v3
           with:
             path: dist/*.tar.gz
-            
+
+
     build_wheels:
-      name: Wheel on ${{ matrix.os }}
+      name: Wheel for ${{ matrix.py }} ${{ matrix.os }} ${{ matrix.arch }}
       runs-on: ${{ matrix.os }}
       strategy:
         fail-fast: false
         matrix:
-          os: [ubuntu-20.04, windows-2019, macos-10.15]
+          os: [ubuntu-latest, windows-latest, macos-latest]
+          arch: [native, aarch64, universal2]
+          py: [cp36, cp37, cp38, cp39, cp310, cp311]
+          exclude:
+            - os: windows-latest
+              arch: aarch64
+            - os: windows-latest
+              arch: universal2
+            - os: macos-latest
+              arch: aarch64
+            - os: ubuntu-latest
+              arch: universal2
+      env:
+        PYTEST_COMMAND: pytest --pyargs MCEq
+        PYTEST_COMMAND_AARCH64: >
+          cd {package}/MCEq/tests &&
+          pytest test_densities.py test_msis.py
 
       steps:
-      - uses: actions/checkout@v3
+        - uses: actions/checkout@v3
 
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v1
-        with:
-          platforms: all
- 
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.5.0
-        env:
-          CIBW_SKIP: "*-win32 *linux_i686 pp* *musllinux*"
-          CIBW_ARCHS_MACOS: x86_64 universal2
-          CIBW_ARCHS_LINUX: "auto aarch64"
-          CIBW_TEST_SKIP: "*-macosx_arm64 *-macosx_universal2:arm64 *-*linux_{aarch64,ppc64le,s390x}"
-          CIBW_TEST_REQUIRES: pytest
-          CIBW_TEST_COMMAND: pytest {package}/MCEq/tests
-      
-      - name: Upload wheels
-        uses: actions/upload-artifact@v3
-        with:
-          path: wheelhouse/*.whl
+        - name: Set up QEMU
+          if: ${{ matrix.arch == 'aarch64' }}
+          uses: docker/setup-qemu-action@v1
+
+        - name: Set up testing command for aarch64
+          if: ${{ matrix.arch == 'aarch64' }}
+          run: |
+            echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND_AARCH64 }}" >> $GITHUB_ENV
+
+        - name: Set up testing command for other cases
+          if: ${{ !(matrix.arch == 'aarch64') }}
+          run: |
+            echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND }}" >> $GITHUB_ENV
+
+        - uses: pypa/cibuildwheel@v2.5.0
+          env:
+            CIBW_BUILD: ${{ matrix.py }}-*
+            CIBW_ARCHS: ${{ matrix.arch }}
+            CIBW_SKIP: "*musllinux*"
+            CIBW_TEST_REQUIRES: pytest
+
+        - name: Upload wheels
+          uses: actions/upload-artifact@v3
+          with:
+            path: wheelhouse/*.whl
 
     upload_all_to_PyPI:
       name: Upload to PyPI
