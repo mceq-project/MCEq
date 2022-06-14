@@ -36,9 +36,12 @@ jobs:
       strategy:
         fail-fast: false
         matrix:
-          os: [ubuntu-latest, windows-latest, macos-latest]
-          arch: [native, aarch64, universal2]
-          py: [cp36, cp37, cp38, cp39, cp310]
+          os: [ubuntu-latest]
+          arch: [aarch64]
+          py: [cp36]
+          # os: [ubuntu-latest, windows-latest, macos-latest]
+          # arch: [native, aarch64, universal2]
+          # py: [cp36, cp37, cp38, cp39, cp310]
           exclude:
             - os: windows-latest
               arch: aarch64
@@ -79,13 +82,14 @@ jobs:
             echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND }}" >> $GITHUB_ENV
           shell: bash
 
-        - name: Set up testing command for aarch64
+        - name: Removing tests for cp36 ubuntu-latest aarch64
           if: ${{ (matrix.os == 'ubuntu-latest') && (matrix.py == 'cp36') && (matrix.arch == 'aarch64') }}
           run: |
-            echo "CIBW_TEST_COMMAND=''" >> $GITHUB_ENV
+            echo "CIBW_TEST_COMMAND= " >> $GITHUB_ENV
           shell: bash    
 
-        - uses: pypa/cibuildwheel@v2.5.0
+        - name: Build wheels
+          uses: pypa/cibuildwheel@v2.5.0
           env:
             CIBW_BUILD: ${{ matrix.py }}-*
             CIBW_ARCHS: ${{ matrix.arch }}
