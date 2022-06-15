@@ -1,5 +1,8 @@
 Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.2.5:
+- Migrated to github actions for CI. Thx @jncots
+
 Version 1.2.3:
 - Binary wheel for aarch64 on linux. Thanks to @obidev
 
