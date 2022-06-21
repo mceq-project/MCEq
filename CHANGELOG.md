@@ -6,6 +6,7 @@ Version 1.3.7:
 - Geometry/atmosphere interfaces moved to package level from redundant python source files
 - Merged AArch64 on linux support from master
 - Some advanced options to mix and match yields and inelastic cross sections from different models
+- Different Z-Factor function in DDM
 
 Version 1.3.5:
 
