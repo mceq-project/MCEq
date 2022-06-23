@@ -354,23 +354,23 @@ class MCEqRun(object):
         if return_as == "total energy":
             etot_grid = self.etot_grid(lep_str)
             if not integrate:
-                return res * etot_grid ** mag
+                return res * etot_grid**mag
             else:
-                return res * etot_grid ** mag * self.e_widths
+                return res * etot_grid**mag * self.e_widths
 
         elif return_as == "kinetic energy":
             if not integrate:
-                return res * self._energy_grid.c ** mag
+                return res * self._energy_grid.c**mag
             else:
-                return res * self._energy_grid.c ** mag * self.e_widths
+                return res * self._energy_grid.c**mag * self.e_widths
 
         elif return_as == "total momentum":
             ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
-                return dEkindp * res * ptot_grid ** mag
+                return dEkindp * res * ptot_grid**mag
             else:
-                return dEkindp * res * ptot_grid ** mag * np.diff(ptot_bins)
+                return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
 
         else:
             raise Exception(
@@ -649,7 +649,7 @@ class MCEqRun(object):
 
         if n_nucleons == 0:
             # This case handles other exotic projectiles
-            b_particle = np.array([1.0, En, En ** 2])
+            b_particle = np.array([1.0, En, En**2])
             lidx = self.pman[pdg_id].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -659,7 +659,7 @@ class MCEqRun(object):
             return
 
         if n_protons > 0:
-            b_protons = np.array([n_protons, En * n_protons, En ** 2 * n_protons])
+            b_protons = np.array([n_protons, En * n_protons, En**2 * n_protons])
             p_lidx = self.pman[2212].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -667,7 +667,7 @@ class MCEqRun(object):
                     emat, b_protons
                 )
         if n_neutrons > 0:
-            b_neutrons = np.array([n_neutrons, En * n_neutrons, En ** 2 * n_neutrons])
+            b_neutrons = np.array([n_neutrons, En * n_neutrons, En**2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
