@@ -644,7 +644,7 @@ class MCEqRun(object):
         Currently only 'down-going' angles (0-90 degrees) are supported.
 
         Args:
-          atm_config (tuple of strings): (parametrization type, location string, season string)
+          theta_deg (float): zenith angle in the range 0-90 degrees
         """
         import MCEq.geometry.density_profiles as dprof
         

@@ -325,6 +325,49 @@ class MCEqConfigCompatibility(dict):
 
 config = MCEqConfigCompatibility(globals())
 
+class FileIntegrityCheck:
+    """
+    A class to check a file integrity against provided checksum
+    
+    Attributes
+    ----------
+    filename : str
+        path to the file
+    checksum : str
+        hex of sha256 checksum
+    Methods
+    -------
+    is_passed():
+        returns True if checksum and calculated checksum of the file are equal
+    
+    get_file_checksum():
+        returns checksum of the file
+    """
+    import hashlib
+    def __init__(self, filename, checksum = ''):
+        self.filename = filename
+        self.checksum = checksum
+        self.sha256_hash = self.hashlib.sha256()
+        self.hash_is_calculated = False
+        
+    def _calculate_hash(self):
+        if not self.hash_is_calculated:
+            try:
+                with open(self.filename, "rb") as file:
+                    for byte_block in iter(lambda: file.read(4096),b""):
+                        self.sha256_hash.update(byte_block)
+                self.hash_is_calculated = True
+            except EnvironmentError as ex:
+                print("FileIntegrityCheck: {0}".format(ex))
+
+    def is_passed(self):
+        self._calculate_hash()
+        return (self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum)
+
+    def get_file_checksum(self):
+        self._calculate_hash()
+        return self.sha256_hash.hexdigest()
+
 
 def _download_file(url, outfile):
     """Downloads the MCEq database from github"""
@@ -353,13 +396,26 @@ def _download_file(url, outfile):
 base_url = 'https://github.com/afedynitch/MCEq/releases/download/'
 release_tag = 'builds_on_azure/'
 url = base_url + release_tag + mceq_db_fname
-if not path.isfile(path.join(data_dir, mceq_db_fname)):
+# sha256 checksum of the file
+# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
+file_checksum="6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
+
+filepath_to_database = path.join(data_dir, mceq_db_fname)
+if path.isfile(filepath_to_database):
+    is_file_complete = FileIntegrityCheck(filepath_to_database, file_checksum).is_passed()
+else:
+    is_file_complete = False
+
+if not is_file_complete:
     print('Downloading for mceq database file {0}.'.format(mceq_db_fname))
     if debug_level >= 2:
         print(url)
-    _download_file(url, path.join(data_dir, mceq_db_fname))
+    _download_file(url, filepath_to_database)
 
-if path.isfile(path.join(data_dir, 'mceq_db_lext_dpm191.h5')):
+old_database = 'mceq_db_lext_dpm191.h5'
+filepath_to_old_database = path.join(data_dir, old_database)
+
+if path.isfile(filepath_to_old_database):
     import os
-    print('Removing previous database {0}.'.format('mceq_db_lext_dpm191.h5'))
-    os.unlink(path.join(data_dir, 'mceq_db_lext_dpm191.h5'))
+    print('Removing previous database {0}.'.format(old_database))
+    os.unlink(filepath_to_old_database)
