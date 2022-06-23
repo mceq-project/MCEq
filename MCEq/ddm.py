@@ -184,6 +184,39 @@ class DataDrivenModel(object):
 
         return y, sig_y
 
+    def calc_zfactor_and_error2(self, prim, sec, ebeam, fv, fe, gamma=1.7):
+        """The parameter `gamma` is the CR nucleon integral spectral index.
+
+        fv and fe are the fitted correction and its uncertainty.
+        """
+
+        (ebeam, x17, tck, cov, tv, te) = self._unpack_coeff(prim, sec, ebeam)
+
+        info(3, f"Calculating Z-factor for {prim}-->{sec} @ {ebeam} GeV.")
+
+        def fitfunc_center(*args, **kwargs):
+            return self._fitfunc(*args, **kwargs)[0]
+
+        def fitfunc_error(*args, **kwargs):
+            return self._fitfunc(*args, **kwargs)[1]
+
+        zfactor_center = quad(
+            fitfunc_center,
+            _pdata.mass(sec) / ebeam,
+            1.0,
+            args=(tck, x17, cov, 1.0, 1.0, True, gamma),
+            **_quad_params,
+        )[0]
+        zfactor_error = quad(
+            fitfunc_error,
+            _pdata.mass(sec) / ebeam,
+            1.0,
+            args=(tck, x17, cov, 1.0, 1.0, True, gamma),
+            **_quad_params,
+        )[0]
+
+        return zfactor_center + fv * zfactor_error, fe * zfactor_error
+
     def _gen_dndx(self, xbins, prim, sec, ebeam):
         (ebeam, x17, tck, cov, tv, te) = self._unpack_coeff(prim, sec, ebeam)
 
