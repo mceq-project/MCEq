@@ -207,7 +207,7 @@ class HDF5Backend(object):
         else:
             description = None
         mat_data = np.asarray(hdf_root[:, :], dtype=config.floatlen)
-        indptr_data = indptrs[:]
+        indptr_data = np.asarray(indptrs[:])
         len_data = hdf_root.attrs["len_data"]
         if hdf_root.attrs["tuple_idcs"].shape[1] == 4:
             model_particles = sorted(
@@ -467,17 +467,44 @@ class HDF5Backend(object):
                             (sign * 11, hel),
                         )
 
-                dec_index["relations"] = defaultdict(lambda: [])
-                dec_index["particles"] = []
+            if (3210000, 0) in dec_index["parents"]:
+                for child in dec_index["relations"][(3210000, 0)]:
+                    antichild = (-child[0], child[1]) if child[0] not in [111] else child
 
-                for idx_tup in dec_index["index_d"]:
-                    parent, child = idx_tup
-                    dec_index["relations"][parent].append(child)
-                    dec_index["particles"].append(parent)
-                    dec_index["particles"].append(child)
+                    if ((321, 0), child) in dec_index["index_d"]:
+                        assert (((321, 0), child) in dec_index["index_d"]) and (
+                            (-321, 0),
+                            antichild,
+                        ) in dec_index["index_d"], f"{antichild} not in index" 
 
-                dec_index["parents"] = sorted(list(dec_index["relations"]))
-                dec_index["particles"] = sorted(list(set(dec_index["particles"])))
+                        dec_index["index_d"][((321, 0), child)] += dec_index[
+                            "index_d"
+                        ][((3210000, 0), child)]
+                        dec_index["index_d"][((-321, 0), antichild)] += dec_index[
+                            "index_d"
+                        ][((-3210000, 0), antichild)]
+                    else:
+                        dec_index["index_d"][((321, 0), child)] = dec_index[
+                            "index_d"
+                        ][((3210000, 0), child)]
+                        dec_index["index_d"][((321, 0), antichild)] = dec_index[
+                            "index_d"
+                        ][((-3210000, 0), antichild)]
+                    del dec_index["index_d"][((3210000, 0), child)]
+                    del dec_index["index_d"][((-3210000, 0), antichild)]
+
+            # Refresh the metadata after modifying the index
+            dec_index["relations"] = defaultdict(lambda: [])
+            dec_index["particles"] = []
+
+            for idx_tup in dec_index["index_d"]:
+                parent, child = idx_tup
+                dec_index["relations"][parent].append(child)
+                dec_index["particles"].append(parent)
+                dec_index["particles"].append(child)
+
+            dec_index["parents"] = sorted(list(dec_index["relations"]))
+            dec_index["particles"] = sorted(list(set(dec_index["particles"])))
         return dec_index
 
     def cs_db(self, interaction_model_name):
@@ -621,7 +648,6 @@ class Interactions(object):
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
-        from itertools import product
 
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
@@ -658,10 +684,10 @@ class Interactions(object):
             # a sum of K+ and K-. The different values are expected
             # from quark counting rules. This bug will be resolved
             # in future versions.
+            info(3, "Applying fix for neutral kaons in DPMJET.")
             for p in self.parents:
                 if abs(p[0]) < 100:
                     continue
-                info(3, "Applying fix for neutral kaons in DPMJET.")
                 if p[0] in [2212, 2112]:
                     # From fit to fixed distributions
                     self.index_d[(p, (310, 0))] = 0.5 * (
@@ -956,13 +982,15 @@ class Decays(object):
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, default_decay_dset="full_decays"):
+    def __init__(self, mceq_hdf_db, decay_db_name=None):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
         self.parent_list = []
-        self._default_decay_dset = default_decay_dset
+        self._default_decay_dset = (
+            decay_db_name if decay_db_name is not None else config.decay_db_name
+        )
 
     def load(self, parent_list=None, decay_dset=None):
         # Load tables and index from file
