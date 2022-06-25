@@ -1,11 +1,18 @@
 # Changes in MCEq since moving from MCEq_classic to the 1.X.X versions
 
+Version 1.3.8:
+
+- New default data file in preparation for 1.4 update
+- Recomputed decay database and separated 3-body (3b) decays of Kaons
+- Unpolarized 3b decay of kaons full accounted for helicity dependent calculations
+
 Version 1.3.7:
 
 - New interface to Apple Accelerate/vecLib library for accelerated computation on Apple Silicon macs
 - Geometry/atmosphere interfaces moved to package level from redundant python source files
 - Merged AArch64 on linux support from master
 - Some advanced options to mix and match yields and inelastic cross sections from different models
+- Different Z-Factor function in DDM
 
 Version 1.3.5:
 

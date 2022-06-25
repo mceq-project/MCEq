@@ -25,10 +25,13 @@ print_module = False
 data_dir = path.join(base_path, "MCEq", "data")
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"
+mceq_db_fname = "mceq_db_lext_dpm191_v14.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
+
+#: Decay database name
+decay_db_name = 'pythia_decays_K3b_202206'
 
 # =================================================================
 # Atmosphere and geometry settings
