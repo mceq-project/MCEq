@@ -1,16 +1,24 @@
-Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+
+Version 1.2.6:
+
+- Fixed a bug where alternating changes between up- and downgoing zenith angles are not detected correctly and the same results returned
 
 Version 1.2.5:
+
 - Migrated to github actions for CI. Thx @jncots
 
 Version 1.2.3:
+
 - Binary wheel for aarch64 on linux. Thanks to @obidev
 
 Version 1.2.2:
+
 - Added wheels for Python 3.9 on 64 bit systems
 - Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
 
 Version 1.2.0:
+
 - New data tables: physics will be affected mostly low energies < 30 GeV and minor
 corrections can be visible for particle ratios at higher energies.
 [See dedicated doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
@@ -26,7 +34,7 @@ corrections can be visible for particle ratios at higher energies.
 
 Version 1.1.3:
 
-- Added atmospheres for KM3NeT by @Kakiczi (https://github.com/Kakiczi)
+- Added atmospheres for KM3NeT by @Kakiczi (<https://github.com/Kakiczi>)
 - new keyword for MCEqRun "build_matrices"=False (to prevent matrix building on init)
 - Equivalent projectile mappings separated for SIBYLL 2.1 and 2.3  
 
@@ -56,20 +64,24 @@ may have generated some confusion. Other changes include:
 - tests for atmospheres
 
 Version 1.0.9:
+
 - disable_decays flag in advanced options fixed
 - threshold energy not used in n_mu, n_e
 - new generic function 'n_particles' for arbitrary particle types
 - new config option dedx_material
 
 Version 1.0.8:
+
 - Fixed a Python3 compatibility issue in density profiles
 - Cross checked and corrected the functionality of "disabled particles" in config file
 - Version tagged for paper submission
 
 Version 1.0.6 and 1.0.7:
+
 - A few typos corrected
 
 Version 1.0.5:
+
 - Check added to make sure depth grids are strictly increasing
 - Tutorial updated to reflect this fact
 - New advanced variable in config "stability_margin"
@@ -93,4 +105,3 @@ General remark::
     one based on DifferentialOperators that are not part of the "C Matrix". With the new
     structure it became simpler to exchange physical models or track particle decays of
     any kind.
-
