@@ -686,6 +686,37 @@ class MSIS00Atmosphere(EarthsAtmosphere):
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
             self.geom.h_obs = self._msis.alt_surface
 
+    def __clear_cache(self):
+        """Clears the density model cache so that density profiles can be recalculated
+
+        It is a private method to wrap the logic of cache cleaning
+        """
+        self.theta_deg = None
+
+    def update_parameters(self, **kwargs):
+        """Updates parameters of the density model
+
+        Args:
+          location_coord (tuple of str): (longitude, latitude)
+          season (str): months of the year: January, February, etc.
+          doy (int): day of the year. 'doy' takes precedence over 'season' if both are set
+        """
+
+        self.__clear_cache()
+        if not kwargs:
+            return
+
+        if "location_coord" in kwargs:
+            self.set_location_coord(*kwargs.get("location_coord"))
+
+        if "season" in kwargs:
+            self.set_season(kwargs.get("season"))
+
+        if "doy" in kwargs:
+            self.set_doy(kwargs.get("doy"))
+            if "season" in kwargs:
+                info(2, "Both 'season' and 'doy' are set in parameter list.\n'doy' takes precedence over 'season'")
+
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.
 
@@ -707,6 +738,18 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_location(location)
+        self.__clear_cache()
+
+    def set_location_coord(self, longitude, latitude):
+        """Changes MSIS location by longitude, latitude in _msis_wrapper
+
+        Args:
+          longitude (float): longitude of the location with abs(longitude) <= 180
+          latitude (float): latitude of the location with abs(latitude) <= 90
+
+        """
+        self._msis.set_location_coord(longitude, latitude)
+        self.__clear_cache()
 
     def set_season(self, month):
         """Changes MSIS location by month strings defined in _msis_wrapper.
@@ -716,6 +759,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_season(month)
+        self.__clear_cache()
 
     def set_doy(self, day_of_year):
         """Changes MSIS season by day of year.
@@ -725,6 +769,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_doy(day_of_year)
+        self.__clear_cache()
 
     def get_temperature(self, h_cm):
         """Returns the temperature of air in K.
