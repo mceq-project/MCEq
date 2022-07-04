@@ -686,7 +686,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
             self.geom.h_obs = self._msis.alt_surface
 
-    def __clear_cache(self):
+    def _clear_cache(self):
         """Clears the density model cache so that density profiles can be recalculated
 
         It is a private method to wrap the logic of cache cleaning
@@ -702,7 +702,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
           doy (int): day of the year. 'doy' takes precedence over 'season' if both are set
         """
 
-        self.__clear_cache()
+        self._clear_cache()
         if not kwargs:
             return
 
@@ -738,7 +738,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_location(location)
-        self.__clear_cache()
+        self._clear_cache()
 
     def set_location_coord(self, longitude, latitude):
         """Changes MSIS location by longitude, latitude in _msis_wrapper
@@ -749,7 +749,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_location_coord(longitude, latitude)
-        self.__clear_cache()
+        self._clear_cache()
 
     def set_season(self, month):
         """Changes MSIS location by month strings defined in _msis_wrapper.
@@ -759,7 +759,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_season(month)
-        self.__clear_cache()
+        self._clear_cache()
 
     def set_doy(self, day_of_year):
         """Changes MSIS season by day of year.
@@ -769,7 +769,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         """
         self._msis.set_doy(day_of_year)
-        self.__clear_cache()
+        self._clear_cache()
 
     def get_temperature(self, h_cm):
         """Returns the temperature of air in K.
