@@ -31,7 +31,7 @@ mceq_db_fname = "mceq_db_lext_dpm191_v14.h5"
 em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
 
 #: Decay database name
-decay_db_name = "pythia_decays_K3b_202206"
+decay_db_name = None
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -103,7 +103,7 @@ integrator = "euler"
 #: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "auto"
+kernel_config = "numpy"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -303,7 +303,7 @@ class FileIntegrityCheck:
         hex of sha256 checksum
     Methods
     -------
-    is_passed():
+    succeeded():
         returns True if checksum and calculated checksum of the file are equal
 
     get_file_checksum():
@@ -328,7 +328,7 @@ class FileIntegrityCheck:
             except EnvironmentError as ex:
                 print("FileIntegrityCheck: {0}".format(ex))
 
-    def is_passed(self):
+    def succeeded(self):
         self._calculate_hash()
         return self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum
 
@@ -373,24 +373,24 @@ url = base_url + release_tag + mceq_db_fname
 file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
 
 filepath_to_database = path.join(data_dir, mceq_db_fname)
-if path.isfile(filepath_to_database):
-    is_file_complete = FileIntegrityCheck(
-        filepath_to_database, file_checksum
-    ).is_passed()
-else:
-    is_file_complete = False
-
+# if path.isfile(filepath_to_database):
+#     is_file_complete = FileIntegrityCheck(
+#         filepath_to_database, file_checksum
+#     ).succeeded()
+# else:
+#     is_file_complete = False
+is_file_complete = True
 if not is_file_complete:
     print("Downloading for mceq database file {0}.".format(mceq_db_fname))
     if debug_level >= 2:
         print(url)
     _download_file(url, filepath_to_database)
 
-old_database = "mceq_db_lext_dpm191.h5"
-filepath_to_old_database = path.join(data_dir, old_database)
+# old_database = "mceq_db_lext_dpm191.h5"
+# filepath_to_old_database = path.join(data_dir, old_database)
 
-if path.isfile(filepath_to_old_database):
-    import os
+# if path.isfile(filepath_to_old_database):
+#     import os
 
-    print("Removing previous database {0}.".format(old_database))
-    os.unlink(filepath_to_old_database)
+#     print("Removing previous database {0}.".format(old_database))
+#     os.unlink(filepath_to_old_database)

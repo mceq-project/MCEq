@@ -422,79 +422,22 @@ class HDF5Backend(object):
         info(10, "Generating decay db. dset_name={0}".format(decay_dset_name))
 
         with h5py.File(self.had_fname, "r") as mceq_db:
+            if config.muon_helicity_dependence:
+                if decay_dset_name != "full_decays":
+                    info(
+                        0,
+                        "Warning: "
+                        + f"Does this decay dataset '{decay_dset_name}'"
+                        + " include polarization?",
+                    )
+                    decay_dset_name = "polarized_decays"
+                    info(2, "Using helicity dependent decays.")
+
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][decay_dset_name],
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
-
-            if config.muon_helicity_dependence:
-                info(2, "Using helicity dependent decays.")
-                custom_index = self._gen_db_dictionary(
-                    mceq_db["decays"]["custom_decays"],
-                    mceq_db["decays"]["custom_decays" + "_indptrs"],
-                )
-
-                info(5, "Replacing decay from custom decay_db.")
-                dec_index["index_d"].update(custom_index["index_d"])
-
-                # Remove manually TODO: Kaon decays to muons assumed
-                # only two-body
-                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
-                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
-                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
-                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)), None)
-                # _ = dec_index['index_d'].pop(((211,0),(14,0)))
-                # _ = dec_index['index_d'].pop(((-211,0),(-14,0)))
-                # _ = dec_index['index_d'].pop(((321,0),(14,0)))
-                # _ = dec_index['index_d'].pop(((-321,0),(-14,0)))
-
-                # Add polarized muon to electron decays (we use the non-polarized
-                # 3-body decay distribution, what is maybe inappropriate
-                # but better than nothing)
-                info(5, "Copy muon->electron decay to polarised muons.")
-                from itertools import product
-
-                for sign, hel in product([1, -1], [1, -1]):
-                    try:
-                        dec_index["index_d"][
-                            ((sign * 13, hel), (sign * 11, hel))
-                        ] = dec_index["index_d"][((sign * 13, 0), (sign * 11, 0))]
-                    except KeyError:
-                        info(
-                            0,
-                            "Error copying muon->electron decays for polarized muons",
-                            (sign * 13, hel),
-                            (sign * 11, hel),
-                        )
-
-            if (3210000, 0) in dec_index["parents"]:
-                for child in dec_index["relations"][(3210000, 0)]:
-                    antichild = (
-                        (-child[0], child[1]) if child[0] not in [111] else child
-                    )
-
-                    if ((321, 0), child) in dec_index["index_d"]:
-                        assert (((321, 0), child) in dec_index["index_d"]) and (
-                            (-321, 0),
-                            antichild,
-                        ) in dec_index["index_d"], f"{antichild} not in index"
-
-                        dec_index["index_d"][((321, 0), child)] += dec_index["index_d"][
-                            ((3210000, 0), child)
-                        ]
-                        dec_index["index_d"][((-321, 0), antichild)] += dec_index[
-                            "index_d"
-                        ][((-3210000, 0), antichild)]
-                    else:
-                        dec_index["index_d"][((321, 0), child)] = dec_index["index_d"][
-                            ((3210000, 0), child)
-                        ]
-                        dec_index["index_d"][((321, 0), antichild)] = dec_index[
-                            "index_d"
-                        ][((-3210000, 0), antichild)]
-                    del dec_index["index_d"][((3210000, 0), child)]
-                    del dec_index["index_d"][((-3210000, 0), antichild)]
 
             # Refresh the metadata after modifying the index
             dec_index["relations"] = defaultdict(lambda: [])
@@ -992,7 +935,7 @@ class Decays(object):
         #: (list) List of particles in the decay matrices
         self.parent_list = []
         self._default_decay_dset = (
-            decay_db_name if decay_db_name is not None else config.decay_db_name
+            decay_db_name if config.decay_db_name is not None else "full_decays"
         )
 
     def load(self, parent_list=None, decay_dset=None):
