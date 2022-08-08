@@ -1,4 +1,4 @@
-from ctypes import cdll, Structure, c_int, c_double, POINTER
+from ctypes import cdll, c_double
 import os
 import sysconfig
 

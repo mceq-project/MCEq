@@ -9,24 +9,26 @@ import numpy as np
 import pytest
 import sys
 
-if sys.platform.startswith("win") and sys.maxsize <= 2**32:
-    pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
-
-
-def format_8_digits(a_list):
-    return ["%.8e" % member for member in a_list]
-
 
 config.debug_level = 1
 config.kernel_config = "numpy"
 config.cuda_gpu_id = 0
-import MCEq, MCEq.core
+
+import MCEq
+import MCEq.core
 
 if config.has_mkl:
     MCEq.set_mkl_threads(2)
 
 # MCEq.set_backend("numpy")
 
+
+def format_8_digits(a_list):
+    return ["%.8e" % member for member in a_list]
+
+
+if sys.platform.startswith("win") and sys.maxsize <= 2**32:
+    pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 mceq = MCEq.core.MCEqRun(
     interaction_model="SIBYLL23D",

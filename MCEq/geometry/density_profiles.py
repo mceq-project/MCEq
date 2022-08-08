@@ -168,7 +168,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         self.geom.set_h_obs(h_obs)
         self.max_theta = self.geom.theta_max_deg
-        assert self.theta_deg <= self.geom.theta_max_deg, 'Theta out of range'
+        assert self.theta_deg <= self.geom.theta_max_deg, "Theta out of range"
         self.calculate_density_spline()
 
     def r_X2rho(self, X):
@@ -249,7 +249,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """Returns the Lorentz factor gamma of Cherenkov threshold in air (MeV)."""
 
         nrel = self.nref_rel_air(h_cm)
-        return (1.0 + nrel) / np.sqrt(2.0 * nrel + nrel ** 2)
+        return (1.0 + nrel) / np.sqrt(2.0 * nrel + nrel**2)
 
     def theta_cherenkov_air(self, h_cm):
         """Returns the Cherenkov angle in air (degrees)."""
@@ -1020,7 +1020,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
         theta_rad = det_zenith_deg / 180.0 * np.pi
 
-        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d ** 2) - (
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
             r - d
         ) * np.cos(theta_rad)
 
@@ -1048,7 +1048,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
                 ),
             )
             theta_deg = 180.0 - theta_deg
-            
+
         MSIS00Atmosphere.set_theta(self, theta_deg)
 
 

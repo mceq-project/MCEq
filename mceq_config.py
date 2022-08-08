@@ -31,7 +31,7 @@ mceq_db_fname = "mceq_db_lext_dpm191_v14.h5"
 em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
 
 #: Decay database name
-decay_db_name = 'pythia_decays_K3b_202206'
+decay_db_name = "pythia_decays_K3b_202206"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -290,35 +290,51 @@ try:
 except ImportError:
     has_cuda = False
 
-# Compatibility layer for dictionary access to config attributes
-# This is deprecated and will be removed in future
 
+class FileIntegrityCheck:
+    """
+    A class to check a file integrity against provided checksum
 
-class MCEqConfigCompatibility(dict):
-    """This class provides access to the attributes of the module as a
-    dictionary, as it was in the previous versions of MCEq
+    Attributes
+    ----------
+    filename : str
+        path to the file
+    checksum : str
+        hex of sha256 checksum
+    Methods
+    -------
+    is_passed():
+        returns True if checksum and calculated checksum of the file are equal
 
-    This method is deprecated and will be removed in future.
+    get_file_checksum():
+        returns checksum of the file
     """
 
-    def __init__(self, namespace):
-        self.__dict__.update(namespace)
-        warn_str = (
-            "Config dictionary is deprecated. "
-            + "Use 'import mceq_config as config' instead of "
-            + "'from mceq_config import config'; and "
-            + "'config.variable instead of config['variable']"
-        )
-        warnings.warn(warn_str, FutureWarning)
+    import hashlib
 
-    def __setitem__(self, key, value):
-        key = key.lower()
-        if key not in self.__dict__:
-            raise Exception("Unknown config key", key)
-        return super(MCEqConfigCompatibility, self).__setitem__(key, value)
+    def __init__(self, filename, checksum=""):
+        self.filename = filename
+        self.checksum = checksum
+        self.sha256_hash = self.hashlib.sha256()
+        self.hash_is_calculated = False
 
+    def _calculate_hash(self):
+        if not self.hash_is_calculated:
+            try:
+                with open(self.filename, "rb") as file:
+                    for byte_block in iter(lambda: file.read(4096), b""):
+                        self.sha256_hash.update(byte_block)
+                self.hash_is_calculated = True
+            except EnvironmentError as ex:
+                print("FileIntegrityCheck: {0}".format(ex))
 
-config = MCEqConfigCompatibility(globals())
+    def is_passed(self):
+        self._calculate_hash()
+        return self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum
+
+    def get_file_checksum(self):
+        self._calculate_hash()
+        return self.sha256_hash.hexdigest()
 
 
 def _download_file(url, outfile):
@@ -352,15 +368,29 @@ def _download_file(url, outfile):
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
 url = base_url + release_tag + mceq_db_fname
-if not path.isfile(path.join(data_dir, mceq_db_fname)):
+# sha256 checksum of the file
+# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
+file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
+
+filepath_to_database = path.join(data_dir, mceq_db_fname)
+if path.isfile(filepath_to_database):
+    is_file_complete = FileIntegrityCheck(
+        filepath_to_database, file_checksum
+    ).is_passed()
+else:
+    is_file_complete = False
+
+if not is_file_complete:
     print("Downloading for mceq database file {0}.".format(mceq_db_fname))
     if debug_level >= 2:
         print(url)
-    _download_file(url, path.join(data_dir, mceq_db_fname))
+    _download_file(url, filepath_to_database)
 
-for fn in ["mceq_db_lext_dpm191.h5", "mceq_db_lext_dpm191_v12.h5"]:
-    if path.isfile(path.join(data_dir, fn)):
-        import os
+old_database = "mceq_db_lext_dpm191.h5"
+filepath_to_old_database = path.join(data_dir, old_database)
 
-        print("Removing previous database {0}.".format(fn))
-        os.unlink(path.join(data_dir, fn))
+if path.isfile(filepath_to_old_database):
+    import os
+
+    print("Removing previous database {0}.".format(old_database))
+    os.unlink(filepath_to_old_database)

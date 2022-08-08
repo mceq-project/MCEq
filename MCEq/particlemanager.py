@@ -1,4 +1,3 @@
-from typing import Type
 import six
 from math import copysign
 import numpy as np
@@ -418,9 +417,9 @@ class MCEqParticle(object):
         #: unit - :math:`\text{GeV} \cdot \text{cm}`
         GeVcm = GeVfm * 1e-13
         #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
-        GeV2mbarn = 10.0 * GeVfm ** 2
+        GeV2mbarn = 10.0 * GeVfm**2
         #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
-        mbarn2cm2 = GeV2mbarn / GeVcm ** 2
+        mbarn2cm2 = GeV2mbarn / GeVcm**2
         if mbarn:
             return mbarn2cm2 * self.cs
 
@@ -602,19 +601,19 @@ class MCEqParticle(object):
             m = {2212: 0.938, 211: 0.139, 321: 0.493}
             mp = m[2212]
 
-            Ecm = np.sqrt(2 * Elab * mp + 2 * mp ** 2)
+            Ecm = np.sqrt(2 * Elab * mp + 2 * mp**2)
             Esec = xL * Elab
             betacm = np.sqrt((Elab - mp) / (Elab + mp))
             gammacm = (Elab + mp) / Ecm
             avpt = self._ptav_sib23c[ppdg](
-                np.log(np.sqrt(Elab ** 2) - m[np.abs(ppdg)] ** 2)
+                np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)] ** 2)
             )
 
             xf = (
                 2
                 * (
                     -betacm * gammacm * Esec
-                    + gammacm * np.sqrt(Esec ** 2 - m[np.abs(ppdg)] ** 2 - avpt ** 2)
+                    + gammacm * np.sqrt(Esec**2 - m[np.abs(ppdg)] ** 2 - avpt**2)
                 )
                 / Ecm
             )
@@ -623,9 +622,9 @@ class MCEqParticle(object):
                 * (
                     -betacm * gammacm * Elab
                     + xL
-                    * Elab ** 2
+                    * Elab**2
                     * gammacm
-                    / np.sqrt((xL * Elab) ** 2 - m[np.abs(ppdg)] ** 2 - avpt ** 2)
+                    / np.sqrt((xL * Elab) ** 2 - m[np.abs(ppdg)] ** 2 - avpt**2)
                 )
                 / Ecm
             )
@@ -931,7 +930,7 @@ class ParticleManager(object):
                 # stored for protons to different energy grids.
                 # Compute beta*gamma from kinetic energy
                 betagamma_p = (
-                    np.sqrt((self._energy_grid.c + p.mass) ** 2 - p.mass ** 2) / p.mass
+                    np.sqrt((self._energy_grid.c + p.mass) ** 2 - p.mass**2) / p.mass
                 )
                 p.dEdX = -np.exp(contloss_db.generic_spl(np.log(betagamma_p)))
                 p.has_contloss = True
@@ -1099,12 +1098,14 @@ class ParticleManager(object):
                                     that leptons originate from
             prefix (list): prefix for each lepton name that will be
                            identified as coming from these parent particles
-            exclude_em (bool, optional): exclude electromagnetic (e+-, gamma) from leptons
-            from_interactions (bool, optional): track particles coming from interactions
-                                                of parents instead of decays
-            use_helicities (bool, optional): ignore leptons with non-zero/defined helicity
-            include_antiparticle (bool, optional): ex. [211, 321] will be automatically converted
-                                                   to [211,-211,321,-321]
+            exclude_em (bool, optional): exclude electromagnetic (e+-, gamma)
+                from leptons
+            from_interactions (bool, optional): track particles coming from
+                interactions of parents instead of decays
+            use_helicities (bool, optional): ignore leptons with
+                non-zero/defined helicity
+            include_antiparticle (bool, optional): ex. [211, 321] will be
+                automatically converted to [211,-211,321,-321]
         """
 
         leptons = [

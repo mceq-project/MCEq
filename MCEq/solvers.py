@@ -8,10 +8,14 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      dX (numpy.array[nsteps]): vector of step-sizes
+        :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values
+        :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (numpy.array): interaction matrix :eq:`int_matrix`
+        in dense or sparse representation
+      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense
+        or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
@@ -52,9 +56,9 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 class CUDASparseContext(object):
-    """This class handles the transfer between CPU and GPU memory, and the calling
-    of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
-    :func:`solv_CUDA_sparse`.
+    """This class handles the transfer between CPU and GPU memory,
+    and the calling of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun`
+    and used by :func:`solv_CUDA_sparse`.
     """
 
     def __init__(self, int_m, dec_m, device_id=config.cuda_gpu_id):
@@ -62,7 +66,6 @@ class CUDASparseContext(object):
         try:
             import cupy as cp
             import cupyx.scipy as cpx
-            from cupy.cusparse import spmv
 
             self.cp = cp
             self.cpx = cpx
@@ -125,14 +128,18 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      dX (numpy.array[nsteps]): vector of step-sizes
+        :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values
+        :math:`\\frac{1}{\\rho(X_i)}`
+      context (object): Instance of :class:`CUDASparseContext`
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
+      grid_idcs (numpy.array): indices, when to save the state vector
+
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after final
+        step
+      numpy.array: state vector copies at `grid_idcs` or empty list
     """
 
     c = context
@@ -166,7 +173,8 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     # mu_loss_handler):
     """`Intel MKL sparse BLAS
-    <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_
+    <https://software.intel.com/en-us/articles/
+    intel-mkl-sparse-blas-overview?language=en>`_
     implementation of forward-euler integration.
 
     Function requires that the path to the MKL runtime library ``libmkl_rt.[so/dylib]``
@@ -174,15 +182,20 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      dX (numpy.array[nsteps]): vector of step-sizes
+        :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values
+        :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (numpy.array): interaction matrix :eq:`int_matrix`
+        in dense or sparse representation
+      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense
+        or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (list): indices at which longitudinal solutions have to be saved.
+      grid_idcs (list): indices, when to save the state vector
 
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      numpy.array: state vector copies at `grid_idcs` or empty list
     """
 
     from ctypes import c_int, c_char, POINTER, byref
@@ -195,15 +208,11 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_dcsrmv
-        # dense vector + dense vector
-        axpy = mkl.cblas_daxpy
     else:
         from ctypes import c_float as fl_pr
 
         # sparse CSR-matrix x dense vector
         gemv = mkl.mkl_scsrmv
-        # dense vector + dense vector
-        axpy = mkl.cblas_saxpy
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -229,7 +238,6 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     m = byref(c_int(int_m.shape[0]))
     cdzero = byref(fl_pr(0.0))
     cdone = byref(fl_pr(1.0))
-    cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
@@ -294,12 +302,17 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      dX (numpy.array[nsteps]): vector of step-sizes
+        :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values
+        :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (numpy.array): interaction matrix :eq:`int_matrix`
+        in dense or sparse representation
+      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in
+        dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (list): indices at which longitudinal solutions have to be saved.
+      grid_idcs (list): indices at which longitudinal solutions
+        have to be saved.
 
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
@@ -359,7 +372,8 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 #     """Solves the transport equations with solvers from ODEPACK.
 
 #     Args:
-#         dXstep (float): external step size (adaptive sovlers make more steps internally)
+#         dXstep (float): external step size (adaptive sovlers make more
+#           steps internally)
 #         initial_depth (float): starting depth in g/cm**2
 #         int_grid (list): list of depths at which results are recorded
 # grid_var (str): Can be depth `X` or something else (currently only `X`

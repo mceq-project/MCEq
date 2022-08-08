@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 from MCEq.misc import theta_rad
 import mceq_config as config
@@ -128,19 +127,19 @@ class EarthGeometry(object):
         r"""Segment length :math:`A2(\theta)` in cm."""
         return self.r_obs * np.sin(theta)
 
-    def l(self, theta):
+    def pl(self, theta):
         r"""Returns path length in [cm] for given zenith
         angle :math:`\theta` [rad].
         """
         self._check_angles(theta)
-        return np.sqrt(self.r_top ** 2 - self._A_2(theta) ** 2) - self._A_1(theta)
+        return np.sqrt(self.r_top**2 - self._A_2(theta) ** 2) - self._A_1(theta)
 
     def cos_th_star(self, theta):
         r"""Returns the zenith angle at atmospheric boarder
         :math:`\cos(\theta^*)` in [rad] as a function of zenith at detector.
         """
         self._check_angles(theta)
-        return (self._A_1(theta) + self.l(theta)) / self.r_top
+        return (self._A_1(theta) + self.pl(theta)) / self.r_top
 
     def h(self, dl, theta):
         r"""Height above surface at distance :math:`dl` counted from the beginning
@@ -149,7 +148,7 @@ class EarthGeometry(object):
         self._check_angles(theta)
         return (
             np.sqrt(
-                self._A_2(theta) ** 2 + (self._A_1(theta) + self.l(theta) - dl) ** 2
+                self._A_2(theta) ** 2 + (self._A_1(theta) + self.pl(theta) - dl) ** 2
             )
             - self.r_E
         )
@@ -161,7 +160,7 @@ class EarthGeometry(object):
         self._check_angles(theta)
         return (
             self._A_1(theta)
-            + self.l(theta)
+            + self.pl(theta)
             - np.sqrt((h + self.r_E) ** 2 - self._A_2(theta) ** 2)
         )
 
@@ -188,7 +187,7 @@ def chirkin_cos_theta_star(costheta):
     p5 = 0.817285
     x = costheta
     return np.sqrt(
-        (x ** 2 + p1 ** 2 + p2 * x ** p3 + p4 * x ** p5) / (1 + p1 ** 2 + p2 + p4)
+        (x**2 + p1**2 + p2 * x**p3 + p4 * x**p5) / (1 + p1**2 + p2 + p4)
     )
 
 

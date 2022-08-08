@@ -16,7 +16,6 @@ when overwriting a model yield file in
 """
 
 import numpy as np
-from MCEq.core import config
 from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
 from six import with_metaclass
@@ -105,7 +104,7 @@ class MRS_charm(CharmModel):
 
         self.e_grid = e_grid
         self.d = e_grid.size
-        self.no_prod = np.zeros(self.d ** 2).reshape(self.d, self.d)
+        self.no_prod = np.zeros(self.d**2).reshape(self.d, self.d)
         self.siginel = csm.get_cs(2212, mbarn=True)
 
     def sigma_cc(self, E):

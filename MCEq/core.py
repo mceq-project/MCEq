@@ -799,8 +799,7 @@ class MCEqRun(object):
         Currently only 'down-going' angles (0-90 degrees) are supported.
 
         Args:
-          atm_config (tuple of strings): (parametrization type,
-            location string, season string)
+          theta_deg (float): zenith angle in the range 0-90 degrees
         """
         import MCEq.geometry.density_profiles as dprof
 
@@ -1128,7 +1127,8 @@ class MCEqRun(object):
                     # if dX / self.density_model.max_X < 1e-7:
                     #     raise Exception(
                     #         "Stiffness warning: dX <= 1e-7. Check configuration or"
-                    #         + 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).'
+                    #         + "manually call MCEqRun._calculate_integration_path("
+                    #         + 'int_grid, "X", force=True).'
                     #     )
                     return dX
 
@@ -1336,15 +1336,19 @@ class MatrixBuilder(object):
 
         These are:
 
-        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
-        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
+        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} +
+            \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
+        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} +
+            \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
 
-        For debug_levels >= 2 some general information about matrix shape and the number of
-        non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
+        For debug_levels >= 2 some general information about matrix
+        shape and the number of non-zero elements is printed. The
+        intermediate matrices :math:`\boldsymbol{C}` and
         :math:`\boldsymbol{D}` are deleted afterwards to save memory.
 
-        Set the ``skip_decay_matrix`` flag to avoid recreating the decay matrix. This is not necessary
-        if, for example, particle production is modified, or the interaction model is changed.
+        Set the ``skip_decay_matrix`` flag to avoid recreating the decay
+        matrix. This is not necessary if, for example, particle production
+        is modified, or the interaction model is changed.
 
         Args:
           skip_decay_matrix (bool): Omit re-creating D matrix

@@ -375,15 +375,16 @@ class HDF5Backend(object):
                     em_db["electromagnetic"][self.medium]["emca_mats" + "_indptrs"],
                 )
             if config.muon_helicity_dependence:
-                # This is only approximately valid and is done for consistency. Typically
-                # electrons would quickly depolarize due to multiple scattering but this requires
-                # additional matrices for (-11,1) -> (-11,0) etc. that are not available
-                # now.
+                # This is only approximately valid and is done for consistency.
+                # Typically electrons would quickly depolarize due to multiple
+                # scattering but this requires additional matrices for
+                # (-11,1) -> (-11,0) etc. that are not available now.
                 from itertools import product
 
                 info(
                     5,
-                    "Copy bremsstrahlung and photon emission to polarised electrons and muons.",
+                    "Copy bremsstrahlung and photon emission to "
+                    + "polarised electrons and muons.",
                 )
                 for pid, h in product([11, -11, 13, -13], [-1, 1]):
                     em_index["index_d"][((pid, h), (pid, h))] = em_index["index_d"][
@@ -469,24 +470,26 @@ class HDF5Backend(object):
 
             if (3210000, 0) in dec_index["parents"]:
                 for child in dec_index["relations"][(3210000, 0)]:
-                    antichild = (-child[0], child[1]) if child[0] not in [111] else child
+                    antichild = (
+                        (-child[0], child[1]) if child[0] not in [111] else child
+                    )
 
                     if ((321, 0), child) in dec_index["index_d"]:
                         assert (((321, 0), child) in dec_index["index_d"]) and (
                             (-321, 0),
                             antichild,
-                        ) in dec_index["index_d"], f"{antichild} not in index" 
+                        ) in dec_index["index_d"], f"{antichild} not in index"
 
-                        dec_index["index_d"][((321, 0), child)] += dec_index[
-                            "index_d"
-                        ][((3210000, 0), child)]
+                        dec_index["index_d"][((321, 0), child)] += dec_index["index_d"][
+                            ((3210000, 0), child)
+                        ]
                         dec_index["index_d"][((-321, 0), antichild)] += dec_index[
                             "index_d"
                         ][((-3210000, 0), antichild)]
                     else:
-                        dec_index["index_d"][((321, 0), child)] = dec_index[
-                            "index_d"
-                        ][((3210000, 0), child)]
+                        dec_index["index_d"][((321, 0), child)] = dec_index["index_d"][
+                            ((3210000, 0), child)
+                        ]
                         dec_index["index_d"][((321, 0), antichild)] = dec_index[
                             "index_d"
                         ][((-3210000, 0), antichild)]
@@ -594,16 +597,16 @@ class HDF5Backend(object):
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
 
             # if config.enable_em:
-            #     with h5py.File(self.em_fname, 'r') as em_db:
-            #         info(2, 'Injecting EmCA matrices into interaction_db.')
-            #         self._check_subgroup_exists(em_db, 'electromagnetic')
+            #     with h5py.File(self.em_fname, "r") as em_db:
+            #         info(2, "Injecting EmCA matrices into interaction_db.")
+            #         self._check_subgroup_exists(em_db, "electromagnetic")
             #         for hel in [0, 1, -1]:
-            #             index_d[(11,
-            #                      hel)] = em_db["electromagnetic"][self.medium]['dEdX 11'][
-            #                          self._cuts]
-            #             index_d[(-11,
-            #                      hel)] = em_db["electromagnetic"][self.medium]['dEdX -11'][
-            #                          self._cuts]
+            #             index_d[(11, hel)] = em_db["electromagnetic"][self.medium][
+            #                 "dEdX 11"
+            #             ][self._cuts]
+            #             index_d[(-11, hel)] = em_db["electromagnetic"][self.medium][
+            #                 "dEdX -11"
+            #             ][self._cuts]
         if generic_dedx is not None:
             return {
                 "parents": sorted(list(index_d)),

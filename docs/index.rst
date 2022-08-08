@@ -61,17 +61,10 @@ To modify the code and contribute, the code needs to be installed from the githu
 
     git clone https://github.com/afedynitch/MCEq.git
     cd MCEq
-    pip install -r requirements.txt
-    python setup.py build_ext --inplace
+    pip install -e .
 
-These commands should leave a working git repository and a working code. The last line builds the
-C modules and installs the requirements. A C compiler is required for this step. To run MCEq from
-the folder, add the folder to your PYTHONPATH or insert at the beginning of your script::
-
-    import sys
-    sys.path.insert(0, <path_to_your_MCEq_git_repository>)
-
-If you think the modifications are useful for others feel free to make a pull request.
+This will build and install MCEq in editable mode, and changes to this source directory will
+be immediately reflected in any code that imports MCEq in the current python enviroment.
 
 Quick start
 ...........

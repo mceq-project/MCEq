@@ -58,9 +58,9 @@ libspacc = Extension(
 )
 
 if is_a_mac:
-    ext_modules=[libnrlmsise00, libcorsikaatm, libspacc]
+    ext_modules = [libnrlmsise00, libcorsikaatm, libspacc]
 else:
-    ext_modules=[libnrlmsise00, libcorsikaatm]
+    ext_modules = [libnrlmsise00, libcorsikaatm]
 
 # This method is adopted from iMinuit https://github.com/scikit-hep/iminuit
 # Getting the version number at this point is a bit tricky in Python:
