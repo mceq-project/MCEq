@@ -77,7 +77,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
             )
 
         thrad = self.thrad
-        path_length = self.geom.l(thrad)
+        path_length = self.geom.pl(thrad)
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
         )
@@ -645,32 +645,20 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
     Args:
       location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
+      season (str,optional): months (January, February, etc.)
+      doy (int, optional): day of year
     """
 
     def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
         from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
-        msis_atmospheres = [
-            "SouthPole",
-            "Karlsruhe",
-            "Geneva",
-            "Tokyo",
-            "SanGrasso",
-            "TelAviv",
-            "KSC",
-            "SoudanMine",
-            "Tsukuba",
-            "LynnLake",
-            "PeaceRiver",
-            "FtSumner",
-        ]
-        assert (
-            location in msis_atmospheres
-        ), "{0} not available for MSIS00Atmosphere".format(location)
-
         self._msis = cNRLMSISE00()
 
+        assert (
+            location in self._msis.locations
+        ), "{0} not available for MSIS00Atmosphere".format(location)
+
+        assert bool(season) ^ bool(doy), "Define either season or doy"
         self.init_parameters(location, season, doy, use_loc_altitudes)
 
         EarthsAtmosphere.__init__(self)
@@ -711,33 +699,6 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """
         return self._msis.get_density(h_cm)
 
-    def set_location(self, location):
-        """Changes MSIS location by strings defined in _msis_wrapper.
-
-        Args:
-          location (str): location as defined in :class:`NRLMSISE-00.`
-
-        """
-        self._msis.set_location(location)
-
-    def set_season(self, month):
-        """Changes MSIS location by month strings defined in _msis_wrapper.
-
-        Args:
-          location (str): month as defined in :class:`NRLMSISE-00.`
-
-        """
-        self._msis.set_season(month)
-
-    def set_doy(self, day_of_year):
-        """Changes MSIS season by day of year.
-
-        Args:
-          day_of_year (int): 1. Jan.=0, 1.Feb=32
-
-        """
-        self._msis.set_doy(day_of_year)
-
     def get_temperature(self, h_cm):
         """Returns the temperature of air in K.
 
@@ -750,6 +711,106 @@ class MSIS00Atmosphere(EarthsAtmosphere):
           float: density :math:`T(h_{cm})` in K
         """
         return self._msis.get_temperature(h_cm)
+
+    def set_location(self, location):
+        """Changes MSIS location by strings defined in _msis_wrapper.
+
+        Args:
+          location (str): location as defined in :class:`NRLMSISE-00.`
+
+        """
+        self._msis.set_location(location)
+        self.theta_deg = None
+
+    def set_season(self, month):
+        """Changes MSIS location by month strings defined in _msis_wrapper.
+
+        Args:
+          location (str): month as defined in :class:`NRLMSISE-00.`
+
+        """
+        self._msis.set_season(month)
+        self.theta_deg = None
+
+    def set_doy(self, day_of_year):
+        """Changes MSIS season by day of year.
+
+        Args:
+          day_of_year (int): 1. Jan.=0, 1.Feb=32
+
+        """
+        self._msis.set_doy(day_of_year)
+        self.theta_deg = None
+
+
+class MSIS00IceCubeCentered(MSIS00Atmosphere):
+    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
+    setting with the zenith angle of the detector.
+
+    Args:
+      location (str): see :func:`init_parameters`
+      season (str,optional): see :func:`init_parameters`
+    """
+
+    def __init__(self, location, season):
+        if location != "SouthPole":
+            info(2, "location forced to the South Pole")
+            location = "SouthPole"
+
+        super().__init__(location, season)
+
+        # Allow for upgoing zenith angles
+        self.max_theta = 180.0
+
+    def _latitude(self, det_zenith_deg):
+        """Returns the geographic latitude of the shower impact point.
+
+        Assumes a spherical earth. The detector is 1948m under the
+        surface.
+
+        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
+
+        Args:
+          det_zenith_deg (float): zenith angle at detector in degrees
+
+        Returns:
+          float: latitude of the impact point in degrees
+        """
+        r = self.geom.r_E
+        d = 1948  # m
+
+        theta_rad = det_zenith_deg / 180.0 * np.pi
+
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
+            r - d
+        ) * np.cos(theta_rad)
+
+        return (
+            -90.0
+            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            / np.pi
+            * 180.0
+        )
+
+    def set_theta(self, theta_deg):
+
+        self._msis.set_location_coord(longitude=0.0, latitude=self._latitude(theta_deg))
+        info(
+            1,
+            "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
+                self._latitude(theta_deg), theta_deg
+            ),
+        )
+        if theta_deg > 90.0:
+            info(
+                1,
+                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
+                    theta_deg, 180.0 - theta_deg
+                ),
+            )
+            theta_deg = 180.0 - theta_deg
+
+        super().set_theta(theta_deg)
 
 
 class AIRSAtmosphere(EarthsAtmosphere):
@@ -980,76 +1041,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
             if h_cm > self.h[-1]:
                 return np.nan
         return ret
-
-
-class MSIS00IceCubeCentered(MSIS00Atmosphere):
-    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
-    setting with the zenith angle of the detector.
-
-    Args:
-      location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
-    """
-
-    def __init__(self, location, season):
-        if location != "SouthPole":
-            info(2, "location forced to the South Pole")
-            location = "SouthPole"
-
-        MSIS00Atmosphere.__init__(self, location, season)
-
-        # Allow for upgoing zenith angles
-        self.max_theta = 180.0
-
-    def latitude(self, det_zenith_deg):
-        """Returns the geographic latitude of the shower impact point.
-
-        Assumes a spherical earth. The detector is 1948m under the
-        surface.
-
-        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
-
-        Args:
-          det_zenith_deg (float): zenith angle at detector in degrees
-
-        Returns:
-          float: latitude of the impact point in degrees
-        """
-        r = self.geom.r_E
-        d = 1948  # m
-
-        theta_rad = det_zenith_deg / 180.0 * np.pi
-
-        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
-            r - d
-        ) * np.cos(theta_rad)
-
-        return (
-            -90.0
-            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
-            / np.pi
-            * 180.0
-        )
-
-    def set_theta(self, theta_deg):
-
-        self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
-        info(
-            1,
-            "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
-                self.latitude(theta_deg), theta_deg
-            ),
-        )
-        if theta_deg > 90.0:
-            info(
-                1,
-                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
-                    theta_deg, 180.0 - theta_deg
-                ),
-            )
-            theta_deg = 180.0 - theta_deg
-
-        MSIS00Atmosphere.set_theta(self, theta_deg)
 
 
 class GeneralizedTarget(object):
