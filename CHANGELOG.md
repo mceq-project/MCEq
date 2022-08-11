@@ -46,15 +46,21 @@ Version 1.3.1:
 - Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
 - deprecation warning forced for config access via dictionary (instead of module)
 
+Version 1.2.6:
+
+- Fixed a bug where alternating changes between up- and downgoing zenith angles are not detected correctly and the same results returned
+
 Version 1.2.5:
 
 - Migrated to github actions for CI. Thx @jncots
 
 Version 1.2.3:
 
+
 - Binary wheel for aarch64 on linux. Thanks to @obidev
 
 Version 1.2.2:
+
 
 - Added wheels for Python 3.9 on 64 bit systems
 - Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
