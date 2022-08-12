@@ -85,7 +85,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.inp.f107A = cmsis.c_double(150.0)
         self.inp.f107 = cmsis.c_double(150.0)
         self.inp.ap = cmsis.c_double(4.0)
-        self.inp.ap_a = cmsis.pointer(cmsis.ap_array())
+        self.inp.ap_a = cmsis.ap_array()
         self.alt_surface = self.locations[self.current_location][2]
 
         self.flags.switches[0] = cmsis.c_int(0)
@@ -123,6 +123,8 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.inp.doy = cmsis.c_int(doy)
 
     def _retrieve_result(self, altitude_cm):
+        from ctypes import byref
+
         if self.last_alt == altitude_cm:
             return
 
@@ -140,8 +142,8 @@ class cNRLMSISE00(NRLMSISE00Base):
             inp.f107,
             inp.ap,
             inp.ap_a,
-            cmsis.byref(self.flags),
-            cmsis.byref(self.output),
+            byref(self.flags),
+            byref(self.output),
         )
 
         self.last_alt = altitude_cm

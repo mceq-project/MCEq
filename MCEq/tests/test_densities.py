@@ -65,7 +65,7 @@ def test_msis_atm():
             ("Karlsruhe", "January"),
             ("Geneva", "January"),
             ("Tokyo", "January"),
-            ("SanGrasso", "January"),
+            ("GranSasso", "January"),
             ("TelAviv", "January"),
             ("KSC", "January"),
             ("SoudanMine", "January"),

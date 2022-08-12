@@ -104,7 +104,10 @@ class MCEqRun(object):
 
         # Set initial flux condition
         if primary_model is not None:
-            self.set_primary_model(*primary_model)
+            try:
+                self.set_primary_model(*primary_model)
+            except TypeError:
+                self.set_primary_model(primary_model)
 
     @property
     def e_grid(self):
