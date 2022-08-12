@@ -430,8 +430,9 @@ class HDF5Backend(object):
                         + f"Does this decay dataset '{decay_dset_name}'"
                         + " include polarization?",
                     )
+                else:
                     decay_dset_name = "polarized_decays"
-                    info(2, "Using helicity dependent decays.")
+                info(2, "Using helicity dependent decays.")
 
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
@@ -934,8 +935,10 @@ class Decays(object):
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
         self.parent_list = []
+        if decay_db_name is None:
+            decay_db_name = "full_decays"
         self._default_decay_dset = (
-            decay_db_name if config.decay_db_name is not None else "full_decays"
+            decay_db_name if config.decay_db_name is None else config.decay_db_name
         )
 
     def load(self, parent_list=None, decay_dset=None):
