@@ -423,7 +423,7 @@ class HDF5Backend(object):
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             if config.muon_helicity_dependence:
-                if decay_dset_name != "full_decays":
+                if decay_dset_name != "polarized":
                     info(
                         0,
                         "Warning: "
@@ -431,7 +431,7 @@ class HDF5Backend(object):
                         + " include polarization?",
                     )
                 else:
-                    decay_dset_name = "polarized_decays"
+                    decay_dset_name = "polarized"
                 info(2, "Using helicity dependent decays.")
 
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
@@ -929,17 +929,21 @@ class Decays(object):
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, decay_db_name=None):
+    def __init__(self, mceq_hdf_db, override_decay_db_name=None):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
         self.parent_list = []
-        if decay_db_name is None:
-            decay_db_name = "full_decays"
         self._default_decay_dset = (
-            decay_db_name if config.decay_db_name is None else config.decay_db_name
+            override_decay_db_name if override_decay_db_name else config.decay_db_name
         )
+
+        if self._default_decay_dset is None:
+            if config.muon_helicity_dependence:
+                self._default_decay_dset = "polarized"
+            else:
+                self._default_decay_dset = "unpolarized"
 
     def load(self, parent_list=None, decay_dset=None):
         # Load tables and index from file

@@ -103,7 +103,7 @@ integrator = "euler"
 #: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "numpy"
+kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
