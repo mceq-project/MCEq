@@ -141,7 +141,7 @@ class cNRLMSISE00(NRLMSISE00Base):
             inp.f107A,
             inp.f107,
             inp.ap,
-            inp.ap_a,
+            byref(inp.ap_a),
             byref(self.flags),
             byref(self.output),
         )
