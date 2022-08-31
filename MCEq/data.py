@@ -844,7 +844,7 @@ class Interactions(object):
         elif abs(sec_pdg) == symm_pdg:
             mpli[(symm_pdg, prim_pdg)][("isospin", args)] = kmat
         else:
-            raise Exception("No isospin relation found for secondary" + str(sec_pdg))
+            info(0, " Warning: No isospin relation found for secondary" + str(sec_pdg))
 
         # Tell MCEqRun to regenerate the matrices if something has changed
         return True
