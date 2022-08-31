@@ -167,8 +167,13 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """Set the elevation of the observation (detector) level in cm."""
 
         self.geom.set_h_obs(h_obs)
-        self.max_theta = self.geom.theta_max_deg
-        assert self.theta_deg <= self.geom.theta_max_deg, "Theta out of range"
+        if isinstance(self, MSIS00IceCubeCentered):
+            self.max_theta = 180.0
+        else:
+            self.max_theta = self.geom.theta_max_deg
+
+        if self.theta_deg >= self.max_theta:
+            raise ValueError(f"Theta {self.theta_deg:5.2f} out of range.")
         self.calculate_density_spline()
 
     def r_X2rho(self, X):
@@ -810,7 +815,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
                     theta_deg, downgoing_theta_deg
                 ),
             )
-        super().set_theta(self, downgoing_theta_deg)
+        super().set_theta(downgoing_theta_deg)
         self.theta_deg = theta_deg
 
 
