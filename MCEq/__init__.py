@@ -1,5 +1,6 @@
 import mceq_config as config
 import MCEq.version
+from sparse import GCXS
 
 __version__ = MCEq.version.__version__
 
