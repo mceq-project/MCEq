@@ -6,6 +6,7 @@ from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
 import mceq_config as config
+import scipy
 
 
 class MCEqRun(object):
@@ -357,23 +358,23 @@ class MCEqRun(object):
         if return_as == "total energy":
             etot_grid = self.etot_grid(lep_str)
             if not integrate:
-                return res * etot_grid**mag
+                return res * etot_grid ** mag
             else:
-                return res * etot_grid**mag * self.e_widths
+                return res * etot_grid ** mag * self.e_widths
 
         elif return_as == "kinetic energy":
             if not integrate:
-                return res * self._energy_grid.c**mag
+                return res * self._energy_grid.c ** mag
             else:
-                return res * self._energy_grid.c**mag * self.e_widths
+                return res * self._energy_grid.c ** mag * self.e_widths
 
         elif return_as == "total momentum":
             ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
-                return dEkindp * res * ptot_grid**mag
+                return dEkindp * res * ptot_grid ** mag
             else:
-                return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
+                return dEkindp * res * ptot_grid ** mag * np.diff(ptot_bins)
 
         else:
             raise Exception(
@@ -468,6 +469,19 @@ class MCEqRun(object):
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False
         )
+        # TK: Forming lists of sparse matrices corresponding to secondary particle yields for each
+        # mode k of the Hankel grid in 2D MCEq (if enabled)
+        if config.enable_2D:
+            int_m_dense = self.int_m.todense()
+            self.int_m_hankel = [
+                scipy.sparse.csr_matrix(int_m_dense[k, :, :])
+                for k in range(len(config.k_grid))
+            ]
+            dec_m_dense = self.dec_m.todense()
+            self.dec_m_hankel = [
+                scipy.sparse.csr_matrix(dec_m_dense[k, :, :])
+                for k in range(len(config.k_grid))
+            ]
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -547,8 +561,7 @@ class MCEqRun(object):
             ] = (1e-4 * p_top)
         else:
             info(
-                1,
-                "Protons not in equation system, can not set primary flux.",
+                1, "Protons not in equation system, can not set primary flux.",
             )
 
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
@@ -652,7 +665,7 @@ class MCEqRun(object):
 
         if n_nucleons == 0:
             # This case handles other exotic projectiles
-            b_particle = np.array([1.0, En, En**2])
+            b_particle = np.array([1.0, En, En ** 2])
             lidx = self.pman[pdg_id].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -662,7 +675,7 @@ class MCEqRun(object):
             return
 
         if n_protons > 0:
-            b_protons = np.array([n_protons, En * n_protons, En**2 * n_protons])
+            b_protons = np.array([n_protons, En * n_protons, En ** 2 * n_protons])
             p_lidx = self.pman[2212].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -670,7 +683,7 @@ class MCEqRun(object):
                     emat, b_protons
                 )
         if n_neutrons > 0:
-            b_neutrons = np.array([n_neutrons, En * n_neutrons, En**2 * n_neutrons])
+            b_neutrons = np.array([n_neutrons, En * n_neutrons, En ** 2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -925,7 +938,7 @@ class MCEqRun(object):
         if not kwargs.pop("skip_integration_path", False):
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be strickly",
+                    "The X values in int_grid are required to be strictly",
                     "increasing.",
                 )
 
@@ -1331,7 +1344,9 @@ class MatrixBuilder(object):
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-
+        if config.enable_2D:
+            self.int_m_hankel = None
+            self.dec_m_hankel = None
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -1381,8 +1396,9 @@ class MatrixBuilder(object):
                 # Subtract unity from the main diagonals
                 info(10, "subtracting main C diagonal from", child.name, parent.name)
                 if config.enable_2D:
-                    self.C_blocks[idx][:, np.diag_indices(self.dim)[0],
-                    np.diag_indices(self.dim)[1]] -= 1.0
+                    self.C_blocks[idx][
+                        :, np.diag_indices(self.dim)[0], np.diag_indices(self.dim)[1]
+                    ] -= 1.0
                 else:
                     self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
@@ -1407,9 +1423,13 @@ class MatrixBuilder(object):
                         info(5, "Cont. loss for", parent.name)
                         if config.enable_cont_rad_loss:
                             if config.enable_2D:
-                                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)[None, :, :]
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )[None, :, :]
                             else:
-                                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
         # -I + D
@@ -1425,8 +1445,11 @@ class MatrixBuilder(object):
                         10, "subtracting main D diagonal from", child.name, parent.name
                     )
                     if config.enable_2D:
-                        self.D_blocks[idx][:, np.diag_indices(self.dim)[0],
-                        np.diag_indices(self.dim)[1]] -= 1.0
+                        self.D_blocks[idx][
+                            :,
+                            np.diag_indices(self.dim)[0],
+                            np.diag_indices(self.dim)[1],
+                        ] -= 1.0
                     else:
                         self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
                 if idx not in self.D_blocks:
@@ -1498,7 +1521,7 @@ class MatrixBuilder(object):
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid."""
         if config.enable_2D:
-            e_dim =  self._pman.dim
+            e_dim = self._pman.dim
             return zeros((len(config.k_grid), e_dim, e_dim), dtype=config.floatlen)
         else:
             return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
@@ -1512,7 +1535,10 @@ class MatrixBuilder(object):
             directly from the blocks, since bmat totally messes up the order.
         """
         if config.enable_2D:
-            new_mat = zeros((len(config.k_grid), self.dim_states, self.dim_states), dtype=config.floatlen)
+            new_mat = zeros(
+                (len(config.k_grid), self.dim_states, self.dim_states),
+                dtype=config.floatlen,
+            )
         else:
             new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
 
@@ -1552,7 +1578,7 @@ class MatrixBuilder(object):
                 # print 'adding stuff', p_orig.pdg_id, p.pdg_id, d.pdg_id
                 dprop = self._zero_mat()
                 p._assign_decay_idx(d, idcs, d.hadridx, dprop)
-                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop@pprod_mat
+                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop @ pprod_mat
 
             if config.debug_level >= 20:
                 pstr = "res"
@@ -1573,7 +1599,7 @@ class MatrixBuilder(object):
                 p._assign_decay_idx(d, idcs, d.residx, dres)
                 reclev += 1
                 self._follow_chains(
-                    d, dres@pprod_mat, p_orig, d.residx, propmat, reclev
+                    d, dres @ pprod_mat, p_orig, d.residx, propmat, reclev
                 )
             else:
                 info(20, reclev * "\t", "\t terminating at", d.name)
@@ -1592,15 +1618,11 @@ class MatrixBuilder(object):
                     ones_matrix = diag(ones(self.dim)).astype(config.floatlen)
                     if config.enable_2D:
                         ones_matrix = ones_matrix[None, :, :]
-                        ones_matrix = np.repeat(ones_matrix, repeats=len(config.k_grid),
-                        axis=0)
+                        ones_matrix = np.repeat(
+                            ones_matrix, repeats=len(config.k_grid), axis=0
+                        )
                     self._follow_chains(
-                        p,
-                        ones_matrix,
-                        p,
-                        p.hadridx,
-                        self.D_blocks,
-                        reclev=0,
+                        p, ones_matrix, p, p.hadridx, self.D_blocks, reclev=0,
                     )
                 else:
                     info(20, p.name, "stable or not added to D matrix")
