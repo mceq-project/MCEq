@@ -1,7 +1,7 @@
 import six
 from time import time
 import numpy as np
-from MCEq import asarray, zeros, csr_matrix, eye, linalg, diag, ones
+from MCEq import *
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
@@ -1380,7 +1380,11 @@ class MatrixBuilder(object):
             if child.mceqidx == parent.mceqidx and parent.can_interact:
                 # Subtract unity from the main diagonals
                 info(10, "subtracting main C diagonal from", child.name, parent.name)
-                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                if config.enable_2D:
+                    self.C_blocks[idx][:, np.diag_indices(self.dim)[0],
+                    np.diag_indices(self.dim)[1]] -= 1.0
+                else:
+                    self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
             if idx in self.C_blocks:
                 # Multiply with Lambda_int and keep track the maximal
@@ -1401,7 +1405,11 @@ class MatrixBuilder(object):
                         or (config.generic_losses_all_charged and pid != 11)
                     ):
                         info(5, "Cont. loss for", parent.name)
-                        self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+                        if config.enable_cont_rad_loss:
+                            if config.enable_2D:
+                                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)[None, :, :]
+                            else:
+                                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
         # -I + D
@@ -1416,7 +1424,11 @@ class MatrixBuilder(object):
                     info(
                         10, "subtracting main D diagonal from", child.name, parent.name
                     )
-                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                    if config.enable_2D:
+                        self.D_blocks[idx][:, np.diag_indices(self.dim)[0],
+                        np.diag_indices(self.dim)[1]] -= 1.0
+                    else:
+                        self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
                 if idx not in self.D_blocks:
                     info(25, parent.pdg_id[0], child.pdg_id, "not in D_blocks")
                     continue
@@ -1436,7 +1448,10 @@ class MatrixBuilder(object):
             mat_density = float(mat.nnz) / float(np.prod(mat.shape))
             info(5, "{0} Matrix info:".format(mname))
             info(5, "    density    : {0:3.2%}".format(mat_density))
-            info(5, "    shape      : {0} x {1}".format(*mat.shape))
+            if config.enable_2D:
+                info(5, "    shape      : {0} x {1} x {2}".format(*mat.shape))
+            else:
+                info(5, "    shape      : {0} x {1}".format(*mat.shape))
             info(5, "    nnz        : {0}".format(mat.nnz))
             info(10, "    sum        :", mat.sum())
 
@@ -1482,7 +1497,11 @@ class MatrixBuilder(object):
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid."""
-        return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
+        if config.enable_2D:
+            e_dim =  self._pman.dim
+            return zeros((len(config.k_grid), e_dim, e_dim), dtype=config.floatlen)
+        else:
+            return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1492,12 +1511,18 @@ class MatrixBuilder(object):
             It's super pain the a** to construct a properly indexed sparse matrix
             directly from the blocks, since bmat totally messes up the order.
         """
-        new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+        if config.enable_2D:
+            new_mat = zeros((len(config.k_grid), self.dim_states, self.dim_states), dtype=config.floatlen)
+        else:
+            new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
 
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
-                new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
+                if config.enable_2D:
+                    new_mat[:, rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
+                else:
+                    new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
                 raise Exception(
                     "Dimension mismatch: matrix "
@@ -1512,7 +1537,10 @@ class MatrixBuilder(object):
                         rc.uidx,
                     )
                 )
-        return csr_matrix(new_mat)
+        if config.enable_2D:
+            return GCXS.from_numpy(new_mat)
+        else:
+            return csr_matrix(new_mat)
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
         """Some recursive magic."""
@@ -1524,7 +1552,7 @@ class MatrixBuilder(object):
                 # print 'adding stuff', p_orig.pdg_id, p.pdg_id, d.pdg_id
                 dprop = self._zero_mat()
                 p._assign_decay_idx(d, idcs, d.hadridx, dprop)
-                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
+                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop@pprod_mat
 
             if config.debug_level >= 20:
                 pstr = "res"
@@ -1545,7 +1573,7 @@ class MatrixBuilder(object):
                 p._assign_decay_idx(d, idcs, d.residx, dres)
                 reclev += 1
                 self._follow_chains(
-                    d, dres.dot(pprod_mat), p_orig, d.residx, propmat, reclev
+                    d, dres@pprod_mat, p_orig, d.residx, propmat, reclev
                 )
             else:
                 info(20, reclev * "\t", "\t terminating at", d.name)
@@ -1561,9 +1589,14 @@ class MatrixBuilder(object):
             for p in self._pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
+                    ones_matrix = diag(ones(self.dim)).astype(config.floatlen)
+                    if config.enable_2D:
+                        ones_matrix = ones_matrix[None, :, :]
+                        ones_matrix = np.repeat(ones_matrix, repeats=len(config.k_grid),
+                        axis=0)
                     self._follow_chains(
                         p,
-                        diag(ones(self.dim)).astype(config.floatlen),
+                        ones_matrix,
                         p,
                         p.hadridx,
                         self.D_blocks,

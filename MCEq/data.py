@@ -132,6 +132,10 @@ equivalences = {
         431: 321,
         3122: 2112,
     },
+    "URQMD34": {
+        3122: 2112,
+        -3122: -2112,
+    }
 }
 
 
@@ -172,13 +176,25 @@ class HDF5Backend(object):
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca["e_grid"]
             )
+            # TK: Cuts for the cross sections copied over from the 1D database
+            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = self._eval_energy_cuts(
+                config.default_ecenters
+            )
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
                 int(self.max_idx - self.min_idx),
             )
-            self.dim_full = int(ca["e_dim"])
+            # TK: Changing min/max indices and the full dim of the csr blocks to
+            # the number of Hankel modes * the length of the energy grid
+            if config.enable_2D:
+                self.min_idx *= len(config.k_grid)
+                self.max_idx *= len(config.k_grid)
+                self._cuts = slice(self.min_idx, self.max_idx)
+                self.dim_full = int(ca["e_dim"]) * len(config.k_grid)
+            else:
+                self.dim_full = int(ca["e_dim"])
 
         self.medium = medium
 
@@ -231,7 +247,13 @@ class HDF5Backend(object):
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
-
+            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices 
+            # (in the 2D case) or to leave them the same as in the 1D case
+            if config.enable_2D:
+                expand_len = len(config.k_grid)
+            else:
+                expand_len = 1
+            # Helicity information handling    
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
@@ -240,7 +262,7 @@ class HDF5Backend(object):
                 raise Exception("Failed decoding parent-child relation.")
 
             if (abs(parent_pdg[0]) in exclude) or (abs(child_pdg[0]) in exclude):
-                read_idx += len_data[tupidx]
+                read_idx += expand_len * len_data[tupidx]
                 continue
             parent_pdg = int(parent_pdg[0]), (parent_pdg[1])
             child_pdg = int(child_pdg[0]), (child_pdg[1])
@@ -251,14 +273,21 @@ class HDF5Backend(object):
                 (
                     csr_matrix(
                         (
-                            mat_data[0, read_idx : read_idx + len_data[tupidx]],
-                            mat_data[1, read_idx : read_idx + len_data[tupidx]],
+                            mat_data[0, read_idx : read_idx + expand_len * len_data[tupidx]],
+                            mat_data[1, read_idx : read_idx + expand_len * len_data[tupidx]],
                             indptr_data[tupidx, :],
                         ),
                         shape=(self.dim_full, self.dim_full),
                     )[self._cuts, self.min_idx : self.max_idx]
                 ).toarray()
             )
+            # TK: In 2D, reshape the yield matrices from a block-diagonal representation to a tensor 
+            # with dimensions (len(k_grid), len(e_grid), len(e_grid)):
+            if config.enable_2D:
+                M = len(self._energy_grid.c)
+                ind_blocks = np.array([index_d[(parent_pdg, child_pdg)][i: i + M, i: i + M]
+                for i in range(0, len(index_d[(parent_pdg, child_pdg)]), M)])
+                index_d[(parent_pdg, child_pdg)] = ind_blocks
             relations[parent_pdg].append(child_pdg)
 
             info(
@@ -297,7 +326,7 @@ class HDF5Backend(object):
                         ),
                     )
 
-            read_idx += len_data[tupidx]
+            read_idx += expand_len * len_data[tupidx]
 
         return {
             "parents": sorted(list(relations)),
@@ -422,23 +451,27 @@ class HDF5Backend(object):
         info(10, "Generating decay db. dset_name={0}".format(decay_dset_name))
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            if config.muon_helicity_dependence:
-                if decay_dset_name != "polarized":
-                    info(
-                        0,
-                        "Warning: "
-                        + f"Does this decay dataset '{decay_dset_name}'"
-                        + " include polarization?",
-                    )
-                else:
-                    decay_dset_name = "polarized"
-                info(2, "Using helicity dependent decays.")
-
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][decay_dset_name],
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
+
+            if config.muon_helicity_dependence:
+
+                custom_index = self._gen_db_dictionary(
+                mceq_db["decays"]["custom_decays"],
+                mceq_db["decays"]["custom_decays" + "_indptrs"],
+                )
+
+                info(2, "Using helicity dependent decays.")
+                info(5, "Replacing decay from custom decay_db.")
+                dec_index["index_d"].update(custom_index["index_d"])
+
+                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
+                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)), None)
 
             # Refresh the metadata after modifying the index
             dec_index["relations"] = defaultdict(lambda: [])
@@ -481,7 +514,9 @@ class HDF5Backend(object):
             index_d = {}
             parents = list(cs_db.attrs["projectiles"])
             for ip, p in enumerate(parents):
-                index_d[p] = cs_data[self._cuts, ip]
+                # TK: apply the cross section cuts (assuming the cross section
+                # array is defined on the full 1D MCEq grid)
+                index_d[p] = cs_data[self.cs_cuts, ip]
 
         if config.adv_set["replace_meson_cross_sections_with"] is not None:
             mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
@@ -535,7 +570,7 @@ class HDF5Backend(object):
             for k in list(cl_db):
                 if k != "hadron":
                     for hel in [0, 1, -1]:
-                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                        index_d[(int(k), hel)] = cl_db[k][self.cs_cuts]
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
