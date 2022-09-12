@@ -81,6 +81,8 @@ class MCEqRun(object):
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
+        if config.enable_2D:
+            self.phi0_2D = None
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
         # Save initial condition (primary flux) to restore after dimensional resizing
@@ -948,6 +950,16 @@ class MCEqRun(object):
             info(2, "Warning: integration path calculation skipped.")
 
         phi0 = np.copy(self._phi0)
+        # TK: if the initial angular density is a delta function
+        # (e.g. a single cosmic ray shower incident at some angle theta),
+        # all Hankel modes k are populated with the same amplitude
+        # (equal to that of the 1D initial condition).
+        if config.enable_2D:
+            nonzero_phi_idcs = np.flatnonzero(phi0)
+            phi0_2D = np.zeros((len(config.k_grid), np.shape(phi0)[0]))
+            for i in nonzero_phi_idcs:
+                phi0_2D[:, i] = phi0[i] 
+            self.phi0_2D = np.copy(phi0_2D)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         info(2, "for {0} integration steps.".format(nsteps))
@@ -958,7 +970,13 @@ class MCEqRun(object):
 
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+            # TK: pass the interaction/decay matrices in the appropriate format
+            # depending on the dimensionality. In the 2D case, pass a list of matrices 
+            # (one for each of the Hankel modes k); in the 1D case, pass simple "flat" matrices.
+            if config.enable_2D:
+                args = (nsteps, dX, rho_inv, self.int_m_hankel, self.dec_m_hankel, phi0_2D, grid_idcs)
+            else:
+                args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
