@@ -9,6 +9,7 @@ import mceq_config as config
 import scipy
 from sparse import GCXS
 from scipy.interpolate import interp1d
+from itertools import product
 
 
 class MCEqRun(object):
@@ -969,6 +970,7 @@ class MCEqRun(object):
         import MCEq.solvers
 
         start = time()
+        extra_kwargs = {}
 
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
@@ -976,6 +978,12 @@ class MCEqRun(object):
             # depending on the dimensionality. In the 2D case, pass a list of matrices
             # (one for each of the Hankel modes k); in the 1D case, pass simple "flat" matrices.
             if config.enable_2D:
+                if config.muon_multiple_scattering:
+                    extra_kwargs = {}
+                    extra_kwargs['edim'] = len(self.e_grid)
+                    extra_kwargs['muon_scat_kernel'] = self.prob_muon_mult_scat_hankel()
+                    muon_inds = [self.pman.pdg2mceqidx[(mu_pdg, hel)] * len(self.e_grid) for (mu_pdg, hel) in product([13, -13], [-1, 0, 1])]
+                    extra_kwargs['muon_inds'] = muon_inds
                 args = (
                     nsteps,
                     dX,
@@ -1033,7 +1041,7 @@ class MCEqRun(object):
                 "Unsupported integrator setting '{0}'.".format(config.kernel_config)
             )
 
-        self._solution, self.grid_sol = kernel(*args)
+        self._solution, self.grid_sol = kernel(*args, **extra_kwargs)
 
         info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
 
@@ -1419,6 +1427,21 @@ class MCEqRun(object):
             zfac[p_eidx] = np.trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
         return zfac
 
+    def prob_muon_mult_scat_hankel(self):
+        """Returns the Gauss approximation of the scattering kernel for muon multiple scattering.
+        See p.12-13 in https://web.iap.kit.edu/corsika/physics_description/corsika_phys.pdf
+        """
+        lambda_s = 37.7
+        E_s = 0.021
+        elab_mu = self.e_grid + self.pman[(13, 0)].mass
+        beta_mu = np.sqrt(elab_mu ** 2 - self.pman[(13, 0)].mass ** 2) / elab_mu
+        theta_s_sq = (1 / lambda_s) * (E_s / (elab_mu * beta_mu ** 2)) ** 2
+        # delta_lambda (float): slant depth traversed by the muon (equivalent to dX in the integrator)
+        exp = lambda delta_lambda: np.exp(
+            -((config.k_grid[:, None]) ** 2) * delta_lambda * theta_s_sq[None, :] / 4
+        )
+        return exp
+
 
 class MatrixBuilder(object):
     """This class constructs the interaction and decay matrices."""
@@ -1800,3 +1823,5 @@ class MatrixBuilder(object):
             op_matrix[row, row + asarray(diags)] = asarray(coeffs) / (denom * h[row])
 
         self.op_matrix = op_matrix
+
+

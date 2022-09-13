@@ -4,7 +4,7 @@ from MCEq.misc import info
 from tqdm import tqdm
 
 
-def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, **kwargs):
     """:mod:`numpy` implementation of forward-euler integration.
 
     Args:
@@ -40,6 +40,12 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     if config.enable_2D:
 
         for step in tqdm(range(nsteps)):
+
+            if config.muon_multiple_scattering:
+                muon_mult_scat_kernel = kwargs['muon_scat_kernel'](dxc[step])
+                for idx in kwargs['muon_inds']:
+                    for k in range(len(config.k_grid)):
+                        phc[k][idx:idx + kwargs['edim']] *= muon_mult_scat_kernel[k]
 
             int_deriv_k = [
             imc[k].dot(phc[k]) for k in range(len(config.k_grid))
