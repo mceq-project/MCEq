@@ -117,7 +117,7 @@ integrator = "euler"
 #: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "auto"
+kernel_config = "numpy"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -213,6 +213,9 @@ use_isospin_sym = True
 
 #: Helicity dependent muons decays from analytical expressions
 muon_helicity_dependence = True
+
+#: Muon multiple scattering from the CORSIKA-like Gauss approximation
+muon_multiple_scattering = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
