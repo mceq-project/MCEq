@@ -7,6 +7,8 @@ from MCEq.particlemanager import ParticleManager
 import MCEq.data
 import mceq_config as config
 import scipy
+from sparse import GCXS
+from scipy.interpolate import interp1d
 
 
 class MCEqRun(object):
@@ -958,7 +960,7 @@ class MCEqRun(object):
             nonzero_phi_idcs = np.flatnonzero(phi0)
             phi0_2D = np.zeros((len(config.k_grid), np.shape(phi0)[0]))
             for i in nonzero_phi_idcs:
-                phi0_2D[:, i] = phi0[i] 
+                phi0_2D[:, i] = phi0[i]
             self.phi0_2D = np.copy(phi0_2D)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
@@ -971,10 +973,18 @@ class MCEqRun(object):
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
             # TK: pass the interaction/decay matrices in the appropriate format
-            # depending on the dimensionality. In the 2D case, pass a list of matrices 
+            # depending on the dimensionality. In the 2D case, pass a list of matrices
             # (one for each of the Hankel modes k); in the 1D case, pass simple "flat" matrices.
             if config.enable_2D:
-                args = (nsteps, dX, rho_inv, self.int_m_hankel, self.dec_m_hankel, phi0_2D, grid_idcs)
+                args = (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    self.int_m_hankel,
+                    self.dec_m_hankel,
+                    phi0_2D,
+                    grid_idcs,
+                )
             else:
                 args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
@@ -1026,6 +1036,62 @@ class MCEqRun(object):
         self._solution, self.grid_sol = kernel(*args)
 
         info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
+
+    def convert_to_theta_space(
+        self, hankel_transf, pdg_id, hel, oversample_res=5, theta_res=600
+    ):
+        """Converts the Hankel space amplitudes from the 2D MCEq solver
+        to the real (angular) space. 
+
+        Args:
+            hankel_transf (list of np.arrays): list of Hankel space solutions at the requested slant depths
+            (i.e. the output of self.grid_sol)
+            pdg_id (int): PDG ID of the particle whose angular density is being requested (e.g. 14 for NuMu)
+            hel (int): helicity of the particle whose angular density is being requested (e.g. 0 or ±1 for polarized muons)
+            oversample_res (int): resolution of the Hankel grid oversampling (used to approximate the continuous inverse Hankel transform)
+            theta_res (int): resolution of the angular (theta) grid where the inverse Hankel transform will output the densities
+
+        """
+        theta_range = np.linspace(0, np.pi / 2, theta_res)
+        oversample_pts = np.max(config.k_grid) * oversample_res
+        oversampled_k_arr = np.linspace(
+            np.min(config.k_grid), np.max(config.k_grid), oversample_pts
+        )
+        j0_ktheta_k = (
+            scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
+            * oversampled_k_arr[:, None]
+        )
+
+        store_oversampled_hankel_amps = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+        store_inverse_hankel_transfs = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+
+        for j in range(len(hankel_transf)):
+
+            for eidx in range(len(self.e_grid)):
+
+                mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
+                oversampled_hankel_amps = interp1d(
+                    config.k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
+                )(oversampled_k_arr)
+                inverse_hankel_transf = np.trapz(
+                    j0_ktheta_k * oversampled_hankel_amps[:, None],
+                    oversampled_k_arr,
+                    axis=0,
+                )
+
+                store_oversampled_hankel_amps[j][eidx] = oversampled_hankel_amps
+                store_inverse_hankel_transfs[j][eidx] = inverse_hankel_transf
+
+        return (
+            oversampled_k_arr,
+            store_oversampled_hankel_amps,
+            theta_range,
+            store_inverse_hankel_transfs,
+        )
 
     def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):
         """Launches the solver directly for parameters of the integration path.
