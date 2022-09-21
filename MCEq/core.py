@@ -980,10 +980,13 @@ class MCEqRun(object):
             if config.enable_2D:
                 if config.muon_multiple_scattering:
                     extra_kwargs = {}
-                    extra_kwargs['edim'] = len(self.e_grid)
-                    extra_kwargs['muon_scat_kernel'] = self.prob_muon_mult_scat_hankel()
-                    muon_inds = [self.pman.pdg2mceqidx[(mu_pdg, hel)] * len(self.e_grid) for (mu_pdg, hel) in product([13, -13], [-1, 0, 1])]
-                    extra_kwargs['muon_inds'] = muon_inds
+                    extra_kwargs["edim"] = len(self.e_grid)
+                    extra_kwargs["muon_scat_kernel"] = self.prob_muon_mult_scat_hankel()
+                    muon_inds = [
+                        self.pman.pdg2mceqidx[(mu_pdg, hel)] * len(self.e_grid)
+                        for (mu_pdg, hel) in product([13, -13], [-1, 0, 1])
+                    ]
+                    extra_kwargs["muon_inds"] = muon_inds
                 args = (
                     nsteps,
                     dX,
@@ -1046,7 +1049,13 @@ class MCEqRun(object):
         info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
 
     def convert_to_theta_space(
-        self, hankel_transf, pdg_id, hel, oversample_res=5, theta_res=600
+        self,
+        hankel_transf,
+        pdg_id,
+        hel,
+        oversample_res=5,
+        theta_res=600,
+        log_theta=False,
     ):
         """Converts the Hankel space amplitudes from the 2D MCEq solver
         to the real (angular) space. 
@@ -1058,9 +1067,13 @@ class MCEqRun(object):
             hel (int): helicity of the particle whose angular density is being requested (e.g. 0 or ±1 for polarized muons)
             oversample_res (int): resolution of the Hankel grid oversampling (used to approximate the continuous inverse Hankel transform)
             theta_res (int): resolution of the angular (theta) grid where the inverse Hankel transform will output the densities
+            log_theta (bool): whether to return logarithmic angular grid (True=logarithmic, False=linear)
 
         """
-        theta_range = np.linspace(0, np.pi / 2, theta_res)
+        if log_theta:
+            theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
+        else:
+            theta_range = np.linspace(0, np.pi / 2, theta_res)
         oversample_pts = np.max(config.k_grid) * oversample_res
         oversampled_k_arr = np.linspace(
             np.min(config.k_grid), np.max(config.k_grid), oversample_pts
@@ -1823,5 +1836,3 @@ class MatrixBuilder(object):
             op_matrix[row, row + asarray(diags)] = asarray(coeffs) / (denom * h[row])
 
         self.op_matrix = op_matrix
-
-
