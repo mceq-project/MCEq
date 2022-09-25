@@ -69,14 +69,7 @@ equivalences = {
         3322: 2212,
         4122: 2212,
     },
-    "QGSJETII": {
-        -3122: -2112,
-        111: 211,
-        113: 211,
-        221: 211,
-        310: 130,
-        3122: 2112,
-    },
+    "QGSJETII": {-3122: -2112, 111: 211, 113: 211, 221: 211, 310: 130, 3122: 2112,},
     "DPMJET": {
         -4122: -3222,
         -3334: -3312,
@@ -132,10 +125,7 @@ equivalences = {
         431: 321,
         3122: 2112,
     },
-    "URQMD34": {
-        3122: 2112,
-        -3122: -2112,
-    }
+    "URQMD34": {3122: 2112, -3122: -2112,},
 }
 
 
@@ -176,23 +166,24 @@ class HDF5Backend(object):
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca["e_grid"]
             )
+
             # TK: Cuts for the cross sections copied over from the 1D database
             self.cs_min_idx, self.cs_max_idx, self.cs_cuts = self._eval_energy_cuts(
                 config.default_ecenters
             )
+
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
                 int(self.max_idx - self.min_idx),
             )
-            # TK: Changing min/max indices and the full dim of the csr blocks to
+            # TK: Changing the full dim of the csr blocks to
             # the number of Hankel modes * the length of the energy grid
             if config.enable_2D:
-                self.min_idx *= len(config.k_grid)
-                self.max_idx *= len(config.k_grid)
-                self._cuts = slice(self.min_idx, self.max_idx)
-                self.dim_full = int(ca["e_dim"]) * len(config.k_grid)
+
+                self.dim_full = int(ca["e_dim"]) * ca["k_dim"]
+
             else:
                 self.dim_full = int(ca["e_dim"])
 
@@ -247,13 +238,13 @@ class HDF5Backend(object):
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
-            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices 
+            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices
             # (in the 2D case) or to leave them the same as in the 1D case
             if config.enable_2D:
                 expand_len = len(config.k_grid)
             else:
                 expand_len = 1
-            # Helicity information handling    
+            # Helicity information handling
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
@@ -269,25 +260,67 @@ class HDF5Backend(object):
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = asarray(
-                (
-                    csr_matrix(
-                        (
-                            mat_data[0, read_idx : read_idx + expand_len * len_data[tupidx]],
-                            mat_data[1, read_idx : read_idx + expand_len * len_data[tupidx]],
-                            indptr_data[tupidx, :],
-                        ),
-                        shape=(self.dim_full, self.dim_full),
-                    )[self._cuts, self.min_idx : self.max_idx]
-                ).toarray()
-            )
-            # TK: In 2D, reshape the yield matrices from a block-diagonal representation to a tensor 
+
+            #TK: do not apply energy slicing right away in 2D! Need to do this for every k mode separately.
+            if config.enable_2D:
+
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )
+                    ).toarray()
+                )
+
+            else:
+
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )[self._cuts, self.min_idx : self.max_idx]
+                    ).toarray()
+                )
+
+            # TK: In 2D, reshape the yield matrices from a block-diagonal representation to a tensor
             # with dimensions (len(k_grid), len(e_grid), len(e_grid)):
             if config.enable_2D:
-                M = len(self._energy_grid.c)
-                ind_blocks = np.array([index_d[(parent_pdg, child_pdg)][i: i + M, i: i + M]
-                for i in range(0, len(index_d[(parent_pdg, child_pdg)]), M)])
+
+                ind_blocks = np.array(
+                    [
+                        index_d[(parent_pdg, child_pdg)][
+                            i + self.min_idx : i + self.max_idx,
+                            i + self.min_idx : i + self.max_idx,
+                        ]
+                        for i in range(
+                            0, len(index_d[(parent_pdg, child_pdg)]), self.dim_full // len(config.k_grid)
+                        )
+                    ]
+                )
                 index_d[(parent_pdg, child_pdg)] = ind_blocks
+
             relations[parent_pdg].append(child_pdg)
 
             info(
@@ -383,6 +416,8 @@ class HDF5Backend(object):
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
+            elif "URQMD34" in mname:
+                eqv = equivalences["URQMD34"]
             int_index = self._gen_db_dictionary(
                 mceq_db["hadronic_interactions"][medium][mname],
                 mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
@@ -460,8 +495,8 @@ class HDF5Backend(object):
             if config.muon_helicity_dependence:
 
                 custom_index = self._gen_db_dictionary(
-                mceq_db["decays"]["custom_decays"],
-                mceq_db["decays"]["custom_decays" + "_indptrs"],
+                    mceq_db["decays"]["polarized"],
+                    mceq_db["decays"]["polarized" + "_indptrs"],
                 )
 
                 info(2, "Using helicity dependent decays.")
@@ -1067,9 +1102,9 @@ class InteractionCrossSections(object):
     #: unit - :math:`\text{GeV} \cdot \text{cm}`
     GeVcm = GeVfm * 1e-13
     #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
-    GeV2mbarn = 10.0 * GeVfm**2
+    GeV2mbarn = 10.0 * GeVfm ** 2
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
-    mbarn2cm2 = GeVcm**2 / GeV2mbarn
+    mbarn2cm2 = GeVcm ** 2 / GeV2mbarn
 
     def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII191"):
 
