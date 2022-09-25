@@ -982,10 +982,16 @@ class MCEqRun(object):
                     extra_kwargs = {}
                     extra_kwargs["edim"] = len(self.e_grid)
                     extra_kwargs["muon_scat_kernel"] = self.prob_muon_mult_scat_hankel()
+                    if config.muon_helicity_dependence:
+                        available_helicities = [-1, 0, 1]
+                    else:
+                        available_helicities = [0]
+
                     muon_inds = [
                         self.pman.pdg2mceqidx[(mu_pdg, hel)] * len(self.e_grid)
-                        for (mu_pdg, hel) in product([13, -13], [-1, 0, 1])
+                        for (mu_pdg, hel) in product([13, -13], available_helicities)
                     ]
+
                     extra_kwargs["muon_inds"] = muon_inds
                 args = (
                     nsteps,
