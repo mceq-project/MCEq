@@ -26,13 +26,15 @@ print_module = False
 data_dir = path.join(base_path, "MCEq", "data")
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"
+mceq_db_fname = "mceq_db_lext_dpm191_v141.h5"
+# 2D MCEq database filename:
+# mceq_db_fname = "mceq_db_10MeV-10TeV_URQMD_lext_2D.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
 
 #: Decay database name
-decay_db_name = "full_decays"
+decay_db_name = "unpolarized"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -86,6 +88,7 @@ except_out_of_bounds = False
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
+#: For 2D MCEq, the approximate minimum energy is 5e-2 GeV.
 e_min = 0.1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
