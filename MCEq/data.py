@@ -458,8 +458,8 @@ class HDF5Backend(object):
 
         mname = normalize_hadronic_model_name(interaction_model_name)
         medium = self.medium
-        if "SIBYLL23C" in mname:
-            info(5, "SIBYLL23C cross sections replaced by 23D.")
+        if "SIBYLL23C" in mname or "SIBYLL23DE" in mname:
+            info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
         if config.adv_set["forced_int_cs"] is not None:
