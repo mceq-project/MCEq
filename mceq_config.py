@@ -46,8 +46,10 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC',('SouthPole','January'))
 #: density_model = ('GeneralizedTarget', None)
 
-#: Definition of prompt: default ctau < 0.123 cm (that of D0)
-prompt_ctau = 0.123
+#: Definition of prompt (only for correct accounting). Leptons from parent particles
+#: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
+#: everything else will be attributed to the "conventional" category
+prompt_ctau = 2.6842 # cm (everything shorter-lived than K0s will be considered prompt)
 
 #: Approximate value for the maximum density expected. Needed for the
 #: resonance approximation. Default value: air at the surface
