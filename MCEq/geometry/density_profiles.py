@@ -1075,15 +1075,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
                 self.latitude(theta_deg), theta_deg
             ),
         )
-        downgoing_theta_deg = theta_deg
-        if theta_deg > 90.0:
-            downgoing_theta_deg = 180.0 - theta_deg
-            info(
-                1,
-                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
-                    theta_deg, downgoing_theta_deg
-                ),
-            )
+
         MSIS00Atmosphere.set_theta(self, downgoing_theta_deg)
 
         self.theta_deg = theta_deg
