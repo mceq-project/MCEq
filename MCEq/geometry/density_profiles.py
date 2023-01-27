@@ -1058,15 +1058,17 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         ) * np.cos(theta_rad)
 
         return (
-            -90.0
-            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
             / np.pi
             * 180.0
         )
 
     def set_theta(self, theta_deg):
 
-        self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
+        alpha_deg = self.latitude(theta_deg)
+        theta_deg = theta_deg-alpha_deg
+
+        self._msis.set_location_coord(longitude=0.0, latitude=alpha_deg-90.0)
         info(
             1,
             "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
