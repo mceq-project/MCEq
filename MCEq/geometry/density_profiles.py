@@ -1076,7 +1076,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
             ),
         )
 
-        MSIS00Atmosphere.set_theta(self, downgoing_theta_deg)
+        MSIS00Atmosphere.set_theta(self, theta_deg)
 
         self.theta_deg = theta_deg
 
