@@ -1034,8 +1034,9 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         # Allow for upgoing zenith angles
         self.max_theta = 180.0
 
-    def latitude(self, det_zenith_deg):
-        """Returns the geographic latitude of the shower impact point.
+    def depth_correction(self, det_zenith_deg):
+        """Returns the geographic latitude (plus 90 deg.) of the 
+        shower impact point.
 
         Assumes a spherical earth. The detector is 1948m under the
         surface.
@@ -1065,7 +1066,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
     def set_theta(self, theta_deg):
 
-        alpha_deg = self.latitude(theta_deg)
+        alpha_deg = self.depth_correction(theta_deg)
         theta_deg = theta_deg-alpha_deg
 
         self._msis.set_location_coord(longitude=0.0, latitude=alpha_deg-90.0)
