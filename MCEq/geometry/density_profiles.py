@@ -1072,7 +1072,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         info(
             1,
             "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
-                self.latitude(theta_deg), theta_deg
+                alpha_deg-90.0, theta_deg
             ),
         )
 
