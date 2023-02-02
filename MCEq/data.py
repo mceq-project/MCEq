@@ -462,6 +462,10 @@ class HDF5Backend(object):
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
+        if "DPMJETIII19" in mname:
+            info(5, f"{mname} cross sections replaced by DPMIII191.")
+            mname = "DPMJETIII191"
+
         if config.adv_set["forced_int_cs"] is not None:
             mname = config.adv_set["forced_int_cs"]
             info(1, "All interaction cross sections forced to", mname)
