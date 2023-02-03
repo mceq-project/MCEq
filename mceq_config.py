@@ -49,7 +49,7 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
 #: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
 #: everything else will be attributed to the "conventional" category
-prompt_ctau = 2.6842 # cm (everything shorter-lived than K0s will be considered prompt)
+prompt_ctau = 2.6842  # cm (everything shorter-lived than K0s will be considered prompt)
 
 #: Approximate value for the maximum density expected. Needed for the
 #: resonance approximation. Default value: air at the surface
@@ -65,7 +65,7 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6391.0e5  # Earth radius in cm
+r_E = 6371.0e5  # Earth radius in cm
 h_obs = 0.0  # observation level in cm
 h_atm = 112.8e5  # top of the atmosphere in cm
 
