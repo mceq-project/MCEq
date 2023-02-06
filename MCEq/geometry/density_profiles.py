@@ -172,9 +172,8 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         else:
             self.max_theta = self.geom.theta_max_deg
 
-        if self.theta_deg >= self.max_theta:
-            raise ValueError(f"Theta {self.theta_deg:5.2f} out of range.")
-        self.calculate_density_spline()
+        if self.theta_deg:
+            self.calculate_density_spline()
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
