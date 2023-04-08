@@ -20,6 +20,9 @@ import MCEq.core
 if config.has_mkl:
     MCEq.set_mkl_threads(2)
 
+config.e_min = 1
+config.e_max = 1e5
+
 # MCEq.set_backend("numpy")
 
 
@@ -30,11 +33,14 @@ def format_8_digits(a_list):
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
-mceq = MCEq.core.MCEqRun(
-    interaction_model="SIBYLL23D",
-    theta_deg=0.0,
-    primary_model=(pm.HillasGaisser2012, "H3a"),
-)
+
+@pytest.fixture(scope="module")
+def mceq_qgs():
+    return MCEq.core.MCEqRun(
+        interaction_model="QGSJETII04",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
 
 
 def test_config_and_file_download():
@@ -45,16 +51,16 @@ def test_config_and_file_download():
     assert config.mceq_db_fname in os.listdir(config.data_dir)
 
 
-def test_some_angles():
+def test_some_angles(mceq_qgs):
 
     nmu = []
-    for theta in [0.0, 30.0, 60.0, 90]:
-        mceq.set_theta_deg(theta)
-        mceq.solve()
+    for theta in [0.0, 30.0, 60.0, 80]:
+        mceq_qgs.set_theta_deg(theta)
+        mceq_qgs.solve()
         nmu.append(
             np.sum(
-                mceq.get_solution("mu+", mag=0, integrate=True)
-                + mceq.get_solution("mu-", mag=0, integrate=True)
+                mceq_qgs.get_solution("mu+", mag=0, integrate=True)
+                + mceq_qgs.get_solution("mu-", mag=0, integrate=True)
             )
         )
     assert format_8_digits(nmu), [
@@ -66,6 +72,11 @@ def test_some_angles():
 
 
 def test_switch_interaction_models():
+    mceq = MCEq.core.MCEqRun(
+        interaction_model="DPMJETIII191",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
     mlist = [
         "DPMJETIII191",
         "DPMJETIII306",
@@ -84,30 +95,30 @@ def test_switch_interaction_models():
     assert count_part == [64, 64, 58, 44, 44, 48, 62, 62, 62, 62]
 
 
-def test_single_primary():
+def test_single_primary(mceq_qgs):
     energies = [1e3, 1e6, 1e9, 5e10]
     nmu, nnumu, nnue = [], [], []
-    mceq.set_interaction_model("SIBYLL23D")
-    mceq.set_theta_deg(0.0)
+    mceq_qgs.set_interaction_model("SIBYLL23D")
+    mceq_qgs.set_theta_deg(0.0)
     for e in energies:
-        mceq.set_single_primary_particle(E=e, pdg_id=2212)
-        mceq.solve()
+        mceq_qgs.set_single_primary_particle(E=e, pdg_id=2212)
+        mceq_qgs.solve()
         nmu.append(
             np.sum(
-                mceq.get_solution("mu+", mag=0, integrate=True)
-                + mceq.get_solution("mu-", mag=0, integrate=True)
+                mceq_qgs.get_solution("mu+", mag=0, integrate=True)
+                + mceq_qgs.get_solution("mu-", mag=0, integrate=True)
             )
         )
         nnumu.append(
             np.sum(
-                mceq.get_solution("numu", mag=0, integrate=True)
-                + mceq.get_solution("antinumu", mag=0, integrate=True)
+                mceq_qgs.get_solution("numu", mag=0, integrate=True)
+                + mceq_qgs.get_solution("antinumu", mag=0, integrate=True)
             )
         )
         nnue.append(
             np.sum(
-                mceq.get_solution("nue", mag=0, integrate=True)
-                + mceq.get_solution("antinue", mag=0, integrate=True)
+                mceq_qgs.get_solution("nue", mag=0, integrate=True)
+                + mceq_qgs.get_solution("antinue", mag=0, integrate=True)
             )
         )
 
