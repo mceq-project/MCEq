@@ -21,6 +21,17 @@ _target_masses = {
 }
 
 
+def _eval_energy_cuts(e_centers, e_min=config.e_min, e_max=config.e_max):
+    min_idx, max_idx = 0, len(e_centers)
+    slice0, slice1 = None, None
+    if e_min:
+        min_idx = slice0 = np.argmin(np.abs(e_centers - e_min))
+    if e_max:
+        e_max = min(1e15, e_max)
+        max_idx = slice1 = np.argmin(np.abs(e_centers - e_max)) + 1
+    return min_idx, max_idx, slice(slice0, slice1)
+
+
 def normalize_hadronic_model_name(name):
     import re
 

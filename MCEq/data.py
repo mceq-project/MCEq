@@ -4,7 +4,7 @@ import h5py
 from os.path import join, isfile
 from collections import defaultdict
 from MCEq import config, asarray
-from .misc import normalize_hadronic_model_name, info
+from .misc import normalize_hadronic_model_name, info, _eval_energy_cuts
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -169,9 +169,7 @@ class HDF5Backend(object):
             self.version = (
                 mceq_db.attrs["version"] if "version" in mceq_db.attrs else "1.0.0"
             )
-            self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
-                ca["e_grid"]
-            )
+            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(ca["e_grid"])
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
@@ -185,16 +183,6 @@ class HDF5Backend(object):
     @property
     def energy_grid(self):
         return self._energy_grid
-
-    def _eval_energy_cuts(self, e_centers):
-        min_idx, max_idx = 0, len(e_centers)
-        slice0, slice1 = None, None
-        if config.e_min is not None:
-            min_idx = slice0 = np.argmin(np.abs(e_centers - config.e_min))
-        if config.e_max is not None:
-            e_max = min(1e15, config.e_max)
-            max_idx = slice1 = np.argmin(np.abs(e_centers - e_max)) + 1
-        return min_idx, max_idx, slice(slice0, slice1)
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
         from scipy.sparse import csr_matrix

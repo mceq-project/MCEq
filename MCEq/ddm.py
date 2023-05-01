@@ -531,131 +531,6 @@ class DDMSplineDB:
         return f"{projectile}-{secondary}"
 
 
-# class DataDrivenModel:
-#     """This class implmenets the Data-Driven Model."""
-
-#     def __init__(
-#         self,
-#         filename: str = str(pathlib.Path(config.data_dir) / "DDM_1.0.npy"),
-#         e_min: float = 0,
-#         e_max: float = np.inf,
-#         enable_channels: List[Tuple[int, int]] = [],
-#         exclude_projectiles: List[int] = [],
-#         enable_K0_from_isospin: bool = True,
-#     ):
-#         """Initializes a DataDrivenModel object.
-
-#         Args:
-#             filename: A string representing the file name containing the data
-#                 points used to build the model.
-#             e_min: A float representing the minimum energy range where DDM
-#                 cross sections overwrite original MCEq matrices.
-#                 Default is 0.
-#             e_max: A float representing the maximum energy range where DDM
-#                 cross sections overwrite original MCEq matrices.
-#                 Default is infinity.
-#             enable_channels: A list of strings representing the channels to
-#                 use in building the model.
-#                 Default is an empty list.
-#             exclude_projectiles: A list of integers representing the projectiles
-#                 to exclude in building the model.
-#                 Default is an empty list.
-#             enable_K0_from_isospin: A bool representing whether to use isospin
-#                 relation for K0S/L.
-#                 Default is True.
-#         """
-#         self.e_min = e_min
-#         self.e_max = e_max
-#         self.enable_K0_from_isospin = enable_K0_from_isospin
-#         self.spline_db = DDMSplineDB(filename, enable_channels, exclude_projectiles)
-
-#     def ddm_matrices(self, mceq) -> Dict[Tuple[int, int], npt.NDArray]:
-#         """Generates a dictionary of DDM matrices for the given MCEq object.
-
-#         Args:
-#             mceq: An MCEq object.
-
-#         Returns:
-#              A dictionary with keys as tuples (projectile PDG, secondary PDG) and
-#         values as numpy arrays representing the corresponding DDM matrices.
-#         """
-
-#         _ddm_mat = dict()
-#         for channel in self.spline_db.channels:
-#             info(
-#                 0, f"Generating {channel.projectile} -> {channel.secondary} DDM matrix"
-#             )
-#             _ddm_mat[(channel.projectile, channel.secondary)] = _generate_DDM_matrix(
-#                 channel=channel, mceq=mceq, e_min=self.e_min, e_max=self.e_max
-#             )
-
-#         if self.enable_K0_from_isospin:
-#             info(3, "Generating DDM K0 matrices from isospin symm.")
-#             K0SL_mat = 0.5 * (_ddm_mat[(2212, 321)] + _ddm_mat[(2212, -321)])
-#             _ddm_mat[(2212, 310)] = K0SL_mat
-#             _ddm_mat[(2212, 130)] = K0SL_mat
-#             if (-211, 321) in _ddm_mat and (-211, -321) in _ddm_mat:
-#                 K0SL_mat = 0.5 * (_ddm_mat[(-211, 321)] + _ddm_mat[(-211, -321)])
-#                 _ddm_mat[(-211, 310)] = K0SL_mat
-#                 _ddm_mat[(-211, 130)] = K0SL_mat
-
-#         return _ddm_mat
-
-#     def apply_tuning(
-#         self,
-#         projectile: int,
-#         secondary: int,
-#         ebeam: Optional[float] = None,
-#         spl_idx: Optional[int] = None,
-#         tv: float = 1.0,
-#         te: float = 1.0,
-#     ) -> None:
-#         """
-#         Modify the tuning values and trim errors in the data_combinations dictionary.
-
-#         Args:
-#             prim: Primary particle code
-#             sec: Secondary particle code
-#             ebeam: Lab frame beam energy in GeV (optional)
-#             tv: Scaling factor for the central value
-#             te: Scaling factor for the errors
-#             spl_idx: Index of the spline to modify (optional)
-
-#         Raises:
-#             AssertionError: If neither `spl_idx` nor `ebeam` is set.
-#         """
-
-#         entry = self.spline_db.get_entry(projectile, secondary, ebeam, spl_idx)
-#         entry.tv = tv
-#         entry.te = te
-
-#     def dn_dxl(self, x, projectile, secondary, ebeam, return_error=True):
-#         """Returns dN/dxL and error."""
-
-#         entry = self.spline_db.get_entry(projectile, secondary, ebeam)
-
-#         res = _eval_spline(
-#             x, entry.tck, entry.x17, entry.cov, return_error=return_error
-#         )
-#         mask = np.where(x < _pdata.mass(secondary) / ebeam)
-#         if isinstance(res, tuple):
-#             v, e = res
-#             v[mask] = 0.0
-#             e[mask] = 0.0
-#             return v, e
-#         elif isinstance(res, np.ndarray):
-#             res[mask] = 0
-
-#         return res
-
-#     def __repr__(self) -> str:
-#         s = "DDM channels:\n"
-#         for channel in self.spline_db.channels:
-#             s += str(channel)
-#         s += "\n"
-#         return s
-
-
 class DataDrivenModel:
     """This class implements the Data-Driven Model."""
 
@@ -810,6 +685,26 @@ class DataDrivenModel:
             res[mask] = 0
 
         return res
+
+    def find_channel(self, projectile: int, secondary: int) -> _DDMChannel:
+        """
+        Finds a DDM channel.
+
+        Parameters
+        ----------
+        projectile : int
+            The projectile.
+        secondary : int
+            The secondary particle.
+
+        Returns
+        -------
+        _DDMChannel
+            The DDM channel.
+        """
+        return self.spline_db._ddm_splines[
+            self.spline_db._mk_channel(projectile, secondary)
+        ]
 
     def __repr__(self) -> str:
         s = "DDM channels:\n"

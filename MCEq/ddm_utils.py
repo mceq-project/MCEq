@@ -17,21 +17,39 @@ _QUAD_PARAMS = dict(limit=150, epsabs=1e-5)
 
 
 def fmteb(ebeam: Union[float, str, int]) -> str:
-    """Format beam energy for handling in db."""
+    """
+    Format beam energy for handling in db.
+
+    Parameters
+    ----------
+    ebeam : Union[float, str, int]
+        The beam energy.
+
+    Returns
+    -------
+    str
+        The formatted beam energy.
+    """
     return f"{float(ebeam):.1f}"
 
 
 def _spline_min_max_at_knot(
     tck: Tuple, iknot: int, sigma: npt.NDArray
 ) -> Tuple[Tuple, Tuple, float]:
-    """Return variation of spline coefficients by 1 sigma.
+    """
+    Return variation of spline coefficients by 1 sigma.
 
     Args:
-        tck: A tuple representing the input spline.
-        iknot: An integer representing the knot index to calculate the variation of.
-        sigma: A list of floats representing the 1-sigma errors of each knot.
+        tck : Tuple
+            A tuple representing the input spline.
+        iknot : int
+            The knot index to calculate the variation of.
+        sigma : npt.NDArray
+            The 1-sigma errors of each knot.
 
-    Returns:
+    Returns
+    -------
+    Tuple[Tuple, Tuple, float]
         A tuple containing two tuples representing the minimum and maximum spline
         coefficients, respectively, and a float representing the variation of the
         spline coefficients by 1 sigma.
@@ -48,25 +66,53 @@ def _spline_min_max_at_knot(
 
 
 def _generate_DDM_matrix(
-    channel,
-    mceq,
-    e_min: float = -1.0,
-    e_max: float = -1.0,
-    average=True,
+    channel, mceq, e_min: float = -1.0, e_max: float = -1.0, average: bool = True
 ) -> npt.NDArray:
+    """
+    Generate a Data-Driven Model matrix for the given channel and MCEq object.
+
+    Args:
+        channel : _DDMChannel
+            The DDM channel.
+        mceq : MCEq
+            The MCEq object.
+        e_min : float, optional
+            The minimum energy range in GeV where DDM cross sections overwrite original MCEq matrices,
+            by default -1.0.
+        e_max : float, optional
+            The maximum energy range in GeV where DDM cross sections overwrite original MCEq matrices,
+            by default -1.0.
+        average : bool, optional
+            Whether to average the dndx values, by default True.
+
+    Returns:
+        npt.NDArray
+            The DDM matrix.
+    """
+    from MCEq.misc import energy_grid, _eval_energy_cuts
+
     projectile = channel.projectile
     secondary = channel.secondary
     # Definitions of particles and energy grid
     e_min = mceq._energy_grid.b[0] if e_min < 0 else e_min
     e_max = mceq._energy_grid.b[-1] if e_max < 0 else e_max
-    dim = mceq.dim
+    mceq_egr = mceq._energy_grid
+    min_idx, max_idx, _cuts = _eval_energy_cuts(mceq_egr.c, e_min, e_max)
+    _energy_grid = energy_grid(
+        mceq_egr.c[_cuts],
+        mceq_egr.b[min_idx : max_idx + 1],
+        mceq_egr.w[_cuts],
+        int(max_idx - min_idx),
+    )
+    dim = len(_energy_grid.c)
+
     projectile_mass = mceq.pman[projectile].mass
     secondary_mass = mceq.pman[secondary].mass
 
     # Convert from kinetic to lab energy
-    elab_secondary_bins = mceq._energy_grid.b + secondary_mass
-    elab_secondary_centers = mceq._energy_grid.c + secondary_mass
-    elab_proj_centers = mceq._energy_grid.c + projectile_mass
+    elab_secondary_bins = _energy_grid.b + secondary_mass
+    elab_secondary_centers = _energy_grid.c + secondary_mass
+    elab_proj_centers = _energy_grid.c + projectile_mass
     e_widths = np.diff(elab_secondary_bins)
     xgrid = elab_secondary_bins / elab_secondary_centers[-1]
 
@@ -76,7 +122,7 @@ def _generate_DDM_matrix(
         mat = copy(mceq.pman[projectile].hadr_yields[mceq.pman[secondary]].get())
     except AttributeError:
         mat = copy(mceq.pman[projectile].hadr_yields[mceq.pman[secondary]])
-
+    mat = mat[min_idx : max_idx + 1, min_idx : max_idx + 1]
     if average:
         dndx_generator = _gen_averaged_dndx
     else:
@@ -84,7 +130,7 @@ def _generate_DDM_matrix(
 
     info(
         5,
-        f"DDM will be used between {e_min:.1e} GeV " + f"and {e_max:.1e} GeV",
+        f"DDM will be used between {e_min:.1e} GeV and {e_max:.1e} GeV",
     )
     n_datasets = channel.n_splines
     assert n_datasets > 0, "Number of splines per channel can't be zero"
@@ -95,14 +141,12 @@ def _generate_DDM_matrix(
         mceq_ebeam = elab_proj_centers[ie0]
         info(
             5,
-            f"Dataset 0 ({projectile}, {secondary}): mceq_eidx={ie0}, "
-            + f"mceq_ebeam={mceq_ebeam:4.3f}, ebeam={entry.ebeam}",
+            f"Dataset 0 ({projectile}, {secondary}): mceq_eidx={ie0}, mceq_ebeam={mceq_ebeam:4.3f}, ebeam={entry.ebeam}",
         )
         averaged_dndx = dndx_generator(xgrid, entry)
 
         for ie, eproj in enumerate(elab_proj_centers[:-1]):
-
-            if (eproj < config.e_min) or (eproj > config.e_max):
+            if (eproj < e_min) or (eproj > e_max):
                 info(0, "Skipping out of range energy", eproj)
                 continue
 
@@ -110,26 +154,25 @@ def _generate_DDM_matrix(
                 averaged_dndx[dim - ie - 1 :] / elab_proj_centers[ie] * e_widths[ie]
             )
     else:
-        # Loop through datasets in pairs of two and interpolate
-        # between them
+        # Loop through datasets in pairs of two and interpolate between them
         for interval in range(n_datasets - 1):
             entry_0 = channel.get_entry(idx=interval)
             entry_1 = channel.get_entry(idx=interval + 1)
-
             ie0 = np.argmin(np.abs(entry_0.fl_ebeam - elab_proj_centers))
             ie1 = np.argmin(np.abs(entry_1.fl_ebeam - elab_proj_centers))
             mceq_ebeam_0 = elab_proj_centers[ie0]
             mceq_ebeam_1 = elab_proj_centers[ie1]
             info(
                 5,
-                f"Dataset {interval} ({projectile}, {secondary}): mceq_eidx={ie0}, "
-                + f"mceq_ebeam={mceq_ebeam_0:4.3f}, ebeam={entry_0.ebeam}",
+                f"Dataset {interval} ({projectile}, {secondary}): "
+                + f"mceq_eidx={ie0}, mceq_ebeam={mceq_ebeam_0:4.3f}, "
+                + f"ebeam={entry_0.ebeam}",
             )
             info(
                 5,
                 f"Dataset {interval + 1} ({projectile}, {secondary}): "
-                + f"mceq_eidx={ie1}, "
-                + f"mceq_ebeam={mceq_ebeam_1:4.3f}, ebeam={entry_1.ebeam}",
+                + f"mceq_eidx={ie1}, mceq_ebeam={mceq_ebeam_1:4.3f}, "
+                + f"ebeam={entry_1.ebeam}",
             )
 
             try:
@@ -139,6 +182,7 @@ def _generate_DDM_matrix(
                     "Error averaging cross section for "
                     + f"({projectile},{secondary},{entry_0.ebeam})"
                 )
+
             try:
                 averaged_dndx_1 = dndx_generator(xgrid, entry_1)
             except ValueError:
@@ -148,19 +192,18 @@ def _generate_DDM_matrix(
                 )
 
             for ie, eproj in enumerate(elab_proj_centers):
-                if (eproj < config.e_min) or (eproj > config.e_max):
+                if (eproj < e_min) or (eproj > e_max):
                     continue
                 if ie <= ie0 and interval == 0:
-                    # If it is the first interval, extrapolate to
-                    # from the lowest energies
+                    # If it is the first interval, extrapolate from the lowest energies
                     mat[: ie + 1, ie] = (
                         averaged_dndx_0[dim - ie - 1 :]
                         / elab_proj_centers[ie]
                         * e_widths[ie]
                     )
                 elif ie < ie0 and interval > 0:
-                    # if it is not the first interval, don't touch the
-                    # columns that have been previously filled
+                    # if it is not the first interval, don't touch the columns
+                    # that have been previously filled
                     continue
                 elif ie <= ie1:
                     # Interpolate between two datasets
@@ -177,8 +220,8 @@ def _generate_DDM_matrix(
                     m = (f1 - f0) / np.log(entry_1.fl_ebeam / entry_0.fl_ebeam)
                     mat[: ie + 1, ie] = f0 + m * np.log(eproj / entry_0.fl_ebeam)
                 elif ie > ie1 and interval != n_datasets - 2:
-                    # if it is not the first dataset, don't touch the
-                    # columns that have been previously filled
+                    # if it is not the first dataset, don't touch the columns
+                    # that have been previously filled
                     break
                 else:
                     mat[: ie + 1, ie] = (
@@ -295,7 +338,39 @@ def _eval_spline_and_correction(
         return res.squeeze()
 
 
-def _gen_dndx(xbins, entry):
+def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
+    """
+    Generate dN/dx values for a given energy binning using a DDM entry.
+
+    Parameters
+    ----------
+    xbins : numpy.ndarray
+        Binning of x values.
+    entry : _DDMEntry
+        The DDM entry containing the spline information.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of dN/dx values corresponding to the provided xbinning.
+
+    Notes
+    -----
+    The dN/dx values are calculated by evaluating the spline defined by the
+    DDM entry at the square root of the bin boundaries. The resulting values
+    are multiplied by the tuning value of the entry.
+
+    If the evaluated x value is less than the minimum x value of the spline,
+    the corresponding dN/dx value is set to zero.
+
+    The returned array has the same shape as the provided xbinning.
+
+    Examples
+    --------
+    >>> xbins = np.linspace(0, 1, 11)
+    >>> entry = _DDMEntry(...)
+    >>> dndx = _gen_dndx(xbins, entry)
+    """
 
     x = np.sqrt(xbins[1:] * xbins[:-1])
 
@@ -304,7 +379,42 @@ def _gen_dndx(xbins, entry):
     return entry.tv * res
 
 
-def _gen_averaged_dndx(xbins, entry):
+def _gen_averaged_dndx(xbins: np.ndarray, entry) -> np.ndarray:
+    """
+    Generate averaged dN/dx values for a given energy binning using a DDM entry.
+
+    Parameters
+    ----------
+    xbins : numpy.ndarray
+        Binning of x values.
+    entry : _DDMEntry
+        The DDM entry containing the spline information.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of averaged dN/dx values corresponding to the provided xbinning.
+
+    Notes
+    -----
+    The averaged dN/dx values are calculated by integrating the spline defined
+    by the DDM entry over each energy bin and dividing by the bin width. The
+    resulting values are multiplied by the tuning value of the entry.
+
+    If an energy bin extends beyond x=1, the integration is performed from the
+    lower limit of the bin to x=1.
+
+    If an energy bin is entirely below entry.x_min, the averaged dN/dx value
+    for that bin is set to zero.
+
+    The returned array has the same shape as the provided xbinning[:-1].
+
+    Examples
+    --------
+    >>> xbins = np.linspace(0.1, 1, 11)
+    >>> entry = _DDMEntry(...)
+    >>> averaged_dndx = _gen_averaged_dndx(xbins, entry)
+    """
 
     xwidths = np.diff(xbins)
     integral = np.zeros_like(xwidths)
@@ -344,12 +454,54 @@ def _gen_averaged_dndx(xbins, entry):
     return integral
 
 
-def calc_zfactor_and_error(self, projectile, secondary, ebeam, gamma=1.7):
-    """The parameter `gamma` is the CR nucleon integral spectral index."""
+def calc_zfactor_and_error(
+    ddm, projectile: int, secondary: int, ebeam: Union[str, float], gamma: float = 1.7
+):
+    """
+    Calculate the Z-factor and its error for a given projectile,
+    secondary, and beam energy.
 
-    entry = self.spline_db.get_entry(projectile, secondary, ebeam)
+    Parameters
+    ----------
+    ddm: DataDrivenModel
+        Instance of DataDrivenModel.
+    projectile : int
+        Projectile PDG code.
+    secondary : int
+        Secondary PDG code.
+    ebeam : float
+        Beam energy in GeV.
+    gamma : float, optional
+        CR nucleon integral spectral index. Default is 1.7.
 
-    info(3, f"Calculating Z-factor for {projectile}-->{secondary} @ {ebeam} GeV.")
+    Returns
+    -------
+    numpy.ndarray
+        Z-factor values.
+    numpy.ndarray
+        Error of the Z-factor values.
+
+    Notes
+    -----
+    The Z-factor is calculated by integrating the spline defined by the DDM entry
+    over the range from entry.x_min to 1.0. The integral is multiplied by the tuning
+    value of the entry and raised to the power of gamma.
+
+    The error of the Z-factor is propagated using the covariance matrix of the spline
+    and the provided _PROPAGATE_PARAMS.
+
+    Examples
+    --------
+    >>> model = DataDrivenModel(...)
+    >>> projectile = 2212
+    >>> secondary = 211
+    >>> ebeam = 10.0
+    >>> z_factor, z_error = model.calc_zfactor_and_error(projectile, secondary, ebeam)
+    """
+
+    entry = ddm.spline_db.get_entry(projectile, secondary, ebeam)
+
+    info(3, f"Calculating Z-factor for {projectile} --> {secondary} @ {ebeam} GeV.")
 
     def func_int(tck_1):
         res = quad(
@@ -375,13 +527,50 @@ def calc_zfactor_and_error(self, projectile, secondary, ebeam, gamma=1.7):
     return y, sig_y
 
 
-def calc_zfactor_and_error2(self, projectile, secondary, ebeam, fv, fe, gamma=1.7):
-    """The parameter `gamma` is the CR nucleon integral spectral index.
+def calc_zfactor_and_error2(
+    ddm, projectile: int, secondary: int, ebeam: Union[str, float], gamma: float = 1.7
+):
+    """
+    Alternative Z-factor and error calculation for a given projectile,
+    secondary, and beam energy.
 
-    fv and fe are the fitted correction and its uncertainty.
+    Parameters
+    ----------
+    ddm: DataDrivenModel
+        Instance of DataDrivenModel.
+    projectile : int
+        Projectile PDG code.
+    secondary : int
+        Secondary PDG code.
+    ebeam : float
+        Beam energy in GeV.
+    gamma : float, optional
+        CR nucleon integral spectral index. Default is 1.7.
+
+    Returns
+    -------
+    numpy.ndarray
+        Z-factor values.
+    numpy.ndarray
+        Error of the Z-factor values.
+
+    Notes
+    -----
+    The main difference to the previous function is the error calculation, which
+    is performed by integrating the error band of the evaluated splines and not
+    by propagating the errors of the integral. This method is a bit more stable
+    for the "problematic" splines.
+
+    Examples
+    --------
+    >>> model = DataDrivenModel(...)
+    >>> projectile = 2212
+    >>> secondary = 211
+    >>> ebeam = 158.0
+    >>> z_factor, z_error = model.calc_zfactor_and_error2(projectile, secondary, ebeam)
     """
 
-    entry = self.spline_db.get_entry(projectile, secondary, ebeam)
+    entry = ddm.spline_db.get_entry(projectile, secondary, ebeam)
 
     info(3, f"Calculating Z-factor for {projectile}-->{secondary} @ {ebeam} GeV.")
 
@@ -407,39 +596,59 @@ def calc_zfactor_and_error2(self, projectile, secondary, ebeam, fv, fe, gamma=1.
     )[0]
 
     return (
-        entry.tv * zfactor_center + fv * entry.te * zfactor_error,
-        fe * entry.tv * zfactor_error,
+        entry.tv * zfactor_center + entry.tv * entry.te * zfactor_error,
+        entry.te * entry.tv * zfactor_error,
     )
 
 
 def gen_matrix_variations(ddm_obj, mceq):
+    """
+    Generate variations of DDM matrices and isospin partners.
+
+    Parameters
+    ----------
+    ddm_obj : DataDrivenModel
+        DataDrivenModel object.
+    mceq : MCEq
+        MCEq object.
+
+    Returns
+    -------
+    Dict[Tuple[int, int], Dict[int, List[numpy.ndarray]]]
+        Dictionary mapping (projectile, secondary) pairs to a dictionary
+        of variations for each knot index. Each variation consists of a
+        list of two matrices (max and min) and the variation magnitude.
+    Dict[Tuple[int, int], Tuple[Tuple[int, int], Dict[int, List[numpy.ndarray]]]]
+        Dictionary mapping (projectile, secondary) pairs to their isospin
+        partners, along with the variations of isospin matrices.
+
+    Examples
+    --------
+    >>> model = DataDrivenModel(...)
+    >>> mceq = MCEq(...)
+    >>> matrix_variations, isospin_partners = gen_matrix_variations(model, mceq)
+    """
+
     matrix_variations = {}
     isospin_partners = {}
 
-    # generate a default set of matrices and save it for isospin cooking
     ddm_matrices = ddm_obj.ddm_matrices(mceq)
     for channel in ddm_obj.spline_db.channels:
-        # for (prim, sec) in ddm_obj.data_combinations:
-        info(1, f"Generating vatiations for channel\n{channel}")
-        channel.total_n_knots
-        # tcks, dim_spls = ddm_obj._dim_spl(projectile, secondary, ret_detailed=True)
-        # sigs = sigmas[(prim, sec)]
-        mat_db = []
-        iso_part_db = []
+        info(1, f"Generating variations for channel\n{channel}")
+        mat_db = {}
+        iso_part_db = {}
 
-        # Loop through the knots of each spline
         for ispl, spl_entry in enumerate(channel.entries):
-            # for ispl, n in enumerate(dim_spls):
             tck = spl_entry.tck
             sig = spl_entry.knot_sigma
-            # tck, sig = tcks[ispl], sigs[ispl]
-            mat_db.append({})
-            iso_part_db.append({})
+            mat_db[ispl] = {}
+            iso_part_db[ispl] = {}
+
             for iknot in range(0, spl_entry.n_knots):
                 if np.allclose(tck[1][iknot], 0.0):
                     continue
+
                 tck_min, tck_max, h = _spline_min_max_at_knot(tck, iknot, sig)
-                # Replace coefficients by the varied ones in data_combinations
                 spl_entry.tck = tck_max
                 mat_max = _generate_DDM_matrix(
                     channel, mceq, e_min=ddm_obj.e_min, e_max=ddm_obj.e_max
@@ -448,10 +657,10 @@ def gen_matrix_variations(ddm_obj, mceq):
                 mat_min = _generate_DDM_matrix(
                     channel, mceq, e_min=ddm_obj.e_min, e_max=ddm_obj.e_max
                 )
-                # Restore original tck
                 spl_entry.tck = tck
-                mat_db[-1][iknot] = [mat_max, mat_min, h]
-                # Create also the varied isospin matrices
+
+                mat_db[ispl][iknot] = [mat_max, mat_min, h]
+
                 if channel.secondary in [321, -321] and ddm_obj.enable_K0_from_isospin:
                     imat_max = 0.5 * (
                         mat_max + ddm_matrices[(channel.projectile, -channel.secondary)]
@@ -459,7 +668,8 @@ def gen_matrix_variations(ddm_obj, mceq):
                     imat_min = 0.5 * (
                         mat_min + ddm_matrices[(channel.projectile, -channel.secondary)]
                     )
-                    iso_part_db[-1][iknot] = [imat_max, imat_min, h]
+                    iso_part_db[ispl][iknot] = [imat_max, imat_min, h]
+
         matrix_variations[(channel.projectile, channel.secondary)] = mat_db
         if channel.secondary in [321, -321]:
             isospin_partners[(channel.projectile, channel.secondary)] = (
