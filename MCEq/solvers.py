@@ -321,7 +321,7 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
     from ctypes import c_double, POINTER
     import MCEq.spacc as spacc
 
-    dim_phi = np.int(phi.shape[0])
+    dim_phi = int(phi.shape[0])
     npphi = np.copy(phi)
     phi = npphi.ctypes.data_as(POINTER(c_double))
     npdelta_phi = np.zeros_like(npphi)
