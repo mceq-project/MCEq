@@ -44,7 +44,6 @@ class MCEqRun(object):
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-
         self.medium = kwargs.pop("medium", config.interaction_medium)
         self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 
@@ -326,7 +325,8 @@ class MCEqRun(object):
             for track_pref in default_tracking_prefixes:
                 if particle_name.startswith(track_pref):
                     raise Exception(
-                        "Tracking category requested but enable_default_tracking is off in config."
+                        "Tracking category requested but "
+                        + "enable_default_tracking is off in config."
                     )
 
         if particle_name.startswith("total_"):
@@ -758,7 +758,6 @@ class MCEqRun(object):
         if not isinstance(
             density_model_or_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)
         ):
-
             base_model, model_config = density_model_or_config
 
             available_models = [
@@ -776,7 +775,7 @@ class MCEqRun(object):
                     "Unknown density model. Available choices are:\n",
                     "\n".join(available_models),
                 )
-                raise Exception("Choose a different profile.")
+                raise ValueError("Choose a different profile.")
 
             info(1, "Setting density profile to", base_model, model_config)
 
@@ -793,7 +792,7 @@ class MCEqRun(object):
             elif base_model == "GeneralizedTarget":
                 self.density_model = dprof.GeneralizedTarget()
             else:
-                raise Exception("Unknown atmospheric base model.")
+                raise ValueError("Unknown atmospheric base model.")
         else:
             self.density_model = density_model_or_config
 
@@ -808,7 +807,7 @@ class MCEqRun(object):
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
         else:
-            raise Exception("Density model not supported.")
+            raise ValueError(f"Density model {self.density_model} not supported.")
 
         # TODO: Make the pman aware of that density might have changed and
         # indices as well
@@ -861,7 +860,7 @@ class MCEqRun(object):
 
         if config.debug_level > 2:
             s = "DDM matrices injected into MCEq:\n"
-            for ((prim, sec), (iprim, isec)) in injected:
+            for (prim, sec), (iprim, isec) in injected:
                 s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
             print(s)
 
@@ -1079,7 +1078,6 @@ class MCEqRun(object):
         info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
-
         if (
             self.integration_path
             and np.alltrue(int_grid == self.int_grid)
