@@ -329,7 +329,8 @@ class DDMSplineDB:
         filename : str, optional
             The filename of the DDM spline data file, by default "DDM_1.0.npy".
         enable_channels : List[Tuple[int, int]], optional
-            List of projectile and secondary combinations to enable, by default an empty list.
+            List of projectile and secondary combinations to enable,
+            by default an empty list.
         exclude_projectiles : List[int], optional
             List of projectile codes to exclude, by default an empty list.
         """
@@ -359,7 +360,7 @@ class DDMSplineDB:
             self._ddm_splines = {}
 
         spl_file = np.load(filename, allow_pickle=True, encoding="latin1").item()
-        for (projectile, secondary, ebeam, x17) in spl_file:
+        for projectile, secondary, ebeam, x17 in spl_file:
             if (enable_channels and (projectile, secondary) not in enable_channels) or (
                 abs(projectile) in exclude_projectiles
             ):
@@ -537,8 +538,8 @@ class DataDrivenModel:
     def __init__(
         self,
         filename: str = str(pathlib.Path(config.data_dir) / "DDM_1.0.npy"),
-        e_min: float = 0,
-        e_max: float = np.inf,
+        e_min: float = -1.0,
+        e_max: float = -1.0,
         enable_channels: List[Tuple[int, int]] = [],
         exclude_projectiles: List[int] = [],
         enable_K0_from_isospin: bool = True,
@@ -549,13 +550,17 @@ class DataDrivenModel:
         Parameters
         ----------
         filename : str, optional
-            The filename of the data file used to build the model, by default "DDM_1.0.npy".
+            The filename of the data file used to build the model,
+            by default "DDM_1.0.npy".
         e_min : float, optional
-            The minimum energy range where DDM cross sections overwrite original MCEq matrices, by default 0.
+            The minimum energy range where DDM cross sections
+            overwrite original MCEq matrices, by default 0.
         e_max : float, optional
-            The maximum energy range where DDM cross sections overwrite original MCEq matrices, by default np.inf.
+            The maximum energy range where DDM cross sections
+            overwrite original MCEq matrices, by default np.inf.
         enable_channels : List[Tuple[int, int]], optional
-            List of projectile and secondary combinations to enable, by default an empty list.
+            List of projectile and secondary combinations to enable,
+            by default an empty list.
         exclude_projectiles : List[int], optional
             List of projectile codes to exclude, by default an empty list.
         enable_K0_from_isospin : bool, optional
@@ -588,11 +593,12 @@ class DataDrivenModel:
                 0, f"Generating {channel.projectile} -> {channel.secondary} DDM matrix"
             )
             _ddm_mat[(channel.projectile, channel.secondary)] = _generate_DDM_matrix(
-                channel=channel, mceq=mceq, e_min=self.e_min, e_max=self.e_max
+                channel=channel, mceq=mceq, e_min=mceq.e_bins[0], e_max=mceq.e_bins[-1]
             )
 
         if self.enable_K0_from_isospin:
             info(3, "Generating DDM K0 matrices from isospin symm.")
+            assert (2212, 321) in _ddm_mat, f"Missing K+ matrices in {_ddm_mat.keys()}"
             K0SL_mat = 0.5 * (_ddm_mat[(2212, 321)] + _ddm_mat[(2212, -321)])
             _ddm_mat[(2212, 310)] = K0SL_mat
             _ddm_mat[(2212, 130)] = K0SL_mat
