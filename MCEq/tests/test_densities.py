@@ -2,7 +2,6 @@ import numpy as np
 
 
 def test_corsika_atm():
-
     from MCEq.geometry.density_profiles import CorsikaAtmosphere
 
     # Depth at surface and density at X=100 g/cm2
@@ -34,7 +33,6 @@ def test_corsika_atm():
             ("PL_SouthPole", "August"),
         ]
     ):
-
         cka_obj = CorsikaAtmosphere(loc, season)
         assert np.allclose(
             [cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)], cka_surf_100[iatm]
@@ -42,7 +40,6 @@ def test_corsika_atm():
 
 
 def test_msis_atm():
-
     from MCEq.geometry.density_profiles import MSIS00Atmosphere
 
     msis_surf_100 = [
@@ -85,7 +82,6 @@ def test_msis_atm():
             ("TRIDENT", "January"),
         ]
     ):
-
         msis_obj = MSIS00Atmosphere(loc, season)
         assert np.allclose(
             [msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)], msis_surf_100[iatm]
