@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod
 from six import with_metaclass
 from os.path import join
 import numpy as np
-from MCEq.misc import theta_rad
 from MCEq.misc import info
 
 import mceq_config as config
@@ -159,7 +158,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise Exception("Zenith angle not in allowed range.")
 
-        self.thrad = theta_rad(theta_deg)
+        self.thrad = np.radians(theta_deg)
         self.theta_deg = theta_deg
         self.calculate_density_spline()
 
@@ -188,7 +187,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: :math:`1/\\rho` in cm**3/g
 
         """
-        return 1.0 / self.s_X2rho(X)
+        return 1.0 / self.s_X2rho(X)  # type: ignore
 
     def h2X(self, h):
         """Returns the depth along path as function of height above
@@ -204,7 +203,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: X  slant depth in g/cm**2
 
         """
-        return np.exp(self.s_h2X(h))
+        return np.exp(self.s_h2X(h))  # type: ignore
 
     def X2h(self, X):
         """Returns the height above surface as a function of slant depth
@@ -280,7 +279,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    _atm_param = None
+    _atm_param = np.zeros(5, dtype="float64")
 
     def __init__(self, location, season=None):
         cka_atmospheres = [
@@ -904,8 +903,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
             # p_levels = [
             #     float(s.strip()) for s in comline.split(' ')[3:] if s != ''
             # ][min_press_idx:]
-            dates = num2date(tab[:, 0])
-            for di, date in enumerate(dates):
+            dates = num2date(tab[:, 0])  # type: ignore
+            for di, date in enumerate(dates):  # type: ignore
                 if date.month == 6 and date.day == 1:
                     if date.year == 2010:
                         IC79_idx_1 = di
