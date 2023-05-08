@@ -144,7 +144,6 @@ class HDF5Backend(object):
     """
 
     def __init__(self, medium=config.interaction_medium):
-
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
@@ -169,7 +168,9 @@ class HDF5Backend(object):
             self.version = (
                 mceq_db.attrs["version"] if "version" in mceq_db.attrs else "1.0.0"
             )
-            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(ca["e_grid"])
+            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
+                ca["e_grid"], config.e_min, config.e_max
+            )
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
@@ -219,7 +220,6 @@ class HDF5Backend(object):
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
-
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
@@ -310,7 +310,6 @@ class HDF5Backend(object):
                 self.medium not in mceq_db["hadronic_interactions"]
                 or mname not in mceq_db["hadronic_interactions"][self.medium]
             ) and config.fallback_to_air_cs:
-
                 self._check_subgroup_exists(
                     mceq_db["hadronic_interactions"]["air"], mname
                 )
@@ -443,7 +442,6 @@ class HDF5Backend(object):
         return dec_index
 
     def cs_db(self, interaction_model_name):
-
         mname = normalize_hadronic_model_name(interaction_model_name)
         medium = self.medium
         if "SIBYLL23C" in mname or "SIBYLL23DE" in mname:
@@ -511,7 +509,6 @@ class HDF5Backend(object):
         return {"parents": parents, "index_d": index_d}
 
     def continuous_loss_db(self):
-
         with h5py.File(self.had_fname, "r") as mceq_db:
             self._check_subgroup_exists(mceq_db["continuous_losses"], self.medium)
             if config.enable_em or not config.enable_cont_rad_loss:
@@ -734,7 +731,7 @@ class Interactions(object):
             return False
 
         # Check function with same mode but different parameter is supplied
-        for (xf_name, fargs) in list(mpli[pstup]):
+        for xf_name, fargs in list(mpli[pstup]):
             if (xf_name == x_func.__name__) and (fargs[0] == args[0]):
                 info(
                     1,
@@ -773,7 +770,6 @@ class Interactions(object):
             # of pi+ and pi- production
 
             if np.any([p in self.parents for p in [221, 223, 333]]):
-
                 unflv_arg = None
                 if (prim_pdg, -sec_pdg) not in mpli:
                     # Only pi+ or pi- (not both) have been modified
@@ -922,7 +918,6 @@ class Decays(object):
     """
 
     def __init__(self, mceq_hdf_db, override_decay_db_name=None):
-
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
@@ -987,7 +982,6 @@ class Decays(object):
         return key in self.parents
 
     def children(self, parent_pdg):
-
         if parent_pdg not in self.relations:
             raise Exception("Parent {0} not in decay database.".format(parent_pdg))
 
@@ -1029,7 +1023,6 @@ class InteractionCrossSections(object):
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
     def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII191"):
-
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -1111,7 +1104,6 @@ class ContinuousLosses(object):
     """
 
     def __init__(self, mceq_hdf_db):
-
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
