@@ -47,6 +47,25 @@ _limit_propagate = np.inf
 _quad_params = dict(limit=150, epsabs=1e-5)
 
 
+def _spline_min_max_at_knot(tck, iknot, sigma):
+    """Return variation of spline coefficients by 1 sigma."""
+
+    assert iknot <= len(tck[1]) - 1, f"Invalid knot {iknot} requested"
+
+    _c_min = np.copy(tck[1])
+    _c_max = np.copy(tck[1])
+
+    h = sigma[iknot]
+
+    _c_min[iknot] = tck[1][iknot] - h
+    _c_max[iknot] = tck[1][iknot] + h
+
+    _tck_min = (tck[0], _c_min, tck[-1])
+    _tck_max = (tck[0], _c_max, tck[-1])
+
+    return _tck_min, _tck_max, h
+
+
 class DataDrivenModel(object):
     def __init__(
         self,
@@ -474,24 +493,6 @@ class DataDrivenModel(object):
         else:
             return ntot
 
-    def _spline_min_max_at_knot(self, tck, iknot, sigma):
-        """Return variation of spline coefficients by 1 sigma."""
-
-        assert iknot <= len(tck[1]) - 1, f"Invalid knot {iknot} requested"
-
-        _c_min = np.copy(tck[1])
-        _c_max = np.copy(tck[1])
-
-        h = sigma[iknot]
-
-        _c_min[iknot] = tck[1][iknot] - h
-        _c_max[iknot] = tck[1][iknot] + h
-
-        _tck_min = (tck[0], _c_min, tck[-1])
-        _tck_max = (tck[0], _c_max, tck[-1])
-
-        return _tck_min, _tck_max, h
-
     def gen_matrix_variations(self, mceq, **kwargs):
         matrix_variations = {}
         isospin_partners = {}
@@ -514,7 +515,7 @@ class DataDrivenModel(object):
                 for iknot in range(0, n):
                     if np.allclose(tck[1][iknot], 0.0):
                         continue
-                    tck_min, tck_max, h = self._spline_min_max_at_knot(tck, iknot, sig)
+                    tck_min, tck_max, h = _spline_min_max_at_knot(tck, iknot, sig)
                     # Replace coefficients by the varied ones in data_combinations
                     self.data_combinations[(prim, sec)][ispl][2] = tck_max
                     mat_max = self._generate_DDM_matrix(prim, sec, mceq)

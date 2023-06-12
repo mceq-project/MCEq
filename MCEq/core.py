@@ -316,6 +316,24 @@ class MCEqRun(object):
 
         lep_str = particle_name.split("_")[1] if "_" in particle_name else particle_name
 
+        default_tracking_prefixes = [
+            "conv_",
+            "pr_",
+            "pi_",
+            "k_",
+            "K0_",
+            "mulr_",
+            "mu_h0_",
+            "prcas_",
+            "prres_",
+        ]
+        if not config.enable_default_tracking:
+            for track_pref in default_tracking_prefixes:
+                if particle_name.startswith(track_pref):
+                    raise Exception(
+                        "Tracking category requested but enable_default_tracking is off in config."
+                    )
+
         if particle_name.startswith("total_"):
             # Note: This has changed from previous MCEq versions,
             # since pi_ and k_ prefixes are mere tracking counters

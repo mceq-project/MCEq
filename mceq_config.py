@@ -31,7 +31,7 @@ mceq_db_fname = "mceq_db_lext_dpm191_v141.h5"
 # mceq_db_fname = "mceq_db_10MeV-10TeV_URQMD_lext_2D.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai_Max_v131.h5"
+em_db_fname = "mceq_db_EM_Tsai_Max_v141.h5"
 
 #: Decay database name
 decay_db_name = "unpolarized"
@@ -49,8 +49,10 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC',('SouthPole','January'))
 #: density_model = ('GeneralizedTarget', None)
 
-#: Definition of prompt: default ctau < 0.123 cm (that of D0)
-prompt_ctau = 0.123
+#: Definition of prompt (only for correct accounting). Leptons from parent particles
+#: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
+#: everything else will be attributed to the "conventional" category
+prompt_ctau = 2.6842  # cm (everything shorter-lived than K0s will be considered prompt)
 
 #: Approximate value for the maximum density expected. Needed for the
 #: resonance approximation. Default value: air at the surface
@@ -66,7 +68,7 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6391.0e5  # Earth radius in cm
+r_E = 6371.0e5  # Earth radius in cm
 h_obs = 0.0  # observation level in cm
 h_atm = 112.8e5  # top of the atmosphere in cm
 

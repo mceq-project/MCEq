@@ -2,7 +2,7 @@ from MCEq.misc import info
 import MCEq.geometry.nrlmsise00 as cmsis
 
 
-class NRLMSISE00Base(object):
+class cNRLMSISE00(object):
     def __init__(self):
         # Cache altitude value of last call
         self.last_alt = None
@@ -38,6 +38,11 @@ class NRLMSISE00Base(object):
             "LynnLake": (-101.1, 56.9, 360.0 * 100.0),
             "PeaceRiver": (-117.2, 56.15, 36000.0 * 100.0),
             "FtSumner": (-104.2, 34.5, 31000.0 * 100.0),
+            "LakeBaikal": (103.91, 51.6, 456 * 100.0),
+            "P-ONE": (-127.7, 47.9, 0 * 100.0),
+            "KM3NeT-ARCA": (15.1322, 36.6827, 0 * 100.0),
+            "KM3NeT-ORCA": (6.0, 42.8, 0 * 100.0),
+            "TRIDENT": (114.0, 17.3, 0 * 100.0),
         }
 
         self.daytimes = {"day": 43200.0, "night": 0.0}
@@ -53,10 +58,6 @@ class NRLMSISE00Base(object):
 
         return quad(self.get_density, altitude_cm, 112.8 * 1e5, epsrel=0.001)[0]
 
-    def _retrieve_result(self, *args, **kwargs):
-        """Calls NRLMSISE library's main function"""
-        raise Exception("Not implemented for the base class")
-
     def get_temperature(self, altitude_cm):
         """Returns temperature in K"""
         self._retrieve_result(altitude_cm)
@@ -67,8 +68,6 @@ class NRLMSISE00Base(object):
         self._retrieve_result(altitude_cm)
         return self.output.d[5]
 
-
-class cNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
 
@@ -183,7 +182,7 @@ def test():
 
     plt.subplot(133)
     msis.set_location("SouthPole")
-    for i in range(360 / 30):
+    for i in range(360 // 30):
         msis.inp.doy = i * 30
         plt.plot(h_vec / 1e5, den(h_vec) / den_sp_jan, label=str(i + 1))
     plt.legend(ncol=2, loc=3)
