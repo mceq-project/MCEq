@@ -98,9 +98,9 @@ e_min = 0.1
 #: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e4
 
-# TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices 
+# TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices
 # on the respective new grid are produced!
-k_grid = np.append(0, np.unique(np.geomspace(1, 2000, 25, dtype='int64')))
+k_grid = np.append(0, np.unique(np.geomspace(1, 2000, 25, dtype="int64")))
 
 #: TK: energy grid defaults for the cross sections and continuous _cont_losses
 # ported over from the 1D database to the 2D database. This is used to "cut"
