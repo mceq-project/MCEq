@@ -48,7 +48,6 @@ class MCEqRun(object):
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-
         self.medium = kwargs.pop("medium", config.interaction_medium)
         self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 
@@ -363,23 +362,23 @@ class MCEqRun(object):
         if return_as == "total energy":
             etot_grid = self.etot_grid(lep_str)
             if not integrate:
-                return res * etot_grid ** mag
+                return res * etot_grid**mag
             else:
-                return res * etot_grid ** mag * self.e_widths
+                return res * etot_grid**mag * self.e_widths
 
         elif return_as == "kinetic energy":
             if not integrate:
-                return res * self._energy_grid.c ** mag
+                return res * self._energy_grid.c**mag
             else:
-                return res * self._energy_grid.c ** mag * self.e_widths
+                return res * self._energy_grid.c**mag * self.e_widths
 
         elif return_as == "total momentum":
             ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
-                return dEkindp * res * ptot_grid ** mag
+                return dEkindp * res * ptot_grid**mag
             else:
-                return dEkindp * res * ptot_grid ** mag * np.diff(ptot_bins)
+                return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
 
         else:
             raise Exception(
@@ -566,7 +565,8 @@ class MCEqRun(object):
             ] = (1e-4 * p_top)
         else:
             info(
-                1, "Protons not in equation system, can not set primary flux.",
+                1,
+                "Protons not in equation system, can not set primary flux.",
             )
 
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
@@ -670,7 +670,7 @@ class MCEqRun(object):
 
         if n_nucleons == 0:
             # This case handles other exotic projectiles
-            b_particle = np.array([1.0, En, En ** 2])
+            b_particle = np.array([1.0, En, En**2])
             lidx = self.pman[pdg_id].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -680,7 +680,7 @@ class MCEqRun(object):
             return
 
         if n_protons > 0:
-            b_protons = np.array([n_protons, En * n_protons, En ** 2 * n_protons])
+            b_protons = np.array([n_protons, En * n_protons, En**2 * n_protons])
             p_lidx = self.pman[2212].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -688,7 +688,7 @@ class MCEqRun(object):
                     emat, b_protons
                 )
         if n_neutrons > 0:
-            b_neutrons = np.array([n_neutrons, En * n_neutrons, En ** 2 * n_neutrons])
+            b_neutrons = np.array([n_neutrons, En * n_neutrons, En**2 * n_neutrons])
             n_lidx = self.pman[2112].lidx
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -758,7 +758,6 @@ class MCEqRun(object):
         if not isinstance(
             density_model_or_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)
         ):
-
             base_model, model_config = density_model_or_config
 
             available_models = [
@@ -861,7 +860,7 @@ class MCEqRun(object):
 
         if config.debug_level > 2:
             s = "DDM matrices injected into MCEq:\n"
-            for ((prim, sec), (iprim, isec)) in injected:
+            for (prim, sec), (iprim, isec) in injected:
                 s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
             print(s)
 
@@ -1064,7 +1063,7 @@ class MCEqRun(object):
         log_theta=False,
     ):
         """Converts the Hankel space amplitudes from the 2D MCEq solver
-        to the real (angular) space. 
+        to the real (angular) space.
 
         Args:
             hankel_transf (list of np.arrays): list of Hankel space solutions at the requested slant depths
@@ -1097,9 +1096,7 @@ class MCEqRun(object):
         ]
 
         for j in range(len(hankel_transf)):
-
             for eidx in range(len(self.e_grid)):
-
                 mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
                 oversampled_hankel_amps = interp1d(
                     config.k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
@@ -1185,7 +1182,6 @@ class MCEqRun(object):
         info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
-
         if (
             self.integration_path
             and np.alltrue(int_grid == self.int_grid)
@@ -1453,8 +1449,8 @@ class MCEqRun(object):
         lambda_s = 37.7
         E_s = 0.021
         elab_mu = self.e_grid + self.pman[(13, 0)].mass
-        beta_mu = np.sqrt(elab_mu ** 2 - self.pman[(13, 0)].mass ** 2) / elab_mu
-        theta_s_sq = (1 / lambda_s) * (E_s / (elab_mu * beta_mu ** 2)) ** 2
+        beta_mu = np.sqrt(elab_mu**2 - self.pman[(13, 0)].mass ** 2) / elab_mu
+        theta_s_sq = (1 / lambda_s) * (E_s / (elab_mu * beta_mu**2)) ** 2
         # delta_lambda (float): slant depth traversed by the muon (equivalent to dX in the integrator)
         exp = lambda delta_lambda: np.exp(
             -((config.k_grid[:, None]) ** 2) * delta_lambda * theta_s_sq[None, :] / 4
@@ -1748,7 +1744,12 @@ class MatrixBuilder(object):
                             ones_matrix, repeats=len(config.k_grid), axis=0
                         )
                     self._follow_chains(
-                        p, ones_matrix, p, p.hadridx, self.D_blocks, reclev=0,
+                        p,
+                        ones_matrix,
+                        p,
+                        p.hadridx,
+                        self.D_blocks,
+                        reclev=0,
                     )
                 else:
                     info(20, p.name, "stable or not added to D matrix")
