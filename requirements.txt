@@ -6,3 +6,5 @@ scipy
 numpy
 tqdm
 requests
+sparse
+particle

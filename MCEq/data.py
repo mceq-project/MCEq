@@ -132,6 +132,10 @@ equivalences = {
         431: 321,
         3122: 2112,
     },
+    "URQMD34": {
+        3122: 2112,
+        -3122: -2112,
+    },
 }
 
 
@@ -144,7 +148,6 @@ class HDF5Backend(object):
     """
 
     def __init__(self, medium=config.interaction_medium):
-
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
@@ -172,13 +175,25 @@ class HDF5Backend(object):
             self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
                 ca["e_grid"]
             )
+
+            # TK: Cuts for the cross sections copied over from the 1D database
+            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = self._eval_energy_cuts(
+                config.default_ecenters
+            )
+
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
                 int(self.max_idx - self.min_idx),
             )
-            self.dim_full = int(ca["e_dim"])
+            # TK: Changing the full dim of the csr blocks to
+            # the number of Hankel modes * the length of the energy grid
+            if config.enable_2D:
+                self.dim_full = int(ca["e_dim"]) * len(config.k_grid)
+
+            else:
+                self.dim_full = int(ca["e_dim"])
 
         self.medium = medium
 
@@ -231,7 +246,13 @@ class HDF5Backend(object):
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
-
+            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices
+            # (in the 2D case) or to leave them the same as in the 1D case
+            if config.enable_2D:
+                expand_len = len(config.k_grid)
+            else:
+                expand_len = 1
+            # Helicity information handling
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
@@ -240,25 +261,73 @@ class HDF5Backend(object):
                 raise Exception("Failed decoding parent-child relation.")
 
             if (abs(parent_pdg[0]) in exclude) or (abs(child_pdg[0]) in exclude):
-                read_idx += len_data[tupidx]
+                read_idx += expand_len * len_data[tupidx]
                 continue
             parent_pdg = int(parent_pdg[0]), (parent_pdg[1])
             child_pdg = int(child_pdg[0]), (child_pdg[1])
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = asarray(
-                (
-                    csr_matrix(
-                        (
-                            mat_data[0, read_idx : read_idx + len_data[tupidx]],
-                            mat_data[1, read_idx : read_idx + len_data[tupidx]],
-                            indptr_data[tupidx, :],
-                        ),
-                        shape=(self.dim_full, self.dim_full),
-                    )[self._cuts, self.min_idx : self.max_idx]
-                ).toarray()
-            )
+
+            # TK: do not apply energy slicing right away in 2D! Need to do this for every k mode separately.
+            if config.enable_2D:
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )
+                    ).toarray()
+                )
+
+            else:
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )[self._cuts, self.min_idx : self.max_idx]
+                    ).toarray()
+                )
+
+            # TK: In 2D, reshape the yield matrices from a block-diagonal representation to a tensor
+            # with dimensions (len(k_grid), len(e_grid), len(e_grid)):
+            if config.enable_2D:
+                ind_blocks = np.array(
+                    [
+                        index_d[(parent_pdg, child_pdg)][
+                            i + self.min_idx : i + self.max_idx,
+                            i + self.min_idx : i + self.max_idx,
+                        ]
+                        for i in range(
+                            0,
+                            len(index_d[(parent_pdg, child_pdg)]),
+                            self.dim_full // len(config.k_grid),
+                        )
+                    ]
+                )
+                index_d[(parent_pdg, child_pdg)] = ind_blocks
+
             relations[parent_pdg].append(child_pdg)
 
             info(
@@ -297,7 +366,7 @@ class HDF5Backend(object):
                         ),
                     )
 
-            read_idx += len_data[tupidx]
+            read_idx += expand_len * len_data[tupidx]
 
         return {
             "parents": sorted(list(relations)),
@@ -322,7 +391,6 @@ class HDF5Backend(object):
                 self.medium not in mceq_db["hadronic_interactions"]
                 or mname not in mceq_db["hadronic_interactions"][self.medium]
             ) and config.fallback_to_air_cs:
-
                 self._check_subgroup_exists(
                     mceq_db["hadronic_interactions"]["air"], mname
                 )
@@ -354,6 +422,8 @@ class HDF5Backend(object):
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
+            elif "URQMD34" in mname:
+                eqv = equivalences["URQMD34"]
             int_index = self._gen_db_dictionary(
                 mceq_db["hadronic_interactions"][medium][mname],
                 mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
@@ -422,23 +492,35 @@ class HDF5Backend(object):
         info(10, "Generating decay db. dset_name={0}".format(decay_dset_name))
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            if config.muon_helicity_dependence:
-                if decay_dset_name != "polarized":
-                    info(
-                        0,
-                        "Warning: "
-                        + f"Does this decay dataset '{decay_dset_name}'"
-                        + " include polarization?",
-                    )
-                else:
-                    decay_dset_name = "polarized"
-                info(2, "Using helicity dependent decays.")
-
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][decay_dset_name],
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
+
+            if config.muon_helicity_dependence:
+                # TK: Support for older names of the polarized/unpolarized datasets
+                # (e.g. if testing matrices from MCEq 1.2.0)
+                try:
+                    custom_index = self._gen_db_dictionary(
+                        mceq_db["decays"]["custom_decays"],
+                        mceq_db["decays"]["custom_decays" + "_indptrs"],
+                    )
+
+                except:
+                    custom_index = self._gen_db_dictionary(
+                        mceq_db["decays"]["polarized"],
+                        mceq_db["decays"]["polarized" + "_indptrs"],
+                    )
+
+                info(2, "Using helicity dependent decays.")
+                info(5, "Replacing decay from custom decay_db.")
+                dec_index["index_d"].update(custom_index["index_d"])
+
+                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
+                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)), None)
 
             # Refresh the metadata after modifying the index
             dec_index["relations"] = defaultdict(lambda: [])
@@ -455,7 +537,6 @@ class HDF5Backend(object):
         return dec_index
 
     def cs_db(self, interaction_model_name):
-
         mname = normalize_hadronic_model_name(interaction_model_name)
         medium = self.medium
         if "SIBYLL23C" in mname or "SIBYLL23DE" in mname:
@@ -485,7 +566,9 @@ class HDF5Backend(object):
             index_d = {}
             parents = list(cs_db.attrs["projectiles"])
             for ip, p in enumerate(parents):
-                index_d[p] = cs_data[self._cuts, ip]
+                # TK: apply the cross section cuts (assuming the cross section
+                # array is defined on the full 1D MCEq grid)
+                index_d[p] = cs_data[self.cs_cuts, ip]
 
         if config.adv_set["replace_meson_cross_sections_with"] is not None:
             mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
@@ -523,23 +606,26 @@ class HDF5Backend(object):
         return {"parents": parents, "index_d": index_d}
 
     def continuous_loss_db(self):
-
         with h5py.File(self.had_fname, "r") as mceq_db:
             self._check_subgroup_exists(mceq_db["continuous_losses"], self.medium)
             if config.enable_em or not config.enable_cont_rad_loss:
                 loss_case = "ionization"
             else:
                 loss_case = "total"
-            cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
-            # No rad losses for hadrons implememented
-            cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
+            try:
+                cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
+                # No rad losses for hadrons implememented
+                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
+            except:
+                cl_db = mceq_db["continuous_losses"][self.medium]
+                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]
             index_d = {}
             generic_dedx = None
 
             for k in list(cl_db):
                 if k != "hadron":
                     for hel in [0, 1, -1]:
-                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                        index_d[(int(k), hel)] = cl_db[k][self.cs_cuts]
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
@@ -746,7 +832,7 @@ class Interactions(object):
             return False
 
         # Check function with same mode but different parameter is supplied
-        for (xf_name, fargs) in list(mpli[pstup]):
+        for xf_name, fargs in list(mpli[pstup]):
             if (xf_name == x_func.__name__) and (fargs[0] == args[0]):
                 info(
                     1,
@@ -785,7 +871,6 @@ class Interactions(object):
             # of pi+ and pi- production
 
             if np.any([p in self.parents for p in [221, 223, 333]]):
-
                 unflv_arg = None
                 if (prim_pdg, -sec_pdg) not in mpli:
                     # Only pi+ or pi- (not both) have been modified
@@ -934,7 +1019,6 @@ class Decays(object):
     """
 
     def __init__(self, mceq_hdf_db, override_decay_db_name=None):
-
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
@@ -954,7 +1038,21 @@ class Decays(object):
         if decay_dset is None:
             decay_dset = self._default_decay_dset
 
-        index = self.mceq_db.decay_db(decay_dset)
+        try:
+            index = self.mceq_db.decay_db(decay_dset)
+
+        # TK: Support for older names of the polarized/unpolarized datasets
+        # (e.g. if testing matrices from MCEq 1.2.0)
+        except:
+            if decay_dset == "unpolarized":
+                decay_dset = "full_decays"
+
+            elif decay_dset == "polarized":
+                decay_dset = "custom_decays"
+
+            print("defaulting to %s" % decay_dset)
+
+            index = self.mceq_db.decay_db(decay_dset)
 
         self.parents = index["parents"]
         self.particles = index["particles"]
@@ -999,7 +1097,6 @@ class Decays(object):
         return key in self.parents
 
     def children(self, parent_pdg):
-
         if parent_pdg not in self.relations:
             raise Exception("Parent {0} not in decay database.".format(parent_pdg))
 
@@ -1040,8 +1137,11 @@ class InteractionCrossSections(object):
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
-    def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII191"):
-
+    def __init__(
+        self,
+        mceq_hdf_db,
+        interaction_model="DPMJETIII191",
+    ):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -1123,7 +1223,6 @@ class ContinuousLosses(object):
     """
 
     def __init__(self, mceq_hdf_db):
-
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid

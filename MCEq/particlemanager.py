@@ -447,9 +447,15 @@ class MCEqParticle(object):
                             to the child's energy grid
           cmat (numpy.array): array reference to the interaction matrix
         """
-        cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
+        # TK: reshape the yield matrices for 2D
+        if config.enable_2D:
+            cmat[:, chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][:,
             chidx[0] : chidx[1], projidx[0] : projidx[1]
-        ]
+            ]
+        else:
+            cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
+                chidx[0] : chidx[1], projidx[0] : projidx[1]
+            ]
 
     def _assign_decay_idx(self, child, projidx, chidx, cmat):
         """Copies a subset, defined between indices ``projidx`` and ``chiidx``
@@ -463,9 +469,15 @@ class MCEqParticle(object):
                             to the child's energy grid
           cmat (numpy.array): array reference to the interaction matrix
         """
-        cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
+        # TK: reshape the yield matrices for 2D
+        if config.enable_2D:
+            cmat[:, chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][:,
             chidx[0] : chidx[1], projidx[0] : projidx[1]
-        ]
+            ]
+        else:
+            cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
+                chidx[0] : chidx[1], projidx[0] : projidx[1]
+            ]
 
     def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close

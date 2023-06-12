@@ -1,9 +1,10 @@
 import numpy as np
 import mceq_config as config
 from MCEq.misc import info
+from tqdm import tqdm
 
 
-def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, **kwargs):
     """:mod:`numpy` implementation of forward-euler integration.
 
     Args:
@@ -35,15 +36,51 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     from time import time
 
     start = time()
+    # TK: 2D solver (same approach as 1D, but looping over the Hankel modes k)
+    if config.enable_2D:
 
-    for step in range(nsteps):
-        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+        for step in tqdm(range(nsteps)):
 
-        dXaccum += dxc[step]
+            if config.muon_multiple_scattering:
+                muon_mult_scat_kernel = kwargs['muon_scat_kernel'](dxc[step])
+                for idx in kwargs['muon_inds']:
+                    for k in range(len(config.k_grid)):
+                        phc[k][idx:idx + kwargs['edim']] *= muon_mult_scat_kernel[k]
 
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(phc))
-            grid_step += 1
+            int_deriv_k = [
+            imc[k].dot(phc[k]) for k in range(len(config.k_grid))
+            ]
+            dec_deriv_k = [
+                dmc[k].dot(phc[k]) * ric[step] for k in range(len(config.k_grid))
+            ]
+            full_deriv_k = [
+                int_deriv_k[k] + dec_deriv_k[k] for k in range(len(config.k_grid))
+            ]
+
+            phc += np.array(full_deriv_k) * dxc[step]
+
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
+    # 1D solver
+    else:
+
+        for step in range(nsteps):
+            phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+
+            dXaccum += dxc[step]
+
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
 
     info(
         2,

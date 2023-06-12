@@ -3,6 +3,7 @@ import sys
 import platform
 import os.path as path
 import warnings
+import numpy as np
 
 base_path = path.dirname(path.abspath(__file__))
 
@@ -26,12 +27,14 @@ data_dir = path.join(base_path, "MCEq", "data")
 
 #: File name of the MCEq database
 mceq_db_fname = "mceq_db_lext_dpm191_v141.h5"
+# 2D MCEq database filename:
+# mceq_db_fname = "mceq_db_10MeV-10TeV_URQMD_lext_2D.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai_Max_v141.h5"
 
 #: Decay database name
-decay_db_name = None
+decay_db_name = "unpolarized"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -87,6 +90,7 @@ except_out_of_bounds = False
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
+#: For 2D MCEq, the approximate minimum energy is 5e-2 GeV.
 e_min = 0.1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
@@ -94,10 +98,23 @@ e_min = 0.1
 #: for inclusive calculations to max. energy of interest + 4-5 orders of
 #: magnitude. For single primaries the maximal energy is directly limited by
 #: this value. Smaller grids speed up the initialization and integration.
-e_max = 1e11
+e_max = 1e4
+
+# TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices
+# on the respective new grid are produced!
+k_grid = np.append(0, np.unique(np.geomspace(1, 2000, 25, dtype="int64")))
+
+#: TK: energy grid defaults for the cross sections and continuous _cont_losses
+# ported over from the 1D database to the 2D database. This is used to "cut"
+# the cross section arrays defined on the entire 1D MCEq grid to the smaller 2D grid.
+default_ebins = np.logspace(-2, 12, 14 * 10 + 1)
+default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
 
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
+
+#: TK: Enable 2D shower development
+enable_2D = True
 
 #: Selection of integrator (euler/odepack)
 integrator = "euler"
@@ -105,7 +122,7 @@ integrator = "euler"
 #: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "auto"
+kernel_config = "numpy"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -201,6 +218,9 @@ use_isospin_sym = True
 
 #: Helicity dependent muons decays from analytical expressions
 muon_helicity_dependence = True
+
+#: Muon multiple scattering from the CORSIKA-like Gauss approximation
+muon_multiple_scattering = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
