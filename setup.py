@@ -117,6 +117,7 @@ setup(
         "numpy",
         "tqdm",
         "requests",
+        "jacobi"
     ],
     py_modules=["mceq_config"],
     ext_modules=ext_modules,

@@ -6,3 +6,4 @@ scipy
 numpy
 tqdm
 requests
+jacobi
