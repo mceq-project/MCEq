@@ -130,9 +130,6 @@ class _DDMEntry:
 
     def calc_zfactor_and_error(
         self,
-        projectile: int,
-        secondary: int,
-        ebeam: Union[str, float],
         gamma: float = 1.7,
     ):
         """
@@ -143,12 +140,6 @@ class _DDMEntry:
         ----------
         ddm: DataDrivenModel
             Instance of DataDrivenModel.
-        projectile : int
-            Projectile PDG code.
-        secondary : int
-            Secondary PDG code.
-        ebeam : float
-            Beam energy in GeV.
         gamma : float, optional
             CR nucleon integral spectral index. Default is 1.7.
 
@@ -165,21 +156,24 @@ class _DDMEntry:
         over the range from entry.x_min to 1.0. The integral is multiplied by the tuning
         value of the entry and raised to the power of gamma.
 
-        The error of the Z-factor is propagated using the covariance matrix of the spline
-        and the provided _PROPAGATE_PARAMS.
+        The error of the Z-factor is propagated using the covariance matrix of the
+        spline and the provided _PROPAGATE_PARAMS.
 
         Examples
         --------
         >>> model = DataDrivenModel(...)
-        >>> projectile = 2212
-        >>> secondary = 211
-        >>> ebeam = 10.0
-        >>> z_factor, z_error = model.calc_zfactor_and_error(projectile, secondary, ebeam)
+        >>> entry = model.spline_db.get_entry(
+                projectile, secondary, ebeam=ebeam)
+        >>> z_factor, z_error = entry.calc_zfactor_and_error()
         """
         from jacobi import propagate
-        import ddm_utils
+        from MCEq import ddm_utils
 
-        info(3, f"Calculating Z-factor for {projectile} --> {secondary} @ {ebeam} GeV.")
+        info(
+            3,
+            f"Calculating Z-factor for {self.projectile} --> "
+            + f"{self.secondary} @ {self.ebeam} GeV.",
+        )
 
         def func_int(tck_1):
             res = quad(
@@ -208,9 +202,6 @@ class _DDMEntry:
 
     def calc_zfactor_and_error2(
         self,
-        projectile: int,
-        secondary: int,
-        ebeam: Union[str, float],
         gamma: float = 1.7,
     ):
         """
@@ -221,12 +212,6 @@ class _DDMEntry:
         ----------
         ddm: DataDrivenModel
             Instance of DataDrivenModel.
-        projectile : int
-            Projectile PDG code.
-        secondary : int
-            Secondary PDG code.
-        ebeam : float
-            Beam energy in GeV.
         gamma : float, optional
             CR nucleon integral spectral index. Default is 1.7.
 
@@ -247,14 +232,17 @@ class _DDMEntry:
         Examples
         --------
         >>> model = DataDrivenModel(...)
-        >>> projectile = 2212
-        >>> secondary = 211
-        >>> ebeam = 158.0
-        >>> z_factor, z_error = model.calc_zfactor_and_error2(projectile, secondary, ebeam)
+        >>> entry = model.spline_db.get_entry(
+                projectile, secondary, ebeam=ebeam)
+        >>> z_factor, z_error = entry.calc_zfactor_and_error2()
         """
-        import ddm_utils
+        from MCEq import ddm_utils
 
-        info(3, f"Calculating Z-factor for {projectile}-->{secondary} @ {ebeam} GeV.")
+        info(
+            3,
+            f"Calculating Z-factor for {self.projectile} --> "
+            + f"{self.secondary} @ {self.ebeam} GeV.",
+        )
 
         def fitfunc_center(*args, **kwargs):
             return _eval_spline(*args, **kwargs)[0]
