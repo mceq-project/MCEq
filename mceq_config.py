@@ -68,6 +68,8 @@ A_target = "auto"
 r_E = 6371.0e5  # Earth radius in cm
 h_obs = 0.0  # observation level in cm
 h_atm = 112.8e5  # top of the atmosphere in cm
+X_start = 0.0  # starting slant depth in g/cm^-2
+
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]

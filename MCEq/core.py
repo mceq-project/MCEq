@@ -1104,7 +1104,11 @@ class MCEqRun(object):
         dX_vec = []
         rho_inv_vec = []
 
-        X = 0.0
+        X = config.X_start
+        if min(int_grid) < X:
+            raise ValueError(
+                "Steps in int_grid must be larger than mceq_config.X_start."
+            )
         step = 0
         grid_step = 0
         grid_idcs = []
