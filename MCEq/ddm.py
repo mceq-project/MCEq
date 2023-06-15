@@ -4,6 +4,7 @@ from typing import Dict, Generator, List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
+from scipy.integrate import quad
 
 import mceq_config as config
 
@@ -126,6 +127,160 @@ class _DDMEntry:
             The minimum x value.
         """
         return _pdata.mass(self.secondary) / float(self.ebeam)
+
+    def calc_zfactor_and_error(
+        self,
+        projectile: int,
+        secondary: int,
+        ebeam: Union[str, float],
+        gamma: float = 1.7,
+    ):
+        """
+        Calculate the Z-factor and its error for a given projectile,
+        secondary, and beam energy.
+
+        Parameters
+        ----------
+        ddm: DataDrivenModel
+            Instance of DataDrivenModel.
+        projectile : int
+            Projectile PDG code.
+        secondary : int
+            Secondary PDG code.
+        ebeam : float
+            Beam energy in GeV.
+        gamma : float, optional
+            CR nucleon integral spectral index. Default is 1.7.
+
+        Returns
+        -------
+        numpy.ndarray
+            Z-factor values.
+        numpy.ndarray
+            Error of the Z-factor values.
+
+        Notes
+        -----
+        The Z-factor is calculated by integrating the spline defined by the DDM entry
+        over the range from entry.x_min to 1.0. The integral is multiplied by the tuning
+        value of the entry and raised to the power of gamma.
+
+        The error of the Z-factor is propagated using the covariance matrix of the spline
+        and the provided _PROPAGATE_PARAMS.
+
+        Examples
+        --------
+        >>> model = DataDrivenModel(...)
+        >>> projectile = 2212
+        >>> secondary = 211
+        >>> ebeam = 10.0
+        >>> z_factor, z_error = model.calc_zfactor_and_error(projectile, secondary, ebeam)
+        """
+        from jacobi import propagate
+        import ddm_utils
+
+        info(3, f"Calculating Z-factor for {projectile} --> {secondary} @ {ebeam} GeV.")
+
+        def func_int(tck_1):
+            res = quad(
+                _eval_spline,
+                self.x_min,
+                1.0,
+                args=(
+                    (self.tck[0], tck_1, self.tck[2]),
+                    self.x17,
+                    self.cov,
+                    False,
+                    gamma,
+                ),
+                **ddm_utils._QUAD_PARAMS,
+            )[0]
+            res = np.atleast_1d(res)
+            res[
+                (res < 0) | ~np.isfinite(res) | (res > ddm_utils._LIMIT_PROPAGATE)
+            ] = 0.0
+            return res.squeeze()
+
+        y, C = propagate(func_int, self.tck[1], self.cov, **ddm_utils._PROPAGATE_PARAMS)
+        sig_y = np.sqrt(C)
+
+        return y, sig_y
+
+    def calc_zfactor_and_error2(
+        self,
+        projectile: int,
+        secondary: int,
+        ebeam: Union[str, float],
+        gamma: float = 1.7,
+    ):
+        """
+        Alternative Z-factor and error calculation for a given projectile,
+        secondary, and beam energy.
+
+        Parameters
+        ----------
+        ddm: DataDrivenModel
+            Instance of DataDrivenModel.
+        projectile : int
+            Projectile PDG code.
+        secondary : int
+            Secondary PDG code.
+        ebeam : float
+            Beam energy in GeV.
+        gamma : float, optional
+            CR nucleon integral spectral index. Default is 1.7.
+
+        Returns
+        -------
+        numpy.ndarray
+            Z-factor values.
+        numpy.ndarray
+            Error of the Z-factor values.
+
+        Notes
+        -----
+        The main difference to the previous function is the error calculation, which
+        is performed by integrating the error band of the evaluated splines and not
+        by propagating the errors of the integral. This method is a bit more stable
+        for the "problematic" splines.
+
+        Examples
+        --------
+        >>> model = DataDrivenModel(...)
+        >>> projectile = 2212
+        >>> secondary = 211
+        >>> ebeam = 158.0
+        >>> z_factor, z_error = model.calc_zfactor_and_error2(projectile, secondary, ebeam)
+        """
+        import ddm_utils
+
+        info(3, f"Calculating Z-factor for {projectile}-->{secondary} @ {ebeam} GeV.")
+
+        def fitfunc_center(*args, **kwargs):
+            return _eval_spline(*args, **kwargs)[0]
+
+        def fitfunc_error(*args, **kwargs):
+            return _eval_spline(*args, **kwargs)[1]
+
+        zfactor_center = quad(
+            fitfunc_center,
+            self.x_min,
+            1.0,
+            args=(self.tck, self.x17, self.cov, True, gamma),
+            **ddm_utils._QUAD_PARAMS,
+        )[0]
+        zfactor_error = quad(
+            fitfunc_error,
+            self.x_min,
+            1.0,
+            args=(self.tck, self.x17, self.cov, True, gamma),
+            **ddm_utils._QUAD_PARAMS,
+        )[0]
+
+        return (
+            self.tv * zfactor_center + self.tv * self.te * zfactor_error,
+            self.te * self.tv * zfactor_error,
+        )
 
 
 class _DDMChannel:
