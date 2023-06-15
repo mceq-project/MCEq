@@ -249,40 +249,54 @@ class TestDDMUtils(unittest.TestCase):
         expected_matrix = np.array(
             [
                 [
-                    0.0,
-                    0.000983217365563208,
-                    0.006211704918804481,
-                    0.026537833076977973,
-                    0.0656015917857339,
-                    0.10123265537019738,
+                    6.84457826e-06,
+                    9.83217366e-04,
+                    6.21170492e-03,
+                    2.65378331e-02,
+                    6.56015918e-02,
+                    1.04785868e-01,
                 ],
                 [
-                    0.0,
-                    7.638437045704317e-05,
-                    0.000991419546926868,
-                    0.006507972292888666,
-                    0.02629565697073082,
-                    0.04999655619749746,
+                    0.00000000e00,
+                    7.63843705e-05,
+                    9.91419547e-04,
+                    6.50797229e-03,
+                    2.62956570e-02,
+                    5.22770344e-02,
                 ],
                 [
-                    0.0,
-                    0.0,
-                    7.702158302242417e-05,
-                    0.0011836492400988143,
-                    0.006900314243808511,
-                    0.0217230936979197,
+                    0.00000000e00,
+                    0.00000000e00,
+                    7.70215830e-05,
+                    1.18364924e-03,
+                    6.90031424e-03,
+                    2.32589471e-02,
                 ],
                 [
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.00012213941307792056,
-                    0.0014504806061470543,
-                    0.007357451148747356,
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    1.22139413e-04,
+                    1.45048061e-03,
+                    8.29959437e-03,
                 ],
-                [0.0, 0.0, 0.0, 0.0, 0.00018539511358273218, 0.0010888189683184015],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 1.4570881508361719e-06],
-            ]
+                [
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    1.85395114e-04,
+                    1.37882398e-03,
+                ],
+                [
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    4.46379648e-06,
+                ],
+            ],
         )
 
         npt.assert_allclose(generated_matrix, expected_matrix)
@@ -352,9 +366,9 @@ def test_calc_zfactor_and_error(ddm_fix):
     secondary = 211
     ebeam = 158.0
 
-    z_factor, z_error = ddm_utils.calc_zfactor_and_error(
-        ddm_fix, projectile, secondary, ebeam
-    )
+    entry = ddm_fix.spline_db.get_entry(projectile, secondary, ebeam=ebeam)
+
+    z_factor, z_error = entry.calc_zfactor_and_error()
 
     # Check that Z-factor values are non-negative
     assert np.all(z_factor >= 0)
@@ -371,9 +385,9 @@ def test_calc_zfactor_and_error2(ddm_fix):
     secondary = 211
     ebeam = 158.0
 
-    z_factor, z_error = ddm_utils.calc_zfactor_and_error2(
-        ddm_fix, projectile, secondary, ebeam
-    )
+    entry = ddm_fix.spline_db.get_entry(projectile, secondary, ebeam=ebeam)
+
+    z_factor, z_error = entry.calc_zfactor_and_error2()
 
     # Check that Z-factor values are non-negative
     assert np.all(z_factor >= 0)
@@ -435,11 +449,11 @@ def test_calc_zfactor_and_error2(ddm_fix):
 #     ]
 #     channel2.n_splines = 2
 #     model.spline_db.channels = [channel1, channel2]
-    
+
 #     class MyMockClass:
 #    ...:     def __init__(self):
 #    ...:         self.my_list = [1, 2, 3, 4, 5]
-#    ...: 
+#    ...:
 #    ...:     def get_list_entry(self, index):
 #    ...:         return self.my_list[index]
 
