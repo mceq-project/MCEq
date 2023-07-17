@@ -1105,7 +1105,7 @@ class MCEqRun(object):
         rho_inv_vec = []
 
         X = config.X_start
-        if min(int_grid) < X:
+        if int_grid is not None and min(int_grid) < X:
             raise ValueError(
                 "Steps in int_grid must be larger than mceq_config.X_start."
             )

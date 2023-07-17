@@ -444,7 +444,7 @@ class HDF5Backend(object):
     def cs_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
         medium = self.medium
-        if "SIBYLL23C" in mname or "SIBYLL23DE" in mname:
+        if "SIBYLL23C" in mname or "SIBYLL23DSTAR" in mname:
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
