@@ -51,7 +51,6 @@ class MCEqParticle(object):
         init_pdata_defaults=True,
         A_target=average_A_target(),
     ):
-
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
@@ -597,7 +596,6 @@ class MCEqParticle(object):
             )[0]
 
         def xF(xL, Elab, ppdg):
-
             m = {2212: 0.938, 211: 0.139, 321: 0.493}
             mp = m[2212]
 
@@ -1188,7 +1186,6 @@ class ParticleManager(object):
         self._update_particle_tables()
 
     def add_new_particle(self, new_mceq_particle):
-
         if new_mceq_particle in self.all_particles:
             info(
                 0,
@@ -1350,7 +1347,6 @@ class ParticleManager(object):
         return str_out
 
     def print_particle_tables(self, min_dbg_lev=2):
-
         info(min_dbg_lev, "Hadrons and stable particles:", no_caller=True)
         print_in_rows(
             min_dbg_lev,

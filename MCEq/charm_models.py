@@ -97,7 +97,6 @@ class MRS_charm(CharmModel):
     allowed_sec = [411, 421, 431, 4122]
 
     def __init__(self, e_grid, csm):
-
         # inverted fragmentation functions
         self.lambda_c_frag = lambda xhad: 1 / 1.47 * xhad
         self.d_frag = lambda xhad: 4.0 / 3.0 * xhad

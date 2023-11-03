@@ -52,7 +52,6 @@ def test_config_and_file_download():
 
 
 def test_some_angles(mceq_qgs):
-
     nmu = []
     for theta in [0.0, 30.0, 60.0, 80]:
         mceq_qgs.set_theta_deg(theta)

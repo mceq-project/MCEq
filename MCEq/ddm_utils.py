@@ -7,8 +7,6 @@ from jacobi import propagate
 from scipy.integrate import quad
 from scipy.interpolate import splev
 
-import mceq_config as config
-
 from .misc import info
 
 _LIMIT_PROPAGATE = np.inf
@@ -77,11 +75,11 @@ def _generate_DDM_matrix(
         mceq : MCEq
             The MCEq object.
         e_min : float, optional
-            The minimum energy range in GeV where DDM cross sections overwrite original MCEq matrices,
-            by default -1.0.
+            The minimum energy range in GeV where DDM cross sections overwrite
+            original MCEq matrices, by default -1.0.
         e_max : float, optional
-            The maximum energy range in GeV where DDM cross sections overwrite original MCEq matrices,
-            by default -1.0.
+            The maximum energy range in GeV where DDM cross sections overwrite
+            original MCEq matrices, by default -1.0.
         average : bool, optional
             Whether to average the dndx values, by default True.
 
@@ -138,10 +136,10 @@ def _generate_DDM_matrix(
     if n_datasets == 1:
         entry = channel.get_entry(idx=0)
         ie0 = np.argmin(np.abs(entry.fl_ebeam - elab_proj_centers))
-        mceq_ebeam = elab_proj_centers[ie0]
         info(
             5,
-            f"Dataset 0 ({projectile}, {secondary}): mceq_eidx={ie0}, mceq_ebeam={mceq_ebeam:4.3f}, ebeam={entry.ebeam}",
+            f"Dataset 0 ({projectile}, {secondary}): mceq_eidx={ie0}, "
+            + "mceq_ebeam={mceq_ebeam:4.3f}, ebeam={entry.ebeam}",
         )
         averaged_dndx = dndx_generator(xgrid, entry)
 
@@ -452,6 +450,7 @@ def _gen_averaged_dndx(xbins: np.ndarray, entry) -> np.ndarray:
             )
 
     return integral
+
 
 def gen_matrix_variations(ddm_obj, mceq):
     """

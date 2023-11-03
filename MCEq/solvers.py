@@ -335,7 +335,6 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
     start = time()
 
     for step in range(nsteps):
-
         # delta_phi = int_m.dot(phi)
         npdelta_phi *= 0
         spacc_int_m.gemv_ctargs(1.0, phi, delta_phi)

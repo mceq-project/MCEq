@@ -62,6 +62,7 @@ if is_a_mac:
 else:
     ext_modules = [libnrlmsise00, libcorsikaatm]
 
+
 # This method is adopted from iMinuit https://github.com/scikit-hep/iminuit
 # Getting the version number at this point is a bit tricky in Python:
 # https://packaging.python.org/en/latest/development.html#single-sourcing-the-version-across-setup-py-and-your-project
@@ -117,7 +118,7 @@ setup(
         "numpy",
         "tqdm",
         "requests",
-        "jacobi"
+        "jacobi",
     ],
     py_modules=["mceq_config"],
     ext_modules=ext_modules,

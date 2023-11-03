@@ -796,7 +796,6 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         )
 
     def set_theta(self, theta_deg):
-
         self._msis.set_location_coord(longitude=0.0, latitude=self._latitude(theta_deg))
         info(
             1,
@@ -1075,7 +1074,6 @@ class GeneralizedTarget(object):
         env_density=config.env_density,  # g/cm3
         env_name=config.env_name,
     ):
-
         self.len_target = len_target
         self.env_density = env_density
         self.env_name = env_name
