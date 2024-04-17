@@ -134,7 +134,7 @@ equivalences = {
     },
 }
 
-
+equivalences["FLUKA"] = equivalences["DPMJET"]
 class HDF5Backend(object):
     """Provides access to tabulated data stored in an HDF5 file.
 
@@ -341,6 +341,10 @@ class HDF5Backend(object):
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
+            elif "FLUKA" in mname:
+                eqv = equivalences["FLUKA"]
+            else:
+                raise ValueError("Unknown equivalence table for", mname)
             int_index = self._gen_db_dictionary(
                 mceq_db["hadronic_interactions"][medium][mname],
                 mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
@@ -448,7 +452,7 @@ class HDF5Backend(object):
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
-        if "DPMJETIII19" in mname:
+        if "DPMJETIII19" in mname or "FLUKA" in mname:
             info(5, f"{mname} cross sections replaced by DPMIII191.")
             mname = "DPMJETIII191"
 
