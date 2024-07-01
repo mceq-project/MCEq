@@ -61,7 +61,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         Raises:
             Exception: if :func:`set_theta` was not called before.
         """
-        from scipy.integrate import cumtrapz
+        from scipy.integrate import cumulative_trapezoid as cumtrapz
         from time import time
         from scipy.interpolate import UnivariateSpline
 
