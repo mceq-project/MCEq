@@ -1349,9 +1349,11 @@ if __name__ == "__main__":
             x_vec,
             1 / cka_obj.r_X2rho(x_vec),
             lw=1.5,
-            label="{0}/{1}".format(loc, season)
-            if season is not None
-            else "{0}".format(loc),
+            label=(
+                "{0}/{1}".format(loc, season)
+                if season is not None
+                else "{0}".format(loc)
+            ),
         )
         cka_surf_100.append((cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)))
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")

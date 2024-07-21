@@ -115,8 +115,8 @@ class CUDASparseContext(object):
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        cu_delta_phi = self.cu_int_m.dot(self.cu_curr_phi)
-        cu_delta_phi += rho_inv * self.cu_dec_m.dot(self.cu_curr_phi)
+        cu_delta_phi = self.cu_int_m @ self.cu_curr_phi
+        cu_delta_phi += self.cu_dec_m @ (self.cu_curr_phi * rho_inv)
         self.cu_curr_phi += dX * cu_delta_phi
 
 
