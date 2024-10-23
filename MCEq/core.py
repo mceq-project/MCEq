@@ -786,8 +786,8 @@ class MCEqRun(object):
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
-        if (self.integration_path and np.alltrue(int_grid == self.int_grid)
-                and np.alltrue(self.grid_var == grid_var) and not force):
+        if (self.integration_path and np.all(int_grid == self.int_grid)
+                and np.all(self.grid_var == grid_var) and not force):
             info(5, 'skipping calculation.')
             return
 
