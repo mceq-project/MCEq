@@ -292,6 +292,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             ("KM3NeT-ARCA", "Winter"),
             ("KM3NeT", None),
             ("SouthPole", "December"),
+            ("SouthPole", "June"),
             ("PL_SouthPole", "January"),
             ("PL_SouthPole", "August"),
         ]
