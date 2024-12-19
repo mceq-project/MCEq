@@ -160,7 +160,7 @@ def Download_ERA5_model_lvl(Outdir, date, time):
     return Filename
 
 
-def read_grib2_Data(Filename, date=None):
+def read_grib2_Data(Filename, date=None, eccodes_dir=""):
     '''
     read tempature, geopotential height, latitude, longitude and pressure
     from a grib2 file. This requires the cfgrib package to be installed
@@ -176,12 +176,13 @@ def read_grib2_Data(Filename, date=None):
         Output (dict): dictionary with the temperature, geopotential height,
                        latitude, longitude and pressure levels
     '''
-    os.environ["ECCODES_DIR"] = "/home/jbottcher/.local/"
+    os.environ["ECCODES_DIR"] = eccodes_dir
     import cfgrib
     print(Filename)
     data = cfgrib.open_datasets(Filename, engine='cfgrib')
     data = [x.sel(time=date) for x in data]
-    mldf = pd.read_csv('~/akbk.csv', index_col='n')
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    mldf = pd.read_csv(dir_path + '/geometry/akbk.csv', index_col='n')
     Height, Temp, Press, lat, long = geopot(data, mldf)
     Output = {}
     Output["Temperature"] = Temp

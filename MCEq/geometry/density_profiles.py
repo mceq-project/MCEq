@@ -1059,6 +1059,7 @@ class ERA5Atmosphere(EarthsAtmosphere):
                  location,
                  download_dir="",
                  data_type="pressure_levels",
+                 eccodes_dir="",
                  *args,
                  **kwargs):
         '''
@@ -1075,24 +1076,20 @@ class ERA5Atmosphere(EarthsAtmosphere):
 
         self.download_dir = download_dir
         self.lat, self.long = location
-        self.init_parameters(date, data_type=data_type, **kwargs)
+        self.init_parameters(date,
+                             data_type=data_type,
+                             eccodes_dir=eccodes_dir,
+                             **kwargs)
         self.set_observer_location(location)
         EarthsAtmosphere.__init__(self)
 
-    def load_data(self, date, data_type="pressure_levels"):
+    def load_data(self, date, data_type="pressure_levels", eccodes_dir=""):
         '''
         Load the ERA5 data for a given date.
 
         Args:
             date (str): date in the format 'YYYYMMDD'
             data_type (str): type of data to load
-
-        Returns:
-            numpy.ndarray: temperature in K
-            numpy.ndarray: height in m
-            numpy.ndarray: pressure levels in Pa
-            numpy.ndarray: latitude bins in degrees
-            numpy.ndarray: longitude bins in degrees
         '''
         if data_type == "pressure_levels":
             from MCEq.geometry import ECMWF_Download
@@ -1107,23 +1104,29 @@ class ERA5Atmosphere(EarthsAtmosphere):
                 self.download_dir,
                 date,
                 '12:00')
-            self.Atmos_grid = ECMWF_Download.read_grib2_Data(Filename,
-                                                             date)
+            self.Atmos_grid = \
+                ECMWF_Download.read_grib2_Data(Filename,
+                                               date,
+                                               eccodes_dir=eccodes_dir)
         else:
             raise ValueError(f"Type {data_type} not supported."
                              " Only 'pressure_levels' and"
                              " 'model_lvl' are supported.")
 
-    def init_parameters(self, date, data_type="pressure_levels", **kwargs):
+    def init_parameters(self,
+                        date,
+                        data_type="pressure_levels",
+                        eccodes_dir="", **kwargs):
         '''
         Load the ERA5 data and set up the splines for interpolation.
 
         Args:
             date (str): date in the format 'YYYYMMDD'
             data_type (str): type of data to load
+            eccodes_dir (str): folder of the eccodes installation
         '''
         from scipy.spatial import KDTree
-        self.load_data(date, data_type=data_type)
+        self.load_data(date, data_type=data_type, eccodes_dir=eccodes_dir)
         # Create msis object for extrapolation above the ERA5 data
         self.date_obj = datetime.strptime(date, '%Y%m%d')
         self.msis = MSIS00Atmosphere("SouthPole", 'January')
