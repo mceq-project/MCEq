@@ -109,6 +109,10 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         # Calculate integral for each depth point
         finite = np.isfinite(rho_vec)
+        if np.sum(finite) < 1:
+            raise Exception(
+                "No finite density values found in the density spline evaluation."
+            )
         rho_vec = rho_vec[finite]
         dl_vec = dl_vec[finite]
         X_int = cumulative_trapezoid(rho_vec, dl_vec)
