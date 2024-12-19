@@ -1304,6 +1304,7 @@ class MCEqRun:
                 "MSIS21_KM3NeT",
                 "CORSIKA",
                 "AIRS",
+                "ERA5Atmosphere",
                 "Isothermal",
                 "GeneralizedTarget",
             ]
@@ -1332,6 +1333,8 @@ class MCEqRun:
                 self.density_model = dprof.CorsikaAtmosphere(*model_config)
             elif base_model == "AIRS":
                 self.density_model = dprof.AIRSAtmosphere(*model_config)
+            elif base_model == "ERA5Atmosphere":
+                self.density_model = dprof.ERA5Atmosphere(*model_config)
             elif base_model == "Isothermal":
                 self.density_model = dprof.IsothermalAtmosphere(*model_config)
             elif base_model == "GeneralizedTarget":
