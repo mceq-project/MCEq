@@ -86,7 +86,12 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         # Calculate integral for each depth point
         rho_l = vec_rho_l(dl_vec)
-        X_int = cumtrapz(rho_l[np.isfinite(rho_l)], dl_vec[np.isfinite(rho_l)])
+        if np.sum(np.isfinite(rho_l)) >= 1:
+            X_int = cumtrapz(rho_l[np.isfinite(rho_l)],
+                             dl_vec[np.isfinite(rho_l)])
+        else:
+            raise Exception("No finite density values found"
+                            " in the density spline evaluation.")
         dl_vec = dl_vec[np.isfinite(rho_l)][1:]
 
         info(5, ".. took {0:1.2f}s".format(time() - now))
