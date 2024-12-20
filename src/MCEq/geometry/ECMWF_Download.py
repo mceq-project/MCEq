@@ -180,10 +180,16 @@ def read_grib2_Data(Filename, date=None, eccodes_dir=""):
     import cfgrib
     print(Filename)
     data = cfgrib.open_datasets(Filename, engine='cfgrib')
-    data = [x.sel(time=date) for x in data]
+    try:
+        base_data = data[0].sel(time=date)
+        grid_data = data[1].sel(time=date)
+    except KeyError:
+        base_data = data[0]
+        grid_data = data[1]
+
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    mldf = pd.read_csv(dir_path + '/geometry/akbk.csv', index_col='n')
-    Height, Temp, Press, lat, long = geopot(data, mldf)
+    mldf = pd.read_csv(dir_path + '/akbk.csv', index_col='n')
+    Height, Temp, Press, lat, long = geopot(base_data, grid_data, mldf)
     Output = {}
     Output["Temperature"] = Temp
     Output["Height"] = Height
@@ -193,7 +199,7 @@ def read_grib2_Data(Filename, date=None, eccodes_dir=""):
     return Output
 
 
-def geopot(dataset, ml_df):
+def geopot(base_data, grid_data, ml_df):
     '''
     source:  IFS Documentation - Cy41r1, Part III:
              Dynamics and Numerical Procedures
@@ -211,7 +217,7 @@ def geopot(dataset, ml_df):
     b = ml_df.loc[:, 'b']
     b = b.to_numpy()[:, np.newaxis, np.newaxis]
     # surface pressure is given in log-values
-    lnsp = dataset[0]["lnsp"].values[0]
+    lnsp = base_data["lnsp"].values
     p_k = a+b*np.exp(lnsp)[np.newaxis]
     p_up = p_k[1:, :, :]  # pressure at half layer above (lower than pl)
     p_low = p_k[:-1, :, :]  # pressure at half layer below (higher than pu)
@@ -222,8 +228,8 @@ def geopot(dataset, ml_df):
     alpha_k = 1-(p_low/delta_p_k)*np.log(p_up/p_low)
     alpha_k[0] = np.log(2)
     # get temperature and specific humidity at full levels
-    t = dataset[1]['t'].values[0]  # temperature at full level j
-    q = dataset[1]['q'].values[0]  # specific humidity at full level j
+    t = grid_data['t'].values  # temperature at full level j
+    q = grid_data['q'].values  # specific humidity at full level j
     tv = t*(1+(R_V/R_D-1.0)*q)  # virtual temperature at full level j
 
     # need to add geopotential at surface
@@ -233,14 +239,14 @@ def geopot(dataset, ml_df):
     #   full levels range from 1 to 137
     phi_hl = []
     for k in range(0, 137):
-        s = dataset[0].z.values[0] +\
+        s = base_data.z.values +\
             np.sum(R_D*tv[k+1:]*np.log(p_up[k+1:]/p_low[k+1:]), axis=0)
         phi_hl.append(s)
     phi_hl = np.array(phi_hl)
     phi_k = phi_hl + alpha_k*R_D*tv
     # get longitude and latitude
-    lat = dataset[0]['latitude'].values
-    long = dataset[0]['longitude'].values
+    lat = base_data['latitude'].values
+    long = base_data['longitude'].values
     p = 1/2.*(p_low+p_up)/1e2  # hPa
     z = phi_k/g*1e2  # cm
     # geopotential height to altitude
