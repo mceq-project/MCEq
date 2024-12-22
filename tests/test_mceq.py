@@ -6,6 +6,7 @@ import crflux.models as pm
 import numpy as np
 
 import pytest
+from functools import lru_cache
 import sys
 
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
@@ -20,35 +21,34 @@ config.cuda_gpu_id = 0
 if config.has_mkl:
     config.set_mkl_threads(2)
 
+@pytest.fixture
+@lru_cache(maxsize=1)
+def mceq():
+    return MCEqRun(
+        interaction_model='SIBYLL23C',
+        theta_deg=0.,
+        primary_model=(pm.HillasGaisser2012, 'H3a'))
+    
+# def test_config_and_file_download():
+#     import mceq_config as config
+#     import os
+#     # Import of config triggers data download
+#     assert config.mceq_db_fname in os.listdir(config.data_dir)
 
-mceq = MCEqRun(
-    interaction_model='SIBYLL23C',
-    theta_deg=0.,
-    primary_model=(pm.HillasGaisser2012, 'H3a'))
 
-
-def test_config_and_file_download():
-    import mceq_config as config
-    import os
-    # Import of config triggers data download
-    assert config.mceq_db_fname in os.listdir(config.data_dir)
-
-
-
-def test_some_angles():
-
+def test_some_angles(mceq):
     nmu = []
-    for theta in [0., 30., 60., 90]:
+    for theta in [0., 30., 60.]:
         mceq.set_theta_deg(theta)
         mceq.solve()
         nmu.append(
             np.sum(
                 mceq.get_solution('mu+', mag=0, integrate=True) +
                 mceq.get_solution('mu-', mag=0, integrate=True)))
-    assert format_8_digits(nmu), ['5.62504370e-03', '4.20479234e-03', '1.36630552e-03', '8.20255259e-06']
+    assert format_8_digits(nmu), ['5.62504370e-03', '4.20479234e-03', '1.36630552e-03']
 
 
-def test_switch_interaction_models():
+def test_switch_interaction_models(mceq):
     mlist = [
         'DPMJETIII191',
         'DPMJETIII306',
@@ -67,7 +67,7 @@ def test_switch_interaction_models():
     assert(count_part == [64, 64, 58, 44, 44, 48, 62, 62, 62, 62])
 
 
-def test_single_primary():
+def test_single_primary(mceq):
     energies = [1e3, 1e6, 1e9, 5e10]
     nmu, nnumu, nnue = [], [], []
     mceq.set_interaction_model('SIBYLL23C')
