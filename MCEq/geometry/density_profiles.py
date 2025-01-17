@@ -3,7 +3,7 @@ from six import with_metaclass
 from os.path import join
 import numpy as np
 from MCEq.misc import info
-
+from datetime import datetime
 import mceq_config as config
 
 
@@ -85,8 +85,14 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         now = time()
 
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)  #
-        dl_vec = dl_vec[1:]
+        rho_l = vec_rho_l(dl_vec)
+        if np.sum(np.isfinite(rho_l)) >= 1:
+            X_int = cumtrapz(rho_l[np.isfinite(rho_l)],
+                             dl_vec[np.isfinite(rho_l)])
+        else:
+            raise Exception("No finite density values found"
+                            " in the density spline evaluation.")
+        dl_vec = dl_vec[np.isfinite(rho_l)][1:]
 
         info(5, ".. took {0:1.2f}s".format(time() - now))
 
@@ -1042,6 +1048,359 @@ class AIRSAtmosphere(EarthsAtmosphere):
             ret[h_cm > self.h[-1]] = np.nan
         except TypeError:
             if h_cm > self.h[-1]:
+                return np.nan
+        return ret
+
+
+class ERA5Atmosphere(EarthsAtmosphere):
+
+    def __init__(self,
+                 date,
+                 location,
+                 download_dir="",
+                 data_type="pressure_levels",
+                 eccodes_dir="",
+                 *args,
+                 **kwargs):
+        '''
+        Class to handle the ERA5 data for atmospheric profiles.
+        Needs setup on cds site and the cdsapi python package.
+        See https://cds.climate.copernicus.eu/api-how-to for details.
+        Args:
+            date (str): date in the format 'YYYYMMDD'
+            location (tuple): latitude and longitude of the observer in degrees
+            download_dir (str): directory to download the ERA5 data to
+            data_type (str): type of data to load
+            **kwargs: additional arguments for the EarthsAtmosphere class
+        '''
+
+        self.download_dir = download_dir
+        self.lat, self.long = location
+        self.init_parameters(date,
+                             data_type=data_type,
+                             eccodes_dir=eccodes_dir,
+                             **kwargs)
+        self.set_observer_location(location)
+        EarthsAtmosphere.__init__(self)
+
+    def load_data(self, date, data_type="pressure_levels", eccodes_dir=""):
+        '''
+        Load the ERA5 data for a given date.
+
+        Args:
+            date (str): date in the format 'YYYYMMDD'
+            data_type (str): type of data to load
+        '''
+        if data_type == "pressure_levels":
+            from MCEq.geometry import ECMWF_Download
+            Filename = ECMWF_Download.Download_ERA5(
+                self.download_dir,
+                date,
+                '12:00')
+            self.Atmos_grid = ECMWF_Download.read_grib_data(Filename)
+        elif data_type == "model_lvl":
+            from MCEq.geometry import ECMWF_Download
+            Filename = ECMWF_Download.Download_ERA5_model_lvl(
+                self.download_dir,
+                date,
+                '12:00')
+            self.Atmos_grid = \
+                ECMWF_Download.read_grib2_Data(Filename,
+                                               date,
+                                               eccodes_dir=eccodes_dir)
+        else:
+            raise ValueError(f"Type {data_type} not supported."
+                             " Only 'pressure_levels' and"
+                             " 'model_lvl' are supported.")
+
+    def init_parameters(self,
+                        date,
+                        data_type="pressure_levels",
+                        eccodes_dir="", **kwargs):
+        '''
+        Load the ERA5 data and set up the splines for interpolation.
+
+        Args:
+            date (str): date in the format 'YYYYMMDD'
+            data_type (str): type of data to load
+            eccodes_dir (str): folder of the eccodes installation
+        '''
+        from scipy.spatial import KDTree
+        self.load_data(date, data_type=data_type, eccodes_dir=eccodes_dir)
+        # Create msis object for extrapolation above the ERA5 data
+        self.date_obj = datetime.strptime(date, '%Y%m%d')
+        self.msis = MSIS00Atmosphere("SouthPole", 'January')
+        self.msis._msis.set_doy(self._get_y_doy(self.date_obj)[1] - 1)
+        # Calculate the measured points in cartesian coordinates
+        # Earth is normalized to a radius of 1
+        lat_grid, long_grid = np.meshgrid(self.Atmos_grid['Latitude'],
+                                          self.Atmos_grid['Longitude'],
+                                          indexing='ij')
+        earth_dist = 1 + self.Atmos_grid["Height"]/config.r_E
+        x_vec = (np.cos(lat_grid*np.pi/180.) *
+                 np.cos(long_grid*np.pi/180.)*earth_dist)
+        y_vec = (np.cos(lat_grid*np.pi/180.) *
+                 np.sin(long_grid*np.pi/180.)*earth_dist)
+        z_vec = (np.sin(lat_grid*np.pi/180.)*earth_dist)
+        self.grid_vectors = np.array([x_vec.flatten(),
+                                      y_vec.flatten(),
+                                      z_vec.flatten()]).T
+        # Create KDTree for interpolation
+        self.inf_mask = np.isfinite(self.Atmos_grid["Temperature"].flatten())
+        self.Tree = KDTree(self.grid_vectors[self.inf_mask])
+        # TODO: Define this properly for up-going showers
+        self.h_lims = (max(config.h_obs,
+                           self.Atmos_grid["Height"].min()),
+                       self.Atmos_grid["Height"].max())
+        self.theta_deg = None
+
+    def get_era5data(self, latitude, longitude, height, k=1, power=2):
+        '''
+        Get the temperature and pressure at a given location and height.
+
+        Args:
+            latitude (float): latitude in radians
+            longitude (float): longitude in radians
+            heigth (float): height in cm
+            k (int): number of nearest neighbors to consider
+                     this leads to an average of the nearest neighbors
+                     k = 1 returns the nearest neighbor
+                     and avoids averaging
+            power (float): power of the distance for the weighting
+
+        Returns:
+            numpy.ndarray: temperature in K
+            numpy.ndarray: pressure in hPa
+        '''
+        # Calculate the cartesian coordinates of the shower points
+        x_0 = np.cos(latitude)*np.cos(longitude)*(height/config.r_E+1)
+        y_0 = np.cos(latitude)*np.sin(longitude)*(height/config.r_E+1)
+        z_0 = np.sin(latitude)*(height/config.r_E+1)
+        earth_vector = np.array([x_0, y_0, z_0]).T
+        # evaluate the nearest neighbor in the ERA5 data
+        Temp_grid = self.Atmos_grid["Temperature"].flatten()[self.inf_mask]
+        Press_grid = self.Atmos_grid["Pressure"].flatten()[self.inf_mask]
+        Height_grid = self.Atmos_grid["Height"].flatten()[self.inf_mask]
+        d, idx = self.Tree.query(earth_vector, k=k)
+        if k > 1:
+            # Average the nearest neighbors with a weight of 1/distance^power
+            weights = 1/d**power
+            weights /= weights.sum(axis=1)[:, np.newaxis]
+            Temp = np.sum(Temp_grid[idx]*weights, axis=1)
+            Press = np.sum(Press_grid[idx]*weights, axis=1)
+            Height = height
+        else:
+            # Filter any repeated reference points
+            # and take the actual measured profile values
+            # This avoids step-like features in the interpolation
+            Temp = Temp_grid[idx]
+            Press = Press_grid[idx]
+            Height = Height_grid[idx]
+            unique_id = np.unique(idx, return_index=True)[1]
+            Temp = Temp[unique_id]
+            Height = Height[unique_id]
+            Press = Press[unique_id]
+        return Temp, Press, Height
+
+    def set_observer_location(self, location):
+        '''
+        Set the location of the observer and calculate
+        the observer vector and the rotation matrix
+        to rotate the shower direction into the Earth frame of reference.
+
+        Args:
+            location (tuple): latitude and longitude of the observer in degrees
+        '''
+        h_obs = config.h_obs
+        det_lat = location[0]*np.pi/180
+        det_long = location[1]*np.pi/180
+        self.obs_vec = np.array([np.cos(det_lat)*np.cos(det_long),
+                                 np.cos(det_lat)*np.sin(det_long),
+                                 np.sin(det_lat)])*(h_obs + config.r_E)
+        self.M_rot = np.array([[-np.sin(det_long),
+                                -np.sin(det_lat)*np.cos(det_long),
+                                np.cos(det_lat)*np.cos(det_long),],
+                               [np.cos(det_long),
+                                -np.sin(det_lat)*np.sin(det_long),
+                                np.cos(det_lat)*np.sin(det_long)],
+                               [0, np.cos(det_lat), np.sin(det_lat)]])
+
+    def set_theta(self, theta_deg, azimuth_deg=0):
+        '''
+        Set the zenith angle of the shower
+        and calculate the latitude and longitude
+        of the shower impact point on the ground.
+
+        Args:
+            theta_deg (float): zenith angle of the shower in degrees
+            azimuth_deg (float): azimuth angle of the shower in degrees
+
+        '''
+        self.shower_latitude, self.shower_longitude = \
+            self.set_shower_location(theta_deg, azimuth_deg)
+        theta_max = np.arcsin(config.r_E/(config.r_E + config.h_obs))
+        if theta_deg > theta_max*180/np.pi:
+            shower_theta_deg = np.arcsin((1 + config.h_obs/config.r_E) *
+                                         np.sin(theta_deg*np.pi/180))*180/np.pi
+        else:
+            shower_theta_deg = theta_deg
+        info(
+            1,
+            "shower latitude = {0:5.2f}, longitude = {1:5.2f}, "
+            "local shower zenith angle = {2:5.2f}, "
+            "for observed zenith angle = {3:5.2f}".format(
+                self.shower_latitude, self.shower_longitude,
+                shower_theta_deg, theta_deg
+            ),
+        )
+        self.thrad = np.radians(shower_theta_deg)
+        self.theta_deg = shower_theta_deg
+        self.calculate_density_spline()
+
+    def calc_lat_long(self, zenith_rad, h=0):
+        '''
+        Calculate the latitude and longitude of
+        an air shower at an altitude h above ground.
+
+        Args:
+            zenith_rad (float): zenith angle of the shower in radians
+            h (float): height above ground in cm
+
+        Returns:
+            float: latitude of the shower in radians
+            float: longitude of the shower in radians
+        '''
+        s_1 = -(config.r_E + config.h_obs) * np.cos(zenith_rad)
+        s_2 = np.sqrt((config.r_E + config.h_obs)**2*np.cos(zenith_rad)**2 -
+                      (config.h_obs - h)*(2*config.r_E + config.h_obs + h))
+        s = s_1 + s_2
+        vector = self.obs_vec[:, np.newaxis] + s*self.d_shower_vec
+        lat = np.arcsin(vector[2]/np.linalg.norm(vector, axis=0))
+        long = np.arctan2(vector[1], vector[0])
+        return lat, long
+
+    def set_shower_location(self, zenith_deg, azimuth_deg):
+        '''
+        Set the direction of the shower and
+        calculate the density and temperature profiles
+        along the shower direction.
+
+        Args:
+            zenith_deg (float): zenith angle of the shower in degrees
+            azimuth_deg (float): azimuth angle of the shower in degrees
+            h_obs (float): height of the observer in cm
+
+        Returns:
+            float: latitude of the shower impact point in degrees
+            float: longitude of the shower impact point in degrees
+        '''
+        from scipy.interpolate import interp1d
+        zenith_rad = zenith_deg*np.pi/180
+        azimuth_rad = azimuth_deg*np.pi/180
+        R = 8.314*1e6*1e-2  # cm^3 hPa/K/mol (Ideal gas constant)
+        M = 28.964  # g/mol (molar density of Air)
+        # Define shower direction at observer
+        d_shower_vec = np.array([np.sin(zenith_rad)*np.sin(azimuth_rad),
+                                 np.sin(zenith_rad)*np.cos(azimuth_rad),
+                                 np.cos(zenith_rad)])
+        # rotate shower vector into Earth frame of reference
+        self.d_shower_vec = np.dot(self.M_rot, d_shower_vec)[:, np.newaxis]
+        # Get temperature at pressure levels and
+        # correct for latitude shift with height
+        # h_test is arbitrary
+        # TODO: could adjust geom.h_obs to the ground heigth here
+        h_test = np.linspace(self.h_lims[0], self.h_lims[1], 100)
+        lat, long = self.calc_lat_long(zenith_rad, h_test[np.newaxis])
+        t_vec, p_vec, h_vec = self.get_era5data(lat, long, h_test)
+        # Get shower ground location
+        lat_0, long_0 = lat[0], long[0]
+        # sort the data by height
+        idx = np.argsort(h_vec)
+        h_vec = h_vec[idx]
+        t_vec = t_vec[idx]
+        p_vec = p_vec[idx]
+        # set observer heigth on ground of shower impact
+        # TODO: set geom.h_top as well instead of msis extrapolation
+        self.geom.set_h_obs(h_vec[0])
+        # Calculate density profile
+        d_vec = p_vec/t_vec*M/R  # g/cm^3
+        # Add extra layers on top of the atmosphere
+        if h_vec[-1] < config.h_atm:
+            h_extra = np.linspace(h_vec[-1], config.h_atm, 100)
+            msis_extra_d, msis_extra_t = \
+                np.zeros(len(h_extra)), np.zeros(len(h_extra))
+            for h_i, h in enumerate(h_extra):
+                lat, long = self.calc_lat_long(zenith_rad, h)
+                self.msis._msis.set_location_coord(
+                    longitude=long[0]*180./np.pi,
+                    latitude=lat[0]*180./np.pi
+                    )
+                msis_extra_d[h_i] = self.msis.get_density(h)
+                msis_extra_t[h_i] = self.msis.get_temperature(h)
+
+            # Merge the two datasets
+            h_vec = np.hstack([h_vec[:-1], h_extra])
+            d_vec = np.hstack([d_vec[:-1], msis_extra_d])
+            t_vec = np.hstack([t_vec[:-1], msis_extra_t])
+        # Save density and temperature profiles for the set location and date
+        self.dens = interp1d(h_vec,
+                             np.log(d_vec),
+                             assume_sorted=True,
+                             bounds_error=False)
+        self.temp = interp1d(h_vec,
+                             t_vec,
+                             assume_sorted=True,
+                             bounds_error=False)
+        return lat_0/np.pi*180, long_0/np.pi*180
+
+    def set_date(self, date):
+        if self.date_obj == datetime.strptime(date, '%Y%m%d'):
+            return
+        self.init_parameters(date)
+        self.set_observer_location((self.lat, self.long))
+
+    def _get_y_doy(self, date):
+        return date.timetuple().tm_year, date.timetuple().tm_yday
+
+    def get_density(self, h_cm):
+        """ Returns the density of air in g/cm**3.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
+        """
+
+        ret = np.exp(self.dens(h_cm))
+
+        try:
+            ret[h_cm > config.h_atm] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm:
+                return np.nan
+        return ret
+
+    def get_temperature(self, h_cm):
+        """ Returns the temperature in K.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: temperature :math:`T(h_{cm})` in K
+        """
+        ret = self.temp(h_cm)
+        try:
+            ret[h_cm > config.h_atm] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm:
                 return np.nan
         return ret
 
