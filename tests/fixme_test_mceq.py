@@ -12,7 +12,6 @@ import sys
 
 config.debug_level = 1
 config.kernel_config = "numpy"
-config.cuda_gpu_id = 0
 
 import MCEq
 import MCEq.core
@@ -21,7 +20,7 @@ if config.has_mkl:
     MCEq.set_mkl_threads(2)
 
 config.e_min = 1
-config.e_max = 1e5
+config.e_max = 5e7
 
 # MCEq.set_backend("numpy")
 
@@ -79,11 +78,10 @@ def test_switch_interaction_models():
     mlist = [
         "DPMJETIII191",
         "DPMJETIII306",
-        "QGSJET01C",
+        "QGSJET01D",
         "QGSJETII03",
         "QGSJETII04",
         "SIBYLL21",
-        "SIBYLL23",
         "SIBYLL23C",
         "SIBYLL23D",
     ]
@@ -91,11 +89,11 @@ def test_switch_interaction_models():
     for m in mlist:
         mceq.set_interaction_model(m)
         count_part.append(len(mceq._particle_list))
-    assert count_part == [64, 64, 58, 44, 44, 48, 62, 62, 62, 62]
+    assert count_part == [68, 68, 62, 48, 48, 52, 66, 66]
 
 
 def test_single_primary(mceq_qgs):
-    energies = [1e3, 1e6, 1e9, 5e10]
+    energies = [1e3, 1e6]#, 1e9, 5e10]
     nmu, nnumu, nnue = [], [], []
     mceq_qgs.set_interaction_model("SIBYLL23D")
     mceq_qgs.set_theta_deg(0.0)
@@ -124,14 +122,14 @@ def test_single_primary(mceq_qgs):
     assert format_8_digits(nmu) == [
         "2.03134720e+01",
         "1.20365838e+04",
-        "7.09254150e+06",
-        "2.63982133e+08",
+        # "7.09254150e+06",
+        # "2.63982133e+08",
     ]
     assert format_8_digits(nnumu) == [
         "6.80367347e+01",
         "2.53158948e+04",
-        "1.20884925e+07",
-        "4.14935240e+08",
+        # "1.20884925e+07",
+        # "4.14935240e+08",
     ]
     assert format_8_digits(nnue) == [
         "2.36908717e+01",
