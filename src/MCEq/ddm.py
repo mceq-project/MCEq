@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.integrate import quad
 
-import src.mceq_config as config
+import mceq_config as config
 
 from .misc import info
 from .particlemanager import _pdata

@@ -1,5 +1,5 @@
 import numpy as np
-import src.mceq_config as config
+import mceq_config as config
 from MCEq.misc import info
 
 

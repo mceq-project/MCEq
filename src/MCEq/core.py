@@ -5,7 +5,7 @@ from MCEq import asarray, zeros, csr_matrix, eye, linalg, diag, ones
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
-import src.mceq_config as config
+import mceq_config as config
 
 
 class MCEqRun(object):

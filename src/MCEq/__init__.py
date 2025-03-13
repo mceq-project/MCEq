@@ -1,4 +1,4 @@
-import src.mceq_config as config
+import mceq_config as config
 import MCEq.version
 
 __version__ = MCEq.version.__version__
