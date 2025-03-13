@@ -99,7 +99,6 @@ setup(
     url="https://github.com/afedynitch/MCEq",
     packages=[
         "MCEq",
-        "MCEq.tests",
         "MCEq.geometry",
         "MCEq.geometry.nrlmsise00",
         "MCEq.geometry.corsikaatm",
