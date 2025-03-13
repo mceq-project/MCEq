@@ -1,5 +1,5 @@
 import numpy as np
-import mceq_config as config
+import src.mceq_config as config
 from MCEq.misc import info
 
 
@@ -199,7 +199,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     """
 
     from ctypes import c_int, c_char, POINTER, byref
-    from mceq_config import mkl
+    from src.mceq_config import mkl
 
     np_fl = config.floatlen
 

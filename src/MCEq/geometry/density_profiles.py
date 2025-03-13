@@ -4,7 +4,7 @@ from os.path import join
 import numpy as np
 from MCEq.misc import info
 
-import mceq_config as config
+import src.mceq_config as config
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):

@@ -2,7 +2,6 @@ from __future__ import print_function
 import sys
 import platform
 import os.path as path
-import warnings
 
 base_path = path.dirname(path.abspath(__file__))
 

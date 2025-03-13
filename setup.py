@@ -35,24 +35,24 @@ setup_requires = pytest_runner
 libnrlmsise00 = Extension(
     "MCEq.geometry.nrlmsise00.libnrlmsise00",
     sources=[
-        join("MCEq/geometry/nrlmsise00", sf)
+        join("src/MCEq/geometry/nrlmsise00", sf)
         for sf in ["nrlmsise-00_data.c", "nrlmsise-00.c"]
     ],
-    include_dirs=["MCEq/geometry/nrlmsise00"],
+    include_dirs=["src/MCEq/geometry/nrlmsise00"],
     extra_compile_args=extra_compile_args,
     extra_link_args=extra_link_args,
 )
 
 libcorsikaatm = Extension(
     "MCEq.geometry.corsikaatm.libcorsikaatm",
-    sources=["MCEq/geometry/corsikaatm/corsikaatm.c"],
+    sources=["src/MCEq/geometry/corsikaatm/corsikaatm.c"],
     extra_compile_args=extra_compile_args,
     extra_link_args=extra_link_args,
 )
 
 libspacc = Extension(
     "MCEq.spacc.libspacc",
-    sources=["MCEq/spacc/spacc.c"],
+    sources=["src/MCEq/spacc/spacc.c"],
     extra_compile_args=extra_compile_args,
     extra_link_args=extra_link_args,
 )
@@ -69,7 +69,7 @@ else:
 # This is one of the recommended methods that works in Python 2 and 3:
 def get_version():
     version = {}
-    with open("MCEq/version.py") as fp:
+    with open("src/MCEq/version.py") as fp:
         exec(fp.read(), version)
     return version["__version__"]
 
@@ -104,6 +104,7 @@ setup(
         "MCEq.geometry.corsikaatm",
         "MCEq.spacc",
     ],
+    package_dir={"": "src"},
     setup_requires=[] + pytest_runner,
     package_data={
         "MCEq": ["data/README.md", "geometry/nrlmsise00/nrlmsise-00.h"],
