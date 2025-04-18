@@ -1,0 +1,46 @@
+[build-system]
+requires = ["scikit-hep.core"]
+build-backend = "scikit-hep.core"
+
+[project]
+name = "MCEq"
+version = "0.1.0"
+description = "Numerical cascade equation solver"
+readme = "README.md"
+authors = [{ name = "Anatoli Fedynitch", email = "afedynitch@gmail.com" }]
+license = { text = "BSD 3-Clause License" }
+homepage = "https://github.com/afedynitch/MCEq"
+keywords = ["cascade", "physics", "numerical"]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: BSD License"
+]
+
+[project.dependencies]
+six = "*"
+h5py = "*"
+particletools = "*"
+crflux = ">1.0.4"
+scipy = "*"
+numpy = "*"
+tqdm = "*"
+requests = "*"
+
+[project.optional-dependencies]
+MKL = ["mkl==2020.0"]
+CUDA = ["cupy-cuda112==9.2.0"]
+
+[tool.scikit-hep.core]
+extensions = [
+    { name = "MCEq.geometry.nrlmsise00.libnrlmsise00", sources = ["MCEq/geometry/nrlmsise00/nrlmsise-00_data.c", "MCEq/geometry/nrlmsise00/nrlmsise-00.c"], include_dirs = ["MCEq/geometry/nrlmsise00"] },
+    { name = "MCEq.geometry.corsikaatm.libcorsikaatm", sources = ["MCEq/geometry/corsikaatm/corsikaatm.c"] }
+]
+
+[flake8]
+max-line-length = 90
+extend-ignore = E203, E402
+exclude = test_msis.py
