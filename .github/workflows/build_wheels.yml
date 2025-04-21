@@ -8,8 +8,8 @@ on:
     paths:
       - 'MCEq/**'
       - '!MCEq/data/README.md'
-    tags:        
-      - 'release**' 
+    tags:
+      - 'release**'
   pull_request:
     types:
       - opened
@@ -51,10 +51,10 @@ jobs:
               arch: aarch64
             - os: macos-latest
               arch: universal2
-              py: cp36 
+              py: cp36
             - os: macos-latest
               arch: universal2
-              py: cp37  
+              py: cp37
             - os: ubuntu-latest
               arch: universal2
       env:
@@ -74,7 +74,7 @@ jobs:
           if: ${{ (matrix.arch == 'aarch64') && !(matrix.py == 'cp36') }}
           run: |
             echo "CIBW_TEST_COMMAND=${{ env.PYTEST_COMMAND_AARCH64 }}" >> $GITHUB_ENV
-          shell: bash  
+          shell: bash
 
         - name: Set up testing command for other cases
           if: ${{ !(matrix.arch == 'aarch64') }}
@@ -124,7 +124,7 @@ jobs:
         - name: Upload wheels
           uses: actions/upload-artifact@v3
           with:
-            path: wheelhouse/*.whl          
+            path: wheelhouse/*.whl
 
     upload_all_to_PyPI:
       name: Upload to PyPI
@@ -137,7 +137,7 @@ jobs:
           with:
             name: artifact
             path: dist
-      
+
         - name: Publish the package to PyPI
           uses: pypa/gh-action-pypi-publish@v1.5.0
           with:

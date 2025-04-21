@@ -14,7 +14,7 @@ _PROPAGATE_PARAMS = dict(maxiter=10, maxgrad=1, method=0)  # Used to compute the
 _QUAD_PARAMS = dict(limit=150, epsabs=1e-5)
 
 
-def fmteb(ebeam: Union[float, str, int]) -> str:
+def fmteb(ebeam: Union[float, str]) -> str:
     """
     Format beam energy for handling in db.
 
@@ -87,7 +87,7 @@ def _generate_DDM_matrix(
         npt.NDArray
             The DDM matrix.
     """
-    from MCEq.misc import energy_grid, _eval_energy_cuts
+    from MCEq.misc import _eval_energy_cuts, energy_grid
 
     projectile = channel.projectile
     secondary = channel.secondary
@@ -195,9 +195,7 @@ def _generate_DDM_matrix(
                 if ie <= ie0 and interval == 0:
                     # If it is the first interval, extrapolate from the lowest energies
                     mat[: ie + 1, ie] = (
-                        averaged_dndx_0[dim - ie - 1 :]
-                        / elab_proj_centers[ie]
-                        * e_widths[ie]
+                        averaged_dndx_0[dim - ie - 1 :] / eproj * e_widths[ie]
                     )
                 elif ie < ie0 and interval > 0:
                     # if it is not the first interval, don't touch the columns
@@ -205,16 +203,8 @@ def _generate_DDM_matrix(
                     continue
                 elif ie <= ie1:
                     # Interpolate between two datasets
-                    f0 = (
-                        averaged_dndx_0[dim - ie - 1 :]
-                        / elab_proj_centers[ie]
-                        * e_widths[ie]
-                    )
-                    f1 = (
-                        averaged_dndx_1[dim - ie - 1 :]
-                        / elab_proj_centers[ie]
-                        * e_widths[ie]
-                    )
+                    f0 = averaged_dndx_0[dim - ie - 1 :] / eproj * e_widths[ie]
+                    f1 = averaged_dndx_1[dim - ie - 1 :] / eproj * e_widths[ie]
                     m = (f1 - f0) / np.log(entry_1.fl_ebeam / entry_0.fl_ebeam)
                     mat[: ie + 1, ie] = f0 + m * np.log(eproj / entry_0.fl_ebeam)
                 elif ie > ie1 and interval != n_datasets - 2:
@@ -223,9 +213,7 @@ def _generate_DDM_matrix(
                     break
                 else:
                     mat[: ie + 1, ie] = (
-                        averaged_dndx_1[dim - ie - 1 :]
-                        / elab_proj_centers[ie]
-                        * e_widths[ie]
+                        averaged_dndx_1[dim - ie - 1 :] / eproj * e_widths[ie]
                     )
 
     return mat
@@ -277,10 +265,9 @@ def _eval_spline(
         y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)  # type: ignore
         sig_y = np.squeeze(np.sqrt(np.diag(np.atleast_1d(C))))
         return y, sig_y
-    else:
-        res = np.atleast_1d(func(func_params))
-        res[(res < 0) | ~np.isfinite(res) | (res > _LIMIT_PROPAGATE)] = 0.0
-        return res.squeeze()
+    res = np.atleast_1d(func(func_params))
+    res[(res < 0) | ~np.isfinite(res) | (res > _LIMIT_PROPAGATE)] = 0.0
+    return res.squeeze()
 
 
 def _eval_spline_and_correction(
@@ -330,10 +317,9 @@ def _eval_spline_and_correction(
         y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)  # type: ignore
         sig_y = np.squeeze(np.sqrt(np.diag(np.atleast_1d(C))))
         return y, sig_y
-    else:
-        res = np.atleast_1d(func(func_params))
-        res[(res < 0) | ~np.isfinite(res) | (res > _LIMIT_PROPAGATE)] = 0.0
-        return res.squeeze()
+    res = np.atleast_1d(func(func_params))
+    res[(res < 0) | ~np.isfinite(res) | (res > _LIMIT_PROPAGATE)] = 0.0
+    return res.squeeze()
 
 
 def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
@@ -433,7 +419,7 @@ def _gen_averaged_dndx(xbins: np.ndarray, entry) -> np.ndarray:
             if xbins[ib + 1] < entry.x_min:
                 integral[ib] = 0.0
                 continue
-            elif xbins[ib] < entry.x_min:
+            if xbins[ib] < entry.x_min:
                 low_lim = entry.x_min
             else:
                 low_lim = xbins[ib]
@@ -495,7 +481,7 @@ def gen_matrix_variations(ddm_obj, mceq):
             mat_db[ispl] = {}
             iso_part_db[ispl] = {}
 
-            for iknot in range(0, spl_entry.n_knots):
+            for iknot in range(spl_entry.n_knots):
                 if np.allclose(tck[1][iknot], 0.0):
                     continue
 

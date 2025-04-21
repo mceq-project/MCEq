@@ -1,5 +1,6 @@
 import numpy as np
-import MCEq.config as config
+
+from MCEq import config
 
 
 class EarthGeometry:
@@ -165,9 +166,7 @@ def chirkin_cos_theta_star(costheta):
     p4 = 0.0407253
     p5 = 0.817285
     x = costheta
-    return np.sqrt(
-        (x**2 + p1**2 + p2 * x**p3 + p4 * x**p5) / (1 + p1**2 + p2 + p4)
-    )
+    return np.sqrt((x**2 + p1**2 + p2 * x**p3 + p4 * x**p5) / (1 + p1**2 + p2 + p4))
 
 
 if __name__ == "__main__":
@@ -222,7 +221,7 @@ if __name__ == "__main__":
         plt.plot(
             delta_l_vec / 1e5,
             earth.h(delta_l_vec, theta_path) / 1e5,
-            label=r"${0}^o$".format(theta),
+            label=rf"${theta}^o$",
             lw=2,
         )
     plt.legend()

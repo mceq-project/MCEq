@@ -1,9 +1,11 @@
-from __future__ import print_function
-import sys
+# import os.path as path
+import pathlib
 import platform
-import os.path as path
+import sys
 
-base_path = path.dirname(path.abspath(__file__))
+base_path = pathlib.Path(__file__).parent.resolve()
+
+# base_path = path.dirname(path.abspath(__file__))
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -21,7 +23,7 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = path.join(base_path, "MCEq", "data")
+data_dir = base_path / "data"
 
 #: File name of the MCEq database
 mceq_db_fname = "mceq_db_lext_dpm193_v150.h5"
@@ -267,20 +269,21 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 pf = platform.platform()
 has_accelerate = False
 
+prefix = pathlib.Path(sys.prefix)
 if "Linux" in pf:
-    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.so")
+    mkl_path = prefix / "lib" / "libmkl_rt.so"
 elif "macOS" in pf:
-    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.dylib")
+    mkl_path = prefix / "lib" / "libmkl_rt.dylib"
     has_accelerate = True
 else:
     # Windows case
-    mkl_path = path.join(sys.prefix, "Library", "bin", "mkl_rt.dll")
+    mkl_path = prefix / "Library" / "bin", "mkl_rt.dll"
 
 # mkl library handler
 mkl = None
 
 # Check if MKL library found
-if path.isfile(mkl_path):
+if mkl_path.is_file():
     has_mkl = True
 else:
     has_mkl = False
@@ -328,8 +331,8 @@ class FileIntegrityCheck:
                     for byte_block in iter(lambda: file.read(4096), b""):
                         self.sha256_hash.update(byte_block)
                 self.hash_is_calculated = True
-            except EnvironmentError as ex:
-                print("FileIntegrityCheck: {0}".format(ex))
+            except OSError as ex:
+                print(f"FileIntegrityCheck: {ex}")
 
     def succeeded(self):
         self._calculate_hash()
@@ -343,9 +346,10 @@ class FileIntegrityCheck:
 def _download_file(url, outfile):
     """Downloads the MCEq database from github"""
 
-    from tqdm import tqdm
-    import requests
     import math
+
+    import requests
+    from tqdm import tqdm
 
     # Streaming, so we can iterate over the response.
     r = requests.get(url, stream=True)
@@ -375,7 +379,7 @@ url = base_url + release_tag + mceq_db_fname
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
 file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
 
-filepath_to_database = path.join(data_dir, mceq_db_fname)
+filepath_to_database = data_dir / mceq_db_fname
 # if path.isfile(filepath_to_database):
 #     is_file_complete = FileIntegrityCheck(
 #         filepath_to_database, file_checksum
@@ -384,7 +388,7 @@ filepath_to_database = path.join(data_dir, mceq_db_fname)
 #     is_file_complete = False
 is_file_complete = True
 if not is_file_complete:
-    print("Downloading for mceq database file {0}.".format(mceq_db_fname))
+    print(f"Downloading for mceq database file {mceq_db_fname}.")
     if debug_level >= 2:
         print(url)
     _download_file(url, filepath_to_database)

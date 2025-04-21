@@ -2,11 +2,11 @@ import atexit
 import os
 import sysconfig
 from ctypes import (
-    cdll,
-    c_int,
-    c_double,
-    c_longlong,
     POINTER,
+    c_double,
+    c_int,
+    c_longlong,
+    cdll,
 )
 
 base = os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +65,7 @@ spacc.free_mstore()
 atexit.register(spacc.free_mstore)
 
 
-class SpaccMatrix(object):
+class SpaccMatrix:
     def __init__(self, scipy_sparse_matrix):
         spm = scipy_sparse_matrix.tocoo()
         self.dim_rows, self.dim_cols = spm.shape

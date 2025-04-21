@@ -1,6 +1,6 @@
-from ctypes import cdll, c_double
 import os
 import sysconfig
+from ctypes import c_double, cdll
 
 base = os.path.dirname(os.path.abspath(__file__))
 suffix = sysconfig.get_config_var("EXT_SUFFIX")

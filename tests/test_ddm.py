@@ -1,10 +1,11 @@
-import pytest
-from MCEq import ddm
-from MCEq import ddm_utils
-from MCEq.particlemanager import _pdata
+import unittest
+
 import numpy as np
 import numpy.testing as npt
-import unittest
+import pytest
+
+from MCEq import ddm, ddm_utils
+from MCEq.particlemanager import _pdata
 
 
 @pytest.fixture(scope="module")
@@ -20,8 +21,9 @@ def ddm_fix():
 
 @pytest.fixture(scope="module")
 def mceq_qgs():
-    import MCEq.core
     from crflux.models import HillasGaisser2012
+
+    import MCEq.core
 
     return MCEq.core.MCEqRun(
         interaction_model="QGSJETII04",
@@ -232,8 +234,9 @@ class TestDDMUtils(unittest.TestCase):
         self.assertEqual(h, expected_h)
 
     def test_generate_DDM_matrix(self):
-        import MCEq.core
         from crflux.models import HillasGaisser2012
+
+        import MCEq.core
 
         mceq_qgs = MCEq.core.MCEqRun(
             interaction_model="QGSJETII04",

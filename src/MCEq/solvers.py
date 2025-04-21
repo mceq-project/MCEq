@@ -1,5 +1,6 @@
 import numpy as np
-import MCEq.config as config
+
+from MCEq import config
 from MCEq.misc import info
 
 
@@ -47,15 +48,13 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return phc, np.array(grid_sol)
 
 
-class CUDASparseContext(object):
+class CUDASparseContext:
     """This class handles the transfer between CPU and GPU memory,
     and the calling of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun`
     and used by :func:`solv_CUDA_sparse`.
@@ -162,9 +161,7 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
@@ -198,7 +195,8 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       numpy.array: state vector copies at `grid_idcs` or empty list
     """
 
-    from ctypes import c_int, c_char, POINTER, byref
+    from ctypes import POINTER, byref, c_char, c_int
+
     from MCEq.config import mkl
 
     np_fl = config.floatlen
@@ -288,9 +286,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return npphi, np.asarray(grid_sol)
@@ -318,8 +314,9 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import c_double, POINTER
-    import MCEq.spacc as spacc
+    from ctypes import POINTER, c_double
+
+    from MCEq import spacc
 
     dim_phi = int(phi.shape[0])
     npphi = np.copy(phi)
@@ -353,9 +350,7 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return npphi, np.asarray(grid_sol)

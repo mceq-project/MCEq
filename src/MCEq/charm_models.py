@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 :mod:`MCEq.charm_models` --- charmed particle production
 ========================================================
@@ -15,10 +14,12 @@ when overwriting a model yield file in
 :func:`Yields.set_custom_charm_model`.
 """
 
-import numpy as np
-from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
+
+import numpy as np
 from six import with_metaclass
+
+from MCEq.misc import info
 
 
 class CharmModel(with_metaclass(ABCMeta)):
@@ -118,8 +119,7 @@ class MRS_charm(CharmModel):
         E = np.asarray(E)
         if E.size > 1:
             return 2 * np.array([quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E])
-        else:
-            return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
+        return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
 
     def dsig_dx(self, x, E):
         """Returns the Feynman-:math:`x_F` distribution
@@ -139,7 +139,7 @@ class MRS_charm(CharmModel):
         n, A = None, None
         if E < 1e4:
             return 0.0
-        elif E >= 1e4 and E < 1e8:
+        if E >= 1e4 and E < 1e8:
             n = 7.6 + 0.025 * np.log(E / 1e4)
             A = 140 + (11.0 * np.log(E / 1e2)) ** 1.65
         elif E >= 1e8 and E <= 1e11:
@@ -202,8 +202,7 @@ class MRS_charm(CharmModel):
 
         if abs(sec) == 4122 and ((np.sign(proj) != np.sign(sec)) or abs(proj) < 1000):
             return self.no_prod
-        else:
-            self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
+        self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
         if abs(sec) != 4122:
             self.xdist = lambda e: self.D_dist(self.e_grid / e, e, abs(sec)) / e
 
@@ -213,7 +212,7 @@ class MRS_charm(CharmModel):
         for i, e in enumerate(self.e_grid):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
 
-        info(3, "returning matrix for ({0},{1})".format(proj, sec))
+        info(3, f"returning matrix for ({proj},{sec})")
 
         return m_out
 

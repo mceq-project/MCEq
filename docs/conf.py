@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Matrix Cascade Equation (MCEq) documentation build configuration file, created by
 # sphinx-quickstart on Fri Nov 21 10:13:38 2014.
@@ -12,8 +11,8 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 
-import sys
 import os
+import sys
 
 base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.append(base_path)
