@@ -1,7 +1,7 @@
 import six
 from math import copysign
 import numpy as np
-import mceq_config as config
+import MCEq.config as config
 from MCEq.misc import info, print_in_rows, getAZN, average_A_target
 
 from particletools.tables import PYTHIAParticleData

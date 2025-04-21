@@ -1,7 +1,7 @@
 from __future__ import print_function
 from collections import namedtuple
 import numpy as np
-import mceq_config as config
+import MCEq.config as config
 
 #: Energy grid (centers, bind widths, dimension)
 energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))

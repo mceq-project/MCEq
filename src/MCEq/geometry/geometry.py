@@ -1,5 +1,5 @@
 import numpy as np
-import mceq_config as config
+import MCEq.config as config
 
 
 class EarthGeometry:

@@ -25,10 +25,10 @@ endif()
 # )
 Python_add_library(_libnrlmsise00 MODULE src/MCEq/geometry/nrlmsise00/nrlmsise-00_data.c
 src/MCEq/geometry/nrlmsise00/nrlmsise-00.c WITH_SOABI)
-install(TARGETS _libnrlmsise00 DESTINATION ${SKBUILD_PROJECT_NAME})
+install(TARGETS _libnrlmsise00 DESTINATION src/MCEq/geometry/nrlmsise00/)
 
 Python_add_library(_libcorsikaatm MODULE src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
-install(TARGETS _libcorsikaatm DESTINATION ${SKBUILD_PROJECT_NAME})
+install(TARGETS _libcorsikaatm DESTINATION src/MCEq/geometry/corsikaatm/)
 
 # # SPACC library
 # add_library(libspacc SHARED

@@ -5,7 +5,7 @@ from MCEq import asarray, zeros, csr_matrix, eye, linalg, diag, ones
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data
-import mceq_config as config
+import MCEq.config as config
 
 
 class MCEqRun(object):
@@ -562,7 +562,7 @@ class MCEqRun(object):
         if (2212, 0) in self.pman:
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] = 1e-4 * p_top
+            ] = (1e-4 * p_top)
         else:
             info(
                 1,
@@ -572,7 +572,7 @@ class MCEqRun(object):
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
             self._phi0[
                 min_idx + self.pman[(2112, 0)].lidx : self.pman[(2112, 0)].uidx
-            ] = 1e-4 * n_top
+            ] = (1e-4 * n_top)
         elif (2212, 0) in self.pman:
             info(
                 2,
@@ -581,7 +581,7 @@ class MCEqRun(object):
             )
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] += 1e-4 * n_top
+            ] += (1e-4 * n_top)
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False

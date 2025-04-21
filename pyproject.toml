@@ -30,6 +30,25 @@ dependencies = [
     "requests",
     "jacobi",
 ]
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+wheel.packages = [
+    "src/MCEq",
+    "src/MCEq/geometry",
+    "src/MCEq/geometry/corsikaatm",
+    "src/MCEq/geometry/nrlmsise00",
+    # "srMCEq.geometry.corsikaatm",
+    # "MCEq.geometry.nrlmsise00",
+]
+# wheel.package-dir = { "" = "src" }
+
+[project.urls]
+Changelog = "https://mceq.readthedocs.io/en/latest/en/latest/changelog.html"
+Documentation = "https://mceq.readthedocs.io/en/latest"
+Homepage = "https://github.com/afedynitch/MCEq"
+Issues = "https://github.com/afedynitch/MCEq/issues"
 
 # [flake8]
 # extend-ignore = E203, E402

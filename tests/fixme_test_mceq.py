@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-import mceq_config as config
+import MCEq.config as config
 
 
 import crflux.models as pm
@@ -43,7 +43,7 @@ def mceq_qgs():
 
 
 def test_config_and_file_download():
-    import mceq_config as config
+    import MCEq.config as config
     import os
 
     # Import of config triggers data download
