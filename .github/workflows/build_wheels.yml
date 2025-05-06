@@ -5,17 +5,11 @@ on:
   push:
     branches:
       - master
-    paths:
-      - 'MCEq/**'
-      - '!MCEq/data/README.md'
     tags:
       - 'release**'
   pull_request:
     types:
       - opened
-    paths:
-      - 'MCEq/**'
-      - '!MCEq/data/README.md'
 
 jobs:
     make_sdist:
