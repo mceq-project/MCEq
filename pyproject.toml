@@ -91,6 +91,9 @@ ignore = [
     "S603",    # subprocess untrusted input
     "S607",    # subprocess call
     "S404",    # subprocess module is possibly insecure
+    "B017",    # Complains about plain Exceptions
+    "PT011",    # Also about too plain exceptions
+    "TRY003"   # I know my exception handling is bad
 ]
 typing-modules = ["scikit_build_core._compat.typing"]
 

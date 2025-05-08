@@ -17,10 +17,10 @@ class EarthGeometry:
         h_atm (float): Top of the atmosphere height in cm.
     """
 
-    def __init__(self, r_E=config.r_E, h_obs=config.h_obs, h_atm=config.h_atm):
-        self.r_E = r_E
+    def __init__(self, r_e=config.r_E, h_obs=config.h_obs, h_atm=config.h_atm):
+        self.r_e = r_e
         self.h_atm = h_atm
-        self.r_top = self.r_E + self.h_atm
+        self.r_top = self.r_e + self.h_atm
         self.set_h_obs(h_obs)
 
     def set_h_obs(self, h_obs):
@@ -33,8 +33,8 @@ class EarthGeometry:
         if h_obs >= self.r_top:
             raise ValueError("Observation level cannot be above atmospheric boundary.")
         self.h_obs = h_obs
-        self.r_obs = self.r_E + self.h_obs
-        self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_E / self.r_obs))
+        self.r_obs = self.r_e + self.h_obs
+        self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_e / self.r_obs))
         self.theta_max_deg = np.rad2deg(self.theta_max_rad)
 
     def _check_angles(self, theta):
@@ -52,7 +52,7 @@ class EarthGeometry:
                 f"Zenith angle above maximum {self.theta_max_deg:.1f} degrees."
             )
 
-    def _A_1(self, theta):
+    def _a_1(self, theta):
         """
         Calculate segment length A1(theta) in cm.
 
@@ -64,7 +64,7 @@ class EarthGeometry:
         """
         return self.r_obs * np.cos(theta)
 
-    def _A_2(self, theta):
+    def _a_2(self, theta):
         """
         Calculate segment length A2(theta) in cm.
 
@@ -87,7 +87,7 @@ class EarthGeometry:
             float or numpy.ndarray: Path length in cm.
         """
         self._check_angles(theta)
-        return np.sqrt(self.r_top**2 - self._A_2(theta) ** 2) - self._A_1(theta)
+        return np.sqrt(self.r_top**2 - self._a_2(theta) ** 2) - self._a_1(theta)
 
     def cos_th_star(self, theta):
         """
@@ -101,7 +101,7 @@ class EarthGeometry:
             float or numpy.ndarray: Zenith angle at the atmospheric border in radians.
         """
         self._check_angles(theta)
-        return (self._A_1(theta) + self.pl(theta)) / self.r_top
+        return (self._a_1(theta) + self.pl(theta)) / self.r_top
 
     def h(self, dl, theta):
         """
@@ -120,9 +120,9 @@ class EarthGeometry:
         self._check_angles(theta)
         return (
             np.sqrt(
-                self._A_2(theta) ** 2 + (self._A_1(theta) + self.pl(theta) - dl) ** 2
+                self._a_2(theta) ** 2 + (self._a_1(theta) + self.pl(theta) - dl) ** 2
             )
-            - self.r_E
+            - self.r_e
         )
 
     def delta_l(self, h, theta):
@@ -139,9 +139,9 @@ class EarthGeometry:
         """
         self._check_angles(theta)
         return (
-            self._A_1(theta)
+            self._a_1(theta)
             + self.pl(theta)
-            - np.sqrt((h + self.r_E) ** 2 - self._A_2(theta) ** 2)
+            - np.sqrt((h + self.r_e) ** 2 - self._a_2(theta) ** 2)
         )
 
 

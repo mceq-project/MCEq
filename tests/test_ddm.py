@@ -1,5 +1,3 @@
-from typing import Any
-
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -9,7 +7,7 @@ from MCEq.particlemanager import _pdata
 
 
 @pytest.fixture(scope="module")
-def ddm_fix() -> ddm.DataDrivenModel:
+def ddm_fix():
     return ddm.DataDrivenModel(
         e_min=5.0,
         e_max=500.0,
@@ -20,313 +18,142 @@ def ddm_fix() -> ddm.DataDrivenModel:
 
 
 @pytest.fixture(scope="module")
-def mceq_qgs() -> Any:  # Replace Any with the actual type if known
-    from crflux.models import HillasGaisser2012
-
-    import MCEq.core
-
-    return MCEq.core.MCEqRun(
-        interaction_model="QGSJETII04",
-        theta_deg=0.0,
-        primary_model=(HillasGaisser2012, "H3a"),
+def ddm_entry():
+    return ddm._DDMEntry(
+        ebeam=ddm_utils.fmteb(2.0),
+        projectile=2212,
+        secondary=211,
+        x17=False,
+        tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
+        cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        tv=1.0,
+        te=0.1,
+        spl_idx=1,
     )
 
 
-class TestDDMEntry:
-    entry: ddm._DDMEntry
-
-    @classmethod
-    def setup_class(cls) -> None:
-        cls.entry = ddm._DDMEntry(
-            ebeam=ddm_utils.fmteb(2.0),
-            projectile=2212,
-            secondary=211,
-            x17=False,
-            tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
-            cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
-            tv=1.0,
-            te=0.1,
-            spl_idx=1,
-        )
-
-    def test_knot_sigma(self) -> None:
-        expected_result = np.array([0.1, 0.1, 0.1])
-        np.testing.assert_array_equal(self.entry.knot_sigma, expected_result)
-
-    def test_fl_ebeam(self) -> None:
-        assert self.entry.fl_ebeam == pytest.approx(2.0)
-
-    def test_n_knots(self) -> None:
-        assert self.entry.n_knots == 3
-
-    def test_x_min(self) -> None:
-        assert self.entry.x_min == pytest.approx(_pdata.mass(211) / 2.0)
+@pytest.fixture(scope="module")
+def ddm_channel() -> ddm._DDMChannel:
+    channel = ddm._DDMChannel(projectile=2212, secondary=211)
+    channel.add_entry(
+        ebeam=ddm_utils.fmteb(2.0),
+        projectile=2212,
+        secondary=211,
+        x17=False,
+        tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
+        cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        tv=1.0,
+        te=1.0,
+    )
+    return channel
 
 
-class TestDDMChannel:
-    channel: ddm._DDMChannel
-
-    @classmethod
-    def setup_class(cls) -> None:
-        cls.channel = ddm._DDMChannel(projectile=2212, secondary=211)
-        cls.channel.add_entry(
-            ebeam=ddm_utils.fmteb(2.0),
-            projectile=2212,
-            secondary=211,
-            x17=False,
-            tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
-            cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
-            tv=1.0,
-            te=1.0,
-        )
-
-    def test_entries(self) -> None:
-        assert len(self.channel.entries) == 1
-
-    def test_total_n_knots(self) -> None:
-        assert self.channel.total_n_knots == 3
-
-    def test_n_splines(self) -> None:
-        assert self.channel.n_splines == 1
-
-    def test_spline_indices(self) -> None:
-        assert self.channel.spline_indices == [0]
-
-    def test_get_entry_by_ebeam(self) -> None:
-        entry = self.channel.get_entry(ebeam=2.0)
-        assert entry.projectile == 2212
-        assert entry.secondary == 211
-
-    def test_get_entry_by_idx(self) -> None:
-        entry = self.channel.get_entry(idx=0)
-        assert entry.projectile == 2212
-        assert entry.secondary == 211
-
-    def test_get_entry_raises_error(self) -> None:
-        with pytest.raises(ValueError, match="No entry for ebeam = 3.0 GeV"):
-            self.channel.get_entry(ebeam=3.0)
-
-    def test_str_representation(self) -> None:
-        expected_output = (
-            "\t2212 -> 211:\n\t\t0: ebeam = 2.0 GeV,"
-            " x17=False, tune v|e=1.000|1.000\n"
-        )
-        assert str(self.channel) == expected_output
+@pytest.fixture(scope="module")
+def ddm_spline_db() -> ddm.DDMSplineDB:
+    return ddm.DDMSplineDB(
+        enable_channels=[(2212, 211)],
+        exclude_projectiles=[111, 2112],
+    )
 
 
-class TestDDMSplineDB:
-    db: ddm.DDMSplineDB
-
-    def setup_method(self) -> None:
-        self.db = ddm.DDMSplineDB(
-            enable_channels=[(2212, 211)],
-            exclude_projectiles=[111, 2112],
-        )
-
-    def test_clone_entry(self) -> None:
-        self.db.clone_entry(2212, 211, 158.0, 1000)
-        entry = self.db.get_entry(2212, 211, ebeam=1000)
-        assert entry.projectile == 2212
-        assert entry.secondary == 211
-
-    def test_get_spline_indices(self) -> None:
-        indices = self.db.get_spline_indices(2212, 211)
-        assert indices == [0, 1]
-
-    def test_channels(self) -> None:
-        channels = list(self.db.channels)
-        assert len(channels) == 1
-        channel = channels[0]
-        assert channel.projectile == 2212
-        assert channel.secondary == 211
-
-    def test_get_entry_by_ebeam(self) -> None:
-        entry = self.db.get_entry(2212, 211, ebeam=158)
-        assert entry.projectile == 2212
-        assert entry.secondary == 211
-        assert entry.ebeam == ddm_utils.fmteb(158.0)
-
-    def test_get_entry_by_idx(self) -> None:
-        entry = self.db.get_entry(2212, 211, idx=0)
-        assert entry.projectile == 2212
-        assert entry.secondary == 211
-        assert entry.ebeam == ddm_utils.fmteb(31.0)
-
-    def test_get_entry_raises_error(self) -> None:
-        with pytest.raises(ValueError, match="No entry for ebeam = 123.0 GeV"):
-            self.db.get_entry(2212, 211, ebeam=123.0)
-
-    def test_mk_channel(self) -> None:
-        channel = self.db._mk_channel(2212, 211)
-        assert channel == "2212-211"
+@pytest.mark.parametrize(
+    "test_input,expected",
+    [
+        ("knot_sigma", np.array([0.1, 0.1, 0.1])),
+        ("fl_ebeam", 2.0),
+        ("n_knots", 3),
+        ("x_min", _pdata.mass(211) / 2.0),
+    ],
+)
+def test_ddm_entry_properties(ddm_entry, test_input, expected) -> None:
+    if test_input == "knot_sigma":
+        npt.assert_array_equal(getattr(ddm_entry, test_input), expected)
+    else:
+        assert getattr(ddm_entry, test_input) == pytest.approx(expected)
 
 
-class TestDataDrivenModel:
-    model: ddm.DataDrivenModel
-
-    @classmethod
-    def setup_class(cls) -> None:
-        cls.model = ddm.DataDrivenModel(
-            e_min=5.0,
-            e_max=500.0,
-            enable_channels=[(2212, 211)],
-            exclude_projectiles=[111, 2112],
-            enable_K0_from_isospin=True,
-        )
-
-    # def test_ddm_matrices(self):
-    #     mceq = create_mceq_object()  # Create an MCEq object for testing
-    #     matrices = self.model.ddm_matrices(mceq)
-    #     self.assertEqual(len(matrices), 1)
-    #     self.assertIn((2212, 211), matrices.keys())
-    #     self.assertIsInstance(matrices[(2212, 211)], np.ndarray)
-
-    def test_apply_tuning(self) -> None:
-        self.model.apply_tuning(2212, 211, ebeam=158.0, tv=0.5, te=0.8)
-        entry = self.model.spline_db.get_entry(2212, 211, ebeam=158.0)
-        assert entry.tv == 0.5
-        assert entry.te == 0.8
-
-    def test_dn_dxl(self) -> None:
-        x = np.linspace(0, 1, 100)
-        dn_dxl, error = self.model.dn_dxl(x, 2212, 211, 158.0, return_error=True)
-        assert len(dn_dxl) == len(x)
-        assert len(error) == len(x)
-        assert dn_dxl[0] == 0
-        assert error[0] == 0
-
-    def test_repr(self) -> None:
-        expected_repr = (
-            "DDM channels:\n\t2212 -> 211:\n\t\t0: ebeam = 31.0 GeV,"
-            " x17=False, tune v|e=1.000|1.000\n\t\t1: ebeam = 158.0 GeV,"
-            " x17=False, tune v|e=0.500|0.800\n\n"
-        )
-        assert repr(self.model) == expected_repr
+def test_ddm_channel_entries(ddm_channel: ddm._DDMChannel) -> None:
+    assert len(ddm_channel.entries) == 1
 
 
-class TestDDMUtils:
-    model: ddm.DataDrivenModel
+def test_ddm_channel_total_n_knots(ddm_channel: ddm._DDMChannel) -> None:
+    assert ddm_channel.total_n_knots == 3
 
-    @classmethod
-    def setup_class(cls) -> None:
-        cls.model = ddm.DataDrivenModel(
-            e_min=5.0,
-            e_max=500.0,
-            enable_channels=[(2212, 211)],
-            exclude_projectiles=[111, 2112],
-            enable_K0_from_isospin=True,
-        )
 
-    def test_fmteb(self) -> None:
-        ebeam_float = 2.5
-        ebeam_str = "2.5"
-        ebeam_int = 3
-        formatted_float = ddm_utils.fmteb(ebeam_float)
-        formatted_str = ddm_utils.fmteb(ebeam_str)
-        formatted_int = ddm_utils.fmteb(ebeam_int)
-        assert formatted_float == "2.5"
-        assert formatted_str == "2.5"
-        assert formatted_int == "3.0"
+def test_ddm_channel_n_splines(ddm_channel: ddm._DDMChannel) -> None:
+    assert ddm_channel.n_splines == 1
 
-    def test__spline_min_max_at_knot(self) -> None:
-        tck = (
-            np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
-            np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
-            3,
-        )
-        sigma = np.array([0.1, 0.2, 0.3, 0.4, 0.5])
-        iknot = 2
-        tck_min, tck_max, h = ddm_utils._spline_min_max_at_knot(tck, iknot, sigma)
-        expected_tck_min = (
-            np.array([0, 1, 2, 3, 4]),
-            np.array([1, 2, 2.7, 4, 5]),
-            3,
-        )
-        expected_tck_max = (
-            np.array([0, 1, 2, 3, 4]),
-            np.array([1, 2, 3.3, 4, 5]),
-            3,
-        )
-        expected_h = 0.3
-        assert np.array_equal(tck_min[0], expected_tck_min[0])
-        assert np.array_equal(tck_min[1], expected_tck_min[1])
-        assert tck_min[2] == expected_tck_min[2]
-        assert np.array_equal(tck_max[0], expected_tck_max[0])
-        assert np.array_equal(tck_max[1], expected_tck_max[1])
-        assert tck_max[2] == expected_tck_max[2]
-        assert h == expected_h
 
-    def test_generate_ddm_matrix(self) -> None:
-        from crflux.models import HillasGaisser2012
+def test_ddm_channel_spline_indices(ddm_channel: ddm._DDMChannel) -> None:
+    assert ddm_channel.spline_indices == [0]
 
-        import MCEq.core
 
-        mceq_sib = MCEq.core.MCEqRun(
-            interaction_model="SIBYLL21",
-            theta_deg=0.0,
-            primary_model=(HillasGaisser2012, "H3a"),
-        )
+def test_ddm_channel_get_entry_by_ebeam(ddm_channel: ddm._DDMChannel) -> None:
+    entry = ddm_channel.get_entry(ebeam=2.0)
+    assert entry.projectile == 2212
+    assert entry.secondary == 211
 
-        channel = self.model.find_channel(2212, 211)
 
-        generated_matrix = ddm_utils._generate_DDM_matrix(
-            channel, mceq_sib, e_min=20, e_max=50, average=True
-        )
-        # Updated expected matrix based on the latest SIBYLL23C run results
-        expected_matrix = np.array(
-            [
-                [
-                    4.80000000e-06,
-                    9.83217366e-04,
-                    6.21170492e-03,
-                    2.65378331e-02,
-                    6.56015918e-02,
-                    8.84591296e-02,
-                ],
-                [
-                    0.00000000e00,
-                    7.63843705e-05,
-                    9.91419547e-04,
-                    6.50797229e-03,
-                    2.62956570e-02,
-                    4.07584658e-02,
-                ],
-                [
-                    0.00000000e00,
-                    0.00000000e00,
-                    7.70215830e-05,
-                    1.18364924e-03,
-                    6.90031424e-03,
-                    1.68320355e-02,
-                ],
-                [
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    1.22139413e-04,
-                    1.45048061e-03,
-                    5.43535185e-03,
-                ],
-                [
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    1.85395114e-04,
-                    7.84430958e-04,
-                ],
-                [
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    1.81189687e-06,
-                ],
-            ]
-        )
+def test_ddm_channel_get_entry_by_idx(ddm_channel: ddm._DDMChannel) -> None:
+    entry = ddm_channel.get_entry(idx=0)
+    assert entry.projectile == 2212
+    assert entry.secondary == 211
 
-        npt.assert_allclose(generated_matrix, expected_matrix, rtol=1e-5)
+
+def test_ddm_channel_get_entry_raises_error(ddm_channel: ddm._DDMChannel) -> None:
+    with pytest.raises(ValueError, match="No entry for ebeam = 3.0 GeV"):
+        ddm_channel.get_entry(ebeam=3.0)
+
+
+def test_ddm_channel_str_representation(ddm_channel: ddm._DDMChannel) -> None:
+    expected_output = (
+        "\t2212 -> 211:\n\t\t0: ebeam = 2.0 GeV, x17=False, tune v|e=1.000|1.000\n"
+    )
+    assert str(ddm_channel) == expected_output
+
+
+def test_ddm_spline_db_clone_entry(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    ddm_spline_db.clone_entry(2212, 211, 158.0, 1000)
+    entry = ddm_spline_db.get_entry(2212, 211, ebeam=1000)
+    assert entry.projectile == 2212
+    assert entry.secondary == 211
+
+
+def test_ddm_spline_db_get_spline_indices(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    indices = ddm_spline_db.get_spline_indices(2212, 211)
+    assert indices == [0, 1]
+
+
+def test_ddm_spline_db_channels(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    channels = list(ddm_spline_db.channels)
+    assert len(channels) == 1
+    channel = channels[0]
+    assert channel.projectile == 2212
+    assert channel.secondary == 211
+
+
+def test_ddm_spline_db_get_entry_by_ebeam(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    entry = ddm_spline_db.get_entry(2212, 211, ebeam=158)
+    assert entry.projectile == 2212
+    assert entry.secondary == 211
+    assert entry.ebeam == ddm_utils.fmteb(158.0)
+
+
+def test_ddm_spline_db_get_entry_by_idx(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    entry = ddm_spline_db.get_entry(2212, 211, idx=0)
+    assert entry.projectile == 2212
+    assert entry.secondary == 211
+    assert entry.ebeam == ddm_utils.fmteb(31.0)
+
+
+def test_ddm_spline_db_get_entry_raises_error(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    with pytest.raises(ValueError, match="No entry for ebeam = 123.0 GeV"):
+        ddm_spline_db.get_entry(2212, 211, ebeam=123.0)
+
+
+def test_ddm_spline_db_mk_channel(ddm_spline_db: ddm.DDMSplineDB) -> None:
+    channel = ddm_spline_db._mk_channel(2212, 211)
+    assert channel == "2212-211"
 
 
 def test_eval_spline() -> None:

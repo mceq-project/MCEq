@@ -174,7 +174,7 @@ class _DDMEntry:
         info(
             3,
             f"Calculating Z-factor for {self.projectile} --> "
-            + f"{self.secondary} @ {self.ebeam} GeV.",
+            f"{self.secondary} @ {self.ebeam} GeV.",
         )
 
         def func_int(tck_1):
@@ -430,9 +430,9 @@ class _DDMChannel:
             If no entry is found for the given ebeam or spline index.
         """
 
-        assert (ebeam is not None) != (
-            idx is not None
-        ), "Define either ebeam or spl_idx"
+        assert (ebeam is not None) != (idx is not None), (
+            "Define either ebeam or spl_idx"
+        )
 
         if ebeam is not None:
             ebeam = fmteb(ebeam)
