@@ -152,15 +152,21 @@ class HDF5Backend:
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
-            raise Exception(
-                f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
-            )
+            if not isfile(config.mceq_db_fname):
+                raise Exception(
+                    f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
+                )
+            else:
+                self.had_fname = config.mceq_db_fname
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
-            raise Exception(
-                f'Electromagnetic DB file {config.em_db_fname} not found in "data" directory.'
-            )
+            if not isfile(config.em_db_fname):
+                raise Exception(
+                    f'Electromagnetic DB file {config.em_db_fname} not found in "data" directory.'
+                )
+            else:
+                self.em_fname = config.em_db_fname
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             from MCEq.misc import energy_grid
