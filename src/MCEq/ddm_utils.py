@@ -32,13 +32,13 @@ def fmteb(ebeam: Union[float, str]) -> str:
 
 
 def _spline_min_max_at_knot(
-    tck: Tuple, iknot: int, sigma: npt.NDArray
-) -> Tuple[Tuple, Tuple, float]:
+    tck: tuple, iknot: int, sigma: npt.NDArray
+) -> tuple[tuple, tuple, float]:
     """
     Return variation of spline coefficients by 1 sigma.
 
     Args:
-        tck : Tuple
+        tck : tuple
             A tuple representing the input spline.
         iknot : int
             The knot index to calculate the variation of.
@@ -47,7 +47,7 @@ def _spline_min_max_at_knot(
 
     Returns
     -------
-    Tuple[Tuple, Tuple, float]
+    tuple[tuple, tuple, float]
         A tuple containing two tuples representing the minimum and maximum spline
         coefficients, respectively, and a float representing the variation of the
         spline coefficients by 1 sigma.
@@ -510,8 +510,11 @@ def gen_matrix_variations(ddm_obj, mceq):
         matrix_variations[(channel.projectile, channel.secondary)] = mat_db
         if channel.secondary in [321, -321]:
             isospin_partners[(channel.projectile, channel.secondary)] = (
-                310,
-                130,
-            ), iso_part_db
+                (
+                    310,
+                    130,
+                ),
+                iso_part_db,
+            )
 
     return matrix_variations, isospin_partners
