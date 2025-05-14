@@ -326,7 +326,6 @@ def info(min_dbg_level, *message, **kwargs):
 
 
 def reset_plt(ticksize, fontsize):
-    plt.style.use("seaborn-white")
     plt.rcParams["xtick.labelsize"] = ticksize
     plt.rcParams["ytick.labelsize"] = ticksize
     plt.rcParams["font.size"] = fontsize

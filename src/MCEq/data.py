@@ -184,8 +184,8 @@ class HDF5Backend:
             )
 
             # TK: Cuts for the cross sections copied over from the 1D database
-            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = self._eval_energy_cuts(
-                config.default_ecenters
+            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = _eval_energy_cuts(
+                config.default_ecenters, config.e_min, config.e_max
             )
 
             self._energy_grid = energy_grid(
