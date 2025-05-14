@@ -1,8 +1,8 @@
-from MCEq.misc import info
 import MCEq.geometry.nrlmsise00 as cmsis
+from MCEq.misc import info
 
 
-class cNRLMSISE00(object):
+class cNRLMSISE00:
     def __init__(self):
         # Cache altitude value of last call
         self.last_alt = None
@@ -94,7 +94,7 @@ class cNRLMSISE00(object):
     def set_location(self, tag):
         if tag not in list(self.locations):
             raise Exception(
-                "NRLMSISE00::set_location(): Unknown location tag '{0}'.".format(tag)
+                f"NRLMSISE00::set_location(): Unknown location tag '{tag}'."
             )
 
         self.inp.alt = cmsis.c_double(self.locations[tag][2])
@@ -103,7 +103,7 @@ class cNRLMSISE00(object):
         self.alt_surface = self.locations[self.current_location][2]
 
     def set_location_coord(self, longitude, latitude):
-        info(5, "long={0:5.2f}, lat={1:5.2f}".format(longitude, latitude))
+        info(5, f"long={longitude:5.2f}, lat={latitude:5.2f}")
         if abs(latitude) > 90 or abs(longitude) > 180:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
         self.inp.g_lat = cmsis.c_double(latitude)
@@ -149,8 +149,8 @@ class cNRLMSISE00(object):
 
 
 def test():
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
 
     msis = cNRLMSISE00()
     den = np.vectorize(msis.get_density)

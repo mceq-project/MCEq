@@ -1,14 +1,19 @@
-import six
 from time import time
+
 import numpy as np
-from MCEq import asarray, zeros, csr_matrix, eye, linalg, diag, ones
-from MCEq.misc import normalize_hadronic_model_name, info
-from MCEq.particlemanager import ParticleManager
+import six
+
+import scipy
+from sparse import GCXS
+from scipy.interpolate import interp1d
+from itertools import product
+from MCEq import asarray, config, csr_matrix, diag, eye, linalg, ones, zeros
 import MCEq.data
-import mceq_config as config
+from MCEq.misc import info, normalize_hadronic_model_name
+from MCEq.particlemanager import ParticleManager
 
 
-class MCEqRun(object):
+class MCEqRun:
     """Main class for handling the calculation.
 
     This class is the main user interface for the caclulation. It will
@@ -79,6 +84,8 @@ class MCEqRun(object):
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
+        if config.enable_2D:
+            self.phi0_2D = None
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
         # Save initial condition (primary flux) to restore after dimensional resizing
@@ -149,8 +156,7 @@ class MCEqRun(object):
 
         if return_bins:
             return ptot_bins, ptot_grid
-        else:
-            return ptot_grid
+        return ptot_grid
 
     def etot_grid(self, particle_name, return_bins=False):
         """Computes and returns the total energy grid.
@@ -164,8 +170,7 @@ class MCEqRun(object):
 
         if return_bins:
             return etot_bins, etot_grid
-        else:
-            return etot_grid
+        return etot_grid
 
     def xgrid(self, particle_name, return_as, return_bins=False):
         """Uniform access to the spectrum variable, depending on the
@@ -173,12 +178,11 @@ class MCEqRun(object):
 
         if return_as == "kinetic energy":
             return (self.e_bins, self.e_grid) if return_bins else self.e_grid
-        elif return_as == "total energy":
+        if return_as == "total energy":
             return self.etot_grid(particle_name, return_bins)
-        elif return_as == "total momentum":
+        if return_as == "total momentum":
             return self.ptot_grid(particle_name, return_bins)
-        else:
-            raise Exception("Unknown grid type requested.")
+        raise Exception("Unknown grid type requested.")
 
     def closest_energy(self, kin_energy):
         """Convenience function to obtain the nearest grid energy
@@ -210,11 +214,9 @@ class MCEqRun(object):
         order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
         if order_i != order and not only_available:
             raise Exception(
-                "The orders of the state vecs don't match {0}!={1}".format(
-                    order_i, order
-                )
+                f"The orders of the state vecs don't match {order_i}!={order}"
             )
-        elif order_i != order and only_available:
+        if order_i != order and only_available:
             particles_requested = [o[1] for o in order_i]
             for pidx, pname in order:
                 if pname in self.pman.pname2pref:
@@ -297,15 +299,13 @@ class MCEqRun(object):
                     info(
                         15,
                         "No separate left and right handed particles,",
-                        "or, unavailable particle prefix {0}.".format(prefix + ls),
+                        f"or, unavailable particle prefix {prefix + ls}.",
                     )
                     continue
                 result += sol[ref[prefix + ls].lidx : ref[prefix + ls].uidx]
                 nsuccess += 1
             if nsuccess == 0 and config.excpt_on_missing_particle:
-                raise Exception(
-                    "Requested particle {0} not found.".format(particle_name)
-                )
+                raise Exception(f"Requested particle {particle_name} not found.")
             return result
 
         lep_str = particle_name.split("_")[1] if "_" in particle_name else particle_name
@@ -365,39 +365,32 @@ class MCEqRun(object):
                 res = sum_lr(particle_name, prefix="")
             except KeyError:
                 if config.excpt_on_missing_particle:
-                    raise Exception(
-                        "Requested particle {0} not found.".format(particle_name)
-                    )
-                else:
-                    info(1, "Requested particle {0} not found.".format(particle_name))
+                    raise Exception(f"Requested particle {particle_name} not found.")
+                info(1, f"Requested particle {particle_name} not found.")
 
         # When returning in Etot, interpolate on different grid
         if return_as == "total energy":
             etot_grid = self.etot_grid(lep_str)
             if not integrate:
                 return res * etot_grid**mag
-            else:
-                return res * etot_grid**mag * self.e_widths
+            return res * etot_grid**mag * self.e_widths
 
-        elif return_as == "kinetic energy":
+        if return_as == "kinetic energy":
             if not integrate:
                 return res * self._energy_grid.c**mag
-            else:
-                return res * self._energy_grid.c**mag * self.e_widths
+            return res * self._energy_grid.c**mag * self.e_widths
 
-        elif return_as == "total momentum":
+        if return_as == "total momentum":
             ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
                 return dEkindp * res * ptot_grid**mag
-            else:
-                return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
+            return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
 
-        else:
-            raise Exception(
-                "Unknown 'return_as' variable choice.",
-                'the options are "kinetic energy", "total energy", "total momentum"',
-            )
+        raise Exception(
+            "Unknown 'return_as' variable choice.",
+            'the options are "kinetic energy", "total energy", "total momentum"',
+        )
 
     def set_interaction_model(
         self,
@@ -486,6 +479,19 @@ class MCEqRun(object):
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False
         )
+        # TK: Forming lists of sparse matrices corresponding to secondary particle yields for each
+        # mode k of the Hankel grid in 2D MCEq (if enabled)
+        if config.enable_2D:
+            int_m_dense = self.int_m.todense()
+            self.int_m_hankel = [
+                scipy.sparse.csr_matrix(int_m_dense[k, :, :])
+                for k in range(len(config.k_grid))
+            ]
+            dec_m_dense = self.dec_m.todense()
+            self.dec_m_hankel = [
+                scipy.sparse.csr_matrix(dec_m_dense[k, :, :])
+                for k in range(len(config.k_grid))
+            ]
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -532,7 +538,7 @@ class MCEqRun(object):
             info(5, "Primary model supplied as class")
             self.pmodel = model_class_or_object(tag)
 
-        info(1, "Primary model set to {0}".format(self.pmodel.name))
+        info(1, f"Primary model set to {self.pmodel.name}")
 
         # Save primary flux model for restauration after interaction model changes
         self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
@@ -612,17 +618,17 @@ class MCEqRun(object):
           append (bool): If True, keep previous state and append a new particle.
         """
         import warnings
+
         from scipy.linalg import solve
-        from MCEq.misc import getAZN_corsika, getAZN
+
+        from MCEq.misc import getAZN, getAZN_corsika
 
         if corsika_id and pdg_id:
             raise Exception("Provide either corsika or PDG ID")
 
         info(
             2,
-            "CORSIKA ID {0}, PDG ID {1}, energy {2:5.3g} GeV".format(
-                corsika_id, pdg_id, E
-            ),
+            f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV",
         )
 
         if append is False:
@@ -714,7 +720,7 @@ class MCEqRun(object):
           pdg_id (int): PDG ID in case of a particle
         """
 
-        info(2, "PDG ID {0}".format(pdg_id))
+        info(2, f"PDG ID {pdg_id}")
 
         if not append:
             self._restore_initial_condition = [
@@ -823,7 +829,7 @@ class MCEqRun(object):
         """
         import MCEq.geometry.density_profiles as dprof
 
-        info(2, "Zenith angle {0:6.2f}".format(theta_deg))
+        info(2, f"Zenith angle {theta_deg:6.2f}")
 
         if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
@@ -885,9 +891,7 @@ class MCEqRun(object):
         """
         info(
             1,
-            "{0}/{1}, {2}, {3}".format(
-                prim_pdg, sec_pdg, x_func.__name__, str(x_func_args)
-            ),
+            f"{prim_pdg}/{sec_pdg}, {x_func.__name__}, {x_func_args!s}",
         )
 
         init = self._interactions._set_mod_pprod(prim_pdg, sec_pdg, x_func, x_func_args)
@@ -906,7 +910,7 @@ class MCEqRun(object):
 
         info(1, "Particle production modifications reset to defaults.")
 
-        self._interactions.mod_pprod = defaultdict(lambda: {})
+        self._interactions.mod_pprod = defaultdict(dict)
         # Need to regenerate matrices completely
         if not dont_fill:
             self.regenerate_matrices()
@@ -937,12 +941,12 @@ class MCEqRun(object):
           kwargs (dict): Arguments are passed directly to the solver methods.
 
         """
-        info(2, "Launching {0} solver".format(config.integrator))
+        info(2, f"Launching {config.integrator} solver")
 
         if not kwargs.pop("skip_integration_path", False):
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be strickly",
+                    "The X values in int_grid are required to be strictly",
                     "increasing.",
                 )
 
@@ -952,21 +956,61 @@ class MCEqRun(object):
             info(2, "Warning: integration path calculation skipped.")
 
         phi0 = np.copy(self._phi0)
+        # TK: if the initial angular density is a delta function
+        # (e.g. a single cosmic ray shower incident at some angle theta),
+        # all Hankel modes k are populated with the same amplitude
+        # (equal to that of the 1D initial condition).
+        if config.enable_2D:
+            nonzero_phi_idcs = np.flatnonzero(phi0)
+            phi0_2D = np.zeros((len(config.k_grid), np.shape(phi0)[0]))
+            for i in nonzero_phi_idcs:
+                phi0_2D[:, i] = phi0[i]
+            self.phi0_2D = np.copy(phi0_2D)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
-        info(2, "for {0} integration steps.".format(nsteps))
+        info(2, f"for {nsteps} integration steps.")
 
         import MCEq.solvers
 
         start = time()
+        extra_kwargs = {}
 
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+            # TK: pass the interaction/decay matrices in the appropriate format
+            # depending on the dimensionality. In the 2D case, pass a list of matrices
+            # (one for each of the Hankel modes k); in the 1D case, pass simple "flat" matrices.
+            if config.enable_2D:
+                if config.muon_multiple_scattering:
+                    extra_kwargs = {}
+                    extra_kwargs["edim"] = len(self.e_grid)
+                    extra_kwargs["muon_scat_kernel"] = self.prob_muon_mult_scat_hankel()
+                    if config.muon_helicity_dependence:
+                        available_helicities = [-1, 0, 1]
+                    else:
+                        available_helicities = [0]
+
+                    muon_inds = [
+                        self.pman.pdg2mceqidx[(mu_pdg, hel)] * len(self.e_grid)
+                        for (mu_pdg, hel) in product([13, -13], available_helicities)
+                    ]
+
+                    extra_kwargs["muon_inds"] = muon_inds
+                args = (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    self.int_m_hankel,
+                    self.dec_m_hankel,
+                    phi0_2D,
+                    grid_idcs,
+                )
+            else:
+                args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
-            import MCEq.spacc as spacc
+            from MCEq import spacc
 
             try:
                 if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
@@ -1005,13 +1049,75 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         else:
-            raise Exception(
-                "Unsupported integrator setting '{0}'.".format(config.kernel_config)
-            )
+            raise Exception(f"Unsupported integrator setting '{config.kernel_config}'.")
 
-        self._solution, self.grid_sol = kernel(*args)
+        self._solution, self.grid_sol = kernel(*args, **extra_kwargs)
 
-        info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
+        info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
+
+    def convert_to_theta_space(
+        self,
+        hankel_transf,
+        pdg_id,
+        hel,
+        oversample_res=5,
+        theta_res=600,
+        log_theta=False,
+    ):
+        """Converts the Hankel space amplitudes from the 2D MCEq solver
+        to the real (angular) space.
+
+        Args:
+            hankel_transf (list of np.arrays): list of Hankel space solutions at the requested slant depths
+            (i.e. the output of self.grid_sol)
+            pdg_id (int): PDG ID of the particle whose angular density is being requested (e.g. 14 for NuMu)
+            hel (int): helicity of the particle whose angular density is being requested (e.g. 0 or ±1 for polarized muons)
+            oversample_res (int): resolution of the Hankel grid oversampling (used to approximate the continuous inverse Hankel transform)
+            theta_res (int): resolution of the angular (theta) grid where the inverse Hankel transform will output the densities
+            log_theta (bool): whether to return logarithmic angular grid (True=logarithmic, False=linear)
+
+        """
+        if log_theta:
+            theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
+        else:
+            theta_range = np.linspace(0, np.pi / 2, theta_res)
+        oversample_pts = np.max(config.k_grid) * oversample_res
+        oversampled_k_arr = np.linspace(
+            np.min(config.k_grid), np.max(config.k_grid), oversample_pts
+        )
+        j0_ktheta_k = (
+            scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
+            * oversampled_k_arr[:, None]
+        )
+
+        store_oversampled_hankel_amps = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+        store_inverse_hankel_transfs = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+
+        for j in range(len(hankel_transf)):
+            for eidx in range(len(self.e_grid)):
+                mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
+                oversampled_hankel_amps = interp1d(
+                    config.k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
+                )(oversampled_k_arr)
+                inverse_hankel_transf = np.trapz(
+                    j0_ktheta_k * oversampled_hankel_amps[:, None],
+                    oversampled_k_arr,
+                    axis=0,
+                )
+
+                store_oversampled_hankel_amps[j][eidx] = oversampled_hankel_amps
+                store_inverse_hankel_transfs[j][eidx] = inverse_hankel_transf
+
+        return (
+            oversampled_k_arr,
+            store_oversampled_hankel_amps,
+            theta_range,
+            store_inverse_hankel_transfs,
+        )
 
     def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):
         """Launches the solver directly for parameters of the integration path.
@@ -1035,8 +1141,8 @@ class MCEqRun(object):
           is dumped into `grid_sol`
         """
 
-        info(2, "Launching {0} solver".format(config.integrator))
-        info(2, "for {0} integration steps.".format(nsteps))
+        info(2, f"Launching {config.integrator} solver")
+        info(2, f"for {nsteps} integration steps.")
 
         import MCEq.solvers
 
@@ -1069,13 +1175,11 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         else:
-            raise Exception(
-                "Unsupported integrator setting '{0}'.".format(config.kernel_config)
-            )
+            raise Exception(f"Unsupported integrator setting '{config.kernel_config}'.")
 
         self._solution, self.grid_sol = kernel(*args)
 
-        info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
+        info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
         if (
@@ -1099,7 +1203,7 @@ class MCEqRun(object):
         max_ldec = self.matrix_builder.max_ldec
         dXmax = config.dXmax
 
-        info(2, "X_surface = {0:7.2f}g/cm2".format(max_X))
+        info(2, f"X_surface = {max_X:7.2f}g/cm2")
 
         dX_vec = []
         rho_inv_vec = []
@@ -1129,35 +1233,34 @@ class MCEqRun(object):
             def delta_X(X, inv_rho):
                 return min(config.stability_margin / max_lint, dXmax)
 
+        # This is the case for auto setting.
+        # If no particles in eqn system force decays
+        # as leading eigenvalues
+
+        elif np.allclose(max_lint, 0.0):
+
+            def delta_X(X, inv_rho):
+                return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
+
         else:
-            # This is the case for auto setting.
-            # If no particles in eqn system force decays
-            # as leading eigenvalues
 
-            if np.allclose(max_lint, 0.0):
-
-                def delta_X(X, inv_rho):
-                    return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
-
-            else:
-
-                def delta_X(X, inv_rho):
-                    dX = min(
-                        config.stability_margin / (max_ldec * inv_rho),
-                        config.stability_margin / max_lint,
-                        dXmax,
-                    )
-                    # if dX / self.density_model.max_X < 1e-7:
-                    #     raise Exception(
-                    #         "Stiffness warning: dX <= 1e-7. Check configuration or"
-                    #         + "manually call MCEqRun._calculate_integration_path("
-                    #         + 'int_grid, "X", force=True).'
-                    #     )
-                    return dX
+            def delta_X(X, inv_rho):
+                dX = min(
+                    config.stability_margin / (max_ldec * inv_rho),
+                    config.stability_margin / max_lint,
+                    dXmax,
+                )
+                # if dX / self.density_model.max_X < 1e-7:
+                #     raise Exception(
+                #         "Stiffness warning: dX <= 1e-7. Check configuration or"
+                #         + "manually call MCEqRun._calculate_integration_path("
+                #         + 'int_grid, "X", force=True).'
+                #     )
+                return dX
 
         enable_int_grid = np.any(int_grid)
         len_int_grid = len(int_grid) if enable_int_grid else 0
-        while X < max_X:
+        while max_X > X:
             inv_rho = ri(X)
             dX = delta_X(X, inv_rho)
             if (
@@ -1193,15 +1296,11 @@ class MCEqRun(object):
         )
         info(
             10,
-            "Energy cutoff for particle number calculation {0:4.3e} GeV".format(
-                self.e_bins[ie_min]
-            ),
+            f"Energy cutoff for particle number calculation {self.e_bins[ie_min]:4.3e} GeV",
         )
         info(
             15,
-            "First bin is between {0:3.2e} and {1:3.2e} with midpoint {2:3.2e}".format(
-                self.e_bins[ie_min], self.e_bins[ie_min + 1], self.e_grid[ie_min]
-            ),
+            f"First bin is between {self.e_bins[ie_min]:3.2e} and {self.e_bins[ie_min + 1]:3.2e} with midpoint {self.e_grid[ie_min]:3.2e}",
         )
         return np.sum(
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:]
@@ -1250,15 +1349,13 @@ class MCEqRun(object):
         sec = self.pman[secondary_pdg]
 
         if not proj.is_projectile:
-            raise Exception("{0} is not a projectile particle.".format(proj.name))
+            raise Exception(f"{proj.name} is not a projectile particle.")
         info(
             10,
-            "Computing e-dependent Zfactor for {0} -> {1}".format(proj.name, sec.name),
+            f"Computing e-dependent Zfactor for {proj.name} -> {sec.name}",
         )
         if not proj.is_secondary(sec):
-            raise Exception(
-                "{0} is not a secondary particle of {1}.".format(sec.name, proj.name)
-            )
+            raise Exception(f"{sec.name} is not a secondary particle of {proj.name}.")
 
         if proj == 2112:
             nuc_flux = self.pmodel.p_and_n_flux(self.e_grid)[2]
@@ -1291,25 +1388,22 @@ class MCEqRun(object):
                     smat[min_idx : p_eidx + 1, p_eidx] * nuc_fac * cs_fac
                 )
             return zfac
-        else:
-            # Like in Thunman et al. 1996
-            for p_eidx, e in enumerate(self.e_grid):
-                if e < min_energy:
-                    min_idx = p_eidx
-                    continue
-                nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-                if use_cs_scaling:
-                    cs_fac = np.zeros(p_eidx - min_idx + 1)
-                    old_settings = np.seterr(all="ignore")
-                    res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
-                    np.seterr(**old_settings)
-                    cs_fac[(res > 0) & np.isfinite(res)] = res[
-                        (res > 0) & np.isfinite(res)
-                    ]
-                else:
-                    cs_fac = 1.0
-                zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
-            return zfac
+        # Like in Thunman et al. 1996
+        for p_eidx, e in enumerate(self.e_grid):
+            if e < min_energy:
+                min_idx = p_eidx
+                continue
+            nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
+            if use_cs_scaling:
+                cs_fac = np.zeros(p_eidx - min_idx + 1)
+                old_settings = np.seterr(all="ignore")
+                res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
+                np.seterr(**old_settings)
+                cs_fac[(res > 0) & np.isfinite(res)] = res[(res > 0) & np.isfinite(res)]
+            else:
+                cs_fac = 1.0
+            zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
+        return zfac
 
     def decay_z_factor(self, parent_pdg, child_pdg):
         """Energy dependent Z-factor according to Lipari (1993)."""
@@ -1318,17 +1412,13 @@ class MCEqRun(object):
         sec = self.pman[child_pdg]
 
         if proj.is_stable:
-            raise Exception("{0} does not decay.".format(proj.name))
+            raise Exception(f"{proj.name} does not decay.")
         info(
             10,
-            "Computing e-dependent decay Zfactor for {0} -> {1}".format(
-                proj.name, sec.name
-            ),
+            f"Computing e-dependent decay Zfactor for {proj.name} -> {sec.name}",
         )
         if not proj.is_child(sec):
-            raise Exception(
-                "{0} is not a a child particle of {1}.".format(sec.name, proj.name)
-            )
+            raise Exception(f"{sec.name} is not a a child particle of {proj.name}.")
 
         cr_gamma = self.pmodel.nucleon_gamma(self.e_grid)
         zfac = np.zeros(self.dim)
@@ -1342,8 +1432,23 @@ class MCEqRun(object):
             zfac[p_eidx] = np.trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
         return zfac
 
+    def prob_muon_mult_scat_hankel(self):
+        """Returns the Gauss approximation of the scattering kernel for muon multiple scattering.
+        See p.12-13 in https://web.iap.kit.edu/corsika/physics_description/corsika_phys.pdf
+        """
+        lambda_s = 37.7
+        E_s = 0.021
+        elab_mu = self.e_grid + self.pman[(13, 0)].mass
+        beta_mu = np.sqrt(elab_mu**2 - self.pman[(13, 0)].mass ** 2) / elab_mu
+        theta_s_sq = (1 / lambda_s) * (E_s / (elab_mu * beta_mu**2)) ** 2
+        # delta_lambda (float): slant depth traversed by the muon (equivalent to dX in the integrator)
+        exp = lambda delta_lambda: np.exp(
+            -((config.k_grid[:, None]) ** 2) * delta_lambda * theta_s_sq[None, :] / 4
+        )
+        return exp
 
-class MatrixBuilder(object):
+
+class MatrixBuilder:
     """This class constructs the interaction and decay matrices."""
 
     def __init__(self, particle_manager):
@@ -1351,7 +1456,9 @@ class MatrixBuilder(object):
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-
+        if config.enable_2D:
+            self.int_m_hankel = None
+            self.dec_m_hankel = None
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -1378,11 +1485,9 @@ class MatrixBuilder(object):
 
         """
 
-        from itertools import product
-
         info(
             3,
-            "Start filling matrices. Skip_decay_matrix = {0}".format(skip_decay_matrix),
+            f"Start filling matrices. Skip_decay_matrix = {skip_decay_matrix}",
         )
 
         self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
@@ -1400,7 +1505,12 @@ class MatrixBuilder(object):
             if child.mceqidx == parent.mceqidx and parent.can_interact:
                 # Subtract unity from the main diagonals
                 info(10, "subtracting main C diagonal from", child.name, parent.name)
-                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                if config.enable_2D:
+                    self.C_blocks[idx][
+                        :, np.diag_indices(self.dim)[0], np.diag_indices(self.dim)[1]
+                    ] -= 1.0
+                else:
+                    self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
             if idx in self.C_blocks:
                 # Multiply with Lambda_int and keep track the maximal
@@ -1421,7 +1531,15 @@ class MatrixBuilder(object):
                         or (config.generic_losses_all_charged and pid != 11)
                     ):
                         info(5, "Cont. loss for", parent.name)
-                        self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+                        if config.enable_cont_rad_loss:
+                            if config.enable_2D:
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )[None, :, :]
+                            else:
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
         # -I + D
@@ -1436,7 +1554,14 @@ class MatrixBuilder(object):
                     info(
                         10, "subtracting main D diagonal from", child.name, parent.name
                     )
-                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                    if config.enable_2D:
+                        self.D_blocks[idx][
+                            :,
+                            np.diag_indices(self.dim)[0],
+                            np.diag_indices(self.dim)[1],
+                        ] -= 1.0
+                    else:
+                        self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
                 if idx not in self.D_blocks:
                     info(25, parent.pdg_id[0], child.pdg_id, "not in D_blocks")
                     continue
@@ -1454,10 +1579,13 @@ class MatrixBuilder(object):
 
         for mname, mat in [("C", self.int_m), ("D", self.dec_m)]:
             mat_density = float(mat.nnz) / float(np.prod(mat.shape))
-            info(5, "{0} Matrix info:".format(mname))
-            info(5, "    density    : {0:3.2%}".format(mat_density))
-            info(5, "    shape      : {0} x {1}".format(*mat.shape))
-            info(5, "    nnz        : {0}".format(mat.nnz))
+            info(5, f"{mname} Matrix info:")
+            info(5, f"    density    : {mat_density:3.2%}")
+            if config.enable_2D:
+                info(5, "    shape      : {0} x {1} x {2}".format(*mat.shape))
+            else:
+                info(5, "    shape      : {0} x {1}".format(*mat.shape))
+            info(5, f"    nnz        : {mat.nnz}")
             info(10, "    sum        :", mat.sum())
 
         info(3, "Done filling matrices.")
@@ -1471,7 +1599,7 @@ class MatrixBuilder(object):
         n_steps = int(1.0 / config.loss_step_for_average)
         info(
             10,
-            "Averaging continuous loss using {0} intermediate steps.".format(n_steps),
+            f"Averaging continuous loss using {n_steps} intermediate steps.",
         )
 
         op_step = eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
@@ -1486,8 +1614,7 @@ class MatrixBuilder(object):
 
         if config.average_loss_operator:
             return self._average_operator(op_mat)
-        else:
-            return op_mat
+        return op_mat
 
     @property
     def dim(self):
@@ -1502,7 +1629,11 @@ class MatrixBuilder(object):
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid."""
-        return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
+        if config.enable_2D:
+            e_dim = self._pman.dim
+            return zeros((len(config.k_grid), e_dim, e_dim), dtype=config.floatlen)
+        else:
+            return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1512,27 +1643,30 @@ class MatrixBuilder(object):
             It's super pain the a** to construct a properly indexed sparse matrix
             directly from the blocks, since bmat totally messes up the order.
         """
-        new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+        if config.enable_2D:
+            new_mat = zeros(
+                (len(config.k_grid), self.dim_states, self.dim_states),
+                dtype=config.floatlen,
+            )
+        else:
+            new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
 
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
-                new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
+                if config.enable_2D:
+                    new_mat[:, rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
+                else:
+                    new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
                 raise Exception(
                     "Dimension mismatch: matrix "
-                    + "{0}x{1}, p={2}:({3},{4}), c={5}:({6},{7})".format(
-                        self.dim_states,
-                        self.dim_states,
-                        rp.name,
-                        rp.lidx,
-                        rp.uidx,
-                        rc.name,
-                        rc.lidx,
-                        rc.uidx,
-                    )
+                    + f"{self.dim_states}x{self.dim_states}, p={rp.name}:({rp.lidx},{rp.uidx}), c={rc.name}:({rc.lidx},{rc.uidx})"
                 )
-        return csr_matrix(new_mat)
+        if config.enable_2D:
+            return GCXS.from_numpy(new_mat)
+        else:
+            return csr_matrix(new_mat)
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
         """Some recursive magic."""
@@ -1544,7 +1678,7 @@ class MatrixBuilder(object):
                 # print 'adding stuff', p_orig.pdg_id, p.pdg_id, d.pdg_id
                 dprop = self._zero_mat()
                 p._assign_decay_idx(d, idcs, d.hadridx, dprop)
-                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
+                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop @ pprod_mat
 
             if config.debug_level >= 20:
                 pstr = "res"
@@ -1565,7 +1699,7 @@ class MatrixBuilder(object):
                 p._assign_decay_idx(d, idcs, d.residx, dres)
                 reclev += 1
                 self._follow_chains(
-                    d, dres.dot(pprod_mat), p_orig, d.residx, propmat, reclev
+                    d, dres @ pprod_mat, p_orig, d.residx, propmat, reclev
                 )
             else:
                 info(20, reclev * "\t", "\t terminating at", d.name)
@@ -1581,9 +1715,15 @@ class MatrixBuilder(object):
             for p in self._pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
+                    ones_matrix = diag(ones(self.dim)).astype(config.floatlen)
+                    if config.enable_2D:
+                        ones_matrix = ones_matrix[None, :, :]
+                        ones_matrix = np.repeat(
+                            ones_matrix, repeats=len(config.k_grid), axis=0
+                        )
                     self._follow_chains(
                         p,
-                        diag(ones(self.dim)).astype(config.floatlen),
+                        ones_matrix,
                         p,
                         p.hadridx,
                         self.D_blocks,
@@ -1598,7 +1738,7 @@ class MatrixBuilder(object):
             # if p doesn't interact, skip interaction matrices
             if not p.is_projectile:
                 if p.is_hadron:
-                    info(1, "No interactions by {0} ({1}).".format(p.name, p.pdg_id))
+                    info(1, f"No interactions by {p.name} ({p.pdg_id}).")
                 continue
             for s in p.hadr_secondaries:
                 # if s not in self.pman.cascade_particles:

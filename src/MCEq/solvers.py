@@ -1,9 +1,11 @@
 import numpy as np
-import mceq_config as config
+
+from MCEq import config
 from MCEq.misc import info
+from tqdm import tqdm
 
 
-def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, **kwargs):
     """:mod:`numpy` implementation of forward-euler integration.
 
     Args:
@@ -35,27 +37,61 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     from time import time
 
     start = time()
+    # TK: 2D solver (same approach as 1D, but looping over the Hankel modes k)
+    if config.enable_2D:
 
-    for step in range(nsteps):
-        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+        for step in tqdm(range(nsteps)):
 
-        dXaccum += dxc[step]
+            if config.muon_multiple_scattering:
+                muon_mult_scat_kernel = kwargs['muon_scat_kernel'](dxc[step])
+                for idx in kwargs['muon_inds']:
+                    for k in range(len(config.k_grid)):
+                        phc[k][idx:idx + kwargs['edim']] *= muon_mult_scat_kernel[k]
 
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(phc))
-            grid_step += 1
+            int_deriv_k = [
+            imc[k].dot(phc[k]) for k in range(len(config.k_grid))
+            ]
+            dec_deriv_k = [
+                dmc[k].dot(phc[k]) * ric[step] for k in range(len(config.k_grid))
+            ]
+            full_deriv_k = [
+                int_deriv_k[k] + dec_deriv_k[k] for k in range(len(config.k_grid))
+            ]
+
+            phc += np.array(full_deriv_k) * dxc[step]
+
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
+    # 1D solver
+    else:
+
+        for step in range(nsteps):
+            phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+
+            dXaccum += dxc[step]
+
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return phc, np.array(grid_sol)
 
 
-class CUDASparseContext(object):
+class CUDASparseContext:
     """This class handles the transfer between CPU and GPU memory,
     and the calling of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun`
     and used by :func:`solv_CUDA_sparse`.
@@ -162,9 +198,7 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
@@ -198,8 +232,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       numpy.array: state vector copies at `grid_idcs` or empty list
     """
 
-    from ctypes import c_int, c_char, POINTER, byref
-    from src.mceq_config import mkl
+    from ctypes import POINTER, byref, c_char, c_int
+
+    from MCEq.config import mkl
 
     np_fl = config.floatlen
 
@@ -288,9 +323,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return npphi, np.asarray(grid_sol)
@@ -318,8 +351,9 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import c_double, POINTER
-    import MCEq.spacc as spacc
+    from ctypes import POINTER, c_double
+
+    from MCEq import spacc
 
     dim_phi = int(phi.shape[0])
     npphi = np.copy(phi)
@@ -353,9 +387,7 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
     return npphi, np.asarray(grid_sol)

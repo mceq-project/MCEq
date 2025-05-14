@@ -1,10 +1,13 @@
-import six
-import numpy as np
-import h5py
-from os.path import join, isfile
 from collections import defaultdict
-from MCEq import config, asarray
-from .misc import normalize_hadronic_model_name, info, _eval_energy_cuts
+from os.path import isfile, join
+
+import h5py
+import numpy as np
+import six
+
+from MCEq import asarray, config
+
+from .misc import _eval_energy_cuts, info, normalize_hadronic_model_name
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -132,10 +135,16 @@ equivalences = {
         431: 321,
         3122: 2112,
     },
+    "URQMD34": {
+        3122: 2112,
+        -3122: -2112,
+    },
 }
 
 equivalences["FLUKA"] = equivalences["DPMJET"]
-class HDF5Backend(object):
+
+
+class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
     The file contains all necessary ingredients to run MCEq, i.e. no
@@ -147,19 +156,21 @@ class HDF5Backend(object):
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
-            raise Exception(
-                'MCEq DB file {0} not found in "data" directory.'.format(
-                    config.mceq_db_fname
+            if not isfile(config.mceq_db_fname):
+                raise Exception(
+                    f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
                 )
-            )
+            else:
+                self.had_fname = config.mceq_db_fname
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
-            raise Exception(
-                'Electromagnetic DB file {0} not found in "data" directory.'.format(
-                    config.em_db_fname
+            if not isfile(config.em_db_fname):
+                raise Exception(
+                    f'Electromagnetic DB file {config.em_db_fname} not found in "data" directory.'
                 )
-            )
+            else:
+                self.em_fname = config.em_db_fname
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             from MCEq.misc import energy_grid
@@ -171,13 +182,25 @@ class HDF5Backend(object):
             self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
                 ca["e_grid"], config.e_min, config.e_max
             )
+
+            # TK: Cuts for the cross sections copied over from the 1D database
+            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = _eval_energy_cuts(
+                config.default_ecenters, config.e_min, config.e_max
+            )
+
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
                 int(self.max_idx - self.min_idx),
             )
-            self.dim_full = int(ca["e_dim"])
+            # TK: Changing the full dim of the csr blocks to
+            # the number of Hankel modes * the length of the energy grid
+            if config.enable_2D:
+                self.dim_full = int(ca["e_dim"]) * len(config.k_grid)
+
+            else:
+                self.dim_full = int(ca["e_dim"])
 
         self.medium = medium
 
@@ -189,7 +212,7 @@ class HDF5Backend(object):
         from scipy.sparse import csr_matrix
 
         index_d = {}
-        relations = defaultdict(lambda: [])
+        relations = defaultdict(list)
         particle_list = []
         if "description" in hdf_root.attrs:
             description = hdf_root.attrs["description"]
@@ -215,11 +238,18 @@ class HDF5Backend(object):
         available_parents = sorted(list(set(available_parents)))
 
         # Reverse equivalences
-        eqv_lookup = defaultdict(lambda: [])
+        eqv_lookup = defaultdict(list)
         for k in equivalences:
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
+            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices
+            # (in the 2D case) or to leave them the same as in the 1D case
+            if config.enable_2D:
+                expand_len = len(config.k_grid)
+            else:
+                expand_len = 1
+            # Helicity information handling
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
@@ -228,30 +258,78 @@ class HDF5Backend(object):
                 raise Exception("Failed decoding parent-child relation.")
 
             if (abs(parent_pdg[0]) in exclude) or (abs(child_pdg[0]) in exclude):
-                read_idx += len_data[tupidx]
+                read_idx += expand_len * len_data[tupidx]
                 continue
             parent_pdg = int(parent_pdg[0]), (parent_pdg[1])
             child_pdg = int(child_pdg[0]), (child_pdg[1])
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = asarray(
-                (
-                    csr_matrix(
-                        (
-                            mat_data[0, read_idx : read_idx + len_data[tupidx]],
-                            mat_data[1, read_idx : read_idx + len_data[tupidx]],
-                            indptr_data[tupidx, :],
-                        ),
-                        shape=(self.dim_full, self.dim_full),
-                    )[self._cuts, self.min_idx : self.max_idx]
-                ).toarray()
-            )
+
+            # TK: do not apply energy slicing right away in 2D! Need to do this for every k mode separately.
+            if config.enable_2D:
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )
+                    ).toarray()
+                )
+
+            else:
+                index_d[(parent_pdg, child_pdg)] = asarray(
+                    (
+                        csr_matrix(
+                            (
+                                mat_data[
+                                    0,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                mat_data[
+                                    1,
+                                    read_idx : read_idx + expand_len * len_data[tupidx],
+                                ],
+                                indptr_data[tupidx, :],
+                            ),
+                            shape=(self.dim_full, self.dim_full),
+                        )[self._cuts, self.min_idx : self.max_idx]
+                    ).toarray()
+                )
+
+            # TK: In 2D, reshape the yield matrices from a block-diagonal representation to a tensor
+            # with dimensions (len(k_grid), len(e_grid), len(e_grid)):
+            if config.enable_2D:
+                ind_blocks = np.array(
+                    [
+                        index_d[(parent_pdg, child_pdg)][
+                            i + self.min_idx : i + self.max_idx,
+                            i + self.min_idx : i + self.max_idx,
+                        ]
+                        for i in range(
+                            0,
+                            len(index_d[(parent_pdg, child_pdg)]),
+                            self.dim_full // len(config.k_grid),
+                        )
+                    ]
+                )
+                index_d[(parent_pdg, child_pdg)] = ind_blocks
+
             relations[parent_pdg].append(child_pdg)
 
             info(
                 20,
-                "This parent {0} is used for interactions of".format(parent_pdg[0]),
+                f"This parent {parent_pdg[0]} is used for interactions of",
                 [p[0] for p in eqv_lookup[parent_pdg]],
                 condition=len(equivalences) > 0,
             )
@@ -267,12 +345,10 @@ class HDF5Backend(object):
                             "parent.",
                         )
                         continue
-                    elif eqv_parent in available_parents:
+                    if eqv_parent in available_parents:
                         info(
                             10,
-                            "Parent {0} has dedicated simulation.".format(
-                                eqv_parent[0]
-                            ),
+                            f"Parent {eqv_parent[0]} has dedicated simulation.",
                         )
                         continue
                     particle_list.append(eqv_parent)
@@ -280,12 +356,10 @@ class HDF5Backend(object):
                     relations[eqv_parent] = relations[parent_pdg]
                     info(
                         15,
-                        "equivalence of {0} and {1} interactions".format(
-                            eqv_parent[0], parent_pdg[0]
-                        ),
+                        f"equivalence of {eqv_parent[0]} and {parent_pdg[0]} interactions",
                     )
 
-            read_idx += len_data[tupidx]
+            read_idx += expand_len * len_data[tupidx]
 
         return {
             "parents": sorted(list(relations)),
@@ -304,7 +378,7 @@ class HDF5Backend(object):
 
     def interaction_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
-        info(10, "Generating interaction db. mname={0}".format(mname))
+        info(10, f"Generating interaction db. mname={mname}")
         with h5py.File(self.had_fname, "r") as mceq_db:
             if (
                 self.medium not in mceq_db["hadronic_interactions"]
@@ -341,10 +415,13 @@ class HDF5Backend(object):
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
+            elif "URQMD34" in mname:
+                eqv = equivalences["URQMD34"]
             elif "FLUKA" in mname:
                 eqv = equivalences["FLUKA"]
             else:
                 raise ValueError("Unknown equivalence table for", mname)
+
             int_index = self._gen_db_dictionary(
                 mceq_db["hadronic_interactions"][medium][mname],
                 mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
@@ -386,7 +463,7 @@ class HDF5Backend(object):
                     ]
                     em_index["parents"].append((pid, h))
 
-                em_index["relations"] = defaultdict(lambda: [])
+                em_index["relations"] = defaultdict(list)
                 em_index["particles"] = []
 
                 for idx_tup in em_index["index_d"]:
@@ -410,29 +487,41 @@ class HDF5Backend(object):
         return int_index
 
     def decay_db(self, decay_dset_name):
-        info(10, "Generating decay db. dset_name={0}".format(decay_dset_name))
+        info(10, f"Generating decay db. dset_name={decay_dset_name}")
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            if config.muon_helicity_dependence:
-                if decay_dset_name != "polarized":
-                    info(
-                        0,
-                        "Warning: "
-                        + f"Does this decay dataset '{decay_dset_name}'"
-                        + " include polarization?",
-                    )
-                else:
-                    decay_dset_name = "polarized"
-                info(2, "Using helicity dependent decays.")
-
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][decay_dset_name],
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
 
+            if config.muon_helicity_dependence:
+                # TK: Support for older names of the polarized/unpolarized datasets
+                # (e.g. if testing matrices from MCEq 1.2.0)
+                try:
+                    custom_index = self._gen_db_dictionary(
+                        mceq_db["decays"]["custom_decays"],
+                        mceq_db["decays"]["custom_decays" + "_indptrs"],
+                    )
+
+                except:
+                    custom_index = self._gen_db_dictionary(
+                        mceq_db["decays"]["polarized"],
+                        mceq_db["decays"]["polarized" + "_indptrs"],
+                    )
+
+                info(2, "Using helicity dependent decays.")
+                info(5, "Replacing decay from custom decay_db.")
+                dec_index["index_d"].update(custom_index["index_d"])
+
+                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
+                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
+                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)), None)
+
             # Refresh the metadata after modifying the index
-            dec_index["relations"] = defaultdict(lambda: [])
+            dec_index["relations"] = defaultdict(list)
             dec_index["particles"] = []
 
             for idx_tup in dec_index["index_d"]:
@@ -475,7 +564,9 @@ class HDF5Backend(object):
             index_d = {}
             parents = list(cs_db.attrs["projectiles"])
             for ip, p in enumerate(parents):
-                index_d[p] = cs_data[self._cuts, ip]
+                # TK: apply the cross section cuts (assuming the cross section
+                # array is defined on the full 1D MCEq grid)
+                index_d[p] = cs_data[self.cs_cuts, ip]
 
         if config.adv_set["replace_meson_cross_sections_with"] is not None:
             mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
@@ -519,16 +610,20 @@ class HDF5Backend(object):
                 loss_case = "ionization"
             else:
                 loss_case = "total"
-            cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
-            # No rad losses for hadrons implememented
-            cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
+            try:
+                cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
+                # No rad losses for hadrons implememented
+                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
+            except:
+                cl_db = mceq_db["continuous_losses"][self.medium]
+                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]
             index_d = {}
             generic_dedx = None
 
             for k in list(cl_db):
                 if k != "hadron":
                     for hel in [0, 1, -1]:
-                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                        index_d[(int(k), hel)] = cl_db[k][self.cs_cuts]
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
@@ -550,11 +645,10 @@ class HDF5Backend(object):
                 "index_d": index_d,
                 "generic": generic_dedx,
             }
-        else:
-            return {"parents": sorted(list(index_d)), "index_d": index_d}
+        return {"parents": sorted(list(index_d)), "index_d": index_d}
 
 
-class Interactions(object):
+class Interactions:
     """Class for managing the dictionary of interaction yield matrices.
 
     Args:
@@ -584,7 +678,7 @@ class Interactions(object):
         # #: (tuple) selection of a band of coeffictients (in xf)
         # self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = defaultdict(lambda: {})
+        self.mod_pprod = defaultdict(dict)
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
@@ -728,9 +822,7 @@ class Interactions(object):
             info(
                 5,
                 " no changes to particle production"
-                + " modification matrix of {0}/{1} for {2},{3}".format(
-                    prim_pdg, sec_pdg, x_func.__name__, args
-                ),
+                + f" modification matrix of {prim_pdg}/{sec_pdg} for {x_func.__name__},{args}",
             )
             return False
 
@@ -747,9 +839,7 @@ class Interactions(object):
         info(
             2,
             "modifying modify particle production"
-            + " matrix of {0}/{1} for {2},{3}".format(
-                prim_pdg, sec_pdg, x_func.__name__, args
-            ),
+            + f" matrix of {prim_pdg}/{sec_pdg} for {x_func.__name__},{args}",
         )
 
         kmat = self._gen_mod_matrix(x_func, *args)
@@ -848,9 +938,7 @@ class Interactions(object):
             for j, (argname, argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
                 info(
                     2,
-                    "{0}: {1} -> {2}, func: {3}, arg: {4}".format(
-                        i + j, prim_pdg, sec_pdg, argname, argv
-                    ),
+                    f"{i + j}: {prim_pdg} -> {sec_pdg}, func: {argname}, arg: {argv}",
                     no_caller=True,
                 )
 
@@ -865,9 +953,7 @@ class Interactions(object):
         """
         info(10, "Called for", parent, child)
         if child not in self.relations[parent]:
-            raise Exception(
-                ("trying to get empty matrix {0} -> {1}").format(parent, child)
-            )
+            raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
         m = self.index_d[(parent, child)]
 
@@ -900,9 +986,7 @@ class Interactions(object):
         if (parent[0], child[0]) in list(self.mod_pprod):
             info(
                 5,
-                "using modified particle production for {0}/{1}".format(
-                    parent[0], child[0]
-                ),
+                f"using modified particle production for {parent[0]}/{child[0]}",
             )
             i = 0
             m = np.copy(m)
@@ -914,7 +998,7 @@ class Interactions(object):
         return m
 
 
-class Decays(object):
+class Decays:
     """Class for managing the dictionary of decay yield matrices.
 
     Args:
@@ -941,7 +1025,21 @@ class Decays(object):
         if decay_dset is None:
             decay_dset = self._default_decay_dset
 
-        index = self.mceq_db.decay_db(decay_dset)
+        try:
+            index = self.mceq_db.decay_db(decay_dset)
+
+        # TK: Support for older names of the polarized/unpolarized datasets
+        # (e.g. if testing matrices from MCEq 1.2.0)
+        except:
+            if decay_dset == "unpolarized":
+                decay_dset = "full_decays"
+
+            elif decay_dset == "polarized":
+                decay_dset = "custom_decays"
+
+            print("defaulting to %s" % decay_dset)
+
+            index = self.mceq_db.decay_db(decay_dset)
 
         self.parents = index["parents"]
         self.particles = index["particles"]
@@ -987,7 +1085,7 @@ class Decays(object):
 
     def children(self, parent_pdg):
         if parent_pdg not in self.relations:
-            raise Exception("Parent {0} not in decay database.".format(parent_pdg))
+            raise Exception(f"Parent {parent_pdg} not in decay database.")
 
         return self.relations[parent_pdg]
 
@@ -1002,14 +1100,12 @@ class Decays(object):
         """
         info(20, "entering with", parent, child)
         if child not in self.relations[parent]:
-            raise Exception(
-                ("trying to get empty matrix {0} -> {1}").format(parent, child)
-            )
+            raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
         return self.index_d[(parent, child)]
 
 
-class InteractionCrossSections(object):
+class InteractionCrossSections:
     """Class for managing the dictionary of hadron-air cross-sections.
 
     Args:
@@ -1095,11 +1191,10 @@ class InteractionCrossSections(object):
 
         if not mbarn:
             return self.mbarn2cm2 * cs
-        else:
-            return cs
+        return cs
 
 
-class ContinuousLosses(object):
+class ContinuousLosses:
     """Class for managing the dictionary of hadron-air cross-sections.
 
     Args:
