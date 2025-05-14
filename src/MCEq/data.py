@@ -421,8 +421,8 @@ class HDF5Backend:
                     info(
                         0,
                         "Warning: "
-                        + f"Does this decay dataset '{decay_dset_name}'"
-                        + " include polarization?",
+                        f"Does this decay dataset '{decay_dset_name}'"
+                        " include polarization?",
                     )
                 else:
                     decay_dset_name = "polarized"
@@ -476,7 +476,7 @@ class HDF5Backend:
             cs_db = mceq_db["cross_sections"][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = list(cs_db.attrs["projectiles"])
+            parents = list(cs_db.attrs["parents"])
             for ip, p in enumerate(parents):
                 index_d[p] = cs_data[self._cuts, ip]
 
@@ -490,7 +490,7 @@ class HDF5Backend:
                 )
                 mes_cs_db = mceq_db["cross_sections"][medium][mname_mesons]
                 mes_cs_data = mes_cs_db[:]
-                mes_parents = list(mes_cs_db.attrs["projectiles"])
+                mes_parents = list(mes_cs_db.attrs["parents"])
                 for ip, p in enumerate(mes_parents):
                     if p in index_d and (100 < abs(p) < 2000):
                         info(1, "Meson cross sections for", p, "replaced.")
@@ -504,7 +504,7 @@ class HDF5Backend:
                 self._check_subgroup_exists(em_db["electromagnetic"], medium)
                 em_cs = em_db["electromagnetic"][medium]["cs"][:]
                 em_parents = list(
-                    em_db["electromagnetic"][medium]["cs"].attrs["projectiles"]
+                    em_db["electromagnetic"][medium]["cs"].attrs["parents"]
                 )
 
                 for ip, p in enumerate(em_parents):

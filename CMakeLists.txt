@@ -24,7 +24,7 @@ if(APPLE)
       "${CMAKE_SHARED_LINKER_FLAGS} -framework Accelerate -arch arm64 -arch x86_64"
   )
   python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
-  install(TARGETS _libspacc DESTINATION ${INSTALL_DIR})
+  install(TARGETS _libspacc DESTINATION ${INSTALL_DIR}/spacc)
 endif()
 
 python_add_library(
