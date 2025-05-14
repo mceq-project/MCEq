@@ -1,4 +1,5 @@
 # import os.path as path
+import importlib.util
 import pathlib
 import platform
 import sys
@@ -251,12 +252,12 @@ adv_set = {
 }
 
 #: Particles for compact mode
-standard_particles = [11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431]
+standard_particles = [11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421]
 
 #: Anti-particles
 standard_particles += [-pid for pid in standard_particles]
 
-#: unflavored particles
+#: Neutral & unflavored particles
 #: append 221, 223, 333, if eta, omega and phi needed directly
 standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 
@@ -276,25 +277,26 @@ elif "macOS" in pf:
     mkl_path = prefix / "lib" / "libmkl_rt.dylib"
     has_accelerate = True
 else:
-    # Windows case
-    mkl_path = prefix / "Library" / "bin", "mkl_rt.dll"
+    # Windows or unknown OS: search for mkl_rt*.dll in Library/bin and lib
+    mkl_path = None
+    mkl_dirs = [prefix / "Library" / "bin", prefix / "lib"]
+    mkl_candidates = []
+    for d in mkl_dirs:
+        if d.exists():
+            mkl_candidates.extend(d.glob("mkl_rt*.dll"))
+    if mkl_candidates:
+        mkl_path = mkl_candidates[0]
+    else:
+        # fallback to default path
+        mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
 
 # mkl library handler
 mkl = None
 
-# Check if MKL library found
-if mkl_path.is_file():
-    has_mkl = True
-else:
-    has_mkl = False
+has_mkl = bool(mkl_path.is_file())
 
 # Look for cupy module
-try:
-    import cupy
-
-    has_cuda = True
-except ImportError:
-    has_cuda = False
+has_cuda = importlib.util.find_spec("cupy") is not None
 
 
 class FileIntegrityCheck:

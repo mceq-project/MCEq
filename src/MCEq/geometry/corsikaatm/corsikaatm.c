@@ -1,14 +1,13 @@
 
 #include <math.h>
 
-
 double
 #if _MSC_VER >= 1200
-__declspec(dllexport) 
+    __declspec(dllexport)
 #endif
-planar_rho_inv(double X, double cos_theta,
-               double *a, double *b, double *c,
-               double *t, double *hl)
+    planar_rho_inv(double X, double cos_theta,
+                   double *a, double *b, double *c,
+                   double *t, double *hl)
 {
     /*Optimized calculation of :math:`1/\\rho(X,\\theta)` in
     planar approximation.
@@ -42,11 +41,11 @@ planar_rho_inv(double X, double cos_theta,
 
 double
 #if _MSC_VER >= 1200
-__declspec(dllexport) 
+    __declspec(dllexport)
 #endif
-corsika_get_density(double h_cm, double *a,
-                    double *b, double *c,
-                    double *t, double *hl)
+    corsika_get_density(double h_cm, double *a,
+                        double *b, double *c,
+                        double *t, double *hl)
 {
     /*Optimized calculation of :math:`\\rho(h)` in
     according to CORSIKA type parameterization.
@@ -75,11 +74,11 @@ corsika_get_density(double h_cm, double *a,
 }
 double
 #if _MSC_VER >= 1200
-__declspec(dllexport) 
+    __declspec(dllexport)
 #endif
-corsika_get_m_overburden(double h_cm, double *a,
-                         double *b, double *c,
-                         double *t, double *hl)
+    corsika_get_m_overburden(double h_cm, double *a,
+                             double *b, double *c,
+                             double *t, double *hl)
 {
     /*Optimized calculation of :math:`\\T(h)` in
     according to CORSIKA type parameterization.
@@ -107,4 +106,3 @@ corsika_get_m_overburden(double h_cm, double *a,
 
     return res;
 }
-

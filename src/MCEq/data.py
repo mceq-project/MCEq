@@ -476,7 +476,9 @@ class HDF5Backend:
             cs_db = mceq_db["cross_sections"][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = list(cs_db.attrs["parents"])
+            parents = list(
+                cs_db.attrs["parents" if "parents" in cs_db.attrs else "projectiles"]
+            )
             for ip, p in enumerate(parents):
                 index_d[p] = cs_data[self._cuts, ip]
 
