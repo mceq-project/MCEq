@@ -282,11 +282,23 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             ("SouthPole", "December"),
             ("PL_SouthPole", "January"),
             ("PL_SouthPole", "August"),
+            ("SDR_SouthPole", "January"),
+            ("SDR_SouthPole", "February"),
+            ("SDR_SouthPole", "March"),
+            ("SDR_SouthPole", "April"),
+            ("SDR_SouthPole", "May"),
+            ("SDR_SouthPole", "June"),
+            ("SDR_SouthPole", "July"),
+            ("SDR_SouthPole", "August"),
+            ("SDR_SouthPole", "September"),
+            ("SDR_SouthPole", "October"),
+            ("SDR_SouthPole", "November"),
+            ("SDR_SouthPole", "December")
         ]
         assert (
             location,
             season,
-        ) in cka_atmospheres, "{0}/{1} not available for CorsikaAtmsophere".format(
+        ) in cka_atmospheres, "{0}/{1} not available for CorsikaAtmosphere".format(
             location, season
         )
         self.init_parameters(location, season)
@@ -301,21 +313,23 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         (`see this issue <https://github.com/afedynitch/MCEq/issues/12>`_)
 
         +---------------------+-------------------+------------------------------+
-        | location            | CORSIKA Table     | Description/season           |
+        | location            |   CORSIKA MODATM  | Description/season           |
         +=====================+===================+==============================+
-        | "USStd"             |         23        |  US Standard atmosphere      |
+        | "USStd"             |          1        |  US Standard atmosphere      |
         +---------------------+-------------------+------------------------------+
-        | "BK_USStd"          |         37        |  Bianca Keilhauer's USStd    |
+        | "BK_USStd"          |         17        |  Bianca Keilhauer's USStd    |
         +---------------------+-------------------+------------------------------+
-        | "Karlsruhe"         |         24        |  AT115 / Karlsruhe           |
+        | "Karlsruhe"         |          2        |  AT115 / Karlsruhe           |
         +---------------------+-------------------+------------------------------+
-        | "SouthPole"         |      26 and 28    |  MSIS-90-E for Dec and June  |
+        | "SouthPole"         |     14 and 12     |  MSIS-90-E for Dec and June  |
         +---------------------+-------------------+------------------------------+
-        |"PL_SouthPole"       |      29 and 30    |  P. Lipari's  Jan and Aug    |
+        |"PL_SouthPole"       |     15 and 16     |  P. Lipari's  Jan and Aug    |
         +---------------------+-------------------+------------------------------+
-        |"ANTARES/KM3NeT-ORCA"|    NA             |  PhD T. Heid                 |
+        |"SDR_SouthPole"      |      30 to 41     | S. De Ridder, every month    |
         +---------------------+-------------------+------------------------------+
-        | "KM3NeT-ARCA"       |    NA             |  PhD T. Heid                 |
+        |"ANTARES/KM3NeT-ORCA"|         NA        |  PhD T. Heid                 |
+        +---------------------+-------------------+------------------------------+
+        | "KM3NeT-ARCA"       |         NA        |  PhD T. Heid                 |
         +---------------------+-------------------+------------------------------+
 
 
@@ -459,6 +473,109 @@ class CorsikaAtmosphere(EarthsAtmosphere):
                     [1019.946057, 391.739652, 138.023515, 43.687992, 0.000022]
                 )
                 _hlay = np.array([0.0, 6.67e5, 13.33e5, 2.0e6, 1.0e7])
+            else:
+                raise Exception(
+                    'CorsikaAtmosphere(): Season "'
+                    + season
+                    + '" not parameterized for location SouthPole.'
+                )
+        elif location == "SDR_SouthPole":
+            if season == "January":
+                _aatm = np.array([-91.6956, 7.01491, 0.505452, -0.00181302, 0.00207722])
+                _batm = np.array([1125.71, 1149.81, 1032.68, 490.789, 1.0])
+                _catm = np.array([821621.0, 635444.0, 682968.0, 807327.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1034.012527, 343.944792, 94.067894, 3.291329, 0.000236]
+                )
+                _hlay = np.array([0.0, 7.8e5, 1.64e6, 4.04e6, 1.0e7])
+            elif season == "February":
+                _aatm = np.array([-72.1988, 22.7002, 0.430171, -0.0012030, 0.00207722])
+                _batm = np.array([1108.19, 1159.77, 1079.25, 523.956, 1.0])
+                _catm = np.array([786271.0, 599986.0, 667432.0, 780919.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1035.987489, 328.422968, 220.918411, 2.967188, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.0e5, 1.06e6, 4.04e6, 1.0e7])
+            elif season == "March":
+                _aatm = np.array([-63.7290, -1.02799, 0.324414, -0.000490772, 0.00207722])
+                _batm = np.array([1102.66, 1093.56, 1198.93, 589.827, 1.0])
+                _catm = np.array([764831.0, 660389.0, 636118.0, 734909.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1038.92306, 395.458197, 35.764007, 2.416571, 0.000236]
+                )
+                _hlay = np.array([0.0, 6.7e5, 2.24e6, 4.04e6, 1.0e7])
+            elif season == "April":
+                _aatm = np.array([-69.7259, -2.79781, 0.262692, -0.0000841695, 0.00207722])
+                _batm = np.array([1111.70, 1128.64, 1413.98, 587.688, 1.0])
+                _catm = np.array([766099.0, 641716.0, 588082.0, 693300.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1041.972041, 342.512757, 33.817874, 1.731426, 0.000236]
+                )
+                _hlay = np.array([0.0, 7.6e5, 2.2e6, 4.04e6, 1.0e7])
+            elif season == "May":
+                _aatm = np.array([-78.5551, -5.33239, 0.312889, -0.0000920472, 0.00152236])
+                _batm = np.array([1118.46, 1169.09, 1577.71, 452.177, 1.0])
+                _catm = np.array([776648.0, 626683.0, 553087.0, 696835.0, 7.4095699e9])
+                _thickl = np.array(
+                    [1039.912752, 300.670386, 42.734726, 1.517136, 0.000173]
+                )
+                _hlay = np.array([0.0, 8.4e5, 2.0e6, 3.97e6, 1.0e7])
+            elif season == "June":
+                _aatm = np.array([-92.6125, -8.56450, 0.363986, 0.00207722, 0.00152236])
+                _batm = np.array([1129.88, 1191.98, 1619.82, 411.586, 1.0])
+                _catm = np.array([791177.0, 618840.0, 535235.0, 692253.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1037.258545, 293.258798, 57.517838, 1.604677, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.5e5, 1.79e6, 3.84e6, 1.0e7])
+            elif season == "July":
+                _aatm = np.array([-89.9639, -13.9697, 0.441631, -0.0000146525, 0.00207722])
+                _batm = np.array([1125.73, 1180.47, 1581.43, 373.796, 1.0])
+                _catm = np.array([784553.0, 628042.0, 531652.0, 703417.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1035.760962, 291.018963, 79.913857, 1.808649, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.5e5, 1.59e6, 3.75e6, 1.0e7])
+            elif season == "August":
+                _aatm = np.array([-90.4253, -18.7154, 0.513930, -0.00021565, 0.00152336])
+                _batm = np.array([1125.01, 1175.60, 1518.03, 299.006, 1.0])
+                _catm = np.array([781628.0, 633793.0, 533269.0, 737794.0, 7.4095699e9])
+                _thickl = np.array(
+                    [1034.576882, 288.770552, 102.500845, 1.854518, 0.000173]
+                )
+                _hlay = np.array([0.0, 8.5e5, 1.44e6, 3.75e6, 1.0e7])
+            elif season == "September":
+                _aatm = np.array([-91.6860, -23.3519, 0.891302, -0.000765666, 0.00207722])
+                _batm = np.array([1125.53, 1169.77, 1431.26, 247.030, 1.0])
+                _catm = np.array([786017.0, 645241.0, 545022.0, 805419.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1033.830437, 289.992106, 132.66489, 2.758468, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.5e5, 1.3e6, 3.62e6, 1.0e7])
+            elif season == "October":
+                _aatm = np.array([451.616, -85.5456, 2.06082, -0.0010760, 0.00207722])
+                _batm = np.array([849.239, 1113.16, 1322.28, 372.242, 1.0])
+                _catm = np.array([225286.0, 789340.0, 566132.0, 796434.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1300.861796, 666.125666, 224.149961, 7.129645, 0.000236]
+                )
+                _hlay = np.array([0.0, 3.1e5, 1.01e6, 3.15e6, 1.0e7])
+            elif season == "November":
+                _aatm = np.array([-152.853, 4.22741, 1.38352, -0.00115014, 0.00207722])
+                _batm = np.array([1174.09, 1272.49, 975.906, 481.615, 1.0])
+                _catm = np.array([891602.0, 582119.0, 643130.0, 783786.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1021.228204, 299.692876, 31.36022, 7.715379, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.5e5, 2.24e6, 3.24e6, 1.0e7])
+            elif season == "December":
+                _aatm = np.array([-100.386, 5.43849, 0.399465, -0.00175472, 0.00207722])
+                _batm = np.array([1128.71, 1198.10, 858.522, 480.142, 1.0])
+                _catm = np.array([829352.0, 612649.0, 706104.0, 806875.0, 5.4303203e9])
+                _thickl = np.array(
+                    [1028.319337, 304.628519, 38.473287, 3.210929, 0.000236]
+                )
+                _hlay = np.array([0.0, 8.5e5, 2.2e6, 4.04e6, 1.0e7])
             else:
                 raise Exception(
                     'CorsikaAtmosphere(): Season "'
@@ -1415,6 +1532,7 @@ if __name__ == "__main__":
         ("SouthPole", "December"),
         ("PL_SouthPole", "January"),
         ("PL_SouthPole", "August"),
+        ("SDR_SouthPole", "April"),
     ]
     cka_surf_100 = []
     for loc, season in cka_atmospheres:
