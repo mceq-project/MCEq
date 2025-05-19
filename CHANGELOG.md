@@ -1,4 +1,50 @@
-# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions
+
+Version 1.3.8:
+
+- New default data file in preparation for 1.4 update
+- Recomputed decay database and separated 3-body (3b) decays of Kaons
+- Unpolarized 3b decay of kaons full accounted for helicity dependent calculations
+
+Version 1.3.7:
+
+- New interface to Apple Accelerate/vecLib library for accelerated computation on Apple Silicon macs
+- Geometry/atmosphere interfaces moved to package level from redundant python source files
+- Merged AArch64 on linux support from master
+- Some advanced options to mix and match yields and inelastic cross sections from different models
+- Different Z-Factor function in DDM
+
+Version 1.3.5:
+
+- Code formatter changed to black
+- Additional functions to help returning total momentum or energy spectra (instead of kinetic)
+- changing observation level `mceq.density_profile.set_h_obs()` triggers density spline recomputation
+
+Version 1.3.4:
+
+- DPMJET-III K0 bug discovered and worked around. K0S/L matrices were not generated properly. The workaround is to construct K0 distributions from a sum of K+ and K- with proportions determined from a fit of the Zfactors to the true K0S/L distributions. K0S is equal to K0L by definition in all of the models.
+- Source dist fix. Package should now compile under Python 3.9 or other custom platforms easily via pip.
+
+Version 1.3.3:
+
+- Initialization moved almost entirely to GPU if available, matrix construction may be x2-x3 faster before
+- Config defaults "auto" setting for `kernel_config` and respects other custom settings
+- GPU sparse solver simplified
+- Floating point precision defaults always to fp32 (see `config.floatlen`). MKL doesn't work with fp32 for some reason.
+
+Version 1.3.1:
+
+- Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen | iron`
+- Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`
+- Update to air interaction cross section, which is now consistently computed for mixture of N, O and Ar
+- The pre-averaged cross section for air in SIBYLL2.3 models can be selected with medium='air-legacy'
+- `A_target = 'auto'` will pic correct mass number for the selected medium
+- Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
+- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model
+- Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
+- MCEqRun.density_model.set_h_obs can be used to change observation level altitude
+- Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
+- deprecation warning forced for config access via dictionary (instead of module)
 
 Version 1.2.6:
 
@@ -10,12 +56,23 @@ Version 1.2.5:
 
 Version 1.2.3:
 
+
 - Binary wheel for aarch64 on linux. Thanks to @obidev
 
 Version 1.2.2:
 
+
 - Added wheels for Python 3.9 on 64 bit systems
 - Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
+
+Version 1.2.1:
+
+- Some cleanup and new convenience functions on MCEqParticle
+- Auto detection of leading eigenvalues setting
+- Mixing energy more robustly calculated
+- Stopping power for all charged hadrons enabled by option 'generic_losses_all_charged' (req. new data file)
+- Default minimal energy increased to 1 GeV because it's safe under all conditions (no swing)
+- get_AZN function fixed to return integers only (thx Max)
 
 Version 1.2.0:
 
