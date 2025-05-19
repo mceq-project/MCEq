@@ -252,7 +252,7 @@ adv_set = {
 }
 
 #: Particles for compact mode
-standard_particles = [11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421]
+standard_particles = [11, 12, 13, 14, 16, 211, 321, 2212, 2112, 3122, 411, 421, 431]
 
 #: Anti-particles
 standard_particles += [-pid for pid in standard_particles]

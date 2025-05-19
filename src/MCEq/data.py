@@ -156,8 +156,7 @@ class HDF5Backend:
                 raise Exception(
                     f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
                 )
-            else:
-                self.had_fname = config.mceq_db_fname
+            self.had_fname = config.mceq_db_fname
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
@@ -165,8 +164,7 @@ class HDF5Backend:
                 raise Exception(
                     f'Electromagnetic DB file {config.em_db_fname} not found in "data" directory.'
                 )
-            else:
-                self.em_fname = config.em_db_fname
+            self.em_fname = config.em_db_fname
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             from MCEq.misc import energy_grid
@@ -303,7 +301,7 @@ class HDF5Backend:
         if mname not in available_models:
             info(0, "Invalid choice/model", mname)
             info(0, "Choose from:\n", "\n".join(available_models))
-            raise Exception("Unknown selections.")
+            raise Exception(f"Unknown selection {mname}.")
 
     def interaction_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
@@ -319,9 +317,9 @@ class HDF5Backend:
                 info(
                     1,
                     (
-                        "Production matrices for {0} in {1} not found."
-                        + "Fall-back to air."
-                    ).format(mname, self.medium),
+                        f"Production matrices for {mname} in {self.medium} not found. "
+                        "Fall-back to air."
+                    ),
                 )
                 medium = "air"
             else:
