@@ -22,7 +22,7 @@ jobs:
         include:
           - os: windows-latest
             python-version: "3.12"
-            installs: "mkl nummpy>=2 scipy matplotlib"
+            installs: "mkl numpy>=2 scipy matplotlib"
 
           - os: macos-14
             python-version: "3.12"
