@@ -1,6 +1,13 @@
 from MCEq.misc import info
-import six
 import MCEq.geometry.nrlmsise00.nrlmsise00 as cmsis
+from MCEq.geometry.atmosphere_parameters import (
+    LOCATIONS,
+    MONTH_TO_DAY_OF_YEAR,
+    DAY_TIMES_SEC,
+    DEFAULT_F107A,
+    DEFAULT_F107,
+    DEFAULT_AP
+)
 
 
 class NRLMSISE00Base(object):
@@ -11,37 +18,11 @@ class NRLMSISE00Base(object):
         self.inp = cmsis.nrlmsise_input()
         self.output = cmsis.nrlmsise_output()
         self.flags = cmsis.nrlmsise_flags()
-        self.month2doy = {
-            'January': 1,
-            'February': 32,
-            'March': 60,
-            'April': 91,
-            'May': 121,
-            'June': 152,
-            'July': 182,
-            'August': 213,
-            'September': 244,
-            'October': 274,
-            'November': 305,
-            'December': 335
-        }
-        # Longitude, latitude, height
-        self.locations = {
-            'SouthPole': (0., -90., 2834. * 100.),
-            'Karlsruhe': (8.4, 49., 110. * 100.),
-            'Geneva': (6.1, 46.2, 370. * 100.),
-            'Tokyo': (139., 35., 5. * 100.),
-            'SanGrasso': (13.5, 42.4, 5. * 100.),
-            'TelAviv': (34.8, 32.1, 5. * 100.),
-            'KSC': (-80.7, 32.1, 5. * 100.),
-            'SoudanMine': (-92.2, 47.8, 5. * 100.),
-            'Tsukuba': (140.1, 36.2, 30. * 100.),
-            'LynnLake': (-101.1, 56.9, 360. * 100.),
-            'PeaceRiver': (-117.2, 56.15, 36000. * 100.),
-            'FtSumner': (-104.2, 34.5, 31000. * 100.)
-        }
-
-        self.daytimes = {'day': 43200., 'night': 0.}
+        # Use imported constants
+        self.month2doy = MONTH_TO_DAY_OF_YEAR
+        self.locations = LOCATIONS
+        self.daytimes = DAY_TIMES_SEC
+        
         self.current_location = 'SouthPole'
         self.init_default_values()
 
@@ -84,9 +65,10 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.inp.lst = cmsis.c_double(self.inp.sec.value / 3600. +
                                       self.inp.g_long.value / 15.)
         # Do not touch this except you know what you are doing
-        self.inp.f107A = cmsis.c_double(150.)
-        self.inp.f107 = cmsis.c_double(150.)
-        self.inp.ap = cmsis.c_double(4.)
+        # Use imported constants
+        self.inp.f107A = cmsis.c_double(DEFAULT_F107A)
+        self.inp.f107 = cmsis.c_double(DEFAULT_F107)
+        self.inp.ap = cmsis.c_double(DEFAULT_AP)
         self.inp.ap_a = cmsis.pointer(cmsis.ap_array())
         self.alt_surface = self.locations[self.current_location][2]
 
