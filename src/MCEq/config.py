@@ -22,7 +22,7 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = pathlib.Path(base_path / "data")
+data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
 mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
