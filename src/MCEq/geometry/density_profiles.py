@@ -81,7 +81,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         )
 
         thrad = self.thrad
-        path_length = self.geom.l(thrad)
+        path_length = self.geom.path_len(thrad)
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
         )

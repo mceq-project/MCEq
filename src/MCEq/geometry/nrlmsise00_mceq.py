@@ -8,6 +8,7 @@ from MCEq.geometry.atmosphere_parameters import (
     MONTH_TO_DAY_OF_YEAR,
 )
 from MCEq.misc import info
+from ctypes import pointer, byref, c_double, c_int
 
 
 class NRLMSISE00Base:
@@ -54,26 +55,26 @@ class cNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
 
-        self.inp.doy = cmsis.c_int(self.month2doy["June"])  # Day of year
-        self.inp.year = cmsis.c_int(0)  # No effect
-        self.inp.sec = cmsis.c_double(self.daytimes["day"])  # 12:00
-        self.inp.alt = cmsis.c_double(self.locations[self.current_location][2])
-        self.inp.g_lat = cmsis.c_double(self.locations[self.current_location][1])
-        self.inp.g_long = cmsis.c_double(self.locations[self.current_location][0])
-        self.inp.lst = cmsis.c_double(
+        self.inp.doy = c_int(self.month2doy["June"])  # Day of year
+        self.inp.year = c_int(0)  # No effect
+        self.inp.sec = c_double(self.daytimes["day"])  # 12:00
+        self.inp.alt = c_double(self.locations[self.current_location][2])
+        self.inp.g_lat = c_double(self.locations[self.current_location][1])
+        self.inp.g_long = c_double(self.locations[self.current_location][0])
+        self.inp.lst = c_double(
             self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0
         )
         # Do not touch this except you know what you are doing
         # Use imported constants
-        self.inp.f107A = cmsis.c_double(DEFAULT_F107A)
-        self.inp.f107 = cmsis.c_double(DEFAULT_F107)
-        self.inp.ap = cmsis.c_double(DEFAULT_AP)
-        self.inp.ap_a = cmsis.pointer(cmsis.ap_array())
+        self.inp.f107A = c_double(DEFAULT_F107A)
+        self.inp.f107 = c_double(DEFAULT_F107)
+        self.inp.ap = c_double(DEFAULT_AP)
+        self.inp.ap_a = pointer(cmsis.ap_array())
         self.alt_surface = self.locations[self.current_location][2]
 
-        self.flags.switches[0] = cmsis.c_int(0)
+        self.flags.switches[0] = c_int(0)
         for i in range(1, 24):
-            self.flags.switches[i] = cmsis.c_int(1)
+            self.flags.switches[i] = c_int(1)
 
     def set_location(self, tag):
         if tag not in list(self.locations):
@@ -81,7 +82,7 @@ class cNRLMSISE00(NRLMSISE00Base):
                 f"NRLMSISE00::set_location(): Unknown location tag '{tag}'."
             )
 
-        self.inp.alt = cmsis.c_double(self.locations[tag][2])
+        self.inp.alt = c_double(self.locations[tag][2])
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
@@ -90,8 +91,8 @@ class cNRLMSISE00(NRLMSISE00Base):
         info(5, f"long={longitude:5.2f}, lat={latitude:5.2f}")
         if abs(latitude) > 90 or abs(longitude) > 180:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
-        self.inp.g_lat = cmsis.c_double(latitude)
-        self.inp.g_long = cmsis.c_double(longitude)
+        self.inp.g_lat = c_double(latitude)
+        self.inp.g_long = c_double(longitude)
 
     def set_season(self, tag):
         if tag not in self.month2doy:
@@ -103,14 +104,14 @@ class cNRLMSISE00(NRLMSISE00Base):
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
         info(5, "day of year", doy)
-        self.inp.doy = cmsis.c_int(doy)
+        self.inp.doy = c_int(doy)
 
     def _retrieve_result(self, altitude_cm):
         if self.last_alt == altitude_cm:
             return
 
         inp = self.inp
-        inp.alt = cmsis.c_double(altitude_cm / 1e5)
+        inp.alt = c_double(altitude_cm / 1e5)
         cmsis.msis.gtd7_py(
             inp.year,
             inp.doy,
@@ -123,8 +124,8 @@ class cNRLMSISE00(NRLMSISE00Base):
             inp.f107,
             inp.ap,
             inp.ap_a,
-            cmsis.byref(self.flags),
-            cmsis.byref(self.output),
+            byref(self.flags),
+            byref(self.output),
         )
 
         self.last_alt = altitude_cm
