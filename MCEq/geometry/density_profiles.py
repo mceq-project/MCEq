@@ -866,8 +866,9 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         # Allow for upgoing zenith angles
         self.max_theta = 180.0
 
-    def latitude(self, det_zenith_deg):
-        """Returns the geographic latitude of the shower impact point.
+    def depth_correction(self, det_zenith_deg):
+        """Returns the geographic latitude (plus 90 deg.) of the 
+        shower impact point.
 
         Assumes a spherical earth. The detector is 1948m under the
         surface.
@@ -881,7 +882,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
           float: latitude of the impact point in degrees
         """
         r = self.geom.r_E
-        d = 1948  # m
+        d = 1948 * 1e2 # cm (same as r_E)
 
         theta_rad = det_zenith_deg / 180.0 * np.pi
 
@@ -890,31 +891,25 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         ) * np.cos(theta_rad)
 
         return (
-            -90.0
-            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
             / np.pi
             * 180.0
         )
 
     def set_theta(self, theta_deg):
 
-        self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
+        alpha_deg = self.depth_correction(theta_deg)
+        theta_deg = theta_deg-alpha_deg
+
+        self._msis.set_location_coord(longitude=0.0, latitude=alpha_deg-90.0)
         info(
             1,
             "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
-                self.latitude(theta_deg), theta_deg
+                alpha_deg-90.0, theta_deg
             ),
         )
-        downgoing_theta_deg = theta_deg
-        if theta_deg > 90.0:
-            downgoing_theta_deg = 180.0 - theta_deg
-            info(
-                1,
-                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
-                    theta_deg, downgoing_theta_deg
-                ),
-            )
-        MSIS00Atmosphere.set_theta(self, downgoing_theta_deg)
+
+        MSIS00Atmosphere.set_theta(self, theta_deg)
 
         self.theta_deg = theta_deg
 
