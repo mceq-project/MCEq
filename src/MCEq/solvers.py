@@ -1,6 +1,6 @@
-
 import numpy as np
-import MCEq.config as config
+
+from MCEq import config
 from MCEq.misc import info
 
 
@@ -27,9 +27,10 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     ric = rho_inv
     phc = phi
 
-    dXaccum = 0.
+    dXaccum = 0.0
 
     from time import time
+
     start = time()
 
     for step in range(nsteps):
@@ -37,23 +38,24 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
         dXaccum += dxc[step]
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
 
     return phc, np.array(grid_sol)
 
 
-class CUDASparseContext(object):
+class CUDASparseContext:
     """This class handles the transfer between CPU and GPU memory, and the calling
     of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
     :func:`solv_CUDA_sparse`.
     """
+
     def __init__(self, int_m, dec_m, device_id=0):
 
         if config.cuda_fp_precision == 32:
@@ -61,18 +63,20 @@ class CUDASparseContext(object):
         elif config.cuda_fp_precision == 64:
             self.fl_pr = np.float64
         else:
-            raise Exception(
-                "CUDASparseContext(): Unknown precision specified.")
+            raise Exception("CUDASparseContext(): Unknown precision specified.")
         # Setup GPU stuff and upload data to it
         try:
             import cupy as cp
             import cupyx.scipy as cpx
+
             self.cp = cp
             self.cpx = cpx
             self.cubl = cp.cuda.cublas
         except ImportError:
-            raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
-                            "installed.\nCan not use GPU.")
+            raise Exception(
+                "solv_CUDA_sparse(): Numbapro CUDA libaries not "
+                + "installed.\nCan not use GPU."
+            )
 
         cp.cuda.Device(config.cuda_gpu_id).use()
         self.cubl_handle = self.cubl.create()
@@ -82,8 +86,7 @@ class CUDASparseContext(object):
         """Upload sparce matrices to GPU memory"""
         self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
         self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
-        self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0],
-                                          dtype=self.fl_pr)
+        self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0], dtype=self.fl_pr)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -111,19 +114,29 @@ class CUDASparseContext(object):
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        self.cp.cusparse.csrmv(a=self.cu_int_m,
-                               x=self.cu_curr_phi,
-                               y=self.cu_delta_phi,
-                               alpha=1.,
-                               beta=0.)
-        self.cp.cusparse.csrmv(a=self.cu_dec_m,
-                               x=self.cu_curr_phi,
-                               y=self.cu_delta_phi,
-                               alpha=rho_inv,
-                               beta=1.)
-        self.cubl.saxpy(self.cubl_handle, self.cu_delta_phi.shape[0], dX,
-                        self.cu_delta_phi.data.ptr, 1,
-                        self.cu_curr_phi.data.ptr, 1)
+        self.cp.cusparse.csrmv(
+            a=self.cu_int_m,
+            x=self.cu_curr_phi,
+            y=self.cu_delta_phi,
+            alpha=1.0,
+            beta=0.0,
+        )
+        self.cp.cusparse.csrmv(
+            a=self.cu_dec_m,
+            x=self.cu_curr_phi,
+            y=self.cu_delta_phi,
+            alpha=rho_inv,
+            beta=1.0,
+        )
+        self.cubl.saxpy(
+            self.cubl_handle,
+            self.cu_delta_phi.shape[0],
+            dX,
+            self.cu_delta_phi.data.ptr,
+            1,
+            self.cu_curr_phi.data.ptr,
+            1,
+        )
 
 
 def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
@@ -150,6 +163,7 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     grid_step = 0
 
     from time import time
+
     start = time()
     if len(grid_idcs) > 0:
         c.alloc_grid_sol(phi.shape[0], len(grid_idcs))
@@ -157,14 +171,14 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     for step in range(nsteps):
         c.solve_step(rho_inv[step], dX[step])
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             c.dump_sol()
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
 
     return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
 
@@ -191,13 +205,15 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import c_int, c_char, POINTER, byref
+    from ctypes import POINTER, byref, c_char, c_int
+
     from MCEq.config import mkl
 
     gemv = None
     axpy = None
     np_fl = None
     from ctypes import c_double as fl_pr
+
     # sparse CSR-matrix x dense vector
     gemv = mkl.mkl_dcsrmv
     # dense vector + dense vector
@@ -220,42 +236,65 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
-    trans = c_char(b'n')
+    trans = c_char(b"n")
     npmatd = np.chararray(6)
-    npmatd[0] = b'G'
-    npmatd[3] = b'C'
+    npmatd[0] = b"G"
+    npmatd[3] = b"C"
     matdsc = npmatd.ctypes.data_as(POINTER(c_char))
     m = c_int(int_m.shape[0])
-    cdzero = fl_pr(0.)
-    cdone = fl_pr(1.)
+    cdzero = fl_pr(0.0)
+    cdone = fl_pr(1.0)
     cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
 
     from time import time
+
     start = time()
 
     for step in range(nsteps):
         # delta_phi = int_m.dot(phi)
-        gemv(byref(trans), byref(m), byref(m), byref(cdone),
-             matdsc, int_m_data, int_m_ci, int_m_pb, int_m_pe, phi,
-             byref(cdzero), delta_phi)
+        gemv(
+            byref(trans),
+            byref(m),
+            byref(m),
+            byref(cdone),
+            matdsc,
+            int_m_data,
+            int_m_ci,
+            int_m_pb,
+            int_m_pe,
+            phi,
+            byref(cdzero),
+            delta_phi,
+        )
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(byref(trans), byref(m), byref(m), byref(fl_pr(rho_inv[step])),
-             matdsc, dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe, phi,
-             byref(cdone), delta_phi)
+        gemv(
+            byref(trans),
+            byref(m),
+            byref(m),
+            byref(fl_pr(rho_inv[step])),
+            matdsc,
+            dec_m_data,
+            dec_m_ci,
+            dec_m_pb,
+            dec_m_pe,
+            phi,
+            byref(cdone),
+            delta_phi,
+        )
         # phi = delta_phi * dX + phi
         axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
-        if (grid_idcs and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step):
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
     info(
-        2, "Performance: {0:6.2f}ms/iteration".format(1e3 * (time() - start) /
-                                                      float(nsteps)))
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
 
     return npphi, np.asarray(grid_sol)
 

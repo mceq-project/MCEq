@@ -46,37 +46,39 @@ Homepage = "https://github.com/afedynitch/MCEq"
 Issues = "https://github.com/afedynitch/MCEq/issues"
 
 [tool.ruff.lint]
-extend-select = [
-    "ANN",    # flake8-annotations
-    "ARG",    # flake8-unused-arguments
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "EM",     # flake8-errmsg
-    "FBT",    # flake8-boolean-trap
-    "FLY",    # flynt
-    "I",      # isort
-    "ICN",    # flake8-import-conventions
-    "ISC",    # flake8-implicit-str-concat
-    "N",      # flake8-naming
-    "PERF",   # perflint
-    "PGH",    # pygrep-hooks
-    "PIE",    # flake8-pie
-    "PL",     # pylint
-    "PT",     # flake8-pytest-style
-    "PTH",    # flake8-use-pathlib
-    "PYI",    # flake8-pyi
-    "RET",    # flake8-return
-    "RUF",    # Ruff-specific
-    "S",      # eval -> literal_eval
-    "SIM",    # flake8-simplify
-    "T20",    # flake8-print
-    "TC",     # flake8-type-checking
-    "TID251", # flake8-tidy-imports.banned-api
-    "TRY",    # tryceratops
-    "UP",     # pyupgrade
-    "YTT",    # flake8-2020
-    "FURB",   # refurb
-]
+exclude = ["examples/**"]
+
+# extend-select = [
+#     # "ANN",    # flake8-annotations
+#     "ARG",    # flake8-unused-arguments
+#     "B",      # flake8-bugbear
+#     "C4",     # flake8-comprehensions
+#     "EM",     # flake8-errmsg
+#     "FBT",    # flake8-boolean-trap
+#     "FLY",    # flynt
+#     "I",      # isort
+#     "ICN",    # flake8-import-conventions
+#     "ISC",    # flake8-implicit-str-concat
+#     "N",      # flake8-naming
+#     "PERF",   # perflint
+#     "PGH",    # pygrep-hooks
+#     "PIE",    # flake8-pie
+#     "PL",     # pylint
+#     "PT",     # flake8-pytest-style
+#     "PTH",    # flake8-use-pathlib
+#     "PYI",    # flake8-pyi
+#     "RET",    # flake8-return
+#     "RUF",    # Ruff-specific
+#     "S",      # eval -> literal_eval
+#     "SIM",    # flake8-simplify
+#     "T20",    # flake8-print
+#     "TC",     # flake8-type-checking
+#     "TID251", # flake8-tidy-imports.banned-api
+#     "TRY",    # tryceratops
+#     "UP",     # pyupgrade
+#     "YTT",    # flake8-2020
+#     "FURB",   # refurb
+# ]
 ignore = [
     "PLE1205", # Format check doesn't work with our custom logger
     "PT013",   # It's correct to import classes for typing!
@@ -92,8 +94,12 @@ ignore = [
     "S607",    # subprocess call
     "S404",    # subprocess module is possibly insecure
     "B017",    # Complains about plain Exceptions
-    "PT011",    # Also about too plain exceptions
-    "TRY003"   # I know my exception handling is bad
+    "PT011",   # Also about too plain exceptions
+    "TRY003",  # I know my exception handling is bad
+    # "ANN001",  # Unused type annotation
+    # "ANN002",  # Unused type comment
+    # "ANN201", 
+    "EM101",
 ]
 typing-modules = ["scikit_build_core._compat.typing"]
 

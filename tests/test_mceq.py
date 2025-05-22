@@ -1,20 +1,19 @@
-from __future__ import print_function
+import sys
+from functools import lru_cache
 
-import MCEq.config as config
-from MCEq.core import MCEqRun
 import crflux.models as pm
 import numpy as np
-
 import pytest
-from functools import lru_cache
-import sys
+
+from MCEq import config
+from MCEq.core import MCEqRun
 
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 
 def format_8_digits(a_list):
-    return ["%.8e" % member for member in a_list]
+    return [f"{member:.8e}" for member in a_list]
 
 
 config.debug_level = 1

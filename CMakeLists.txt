@@ -16,16 +16,12 @@ else()
   set(INSTALL_DIR ${SKBUILD_PROJECT_NAME}) # Specify the installation directory
 endif()
 
-# # Detect macOS
-# if(APPLE)
-#   # Write out message and version of mac
-#   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -arch arm64 -arch x86_64")
-#   set(CMAKE_SHARED_LINKER_FLAGS
-#       "${CMAKE_SHARED_LINKER_FLAGS} -framework Accelerate -arch arm64 -arch x86_64"
-#   )
-#   python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
-#   install(TARGETS _libspacc DESTINATION ${INSTALL_DIR}/spacc)
-# endif()
+# # Detect macOS if(APPLE) # Write out message and version of mac
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -arch arm64 -arch x86_64")
+# set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -framework
+# Accelerate -arch arm64 -arch x86_64" ) python_add_library(_libspacc MODULE
+# src/MCEq/spacc/spacc.c WITH_SOABI) install(TARGETS _libspacc DESTINATION
+# ${INSTALL_DIR}/spacc) endif()
 
 python_add_library(
   _libnrlmsise00 MODULE src/MCEq/geometry/nrlmsise00/nrlmsise-00_data.c
