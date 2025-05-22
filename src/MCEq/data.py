@@ -205,17 +205,18 @@ class HDF5Backend:
         len_data = hdf_root.attrs["len_data"]
         if hdf_root.attrs["tuple_idcs"].shape[1] == 4:
             model_particles = sorted(
-                list(set(hdf_root.attrs["tuple_idcs"][:, (0, 2)].flatten().tolist()))
+                set(hdf_root.attrs["tuple_idcs"][:, (0, 2)].flatten().tolist())
             )
         else:
             model_particles = sorted(
-                list(set(hdf_root.attrs["tuple_idcs"].flatten().tolist()))
+                set(hdf_root.attrs["tuple_idcs"].flatten().tolist())
             )
 
         exclude = config.adv_set["disabled_particles"]
         read_idx = 0
         available_parents = [
-            (pdg, parity) for (pdg, parity) in (hdf_root.attrs["tuple_idcs"][:, :2])
+            (int(pdg), int(parity))
+            for (pdg, parity) in (hdf_root.attrs["tuple_idcs"][:, :2])
         ]
         available_parents = sorted(list(set(available_parents)))
 
@@ -235,8 +236,8 @@ class HDF5Backend:
             if (abs(parent_pdg[0]) in exclude) or (abs(child_pdg[0]) in exclude):
                 read_idx += len_data[tupidx]
                 continue
-            parent_pdg = int(parent_pdg[0]), (parent_pdg[1])
-            child_pdg = int(child_pdg[0]), (child_pdg[1])
+            parent_pdg = int(parent_pdg[0]), int(parent_pdg[1])
+            child_pdg = int(child_pdg[0]), int(child_pdg[1])
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
@@ -412,7 +413,6 @@ class HDF5Backend:
 
     def decay_db(self, decay_dset_name):
         info(10, f"Generating decay db. dset_name={decay_dset_name}")
-
         with h5py.File(self.had_fname, "r") as mceq_db:
             if config.muon_helicity_dependence:
                 if decay_dset_name != "polarized":

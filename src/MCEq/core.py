@@ -318,10 +318,11 @@ class MCEqRun:
         if not config.enable_default_tracking:
             for track_pref in default_tracking_prefixes:
                 if particle_name.startswith(track_pref):
-                    raise Exception(
+                    msg = (
                         "Tracking category requested but "
-                        + "enable_default_tracking is off in config."
+                        "enable_default_tracking is off in config."
                     )
+                    raise ValueError(msg)
 
         if particle_name.startswith("total_"):
             # Note: This has changed from previous MCEq versions,
@@ -364,7 +365,7 @@ class MCEqRun:
 
         # When returning in Etot, interpolate on different grid
         if return_as == "total energy":
-            etot_grid = self.etot_grid(lep_str)
+            etot_grid = self.etot_grid(particle_name)
             if not integrate:
                 return res * etot_grid**mag
             return res * etot_grid**mag * self.e_widths
@@ -375,7 +376,7 @@ class MCEqRun:
             return res * self._energy_grid.c**mag * self.e_widths
 
         if return_as == "total momentum":
-            ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
+            ptot_bins, ptot_grid = self.ptot_grid(particle_name, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
                 return dEkindp * res * ptot_grid**mag
@@ -500,9 +501,9 @@ class MCEqRun:
           tag (tuple): positional argument list for model class
         """
 
-        assert not isinstance(
-            model_class_or_object, tuple
-        ), "Primary model can not be supplied as tuples"
+        assert not isinstance(model_class_or_object, tuple), (
+            "Primary model can not be supplied as tuples"
+        )
 
         # Check if classs or object supplied
         if not isinstance(model_class_or_object, type):
@@ -549,7 +550,7 @@ class MCEqRun:
         if (2212, 0) in self.pman:
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] = (1e-4 * p_top)
+            ] = 1e-4 * p_top
         else:
             info(
                 1,
@@ -559,7 +560,7 @@ class MCEqRun:
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
             self._phi0[
                 min_idx + self.pman[(2112, 0)].lidx : self.pman[(2112, 0)].uidx
-            ] = (1e-4 * n_top)
+            ] = 1e-4 * n_top
         elif (2212, 0) in self.pman:
             info(
                 2,
@@ -568,7 +569,7 @@ class MCEqRun:
             )
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] += (1e-4 * n_top)
+            ] += 1e-4 * n_top
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
@@ -1257,9 +1258,9 @@ class MCEqRun:
                     min_idx = p_eidx
                     continue
                 nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-                assert (
-                    use_cs_scaling is False
-                ), f"cs_scaling has when definition = {definition}"
+                assert use_cs_scaling is False, (
+                    f"cs_scaling has when definition = {definition}"
+                )
                 cs_fac = 1.0
                 zfac[p_eidx] = np.sum(
                     smat[min_idx : p_eidx + 1, p_eidx] * nuc_fac * cs_fac
@@ -1447,9 +1448,13 @@ class MatrixBuilder:
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
-        op_mat = -diag(1 / self._energy_grid.c).dot(
-            self.op_matrix.dot(diag(self._pman[pdg_id].dEdX))
-        )
+        try:
+            op_mat = -diag(1 / self._energy_grid.c).dot(
+                self.op_matrix.dot(diag(self._pman[pdg_id].dEdX))
+            )
+        except ValueError as e:
+            msg = f"Error in continuous loss operator for {pdg_id}."
+            raise ValueError(msg) from e
 
         if config.average_loss_operator:
             return self._average_operator(op_mat)
