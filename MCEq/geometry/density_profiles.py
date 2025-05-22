@@ -91,7 +91,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         now = time()
 
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)  #
+        X_int = cumulative_trapezoid(vec_rho_l(dl_vec), dl_vec)  #
         dl_vec = dl_vec[1:]
 
         info(5, ".. took {0:1.2f}s".format(time() - now))
