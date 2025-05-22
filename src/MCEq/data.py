@@ -3,7 +3,7 @@ import six
 import numpy as np
 import h5py
 from collections import defaultdict
-import mceq_config as config
+import MCEq.config as config
 from os.path import join, isfile
 from .misc import normalize_hadronic_model_name, info
 

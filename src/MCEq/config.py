@@ -3,7 +3,9 @@ import sys
 import platform
 import os.path as path
 import warnings
-base_path = path.dirname(path.abspath(__file__))
+
+from MCEq import base_path
+
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -21,7 +23,7 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = path.join(base_path, 'MCEq', 'data')
+data_dir = path.join(base_path, 'data')
 
 #: File name of the MCEq database
 mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"

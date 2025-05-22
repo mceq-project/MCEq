@@ -2,7 +2,7 @@ import os
 import six
 from time import time
 import numpy as np
-import mceq_config as config
+import MCEq.config as config
 from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 import MCEq.data

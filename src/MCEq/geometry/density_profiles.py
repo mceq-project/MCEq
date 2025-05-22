@@ -7,7 +7,7 @@ from MCEq.misc import info
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import get_atmosphere_parameters, list_available_corsika_atmospheres
 
-import mceq_config as config
+import MCEq.config as config
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):
@@ -64,10 +64,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         Raises:
             Exception: if :func:`set_theta` was not called before.
         """
-        try:
-            from scipy.integrate import cumtrapz
-        except Exception:
-            from scipy.integrate import cumulative_trapezoid as cumtrapz
+        from scipy.integrate import cumulative_trapezoid
         from time import time
         from scipy.interpolate import UnivariateSpline
 

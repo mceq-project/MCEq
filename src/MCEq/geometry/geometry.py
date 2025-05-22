@@ -2,7 +2,7 @@
 import sys
 import numpy as np
 from MCEq.misc import theta_rad
-import mceq_config as config
+import MCEq.config as config
 
 class EarthGeometry(object):
     r"""A model of the Earth's geometry, approximating it
