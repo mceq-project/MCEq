@@ -632,11 +632,11 @@ class MCEqRun(object):
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
         else:
-            raise Exception('Density model not supported.')
-
-        # TODO: Make the pman aware of that density might have changed and
-        # indices as well
-        # self.pmod._gen_list_of_particles()
+            # Fallback for custom density model objects
+            try:
+                self.density_model.set_theta(0)
+            except Exception:  # Changed from bare except
+                info(2, "Custom density model does not have 'set_theta' method.")
 
     def set_theta_deg(self, theta_deg):
         """Sets zenith angle :math:`\\theta` as seen from a detector.
