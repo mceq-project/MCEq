@@ -84,7 +84,7 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
           CIBW_TEST_REQUIRES: "pytest"
-          CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
+          CIBW_TEST_COMMAND: "cd {package} && python -c \"import MCEq; print('MCEq imported successfully')\""
           CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
           CIBW_PRERELEASE_PYTHONS: True
@@ -111,8 +111,16 @@ jobs:
           # Find the built sdist file
           SDIST_FILE=$(find dist -name "MCEq-*.tar.gz" | head -1)
           echo "Found sdist: $SDIST_FILE"
-          # Try to install with test extras first, fallback to base package
-          python -m pip install --prefer-binary -v "${SDIST_FILE}[test]" || python -m pip install --prefer-binary -v "$SDIST_FILE"
+          python -m pip install --prefer-binary -v "$SDIST_FILE"
+          python -m pip install pytest
+      - name: Test sdist
+        run: |
+          # Test the installed package
+          python -c "import MCEq; print('MCEq imported successfully')"
+          # Test the installed package with pytest
+          python -m pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}/MCEq
 
       - run: python -c "import MCEq; print('MCEq imported successfully')"
 
