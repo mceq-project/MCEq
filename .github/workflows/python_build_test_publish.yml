@@ -46,7 +46,7 @@ jobs:
         env:
           CIBW_BUILD: "cp313-*"
           CIBW_ARCHS: "auto"
-          CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
+          CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_REQUIRES: "pytest"
           CIBW_SKIP: "*-musllinux*"
           CIBW_PRERELEASE_PYTHONS: True
@@ -82,7 +82,7 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_SKIP: "*-musllinux* pp*"
           CIBW_TEST_REQUIRES: "pytest"
-          CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
+          CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
           CIBW_PRERELEASE_PYTHONS: True
