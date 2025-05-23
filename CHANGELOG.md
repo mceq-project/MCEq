@@ -1,5 +1,14 @@
 # Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+Version 1.3.0:
+
+- New buildsystem. Uses [scikit-build.core](https://github.com/scikit-build/scikit-build-core).
+- `mceq_config` deprecated, use `import MCEq.config`
+- Updated tests
+- New atmosphere models for the South Pole
+- Some linting
+
+
 Version 1.2.6:
 
 - Fixed a bug where alternating changes between up- and downgoing zenith angles are not detected correctly and the same results returned

@@ -50,6 +50,8 @@ jobs:
           CIBW_TEST_REQUIRES: "pytest"
           CIBW_SKIP: "*-musllinux*"
           CIBW_PRERELEASE_PYTHONS: True
+          CIBW_DEPENDENCY_VERSIONS: "pinned"
+          CIBW_BUILD_VERBOSITY: 1
 
   wheels:
     needs: release_check
@@ -86,6 +88,8 @@ jobs:
           CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
           CIBW_PRERELEASE_PYTHONS: True
+          CIBW_DEPENDENCY_VERSIONS: "pinned"
+          CIBW_BUILD_VERBOSITY: 1
 
       - uses: actions/upload-artifact@v4
         with:
@@ -103,7 +107,7 @@ jobs:
       - run: pipx run build --sdist
 
       - run: python -m pip install --upgrade pip setuptools
-      - run: python -m pip install -v $(echo dist/MCEq-*)[test] || python -m pip install -v $(echo dist/MCEq-*)
+      - run: python -m pip install --prefer-binary -v $(echo dist/MCEq-*)[test] || python -m pip install --prefer-binary -v $(echo dist/MCEq-*)
       - run: python -c "import MCEq; print('MCEq imported successfully')"
 
       - uses: actions/upload-artifact@v4
