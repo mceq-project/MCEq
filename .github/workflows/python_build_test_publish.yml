@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/python_build_test_publish.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  release_check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: check
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  test_pr:
+    name: Test (PR - Linux, Python 3.13)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test wheels
+        uses: pypa/cibuildwheel@v2.23
+        env:
+          CIBW_BUILD: "cp313-*"
+          CIBW_ARCHS: "auto"
+          CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
+          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
+          CIBW_PRERELEASE_PYTHONS: True
+          CIBW_DEPENDENCY_VERSIONS: "pinned"
+          CIBW_BUILD_VERBOSITY: 1
+
+  wheels:
+    needs: release_check
+    if: needs.release_check.outputs.should_release == 'true'
+    name: ${{ matrix.py }} ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        arch: [auto, aarch64]
+        py: [cp39, cp310, cp311, cp312, cp313]
+        exclude:
+          - os: windows-latest
+            arch: aarch64
+          - os: macos-13
+            arch: aarch64
+          - os: macos-14
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: ${{ matrix.arch == 'aarch64' }}
+        uses: docker/setup-qemu-action@v3
+
+      - uses: pypa/cibuildwheel@v2.23
+        env:
+          CIBW_BUILD: ${{ matrix.py }}-*
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
+          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
+          CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
+          CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
+          CIBW_PRERELEASE_PYTHONS: True
+          CIBW_DEPENDENCY_VERSIONS: "pinned"
+          CIBW_BUILD_VERBOSITY: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.py }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: ./wheelhouse/*.whl
+
+  sdist:
+    needs: release_check
+    if: needs.release_check.outputs.should_release == 'true'
+    name: source package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: pipx run build --sdist
+
+      - run: python -m pip install --upgrade pip setuptools
+      - run: python -m pip install --prefer-binary -v $(echo dist/MCEq-*)[test] || python -m pip install --prefer-binary -v $(echo dist/MCEq-*)
+      - run: python -c "import MCEq; print('MCEq imported successfully')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  upload:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/MCEq/
+
+    permissions:
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          merge-multiple: true
+          path: dist
+
+      - name: Generate artifact attestation for sdist and wheels
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/MCEq-*"
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release_check, upload]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.ref_name }}
+          generate_release_notes: true

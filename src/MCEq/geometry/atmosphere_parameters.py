@@ -279,7 +279,7 @@ def list_available_corsika_atmospheres(
         # Collect which seasons are available for each location and print
         # formatted output with seasons list listed with one tab in each line
         locations = {}
-        for (location, season) in _cosika_atmosphere_params.keys():
+        for location, season in _cosika_atmosphere_params:
             if location not in locations:
                 locations[location] = []
             if season is not None and season not in locations[location]:
@@ -288,7 +288,6 @@ def list_available_corsika_atmospheres(
             print(f"{location}:")
             for season in seasons:
                 print(f"\t{season}")
-
 
     return list(_cosika_atmosphere_params.keys())
 

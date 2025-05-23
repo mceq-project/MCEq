@@ -5,25 +5,18 @@
 
 # MCEq - Matrix cascade equations
 
-MCEq is a tool to numerically solve cascade equations that describe the evolution
-of particle densities as they propagate through a gaseous or dense medium.
-The main application are particle cascades in the Earth's atmosphere.
-Particles are represented by average densities on discrete energy bins.
-The results are differential energy spectra or total particle numbers.
-Various models/parameterizations for particle interactions and atmospheric
-density profiles are packaged with the code.  
+MCEq is a numerical tool for solving cascade equations that model the evolution of particle densities as they traverse gaseous or dense media. Its primary application is simulating particle cascades in the Earth's atmosphere, where particles are tracked as average densities across discrete energy bins. MCEq outputs differential energy spectra and total particle counts, supporting a range of models and parameterizations for particle interactions and atmospheric density profiles.
 
-This is a new version of the code and may break compatibility with the previous versions. 
-The old versions known as 'master' and 'development' branch are deprecated and located in the 
-[MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
+Very early releases, previously maintained under the 'master' and 'development' branches, are archived and available in the [MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
 
 ## [Documentation](http://mceq.readthedocs.org/en/latest/)
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
-### Version 1.2
-This is a significant update and some of the results. Please consult the
-[CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+### Version 1.3
+This version is physically identical to the 1.2.X release, but features a modernized build system and now provides wheels up to Python 3.13. While this is primarily a technical update, core development has resumed and new features will be merged more frequently.
+
+Please consult the [CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
 
 ## Please cite our work
 

@@ -1,13 +1,17 @@
 from abc import ABCMeta, abstractmethod
-from six import with_metaclass
 from os.path import join
-import numpy as np
-from MCEq.misc import theta_rad
-from MCEq.misc import info
-# Import the new atmosphere data module
-from MCEq.geometry.atmosphere_parameters import get_atmosphere_parameters, list_available_corsika_atmospheres
 
-import mceq_config as config
+import numpy as np
+from six import with_metaclass
+
+from MCEq import config
+
+# Import the new atmosphere data module
+from MCEq.geometry.atmosphere_parameters import (
+    get_atmosphere_parameters,
+    list_available_corsika_atmospheres,
+)
+from MCEq.misc import info, theta_rad
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):
@@ -64,25 +68,20 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         Raises:
             Exception: if :func:`set_theta` was not called before.
         """
-        try:
-            from scipy.integrate import cumtrapz
-        except Exception:
-            from scipy.integrate import cumulative_trapezoid as cumtrapz
         from time import time
+
+        from scipy.integrate import cumulative_trapezoid
         from scipy.interpolate import UnivariateSpline
 
         if self.theta_deg is None:
             raise Exception("zenith angle not set")
-        else:
-            info(
-                5,
-                "Calculating spline of rho(X) for zenith {0:4.1f} degrees.".format(
-                    self.theta_deg
-                ),
-            )
+        info(
+            5,
+            f"Calculating spline of rho(X) for zenith {self.theta_deg:4.1f} degrees.",
+        )
 
         thrad = self.thrad
-        path_length = self.geom.l(thrad)
+        path_length = self.geom.path_len(thrad)
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
         )
@@ -91,10 +90,10 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         now = time()
 
         # Calculate integral for each depth point
-        X_int = cumulative_trapezoid(vec_rho_l(dl_vec), dl_vec)  #
+        X_int = cumulative_trapezoid(vec_rho_l(dl_vec), dl_vec)
         dl_vec = dl_vec[1:]
 
-        info(5, ".. took {0:1.2f}s".format(time() - now))
+        info(5, f".. took {time() - now:1.2f}s")
 
         # Save depth value at h_obs
         self._max_X = X_int[-1]
@@ -284,7 +283,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         self.init_parameters(location, season)
         import MCEq.geometry.corsikaatm.corsikaatm as corsika_acc
 
-        self.corsika_acc = corsika_acc # Assuming corsika_acc is defined elsewhere or needs to be imported
+        self.corsika_acc = corsika_acc  # Assuming corsika_acc is defined elsewhere or needs to be imported
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
@@ -299,7 +298,9 @@ class CorsikaAtmosphere(EarthsAtmosphere):
           Exception: if parameter set not available (via get_atmosphere_parameters)
         """
         # Use the renamed get_atmosphere_parameters function
-        _aatm, _batm, _catm, _thickl, _hlay = get_atmosphere_parameters(location, season)
+        _aatm, _batm, _catm, _thickl, _hlay = get_atmosphere_parameters(
+            location, season
+        )
 
         self._atm_param = np.array([_aatm, _batm, _catm, _thickl, _hlay])
 
@@ -394,9 +395,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
 
         thickl = []
         for h in self._atm_param[4]:
-            thickl.append(
-                "{0:4.6f}".format(quad(self.get_density, h, 112.8e5, epsrel=1e-4)[0])
-            )
+            thickl.append(f"{quad(self.get_density, h, 112.8e5, epsrel=1e-4)[0]:4.6f}")
         info(5, "_thickl = np.array([" + ", ".join(thickl) + "])")
         return thickl
 
@@ -487,7 +486,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         ]
         assert (
             location in msis_atmospheres
-        ), "{0} not available for MSIS00Atmosphere".format(location)
+        ), f"{location} not available for MSIS00Atmosphere"
 
         self._msis = cNRLMSISE00()
 
@@ -547,7 +546,10 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         if "doy" in kwargs:
             self.set_doy(kwargs.get("doy"))
             if "season" in kwargs:
-                info(2, "Both 'season' and 'doy' are set in parameter list.\n'doy' takes precedence over 'season'")
+                info(
+                    2,
+                    "Both 'season' and 'doy' are set in parameter list.\n'doy' takes precedence over 'season'",
+                )
 
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.
@@ -664,8 +666,9 @@ class AIRSAtmosphere(EarthsAtmosphere):
           doy (int): Day Of Year
         """
         # from time import strptime
-        from matplotlib.dates import datestr2num, num2date
         from os import path
+
+        from matplotlib.dates import datestr2num, num2date
 
         def bytespdate2num(b):
             return datestr2num(b.decode("utf-8"))
@@ -901,25 +904,21 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
         info(
             1,
-            "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
-                self.latitude(theta_deg), theta_deg
-            ),
+            f"latitude = {self.latitude(theta_deg):5.2f} for zenith angle = {theta_deg:5.2f}",
         )
         downgoing_theta_deg = theta_deg
         if theta_deg > 90.0:
             downgoing_theta_deg = 180.0 - theta_deg
             info(
                 1,
-                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
-                    theta_deg, downgoing_theta_deg
-                ),
+                f"theta = {theta_deg:5.2f} below horizon. using theta = {downgoing_theta_deg:5.2f}",
             )
         MSIS00Atmosphere.set_theta(self, downgoing_theta_deg)
 
         self.theta_deg = theta_deg
 
 
-class GeneralizedTarget(object):
+class GeneralizedTarget:
     """This class provides a way to run MCEq on piece-wise constant
     one-dimenional density profiles.
 
@@ -1007,7 +1006,7 @@ class GeneralizedTarget(object):
                 "GeneralizedTarget::add_material(): "
                 + "distance exceeds target dimensions."
             )
-        elif (
+        if (
             start_position_cm == self.mat_list[-1][0]
             and self.mat_list[-1][-1] == self.env_name
         ):
@@ -1115,9 +1114,7 @@ class GeneralizedTarget(object):
             # return self.get_density(self.s_X2h(self.max_X))
             info(
                 0,
-                "Depth {0:4.3f} exceeds target dimensions {1:4.3f}".format(
-                    np.max(X), self.max_X
-                ),
+                f"Depth {np.max(X):4.3f} exceeds target dimensions {self.max_X:4.3f}",
             )
             raise Exception("Invalid input")
 
@@ -1255,9 +1252,7 @@ if __name__ == "__main__":
             x_vec,
             1 / cka_obj.r_X2rho(x_vec),
             lw=1.5,
-            label="{0}/{1}".format(loc, season)
-            if season is not None
-            else "{0}".format(loc),
+            label=(f"{loc}/{season}" if season is not None else f"{loc}"),
         )
         cka_surf_100.append((cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)))
     print(cka_surf_100)
@@ -1287,7 +1282,7 @@ if __name__ == "__main__":
         msis_obj = MSIS00Atmosphere(loc, season)
         msis_obj.set_theta(0.0)
         x_vec = np.linspace(0, msis_obj.max_X, 5000)
-        plt.plot(x_vec, 1 / msis_obj.r_X2rho(x_vec), lw=1.5, label="{0}".format(loc))
+        plt.plot(x_vec, 1 / msis_obj.r_X2rho(x_vec), lw=1.5, label=f"{loc}")
         msis_surf_100.append((msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)))
     print(msis_surf_100)
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")

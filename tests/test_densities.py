@@ -1,5 +1,4 @@
 import numpy as np
-
 import pytest
 
 corsika_expected = [
@@ -35,7 +34,7 @@ def test_cka_atm_completeness():
     from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
 
     missing = []
-    expected_entries = set((loc, season) for loc, season, _ in corsika_expected)
+    expected_entries = {(loc, season) for loc, season, _ in corsika_expected}
     for loc, season in list_available_corsika_atmospheres():
         if (loc, season) not in expected_entries:
             missing.append((loc, season))
@@ -54,7 +53,7 @@ def test_cka_atm_completeness():
 ids = [f"{loc}-{season or 'None'}" for loc, season, _ in corsika_expected]
 
 
-@pytest.mark.parametrize("loc,season,expected", corsika_expected, ids=ids)
+@pytest.mark.parametrize(("loc", "season", "expected"), corsika_expected, ids=ids)
 def test_corsika_atm(loc, season, expected):
     from MCEq.geometry.density_profiles import CorsikaAtmosphere
 
@@ -81,7 +80,7 @@ msis00_expected = [
 ids = [f"{loc}-{season or 'None'}" for loc, season, _ in msis00_expected]
 
 
-@pytest.mark.parametrize("loc,season,expected", msis00_expected, ids=ids)
+@pytest.mark.parametrize(("loc", "season", "expected"), msis00_expected, ids=ids)
 def test_msis_atm(loc, season, expected):
     from MCEq.geometry.density_profiles import MSIS00Atmosphere
 
