@@ -48,7 +48,7 @@ jobs:
           CIBW_ARCHS: "auto"
           CIBW_TEST_COMMAND: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
           CIBW_TEST_REQUIRES: "pytest"
-          CIBW_SKIP: "*-musllinux*"
+          CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
           CIBW_PRERELEASE_PYTHONS: True
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
