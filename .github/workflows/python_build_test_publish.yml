@@ -1,129 +1,152 @@
-name: Python Build, Test, and Publish
+name: Release
 
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - '.github/workflows/python_build_test_publish.yml'
   push:
     branches:
       - master
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - '.github/workflows/python_build_test_publish.yml'
     tags:
-      - 'v*.*.*' # Common version tag pattern
+      - 'v*.*.*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/python_build_test_publish.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
 
 jobs:
-  test_wheels_pr:
-    name: Test Wheels (PR - Linux, Python 3.13)
+  release_check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: check
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  test_pr:
+    name: Test (PR - Linux, Python 3.13)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build and test wheels
-        uses: pypa/cibuildwheel@v2.17.0
+        uses: pypa/cibuildwheel@v2.23
         env:
-          CIBW_BUILD: "cp313-*" # Python 3.13
-          CIBW_ARCHS: "auto"    # Native architecture for the runner
-          CIBW_PLATFORM: "linux"
+          CIBW_BUILD: "cp313-*"
+          CIBW_ARCHS: "auto"
           CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
           CIBW_TEST_REQUIRES: "pytest"
           CIBW_SKIP: "*-musllinux*"
           CIBW_PRERELEASE_PYTHONS: True
 
-  build_wheels_all:
-    name: Build Wheels (${{ matrix.os }})
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || startsWith(github.ref, 'refs/tags/')
+  wheels:
+    needs: release_check
+    if: needs.release_check.outputs.should_release == 'true'
+    name: ${{ matrix.py }} ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        arch: [auto, aarch64]
+        py: [cp39, cp310, cp311, cp312, cp313]
+        exclude:
+          - os: windows-latest
+            arch: aarch64
+          - os: macos-13
+            arch: aarch64
+          - os: macos-14
+            arch: aarch64
+
     steps:
       - uses: actions/checkout@v4
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.3
-        env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
-          CIBW_SKIP: "*-musllinux* pp*" # Skip musl and PyPy by default
-          CIBW_TEST_REQUIRES: "pytest"
-          CIBW_ARCHS_LINUX: "auto aarch64"
-          CIBW_ARCHS_WINDOWS: "auto" # 'auto' is typically x64. Add 'ARM64' if Windows ARM64 wheels are needed.
-          CIBW_ARCHS_MACOS: "x86_64 arm64 universal2"
-          # Test commands: general, and specific for Linux aarch64 from your existing config
-          CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
-          CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package}/MCEq/tests && pytest test_densities.py test_msis.py"
-          # Test skip for the arm64 part of universal2 wheels on macOS (from your existing config)
-          CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
 
-      - name: Store wheels
-        uses: actions/upload-artifact@v4
+      - if: ${{ matrix.arch == 'aarch64' }}
+        uses: docker/setup-qemu-action@v3
+
+      - uses: pypa/cibuildwheel@v2.23
+        env:
+          CIBW_BUILD: ${{ matrix.py }}-*
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_SKIP: "*-musllinux* pp*"
+          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
+          CIBW_TEST_COMMAND_LINUX_AARCH64: "cd {package} && python -c 'import MCEq; print(\"MCEq imported successfully\")'"
+          CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
+          CIBW_PRERELEASE_PYTHONS: True
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ github.run_id }} # Unique artifact name per OS and run
+          name: wheel-${{ matrix.py }}-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
 
-  make_sdist:
-    name: Make SDist
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || startsWith(github.ref, 'refs/tags/')
+  sdist:
+    needs: release_check
+    if: needs.release_check.outputs.should_release == 'true'
+    name: source package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+
+      - run: pipx run build --sdist
+
+      - run: python -m pip install --upgrade pip setuptools
+      - run: python -m pip install -v $(echo dist/MCEq-*)[test] || python -m pip install -v $(echo dist/MCEq-*)
+      - run: python -c "import MCEq; print('MCEq imported successfully')"
+
+      - uses: actions/upload-artifact@v4
         with:
-          python-version: '3.10' # A recent Python for build tools
-      - name: Install build dependencies
-        run: python -m pip install build
-      - name: Build SDist
-        run: python -m build --sdist
-      - name: Store SDist
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdist-${{ github.run_id }} # Unique artifact name per run
+          name: sdist
           path: dist/*.tar.gz
 
-  upload_to_pypi:
-    name: Upload to PyPI
-    if: startsWith(github.ref, 'refs/tags/') # Only run on tag pushes
-    needs: [build_wheels_all, make_sdist]
+  upload:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [wheels, sdist]
     runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/MCEq/
+
     permissions:
-      id-token: write # Required for trusted publishing if you switch to it
+      id-token: write
+      attestations: write
+
     steps:
-      - name: Create download directory
-        run: mkdir -p downloaded_artifacts
-
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*-${{ github.run_id }} # Pattern to match wheel artifacts from this run
-          path: downloaded_artifacts/
+          pattern: "*"
+          merge-multiple: true
+          path: dist
 
-      - name: Download SDist artifact
-        uses: actions/download-artifact@v4
+      - name: Generate artifact attestation for sdist and wheels
+        uses: actions/attest-build-provenance@v1
         with:
-          name: sdist-${{ github.run_id }} # Name of the sdist artifact from this run
-          path: downloaded_artifacts/sdist/
+          subject-path: "dist/MCEq-*"
 
-      - name: Prepare packages for publishing
-        run: |
-          mkdir -p dist_to_publish
-          find downloaded_artifacts/ -type f -name '*.whl' -exec mv {} dist_to_publish/ ;
-          find downloaded_artifacts/sdist/ -type f -name '*.tar.gz' -exec mv {} dist_to_publish/ ;
-          echo "Files to publish:"
-          ls -R dist_to_publish
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release_check, upload]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          packages_dir: dist_to_publish/
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.ref_name }}
+          generate_release_notes: true
