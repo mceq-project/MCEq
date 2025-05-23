@@ -34,6 +34,7 @@ jobs:
           CIBW_TEST_COMMAND: "pytest --pyargs MCEq"
           CIBW_TEST_REQUIRES: "pytest"
           CIBW_SKIP: "*-musllinux*"
+          CIBW_PRERELEASE_PYTHONS: True
 
   build_wheels_all:
     name: Build Wheels (${{ matrix.os }})
@@ -49,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.17.0
+        uses: pypa/cibuildwheel@v2.23.3
         env:
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-musllinux* pp*" # Skip musl and PyPy by default
