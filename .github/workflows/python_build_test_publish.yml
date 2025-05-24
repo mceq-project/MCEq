@@ -153,31 +153,12 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Debug - List directory contents
-        run: |
-          echo "Listing dist directory content:"
-          ls -la dist/
-          echo "Finding all wheel and tar.gz files:"
-          find dist -name "*.whl" -o -name "*.tar.gz"
-
-      - name: Rename files if needed
-        run: |
-          # Create MCEq directory if files are not already named with MCEq prefix
-          mkdir -p dist/MCEq
-          # Move all wheel and tarball files that don't already start with MCEq
-          find dist -maxdepth 1 \( -name "*.whl" -o -name "*.tar.gz" \) ! -name "MCEq-*" -exec mv {} dist/MCEq/ \;
-          # List final contents
-          echo "Final directory structure:"
-          ls -la dist/ dist/MCEq/
-
       - name: Generate artifact attestation for sdist and wheels
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: "dist/**/*.whl"
+          subject-path: "dist/mceq-*"
 
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
