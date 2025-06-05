@@ -57,7 +57,6 @@ class CUDASparseContext:
     """
 
     def __init__(self, int_m, dec_m, device_id=0):
-
         if config.cuda_fp_precision == 32:
             self.fl_pr = np.float32
         elif config.cuda_fp_precision == 64:
@@ -205,17 +204,16 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import POINTER, byref, c_char, c_int
+    from ctypes import POINTER, byref, c_int, c_void_p, Structure
+    from ctypes import c_double as fl_pr
 
     from MCEq.config import mkl
 
-    gemv = None
-    axpy = None
-    np_fl = None
-    from ctypes import c_double as fl_pr
-
     # sparse CSR-matrix x dense vector
-    gemv = mkl.mkl_dcsrmv
+    create_csr = mkl.mkl_sparse_s_create_csr
+    gemv = mkl.mkl_sparse_s_mv
+    gemv_hint = mkl.mkl_sparse_set_mv_hint
+    optimize = mkl.mkl_sparse_optimize
     # dense vector + dense vector
     axpy = mkl.cblas_daxpy
     np_fl = np.float64
@@ -236,19 +234,83 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
-    trans = c_char(b"n")
-    npmatd = np.chararray(6)
-    npmatd[0] = b"G"
-    npmatd[3] = b"C"
-    matdsc = npmatd.ctypes.data_as(POINTER(c_char))
     m = c_int(int_m.shape[0])
     cdzero = fl_pr(0.0)
     cdone = fl_pr(1.0)
+    cizero = c_int(0)
     cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
 
+    int_m_handle = c_void_p()
+    matrix_status = create_csr(
+        byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
+    )
+
+    if matrix_status != 0:
+        raise RuntimeError(f"MKL create_csr failed with status {matrix_status}")
+
+    dec_m_handle = c_void_p()
+    matrix_status = create_csr(
+        byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
+    )
+
+    if matrix_status != 0:
+        raise RuntimeError(f"MKL create_csr failed with status {matrix_status}")
+
+    # hints
+    operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
+
+    class MatrixDescr(Structure):
+        _fields_ = [
+            ("type", c_int),
+            ("mode", c_int),
+            ("diag", c_int),
+        ]
+
+    descr = MatrixDescr()
+    descr.type = int(20)  # General matrix
+    descr.mode = int(121)  # set but dont care since general matrix
+    descr.diag = int(131)  # set but dont care since general matrix
+
+    hint_status = gemv_hint(
+        int_m_handle,
+        operation,
+        descr,
+        nsteps,
+    )
+
+    if hint_status != 0:
+        raise RuntimeError(
+            f"mkl_sparse_set_mv_hint failed with status code {hint_status}"
+        )
+
+    hint_status = gemv_hint(
+        dec_m_handle,
+        operation,
+        descr,
+        nsteps,
+    )
+
+    if hint_status != 0:
+        raise RuntimeError(
+            f"mkl_sparse_set_mv_hint failed with status code {hint_status}"
+        )
+
+    # add mkl_sparse_set_memory_hint???
+    #
+
+    optimize_status = optimize(int_m_handle)
+    if optimize_status != 0:
+        raise RuntimeError(
+            f"mkl_sparse_optimize failed with status code {optimize_status}"
+        )
+    optimize_status = optimize(dec_m_handle)
+    if optimize_status != 0:
+        raise RuntimeError(
+            f"mkl_sparse_optimize failed with status code {optimize_status}"
+        )
     from time import time
 
     start = time()
@@ -256,32 +318,22 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     for step in range(nsteps):
         # delta_phi = int_m.dot(phi)
         gemv(
-            byref(trans),
-            byref(m),
-            byref(m),
-            byref(cdone),
-            matdsc,
-            int_m_data,
-            int_m_ci,
-            int_m_pb,
-            int_m_pe,
+            operation,
+            cdone,
+            int_m_handle,
+            descr,
             phi,
-            byref(cdzero),
+            cdzero,
             delta_phi,
         )
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
         gemv(
-            byref(trans),
-            byref(m),
-            byref(m),
-            byref(fl_pr(rho_inv[step])),
-            matdsc,
-            dec_m_data,
-            dec_m_ci,
-            dec_m_pb,
-            dec_m_pe,
+            operation,
+            fl_pr(rho_inv[step]),
+            dec_m_handle,
+            descr,
             phi,
-            byref(cdone),
+            cdone,
             delta_phi,
         )
         # phi = delta_phi * dX + phi
