@@ -210,8 +210,8 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     from MCEq.config import mkl
 
     # sparse CSR-matrix x dense vector
-    create_csr = mkl.mkl_sparse_s_create_csr
-    gemv = mkl.mkl_sparse_s_mv
+    create_csr = mkl.mkl_sparse_d_create_csr
+    gemv = mkl.mkl_sparse_d_mv
     gemv_hint = mkl.mkl_sparse_set_mv_hint
     optimize = mkl.mkl_sparse_optimize
     # dense vector + dense vector
