@@ -1,0 +1,11 @@
+name: mceq-dev
+channel:
+  - default
+  - conda-forge
+dependencies:
+  - python
+  - ipython
+  - jupyter
+  - pytest-xdist
+  - pip:
+    - ruff
