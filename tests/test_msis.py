@@ -1,7 +1,7 @@
 from __future__ import print_function
 
 
-def test_msis():
+def test_msis(msis_expected_file):
     import pathlib
     from ctypes import byref, c_double, c_int, pointer
     from MCEq.geometry.nrlmsise00.nrlmsise00 import (
@@ -12,13 +12,7 @@ def test_msis():
         nrlmsise_output,
     )
 
-    exp_file = pathlib.Path(__file__).parent / "msis_expected.txt"
-    if not exp_file.exists():
-        raise FileNotFoundError(
-            f"Expected output file {exp_file} not found. "
-            "Please run the test with the expected output file."
-        )
-    with open(exp_file, "r") as f:
+    with open(msis_expected_file, "r") as f:
         result_expected = f.read()
 
     output = [nrlmsise_output() for i in range(17)]
