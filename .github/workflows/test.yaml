@@ -46,10 +46,11 @@ jobs:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
     - name: Install requirements
-      run: uv pip install --system . pytest pytest-xdist ${{ matrix.installs }}
+      run: uv pip install --system . pytest pytest-cov pytest-xdist ${{ matrix.installs }}
     - name: Run tests
-      run: pytest -n 3
+      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
     - name: Upload coverage reports to Codecov
+      if: matrix.os == 'macos-14'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
