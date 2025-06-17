@@ -282,7 +282,11 @@ def test_closest_energy(mceq_small):
 
 
 def test_get_solution_grid_idx(mceq_small):
+    import crflux.models as pm
+
+    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
     mceq_small.solve()
+
     with pytest.raises(Exception):
         mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
 
