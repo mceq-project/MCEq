@@ -9,6 +9,60 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 
+def test_solve_default(mceq):
+    mceq.solve()
+    sol = mceq.get_solution("mu+", mag=0, integrate=True)
+    assert sol is not None
+
+
+def test_solve_skip_integration_path(mceq):
+    mceq.solve(skip_integration_path=True)
+    sol = mceq.get_solution("mu+", mag=0, integrate=True)
+    assert sol is not None
+
+
+def test_solve_other_grid_var(mceq):
+    with pytest.raises(NotImplementedError):
+        mceq.solve(grid_var="Y")
+
+
+@pytest.mark.parametrize(
+    ["int_grid", "grid_shape"],
+    [[None, (0,)], [[0, 1], (2, 9922)]],
+)
+def test_solve_int_grid(mceq, int_grid, grid_shape):
+    mceq.solve(int_grid)
+    print(mceq.grid_sol.shape)
+    assert mceq.grid_sol.shape == grid_shape
+
+
+@pytest.mark.parametrize(
+    ["leading_process", "lenX"], [["decays", 594], ["interactions", -1], ["auto", -1]]
+)
+def test_integration_path_leading_process(mceq, leading_process, lenX):
+    """Fix this test by resolving issue #66"""
+    from MCEq import config
+
+    config.leading_process = leading_process
+    int_grid = None
+    grid_var = "X"
+    mceq._calculate_integration_path(int_grid, grid_var)
+    integration_path = mceq.integration_path
+    assert integration_path[0] == lenX
+
+
+def test_integration_path_grid_idcs(mceq):
+    int_grid = [0, 1]
+
+    grid_var = "X"
+    mceq._calculate_integration_path(int_grid, grid_var)
+    integration_path = mceq.integration_path
+    grid_idcs = integration_path[-1]
+    assert len(grid_idcs) == 2
+    assert grid_idcs[0] == 0
+    assert grid_idcs[0] < grid_idcs[1]
+
+
 testdata_theta = [
     [0.0, 5.62504370e-3],
     [30.0, 4.20479234e-3],
