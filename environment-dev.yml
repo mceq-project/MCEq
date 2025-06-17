@@ -1,11 +1,14 @@
 name: mceq-dev
-channel:
+channels:
   - default
   - conda-forge
 dependencies:
   - python
   - ipython
   - jupyter
+  - matplotlib
   - pytest-xdist
+  - pytest-cov
+  - pre-commit
   - pip:
     - ruff
