@@ -9,32 +9,32 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 
-def test_solve_default(mceq):
-    mceq.solve()
-    sol = mceq.get_solution("mu+", mag=0, integrate=True)
+def test_solve_default(mceq_small):
+    mceq_small.solve()
+    sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
 
-def test_solve_skip_integration_path(mceq):
-    mceq.solve(skip_integration_path=True)
-    sol = mceq.get_solution("mu+", mag=0, integrate=True)
+def test_solve_skip_integration_path(mceq_small):
+    mceq_small.solve(skip_integration_path=True)
+    sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
 
-def test_solve_other_grid_var(mceq):
+def test_solve_other_grid_var(mceq_small):
     with pytest.raises(NotImplementedError):
-        mceq.solve(grid_var="Y")
+        mceq_small.solve(grid_var="Y")
 
 
 @pytest.mark.parametrize(
     ["int_grid", "grid_shape"],
-    [[None, (0,)], [[0, 1], (2, 9922)]],
+    [[None, (0,)], [[0, 1], (2, 902)]],
     ids=["no-grid", "with-grid"],
 )
-def test_solve_int_grid(mceq, int_grid, grid_shape):
-    mceq.solve(int_grid)
-    print(mceq.grid_sol.shape)
-    assert mceq.grid_sol.shape == grid_shape
+def test_solve_int_grid(mceq_small, int_grid, grid_shape):
+    mceq_small.solve(int_grid)
+    print(mceq_small.grid_sol.shape)
+    assert mceq_small.grid_sol.shape == grid_shape
 
 
 @pytest.mark.parametrize(
@@ -222,3 +222,59 @@ def test_energy_grid_access(mceq_small):
     assert np.allclose(mceq_small.e_grid, testdata_ecenters, rtol=1e-8, atol=0)
     assert np.allclose(mceq_small.e_bins, testdata_eedges, rtol=1e-8, atol=0)
     assert np.allclose(mceq_small.e_widths, testdata_ewidths, rtol=1e-8, atol=0)
+
+
+def test_closest_energy(mceq_small):
+    closest_energy = np.array(
+        [mceq_small.closest_energy(energy) for energy in testdata_ecenters]
+    )
+    assert np.allclose(closest_energy, testdata_ecenters, rtol=0, atol=1e1)
+
+
+def test_get_solution_grid_idx(mceq_small):
+    mceq_small.solve()
+    with pytest.raises(Exception):
+        mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
+
+    mceq_small.solve([0, 1])
+    sol0 = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
+    sol1 = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=1)
+    sol_last = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=100)
+
+    assert np.allclose(sol0, 0)
+    assert np.all(sol1 != 0)
+    assert np.allclose(sol_last, sol1)
+
+
+def test_get_solution_wrong_particle_name(mceq_small):
+    from MCEq import config
+
+    config.excpt_on_missing_particle = True
+    mceq_small.solve()
+    with pytest.raises(Exception):
+        mceq_small.get_solution("proton", mag=0, integrate=True, grid_idx=0)
+
+
+def test_get_solution_prefixes(mceq_small):
+    mceq_small.solve()
+    total = mceq_small.get_solution("total_mu+", mag=0, integrate=True)
+    conv = mceq_small.get_solution("conv_mu+", mag=0, integrate=True)
+    prompt = mceq_small.get_solution("pr_mu+", mag=0, integrate=True)
+
+    assert np.allclose(total, conv + prompt)
+
+
+@pytest.mark.parametrize(
+    "return_as", ["total energy", "kinetic energy", "total momentum"]
+)
+@pytest.mark.parametrize("integrate", [True, False])
+def test_get_solution_return_as(mceq_small, return_as, integrate):
+    mceq_small.solve()
+
+    result = mceq_small.get_solution("mu+", return_as=return_as, integrate=integrate)
+    if isinstance(result, tuple):
+        xgrid, values = result
+        assert len(xgrid) == len(values)
+        assert np.all(np.isfinite(values))
+    else:
+        assert np.all(np.isfinite(result))
