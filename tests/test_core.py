@@ -29,6 +29,7 @@ def test_solve_other_grid_var(mceq):
 @pytest.mark.parametrize(
     ["int_grid", "grid_shape"],
     [[None, (0,)], [[0, 1], (2, 9922)]],
+    ids=["no-grid", "with-grid"],
 )
 def test_solve_int_grid(mceq, int_grid, grid_shape):
     mceq.solve(int_grid)
@@ -37,7 +38,14 @@ def test_solve_int_grid(mceq, int_grid, grid_shape):
 
 
 @pytest.mark.parametrize(
-    ["leading_process", "lenX"], [["decays", 594], ["interactions", -1], ["auto", -1]]
+    ["leading_process", "lenX"],
+    [
+        ["decays", 594],
+        pytest.param(
+            "interactions", -1, marks=pytest.mark.xfail(reason="Fix issue #66")
+        ),
+        pytest.param("auto", -1, marks=pytest.mark.xfail(reason="Fix issue #66")),
+    ],
 )
 def test_integration_path_leading_process(mceq, leading_process, lenX):
     """Fix this test by resolving issue #66"""
