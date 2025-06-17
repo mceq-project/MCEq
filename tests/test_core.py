@@ -337,3 +337,27 @@ def test_get_solution_return_as(mceq_small, return_as, integrate):
             assert np.all(np.isfinite(values))
         else:
             assert np.all(np.isfinite(result))
+
+
+@pytest.mark.parametrize(
+    "pdg_id",
+    [
+        pytest.param(None, marks=pytest.mark.xfail(reason="Fix issue #69")),
+        pytest.param(2212, marks=pytest.mark.xfail(reason="Fix issue #69")),
+    ],
+)
+@pytest.mark.parametrize("append", [False, True])
+def test_set_initial_spectrum(mceq_small, pdg_id, append):
+    spectrum = np.ones(42)
+    with pytest.raises(Exception):
+        mceq_small.set_initial_spectrum(spectrum, pdg_id, append)
+
+    spectrum = np.ones(mceq_small.dim)
+    mceq_small.set_initial_spectrum(spectrum, pdg_id, append)
+
+    particle = mceq_small.pman[pdg_id]
+
+    phi0 = mceq_small._phi0[particle.lidx : particle.uidx]
+    mceq_small._resize_vectors_and_restore()
+
+    assert np.allclose(phi0, spectrum)
