@@ -114,9 +114,14 @@ def test_set_interaction_model_model(mceq, model, n):
 
 
 def test_set_interaction_model_update_particle_list(mceq):
-    mceq.set_interaction_model("DPMJETIII191", update_particle_list=False)
+    mceq.set_interaction_model("DPMJETIII191", update_particle_list=True)
     n_particles = len(mceq._particle_list)
-    assert n_particles != 64
+    assert n_particles == 64
+
+    mceq.set_interaction_model("SIBYLL23C", update_particle_list=False)
+    n_particles_s = len(mceq._particle_list)
+
+    assert n_particles_s == n_particles
 
 
 @pytest.mark.parametrize(
@@ -174,6 +179,51 @@ def test_single_primary(mceq, energy, nmu, nnumu, nnue):
     assert nmu_sol == approx(nmu, rel=1e-8, abs=1e-5)
     assert nnumu_sol == approx(nnumu, rel=1e-8, abs=1e-5)
     assert nnue_sol == approx(nnue, rel=1e-8, abs=1e-5)
+
+
+testdata_pi0_primary = [
+    4.22673568e-14,
+    6.07686239e-15,
+    -2.62581856e-15,
+    2.51119040e-17,
+    -2.12746915e-18,
+    1.77322773e-20,
+    -8.50881199e-22,
+    6.61039536e-24,
+    -4.09830294e-24,
+    3.91022042e-25,
+    -3.60445917e-26,
+]
+
+
+def test_single_primary_pdg_corsika(mceq_small):
+    mceq_small.set_interaction_model("SIBYLL23C")
+    mceq_small.set_theta_deg(0.0)
+    mceq_small.set_single_primary_particle(E=1e10, pdg_id=1000020040)
+    mceq_small.solve()
+
+    pdg_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+
+    mceq_small.set_single_primary_particle(E=1e10, corsika_id=402)
+    mceq_small.solve()
+
+    corsika_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+
+    assert np.allclose(pdg_sol, corsika_sol)
+
+    # pi0
+    mceq_small.set_single_primary_particle(E=1e9, pdg_id=111)
+    mceq_small.solve()
+    pi0_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+
+    assert np.allclose(pi0_sol, testdata_pi0_primary, rtol=1e-6, atol=1e-30)
+
+
+def test_single_primary_e_too_low(mceq_small):
+    mceq_small.set_interaction_model("SIBYLL23C")
+    mceq_small.set_theta_deg(0.0)
+    with pytest.raises(Exception):
+        mceq_small.set_single_primary_particle(E=1e3, pdg_id=2212)
 
 
 testdata_ecenters = [
@@ -265,16 +315,25 @@ def test_get_solution_prefixes(mceq_small):
 
 
 @pytest.mark.parametrize(
-    "return_as", ["total energy", "kinetic energy", "total momentum"]
+    "return_as",
+    ["total energy", "kinetic energy", "total momentum", "none"],
 )
 @pytest.mark.parametrize("integrate", [True, False])
 def test_get_solution_return_as(mceq_small, return_as, integrate):
     mceq_small.solve()
 
-    result = mceq_small.get_solution("mu+", return_as=return_as, integrate=integrate)
-    if isinstance(result, tuple):
-        xgrid, values = result
-        assert len(xgrid) == len(values)
-        assert np.all(np.isfinite(values))
+    if return_as == "none":
+        with pytest.raises(Exception):
+            result = mceq_small.get_solution(
+                "mu+", return_as=return_as, integrate=integrate
+            )
     else:
-        assert np.all(np.isfinite(result))
+        result = mceq_small.get_solution(
+            "mu+", return_as=return_as, integrate=integrate
+        )
+        if isinstance(result, tuple):
+            xgrid, values = result
+            assert len(xgrid) == len(values)
+            assert np.all(np.isfinite(values))
+        else:
+            assert np.all(np.isfinite(result))
