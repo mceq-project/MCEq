@@ -103,16 +103,42 @@ testdata_model = [
     ["SIBYLL23C", 62],
     ["SIBYLL23CPP", 62],
 ]
-
-
 ids_model = [f"{model[0]}" for model in testdata_model]
 
 
 @pytest.mark.parametrize(["model", "n"], testdata_model, ids=ids_model)
-def test_set_interaction_model(mceq, model, n):
+def test_set_interaction_model_model(mceq, model, n):
     mceq.set_interaction_model(model)
     n_particles = len(mceq._particle_list)
     assert n_particles == n
+
+
+def test_set_interaction_model_update_particle_list(mceq):
+    mceq.set_interaction_model("DPMJETIII191", update_particle_list=False)
+    n_particles = len(mceq._particle_list)
+    assert n_particles != 64
+
+
+@pytest.mark.parametrize(
+    ["particle_list", "projectiles"],
+    [
+        [None, 19],
+        [[(2212, 0)], 1],
+    ],
+    ids=["None", "proton"],
+)
+def test_mceq_init_particles_list(particle_list, projectiles):
+    from MCEq.core import MCEqRun
+    import crflux.models as pm
+
+    mceq = MCEqRun(
+        interaction_model="SIBYLL23C",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+        particle_list=particle_list,
+    )
+
+    assert sum([p.is_projectile for p in mceq.pman.cascade_particles]) == projectiles
 
 
 testdata_primary = [
@@ -121,8 +147,6 @@ testdata_primary = [
     [1e9, 7.09254150e6, 1.20884925e7, 2.87396649e6],
     [5e10, 2.63982133e8, 4.14935240e8, 9.27683105e7],
 ]
-
-
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
 
@@ -150,3 +174,51 @@ def test_single_primary(mceq, energy, nmu, nnumu, nnue):
     assert nmu_sol == approx(nmu, rel=1e-8, abs=1e-5)
     assert nnumu_sol == approx(nnumu, rel=1e-8, abs=1e-5)
     assert nnue_sol == approx(nnue, rel=1e-8, abs=1e-5)
+
+
+testdata_ecenters = [
+    8.91250938e08,
+    1.12201845e09,
+    1.41253754e09,
+    1.77827941e09,
+    2.23872114e09,
+    2.81838293e09,
+    3.54813389e09,
+    4.46683592e09,
+    5.62341325e09,
+    7.07945784e09,
+    8.91250938e09,
+]
+testdata_eedges = [
+    7.94328235e08,
+    1.00000000e09,
+    1.25892541e09,
+    1.58489319e09,
+    1.99526231e09,
+    2.51188643e09,
+    3.16227766e09,
+    3.98107171e09,
+    5.01187234e09,
+    6.30957344e09,
+    7.94328235e09,
+    1.00000000e10,
+]
+testdata_ewidths = [
+    2.05671765e08,
+    2.58925412e08,
+    3.25967781e08,
+    4.10369123e08,
+    5.16624117e08,
+    6.50391229e08,
+    8.18794045e08,
+    1.03080063e09,
+    1.29770111e09,
+    1.63370890e09,
+    2.05671765e09,
+]
+
+
+def test_energy_grid_access(mceq_small):
+    assert np.allclose(mceq_small.e_grid, testdata_ecenters, rtol=1e-8, atol=0)
+    assert np.allclose(mceq_small.e_bins, testdata_eedges, rtol=1e-8, atol=0)
+    assert np.allclose(mceq_small.e_widths, testdata_ewidths, rtol=1e-8, atol=0)
