@@ -455,3 +455,40 @@ def test_set_density_profile(mceq_small, model, density_config):
     profile = profiles[model](*density_config)
     mceq_small.set_density_model(profile)
     mceq_small.solve()
+
+
+def test_set_mod_pprod(mceq_small):
+    def weight(xmat, egrid, pname, value):
+        return (1 + value) * np.ones_like(xmat)
+
+    ret = mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+    assert ret == 1
+
+    assert mceq_small._interactions.mod_pprod[(2212, 211)] is not None
+    assert mceq_small._interactions.mod_pprod[(2212, -211)] is not None
+
+    mceq_small.regenerate_matrices()
+    mceq_small.solve()
+
+    mceq_small.regenerate_matrices(skip_decay_matrix=True)
+    mceq_small.solve()
+
+
+def test_unset_mod_pprod(mceq_small):
+    def weight(xmat, egrid, pname, value):
+        return (1 + value) * np.ones_like(xmat)
+
+    mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+
+    mceq_small.regenerate_matrices()
+    mceq_small.solve()
+
+    mceq_small.unset_mod_pprod()
+    assert not mceq_small._interactions.mod_pprod
+
+    mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+
+    mceq_small.regenerate_matrices()
+    mceq_small.solve()
+    mceq_small.unset_mod_pprod(dont_fill=False)
+    assert not mceq_small._interactions.mod_pprod
