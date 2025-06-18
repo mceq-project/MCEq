@@ -3,6 +3,8 @@ import sys
 import numpy as np
 import pytest
 from pytest import approx
+from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
+import MCEq.geometry.density_profiles as dprof
 
 
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
@@ -365,3 +367,91 @@ def test_set_initial_spectrum(mceq_small, pdg_id, append):
     mceq_small._resize_vectors_and_restore()
 
     assert np.allclose(phi0, spectrum)
+
+
+msis_atmospheres = [
+    "SouthPole",
+    "Karlsruhe",
+    "Geneva",
+    "Tokyo",
+    "SanGrasso",
+    "TelAviv",
+    "KSC",
+    "SoudanMine",
+    "Tsukuba",
+    "LynnLake",
+    "PeaceRiver",
+    "FtSumner",
+]
+
+season = ["January", "July"]
+
+corsika_atmospheres = list_available_corsika_atmospheres()
+
+
+test_densities_cases = []
+# MSIS00: all atmospheres
+for atmo in msis_atmospheres:
+    for s in ["January", "July"]:
+        test_densities_cases.append(
+            pytest.param("MSIS00", (atmo, s), id=f"MSIS00-{atmo}-{s}")
+        )
+
+# MSIS00_IC and AIRS: only SouthPole
+for model in ["MSIS00_IC", "AIRS"]:
+    for s in ["January", "July"]:
+        if model == "AIRS":
+            test_densities_cases.append(
+                pytest.param(
+                    model,
+                    ("SouthPole", s),
+                    id=f"{model}-SouthPole-{s}",
+                    marks=pytest.mark.xfail(reason="Fix issure #71"),
+                )
+            )
+        else:
+            test_densities_cases.append(
+                pytest.param(model, ("SouthPole", s), id=f"{model}-SouthPole-{s}")
+            )
+
+for density_config in corsika_atmospheres:
+    test_densities_cases.append(
+        pytest.param(
+            "CORSIKA",
+            density_config,
+            id=f"CORSIKA-{density_config}",
+        )
+    )
+
+test_densities_cases.append(pytest.param("Isothermal", (None, None), id="Isothermal"))
+test_densities_cases.append(
+    pytest.param("GeneralizedTarget", (), id="GeneralizedTarget")
+)
+test_densities_cases.append(
+    pytest.param(
+        "Unknow",
+        (),
+        id="Unknown",
+        marks=pytest.mark.xfail(reason="Fails for uknown density model"),
+    )
+)
+
+profiles = {
+    "MSIS00": dprof.MSIS00Atmosphere,
+    "MSIS00_IC": dprof.MSIS00IceCubeCentered,
+    "CORSIKA": dprof.CorsikaAtmosphere,
+    "AIRS": dprof.AIRSAtmosphere,
+    "Isothermal": dprof.IsothermalAtmosphere,
+    "GeneralizedTarget": dprof.GeneralizedTarget,
+}
+
+
+@pytest.mark.parametrize("model, density_config", test_densities_cases)
+def test_set_density_profile(mceq_small, model, density_config):
+    mceq_small.set_density_model((model, density_config))
+    mceq_small.solve()
+
+    # test instances instead of str
+    profile = profiles[model](*density_config)
+    mceq_small.set_density_model(profile)
+    mceq_small.solve()
