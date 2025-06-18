@@ -492,3 +492,62 @@ def test_unset_mod_pprod(mceq_small):
     mceq_small.solve()
     mceq_small.unset_mod_pprod(dont_fill=False)
     assert not mceq_small._interactions.mod_pprod
+
+
+def test_n_particles_energy_cutoff_and_grid(mceq_small):
+    mceq_small.solve([0, 1])
+    n0 = mceq_small.n_particles("mu+", grid_idx=0)
+    n1 = mceq_small.n_particles("mu+", grid_idx=1)
+    n_high_cut = mceq_small.n_particles("mu+", grid_idx=1, min_energy_cutoff=1e9)
+
+    assert n0 == 0
+    assert n1 > n0
+    assert n_high_cut < n1
+
+
+def test_n_mu_energy_cutoff_and_grid(mceq_small):
+    mceq_small.solve([0, 1])
+    n0 = mceq_small.n_mu(grid_idx=0)
+    n1 = mceq_small.n_mu(grid_idx=1)
+    nhigh = mceq_small.n_mu(grid_idx=1, min_energy_cutoff=1e9)
+
+    assert n0 == 0
+    assert n1 > 0
+    assert nhigh < n1
+
+
+def test_n_e_energy_cutoff_and_grid(mceq_small):
+    mceq_small.solve([0, 1])
+    n0 = mceq_small.n_e(grid_idx=0)
+    n1 = mceq_small.n_e(grid_idx=1)
+    nhigh = mceq_small.n_e(grid_idx=1, min_energy_cutoff=1e9)
+
+    assert n0 == 0
+    assert n1 > 0
+    assert nhigh < n1
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        pytest.param("primary_e", marks=pytest.mark.xfail(reason="fix issue #72")),
+        pytest.param("no_name_definition"),
+    ],
+)
+def test_z_factor(mceq_small, definition):
+    mceq_small.solve([0, 1])
+    z = mceq_small.z_factor(2212, 211, definition=definition)
+
+    assert isinstance(z, np.ndarray)
+    assert z.shape == mceq_small.e_grid.shape
+    assert np.all(z >= 0)
+    assert np.any(z > 0)
+
+
+def test_decay_z_factor(mceq_small):
+    mceq_small.solve()
+    z = mceq_small.decay_z_factor(211, 14)
+
+    assert z.shape == mceq_small.e_grid.shape
+    assert np.any(z > 0)
+    assert not np.any(np.isnan(z))
