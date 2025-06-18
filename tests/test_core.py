@@ -495,6 +495,9 @@ def test_unset_mod_pprod(mceq_small):
 
 
 def test_n_particles_energy_cutoff_and_grid(mceq_small):
+    import crflux.models as pm
+
+    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
     mceq_small.solve([0, 1])
     n0 = mceq_small.n_particles("mu+", grid_idx=0)
     n1 = mceq_small.n_particles("mu+", grid_idx=1)
@@ -506,6 +509,9 @@ def test_n_particles_energy_cutoff_and_grid(mceq_small):
 
 
 def test_n_mu_energy_cutoff_and_grid(mceq_small):
+    import crflux.models as pm
+
+    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
     mceq_small.solve([0, 1])
     n0 = mceq_small.n_mu(grid_idx=0)
     n1 = mceq_small.n_mu(grid_idx=1)
@@ -517,6 +523,9 @@ def test_n_mu_energy_cutoff_and_grid(mceq_small):
 
 
 def test_n_e_energy_cutoff_and_grid(mceq_small):
+    import crflux.models as pm
+
+    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
     mceq_small.solve([0, 1])
     n0 = mceq_small.n_e(grid_idx=0)
     n1 = mceq_small.n_e(grid_idx=1)
