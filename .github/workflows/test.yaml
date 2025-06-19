@@ -53,7 +53,7 @@ jobs:
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
     - name: Upload coverage reports to Codecov
-      if: matrix.os == 'macos-14'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        flags: ${{ matrix.os }}
