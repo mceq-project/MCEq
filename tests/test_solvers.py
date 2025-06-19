@@ -1,4 +1,5 @@
 import numpy as np
+import copy
 
 from MCEq import config
 from MCEq.solvers import solv_numpy
@@ -12,7 +13,6 @@ def test_solv_numpy_runs(toy_solver_problem):
     grid_idcs = toy_solver_problem[-1]
 
     solution, grid_sol = solv_numpy(*toy_solver_problem)
-    print(phi0, solution, grid_sol)
     assert solution.shape == phi0.shape
     assert grid_sol.shape == (len(grid_idcs), phi0.shape[0])
     assert not np.isnan(solution).any()
@@ -47,8 +47,10 @@ def test_solv_CUDA_sparse_matches_numpy(toy_solver_problem):
 def test_solv_MKL_sparse_matches_numpy(toy_solver_problem):
     from MCEq.solvers import solv_MKL_sparse
 
+    toy_solver_problem_mkl = tuple(copy.deepcopy(x) for x in toy_solver_problem)
+
     solution_numpy, _ = solv_numpy(*toy_solver_problem)
 
-    solution_mkl, _ = solv_MKL_sparse(*toy_solver_problem)
+    solution_mkl, _ = solv_MKL_sparse(*toy_solver_problem_mkl)
 
     assert solution_mkl == pytest.approx(solution_numpy, rel=1e-5, abs=1e-10)
