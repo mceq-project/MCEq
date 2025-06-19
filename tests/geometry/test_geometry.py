@@ -89,3 +89,15 @@ def test_earth_geometry():
 
     h_ret = geom.h(delta_l, theta)
     assert h_ret == pytest.approx(h, rel=1e-6, abs=1e-4)
+
+
+def test_chirkin_cos_theta_star():
+    from MCEq.geometry.geometry import chirkin_cos_theta_star
+
+    theta = np.deg2rad(np.linspace(0, 90, 10))
+    cos_theta = np.cos(theta)
+
+    chirkin = chirkin_cos_theta_star(cos_theta)
+
+    # zero element is 1
+    assert not chirkin[1:] == pytest.approx(cos_theta[1:], rel=1e-8, abs=1e-12)
