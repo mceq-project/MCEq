@@ -51,3 +51,24 @@ def msis_expected_file(request):
             "Please run the test with the expected output file."
         )
     return path
+
+
+@pytest.fixture(scope="function")
+def toy_solver_problem():
+    import numpy as np
+    from scipy.sparse import csr_matrix
+
+    nsteps = 10
+    size = 5
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.ones(nsteps)
+    grid_idcs = list(range(nsteps))
+
+    # mimic how self.int_m and self.dec_m are used in solve()
+    lam_int = 0.3
+    lam_dec = 0.1
+    int_m = csr_matrix(-lam_int * np.eye(size))  # simple interaction term
+    dec_m = csr_matrix(-lam_dec * np.eye(size))  # simple decay term
+
+    phi0 = np.ones(size)
+    return nsteps, dX, rho_inv, int_m, dec_m, phi0, grid_idcs
