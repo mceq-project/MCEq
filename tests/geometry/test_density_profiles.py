@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+import MCEq.geometry.density_profiles as dp
+
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
     ("BK_USStd", None, (1033.8094962133184, 0.00015782685585891685)),
@@ -90,3 +92,105 @@ def test_msis_atm(loc, season, expected):
         msg = f"MSIS-00 reference data for {loc} in {season} not available. Creating a new one. {ref}"
         pytest.fail(msg)
     assert np.allclose([msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)], expected)
+
+
+@pytest.mark.parametrize(
+    "cls,args",
+    [
+        (dp.CorsikaAtmosphere, ("USStd", None)),
+        (dp.MSIS00Atmosphere, ("SouthPole", "January")),
+        (dp.IsothermalAtmosphere, ("Nowhere", None)),
+    ],
+)
+def test_common_atmosphere_interface(cls, args):
+    atm = cls(*args)
+    atm.set_theta(0.0)
+
+    X_test = np.linspace(1, atm.max_X * 0.99, 10)
+    h_test = np.linspace(0, atm.geom.h_atm, 10)
+
+    # r_X2rho should give positive finite values
+    inv_rho = atm.r_X2rho(X_test)
+    assert np.all(np.isfinite(inv_rho))
+    assert np.all(inv_rho > 0)
+
+    # X2rho should be consistent with inverse
+    rho = atm.X2rho(X_test)
+    assert np.allclose(1 / rho, inv_rho, rtol=1e-3)
+
+    # h2X and X2h roundtrip
+    for h in h_test:
+        X = atm.h2X(h)
+        h_back = atm.X2h(X)
+        assert np.isclose(h, h_back, rtol=1e-2)
+
+    # misc functions
+    for h in h_test:
+        mol = atm.moliere_air(h)
+        nrel = atm.nref_rel_air(h)
+        theta_c = atm.theta_cherenkov_air(h)
+        assert mol > 0
+        assert 0 < nrel < 1e-3
+        assert 0 < theta_c < 90
+
+
+@pytest.mark.parametrize("X", [1.0, 10.0, 100.0])
+def test_generalized_target(X):
+    tgt = dp.GeneralizedTarget(len_target=100.0, env_density=2.0, env_name="default")
+
+    # reset + basic props
+    assert tgt.max_den == 2.0
+    assert np.isclose(tgt.max_X, 100.0 * 2.0)
+    assert np.isclose(tgt.get_density_X(X), 2.0)
+    assert np.isclose(tgt.r_X2rho(X), 0.5)
+    assert np.isclose(tgt.get_density(tgt.s_X2h(X)), 2.0)
+
+    # set_length ok
+    tgt.set_length(150.0)
+    assert tgt.len_target == 150.0
+    assert np.isclose(tgt.max_X, 2.0 * 150.0)
+
+    # add material (replace default)
+    tgt.reset()
+    tgt.add_material(0.0, 3.0, "iron")
+    assert len(tgt.mat_list) == 1
+    assert np.isclose(tgt.get_density(0), 3.0)
+
+    # add second layer
+    tgt.reset()
+    tgt.add_material(60.0, 4.0, "lead")
+    assert len(tgt.mat_list) == 2
+    assert np.isclose(tgt.get_density(70), 4.0)
+
+    # set_length too small
+    tgt.reset()
+    tgt.add_material(50.0, 3.0, "x")
+    with pytest.raises(Exception):
+        tgt.set_length(40.0)
+
+    # add invalid materials
+    with pytest.raises(Exception):
+        tgt.add_material(200.0, 1.0, "fail")
+    with pytest.raises(Exception):
+        tgt.add_material(30.0, 2.0, "bad")  # not monotonic
+
+    # set_theta must raise
+    with pytest.raises(NotImplementedError):
+        tgt.set_theta(0.0)
+
+    # spline roundtrip
+    X_vals = np.linspace(1, tgt.max_X - 1, 10)
+    h_vals = tgt.s_X2h(X_vals)
+    assert np.allclose(tgt.s_h2X(h_vals), X_vals)
+
+    # density errors
+    with pytest.raises(Exception):
+        tgt.get_density([0, 200])
+    with pytest.raises(Exception):
+        tgt.get_density_X(tgt.max_X * 1.01)
+
+    # reset again
+    tgt.add_material(60.0, 5.0, "z")
+    tgt.reset()
+    assert len(tgt.mat_list) == 1
+    assert np.isclose(tgt.get_density(10), 2.0)
