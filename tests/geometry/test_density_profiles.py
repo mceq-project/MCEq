@@ -129,9 +129,84 @@ def test_common_atmosphere_interface(cls, args):
         mol = atm.moliere_air(h)
         nrel = atm.nref_rel_air(h)
         theta_c = atm.theta_cherenkov_air(h)
+        gamma_c = atm.gamma_cherenkov_air(h)
         assert mol > 0
         assert 0 < nrel < 1e-3
         assert 0 < theta_c < 90
+        assert gamma_c > 1
+
+
+def test_corsika_depth_and_inverse_functions():
+    atm = dp.CorsikaAtmosphere("USStd", None)
+    atm.set_theta(0.0)
+
+    # depth2height should roughly invert get_mass_overburden
+    h_cm = np.linspace(1e5, 6e5, 10)
+    X = [atm.get_mass_overburden(h) for h in h_cm]
+    h_back = [atm.depth2height(x) for x in X]
+    assert np.allclose(h_cm, h_back, rtol=0.1)
+
+    # rho_inv gives inverse density
+    rho = [atm.get_density(h) for h in h_cm]
+    rho_inv = [atm.rho_inv(atm.get_mass_overburden(h), np.cos(0.0)) for h in h_cm]
+    assert np.allclose([1.0 / r for r in rho], rho_inv, rtol=1e-2)
+
+    # calc_thickl returns 5 values
+    thickl = atm.calc_thickl()
+    assert isinstance(thickl, list)
+    assert len(thickl) == 5
+
+
+def test_isothermal_mass_overburden():
+    atm = dp.IsothermalAtmosphere("Unknown", None)
+    h = np.linspace(0, 5e5, 10)
+    overburden = atm.get_mass_overburden(h)
+    assert np.all(overburden > 0)
+    assert np.all(overburden <= atm.X0)
+
+
+def test_msis_setters_and_cache_clear():
+    atm = dp.MSIS00Atmosphere("SouthPole", "January")
+    atm.theta_deg = 42
+    atm._clear_cache()
+    assert atm.theta_deg is None
+
+    atm.set_location("Karlsruhe")
+    atm.set_location_coord(10.0, 48.0)
+    atm.set_season("February")
+    atm.set_doy(42)
+    assert atm.theta_deg is None  # should still be cleared
+
+    h = 2e5
+    T = atm.get_temperature(h)
+    assert 100 < T < 1000
+
+
+def test_msis00_icecube_centered():
+    atm = dp.MSIS00IceCubeCentered(
+        "Karlsruhe", "January"
+    )  # should override to SouthPole
+    # just check if works
+    assert atm.get_density(1e5) > 0
+
+    # test latitude at 0 and 90 deg
+    lat_0 = atm.latitude(0.0)
+    lat_90 = atm.latitude(90.0)
+    assert -90.0 <= lat_0 <= 0.0
+    assert -90.0 <= lat_90 <= 0.0
+    assert lat_0 < lat_90  # as zenith increases, impact moves away from vertical
+
+    # test set_theta for downgoing and upgoing
+    atm.set_theta(45.0)
+    assert atm.theta_deg == 45.0
+
+    atm.set_theta(135.0)
+    assert atm.theta_deg == 135.0
+
+
+@pytest.mark.xfail(reason="AIRSAtmosphere requires unavailable data files")
+def test_airs_instantiation():
+    dp.AIRSAtmosphere("SouthPole", "January")
 
 
 @pytest.mark.parametrize("X", [1.0, 10.0, 100.0])
