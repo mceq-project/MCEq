@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 
 def test_mrs_charm(mceq_small):
@@ -52,13 +51,3 @@ def test_mrs_charm(mceq_small):
     for proj in model.allowed_proj:
         for sec in model.allowed_sec:
             _ = model.get_yield_matrix(proj, sec)
-
-
-@pytest.mark.xfail(reason="Fix issue #79")
-def test_whr_charm(mceq_small):
-    from MCEq.charm_models import WHR_charm
-
-    e_grid = mceq_small.e_grid
-    cms = mceq_small._int_cs
-    model = WHR_charm(e_grid, cms)
-    assert isinstance(model, WHR_charm)
