@@ -1,5 +1,4 @@
 import crflux.models as pm
-from functools import lru_cache
 import pytest
 import pathlib
 
@@ -9,9 +8,29 @@ from MCEq import config
 
 @pytest.fixture(scope="session")
 def mceq():
-    config.debug_level = 1
+    config.debug_level = 2
     config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
+    config.e_min = 1e-1
+    config.e_max = 1e11
+    if config.has_mkl:
+        config.set_mkl_threads(2)
+
+    return MCEqRun(
+        interaction_model="SIBYLL23C",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
+
+
+@pytest.fixture(scope="session")
+def mceq_small():
+    config.debug_level = 2
+    config.kernel_config = "numpy"
+    config.cuda_gpu_id = 0
+
+    config.e_min = 1e9
+    config.e_max = 1e10
     if config.has_mkl:
         config.set_mkl_threads(2)
 
