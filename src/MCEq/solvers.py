@@ -248,16 +248,18 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
     )
 
-    if matrix_status != 0:
-        raise RuntimeError(f"MKL create_csr failed with status {matrix_status}")
+    assert (
+        matrix_status == 0
+    ), f"MKL create_csr failed with status {matrix_status} on interaction matrix"
 
     dec_m_handle = c_void_p()
     matrix_status = create_csr(
         byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
     )
 
-    if matrix_status != 0:
-        raise RuntimeError(f"MKL create_csr failed with status {matrix_status}")
+    assert (
+        matrix_status == 0
+    ), f"MKL create_csr failed with status {matrix_status} on decay matrix"
 
     # hints
     operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
@@ -281,10 +283,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         nsteps,
     )
 
-    if hint_status != 0:
-        raise RuntimeError(
-            f"mkl_sparse_set_mv_hint failed with status code {hint_status}"
-        )
+    assert (
+        hint_status == 0
+    ), f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
 
     hint_status = gemv_hint(
         dec_m_handle,
@@ -293,24 +294,25 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         nsteps,
     )
 
-    if hint_status != 0:
-        raise RuntimeError(
-            f"mkl_sparse_set_mv_hint failed with status code {hint_status}"
-        )
+    assert (
+        hint_status == 0
+    ), f"MKL gemv_hint failed with status {hint_status} on decay matrix"
 
     # add mkl_sparse_set_memory_hint???
     #
 
     optimize_status = optimize(int_m_handle)
-    if optimize_status != 0:
-        raise RuntimeError(
-            f"mkl_sparse_optimize failed with status code {optimize_status}"
-        )
+
+    assert (
+        optimize_status == 0
+    ), f"MKL mkl_sparse_optimize failed with status {optimize_status} on interaction matrix"
+
     optimize_status = optimize(dec_m_handle)
-    if optimize_status != 0:
-        raise RuntimeError(
-            f"mkl_sparse_optimize failed with status code {optimize_status}"
-        )
+
+    assert (
+        optimize_status == 0
+    ), f"MKL mkl_sparse_optimize failed with status {optimize_status} on decay matrix"
+
     from time import time
 
     start = time()
