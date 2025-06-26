@@ -5,8 +5,8 @@ misc (:mod:`MCEq.misc`)
 ************************************************
 .. currentmodule:: MCEq.misc
 
-   Submodule of :mod:`MCEq`.
 
+Different helper functions.
 
 Reference/API
 =============

@@ -4,7 +4,6 @@ geometry (:mod:`MCEq.geometry.geometry`)
 ******************************************************************
 .. currentmodule:: MCEq.geometry.geometry
 
-   Submodule of :mod:`MCEq.geometry`.
 
 
 Reference/API

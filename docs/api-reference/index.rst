@@ -15,6 +15,7 @@ Submodules
   charm_models
   config
   core
+  data
   geometry/index
   misc
   particlemanager
