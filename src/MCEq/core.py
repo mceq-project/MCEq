@@ -965,6 +965,8 @@ class MCEqRun:
                 if e < min_energy:
                     min_idx = p_eidx + 1
                     continue
+                else:
+                    min_idx = p_eidx
                 zfac[p_eidx] = np.sum(
                     smat[min_idx : p_eidx + 1, p_eidx]
                     * nuc_flux[p_eidx]
