@@ -23,6 +23,8 @@ extensions = [
     "sphinx_automodapi.smart_resolver",
     "sphinx_copybutton",
     "sphinx_design",
+    "nbsphinx",
+    "sphinx_gallery.load_style",
 ]
 
 
@@ -46,7 +48,7 @@ htmlhelp_basename = project + "docs"
 html_theme_options = {
     "navbar_links": [
         {"name": "Quickstart", "url": "quickstart/index", "internal": True},
-        {"name": "Example Gallery", "url": "examples-gallery/index", "internal": True},
+        {"name": "Example Gallery", "url": "example-gallery", "internal": True},
         {"name": "API Reference", "url": "api-reference/index", "internal": True},
         {"name": "Cite Us", "url": "citeus", "internal": True},
         {"name": "References", "url": "citations", "internal": True},
@@ -64,4 +66,8 @@ html_sidebars = {
     "quickstart/index": [],  # disable sidebar on Quickstart
     "citeus": [],  # disable sidebar on Cite Us
     "citations": [],  # disable sidebar on References
+    "example-gallery": [],  # disable sidebar on References
+    "v12v11_diff": [],  # disable sidebar on References
 }
+
+html_show_sourcelink = False

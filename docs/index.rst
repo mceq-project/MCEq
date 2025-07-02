@@ -11,7 +11,6 @@ MCEq documentation
 `Issue Tracker <https://github.com/mceq-project/mceq/issues>`__ |
 `Pull Requests <https://github.com/mceq-project/mceq/pulls>`__
 **License**: `BSD 3 <https://github.com/mceq-project/MCEq/blob/main/LICENSE>`__
-**Python**: |python_requires|
 
 This program is a toolkit to compute the evolution of particle densities that evolve
 as a cascade in the Earth’s atmosphere or other target media.
@@ -24,7 +23,7 @@ Various models/parameterizations for particle interactions and atmospheric densi
   :hidden:
 
   quickstart/index
-  examples-gallery/index
+  example-gallery
   api-reference/index
   citeus
   citations
@@ -48,6 +47,8 @@ Various models/parameterizations for particle interactions and atmospheric densi
   .. grid-item-card:: Examples Gallery
       :class-header: text-center
       :class-body: text-center
+      :link: example-gallery
+      :link-type: doc
 
       :octicon:`book;100px`
 
