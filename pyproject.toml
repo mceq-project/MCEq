@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "MCEq"
-version = "1.3.0"
+version = "1.3.5"
 description = "Numerical cascade equation solver"
 readme = "README.md"
 authors = [{ name = "Anatoli Fedynitch", email = "afedynitch@gmail.com" }]
@@ -31,6 +31,7 @@ dependencies = [
 ]
 [project.optional-dependencies]
 test = ["pytest"]
+cuda = ["cupy-cuda12x>=12.0.0"]
 
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"
