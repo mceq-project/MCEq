@@ -6,12 +6,17 @@
 
 2. **NumPy Solver Input Mutation Bug**: Fixed critical bug where NumPy solver modified input arrays in place, causing subsequent solver calls to use wrong initial conditions.
 
+3. **MKL Library Detection**: Fixed IndexError when no MKL libraries are found in the environment.
+
 ## Code Changes
 
 ### /src/MCEq/solvers.py
 - **Line 28**: Added `.copy()` to prevent input array modification: `phc = phi.copy()`
 - **Lines 70-78**: Updated imports and error message for CuPy
 - **Lines 115-123**: Modernized CUDA `solve_step` method to use `cupyx.scipy.sparse` and `@` operator
+
+### /src/MCEq/config.py
+- **Lines 242-243**: Added safe MKL library detection with fallback to prevent IndexError
 
 ### /pyproject.toml  
 - **Lines 33-34**: Added optional CUDA dependency: `cuda = ["cupy-cuda12x>=12.0.0"]`
