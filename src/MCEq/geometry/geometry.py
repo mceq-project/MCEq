@@ -8,8 +8,8 @@ class EarthGeometry:
     r"""A model of the Earth's geometry, approximating it
        by a sphere. The figure below illustrates the meaning of the parameters.
 
-    .. figure:: graphics/geometry.*
-        :scale: 30 %
+    .. figure:: ../_static/graphics/geometry.*
+        :scale: 50 %
         :alt: picture of geometry
 
 
