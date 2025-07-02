@@ -98,7 +98,6 @@ class MRS_charm(CharmModel):
     allowed_sec = [411, 421, 431, 4122]
 
     def __init__(self, e_grid, csm):
-
         # inverted fragmentation functions
         self.lambda_c_frag = lambda xhad: 1 / 1.47 * xhad
         self.d_frag = lambda xhad: 4.0 / 3.0 * xhad
@@ -221,7 +220,7 @@ class MRS_charm(CharmModel):
         """Plots the meson, baryon and charm quark distribution as shown in
         the plot below.
 
-        .. figure:: graphics/MRS_test.png
+        .. figure:: ../_static/graphics/MRS_test.png
             :scale: 50 %
             :alt: output of test function
 
