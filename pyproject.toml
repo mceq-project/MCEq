@@ -29,9 +29,13 @@ dependencies = [
     "requests",
     "jacobi",
 ]
+
 [project.optional-dependencies]
-test = ["pytest"]
 cuda = ["cupy-cuda12x>=12.0.0"]
+
+[dependency-groups]
+test = ["pytest"]
+
 
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"
