@@ -25,7 +25,7 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     dmc = dec_m
     dxc = dX
     ric = rho_inv
-    phc = phi
+    phc = phi.copy()  # Fix: create a copy to avoid modifying the input
 
     dXaccum = 0.0
 
@@ -73,8 +73,9 @@ class CUDASparseContext:
             self.cubl = cp.cuda.cublas
         except ImportError:
             raise Exception(
-                "solv_CUDA_sparse(): Numbapro CUDA libaries not "
-                + "installed.\nCan not use GPU."
+                "solv_CUDA_sparse(): CuPy not installed or not available.\n"
+                + "Install with: pip install cupy-cuda12x>=12.0.0\n"
+                + "CuPy 12.0+ is required for modern sparse matrix interface compatibility."
             )
 
         cp.cuda.Device(config.cuda_gpu_id).use()
@@ -113,29 +114,16 @@ class CUDASparseContext:
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        self.cp.cusparse.csrmv(
-            a=self.cu_int_m,
-            x=self.cu_curr_phi,
-            y=self.cu_delta_phi,
-            alpha=1.0,
-            beta=0.0,
-        )
-        self.cp.cusparse.csrmv(
-            a=self.cu_dec_m,
-            x=self.cu_curr_phi,
-            y=self.cu_delta_phi,
-            alpha=rho_inv,
-            beta=1.0,
-        )
-        self.cubl.saxpy(
-            self.cubl_handle,
-            self.cu_delta_phi.shape[0],
-            dX,
-            self.cu_delta_phi.data.ptr,
-            1,
-            self.cu_curr_phi.data.ptr,
-            1,
-        )
+        # Mimic the exact NumPy implementation:
+        # phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+        
+        # Calculate: int_m @ curr_phi + dec_m @ (rho_inv * curr_phi)
+        int_result = self.cu_int_m @ self.cu_curr_phi
+        dec_result = self.cu_dec_m @ (rho_inv * self.cu_curr_phi)
+        delta = int_result + dec_result
+        
+        # Apply: curr_phi += delta * dX
+        self.cu_curr_phi += delta * dX
 
 
 def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
