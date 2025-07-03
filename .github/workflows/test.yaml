@@ -7,7 +7,7 @@ on:
       - tests/**
       - pyproject.toml
       - CMakeLists.txt
-      - .github/workflows/test.yml
+      - .github/workflows/test.yaml
   push:
     branches:
       - main
