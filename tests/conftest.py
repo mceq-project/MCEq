@@ -1,6 +1,8 @@
 import crflux.models as pm
+import numpy as np
 import pytest
 import pathlib
+from scipy.sparse import csr_matrix
 
 from MCEq.core import MCEqRun
 from MCEq import config
@@ -72,3 +74,21 @@ def toy_solver_problem():
 
     phi0 = np.ones(size)
     return nsteps, dX, rho_inv, int_m, dec_m, phi0, grid_idcs
+
+
+@pytest.fixture(scope="session")
+def toy_solver_setup():
+    nsteps = 10
+    size = 5
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.ones(nsteps)
+    grid_idcs = list(range(nsteps))
+
+    lam_int = 0.3
+    lam_dec = 0.1
+    int_m = csr_matrix(-lam_int * np.eye(size))
+    dec_m = csr_matrix(-lam_dec * np.eye(size))
+
+    phi = np.ones(size)
+
+    return nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs

@@ -240,7 +240,8 @@ pf = platform.platform()
 
 prefix = pathlib.Path(sys.prefix)
 if "Linux" in pf:
-    mkl_path = list((prefix / "lib").glob("libmkl_rt*"))[0]
+    mkl_libs = list((prefix / "lib").glob("libmkl_rt*"))
+    mkl_path = mkl_libs[0] if mkl_libs else prefix / "lib" / "libmkl_rt.so"
 elif "macOS" in pf:
     mkl_path = prefix / "lib" / "libmkl_rt.dylib"
     has_accelerate = True

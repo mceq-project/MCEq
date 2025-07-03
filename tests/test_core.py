@@ -539,7 +539,7 @@ def test_n_e_energy_cutoff_and_grid(mceq_small):
 @pytest.mark.parametrize(
     "definition",
     [
-        pytest.param("primary_e", marks=pytest.mark.xfail(reason="fix issue #72")),
+        pytest.param("primary_e"),
         pytest.param("no_name_definition"),
     ],
 )
