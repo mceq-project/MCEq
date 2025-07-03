@@ -23,6 +23,7 @@ Various models/parameterizations for particle interactions and atmospheric densi
   :hidden:
 
   quickstart/index
+  tutorial
   example-gallery
   api-reference/index
   citeus

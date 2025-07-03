@@ -25,6 +25,7 @@ extensions = [
     "sphinx_design",
     "nbsphinx",
     "sphinx_gallery.load_style",
+    "matplotlib.sphinxext.plot_directive",
 ]
 
 
@@ -48,6 +49,7 @@ htmlhelp_basename = project + "docs"
 html_theme_options = {
     "navbar_links": [
         {"name": "Quickstart", "url": "quickstart/index", "internal": True},
+        {"name": "Tutorial", "url": "tutorial", "internal": True},
         {"name": "Example Gallery", "url": "example-gallery", "internal": True},
         {"name": "API Reference", "url": "api-reference/index", "internal": True},
         {"name": "Cite Us", "url": "citeus", "internal": True},
@@ -64,6 +66,7 @@ html_theme_options = {
 
 html_sidebars = {
     "quickstart/index": [],  # disable sidebar on Quickstart
+    "tutorial": [],
     "citeus": [],  # disable sidebar on Cite Us
     "citations": [],  # disable sidebar on References
     "example-gallery": [],  # disable sidebar on References
