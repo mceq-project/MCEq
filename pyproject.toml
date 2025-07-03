@@ -34,7 +34,7 @@ dependencies = [
 cuda = ["cupy-cuda12x>=12.0.0"]
 
 [dependency-groups]
-test = ["pytest"]
+test = ["pytest", "pytest-cov", "pytest-xdist"]
 
 
 [tool.scikit-build]

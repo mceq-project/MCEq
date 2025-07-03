@@ -49,7 +49,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
     - name: Install requirements
-      run: uv pip install --system . pytest pytest-cov pytest-xdist ${{ matrix.installs }}
+      run: uv pip install --system . --group test ${{ matrix.installs }}
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
     - name: Upload coverage reports to Codecov
