@@ -59,4 +59,3 @@ Hadronic interaction models
     | *Cascade equations and hadronic interactions at very high energies*
     | A. Fedynitch
     | CERN-THESIS-2015-371
-

@@ -220,7 +220,7 @@ class MRS_charm(CharmModel):
         """Plots the meson, baryon and charm quark distribution as shown in
         the plot below.
 
-        .. figure:: graphics/MRS_test.png
+        .. figure:: ../_static/graphics/MRS_test.png
             :scale: 50 %
             :alt: output of test function
 

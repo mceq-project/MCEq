@@ -1,12 +1,12 @@
 .. _v12v11_diff:
 
-Differences between V 1.2.0 and 1.1.3
+v1.2.0 vs. v1.1.3
 -------------------------------------
 
 Lepton fluxes
 .............
 
-.. figure:: graphics/version_comparison/flux_ratios_versions.png
+.. figure:: _static/graphics/version_comparison/flux_ratios_versions.png
     :width: 1024 px
     :alt: Flux ratio comparisons
     :align: left
@@ -15,7 +15,7 @@ Lepton fluxes
     between the versions 1.2.0 and 1.1.3 (from left to right for muons, muon
     neutrinos and electron neutrinos). Shades are used for different zenith angles.
 
-.. figure:: graphics/version_comparison/ch_fl_rat_ratios_versions.png
+.. figure:: _static/graphics/version_comparison/ch_fl_rat_ratios_versions.png
     :width: 1024 px
     :alt: Flavor and charge ratio comparisons
     :align: left
@@ -31,14 +31,14 @@ The effect is strongest at low energies as seen in the plots. At high energies t
 no changes.  For fluxes the changes are most striking in the zenith distribution of muons.
 For neutrinos the effect is mostly related to the spectral index. For electron neutrinos
 there is some effect for the zenith distribution at tens of GeV and will affect predictions
-made for IceCube DeepCore or KM3Net-ORCA. Update and recomputation of expectations is therefore
+made for IceCube DeepCore or KM3Net-ORCA. Update a[48;44;166;1584;2988tnd recomputation of expectations is therefore
 recommended. For high energies, i.e. IceCube/P-ONE/ARCA recomputation is not necessary.
 
 Muons in air showers
 .....................
 
 
-.. figure:: graphics/version_comparison/muspec_ratios_versions.png
+.. figure:: _static/graphics/version_comparison/muspec_ratios_versions.png
     :width: 600 px
     :alt: Flux ratio comparisons
     :align: left
@@ -47,7 +47,7 @@ Muons in air showers
     between the versions 1.2.0 and 1.1.3 for vertical zenith angle.
     Shades are used for different primary energies.
 
-.. figure:: graphics/version_comparison/munumber_ratios_versions.png
+.. figure:: _static/graphics/version_comparison/munumber_ratios_versions.png
     :width: 600 px
     :alt: Flavor and charge ratio comparisons
     :align: left

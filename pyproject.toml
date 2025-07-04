@@ -31,6 +31,20 @@ dependencies = [
 ]
 [project.optional-dependencies]
 test = ["pytest"]
+docs = [
+    # Core
+    "sphinx>=8",
+    # Third-party extensions
+    "sphinx-automodapi>=0.2",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+    "nbsphinx>=0.9",
+    "sphinx-gallery>=0.19",
+    "pydata-sphinx-theme",
+    # Helpful runtime deps for nbsphinx / gallery
+    "ipython>=9",      # nicer notebook execution
+    "matplotlib>=3.10", # common for gallery images
+]
 cuda = ["cupy-cuda12x>=12.0.0"]
 
 [tool.scikit-build]

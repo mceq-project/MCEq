@@ -2,6 +2,7 @@
 *.pyd
 data/*
 docs/_build
+docs/api
 .vscode
 examples/.ipynb*
 _skbuild
