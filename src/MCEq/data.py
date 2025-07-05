@@ -566,7 +566,7 @@ class Interactions:
           args (tuple): arguments of `x_func`
 
         Returns:
-          (numpy.array): modification matrix
+          (:func:`numpy.array`): modification matrix
         """
         from MCEq.misc import gen_xmat
 
@@ -732,7 +732,7 @@ class Interactions:
           parent (int): PDG ID of parent particle
           child (int): PDG ID of final state child/secondary particle
         Returns:
-          numpy.array: yield matrix
+          :func:`numpy.array`: yield matrix
         """
         info(10, "Called for", parent, child)
         if child not in self.relations[parent]:
@@ -859,7 +859,7 @@ class Decays:
           parent (int): PDG ID of parent particle
           child (int): PDG ID of final state child particle
         Returns:
-          numpy.array: decay matrix
+          :func:`numpy.array`: decay matrix
         """
         info(20, "entering with", parent, child)
         if child not in self.relations[parent]:
@@ -930,7 +930,7 @@ class InteractionCrossSections:
                                  else :math:`\\text{cm}^2`
 
         Returns:
-          numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
+          :func:`numpy.array`: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
         """
 
         message_templ = "replacing {0} with {1} cross section"

@@ -259,7 +259,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     the array _thickl can be calculated using :func:`calc_thickl` .
 
     Attributes:
-      _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters
+      _atm_param (:func:`numpy.array`): (5x5) Stores 5 atmospheric parameters
                                 _aatm, _batm, _catm, _thickl, _hlay
                                 for each of the 5 layers
 
