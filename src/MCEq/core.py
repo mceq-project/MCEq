@@ -173,7 +173,7 @@ class MCEqRun:
           flux (multiply by bin width)
 
         Returns:
-          (numpy.array): flux of particles on energy grid :attr:`e_grid`
+          (:func:`numpy.array`): flux of particles on energy grid :attr:`e_grid`
         """
 
         res = np.zeros(self._energy_grid.d)

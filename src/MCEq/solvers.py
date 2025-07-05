@@ -9,13 +9,13 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
     grid_sol = []
@@ -134,14 +134,14 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
       mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
     c = context
@@ -181,15 +181,15 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
       grid_idcs (list): indices at which longitudinal solutions have to be saved.
 
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
     from ctypes import POINTER, byref, c_int, c_void_p, Structure
