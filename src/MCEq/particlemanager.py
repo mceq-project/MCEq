@@ -410,7 +410,7 @@ class MCEqParticle:
                              to the projectile's energy grid
           dtridx (int,int): tuple containing index range relative
                             to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          cmat (:func:`numpy.array`): array reference to the interaction matrix
         """
         cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
             chidx[0] : chidx[1], projidx[0] : projidx[1]
@@ -426,7 +426,7 @@ class MCEqParticle:
                              to the projectile's energy grid
           dtridx (int,int): tuple containing index range relative
                             to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          cmat (:func:`numpy.array`): array reference to the interaction matrix
         """
         cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
             chidx[0] : chidx[1], projidx[0] : projidx[1]
@@ -444,7 +444,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest enerkin_energygy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -469,7 +469,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -494,7 +494,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -520,7 +520,7 @@ class MCEqParticle:
             verbose (bool): print out the closest energy
 
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
         if not hasattr(self, "_ptav_sib23c"):
             # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
@@ -611,7 +611,7 @@ class MCEqParticle:
         or hadron behavior.
 
         Args:
-          e_grid (numpy.array): energy grid of size :attr:`d`
+          e_grid (:func:`numpy.array`): energy grid of size :attr:`d`
           max_density (float): maximum density on the integration path (largest
                                decay length)
         """

@@ -37,6 +37,11 @@ source_suffix = ".rst"
 master_doc = "index"
 
 
+intersphinx_mapping = {
+    "numpy": ("https://numpy.org/doc/stable", None),
+    "crflux": ("https://crfluxmodels.readthedocs.io/en/latest", None),
+}
+
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
