@@ -46,7 +46,6 @@ class MCEqParticle:
     def __init__(
         self, pdg_id, helicity, energy_grid=None, cs_db=None, init_pdata_defaults=True
     ):
-
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
@@ -532,7 +531,6 @@ class MCEqParticle:
             )[0]
 
         def xF(xL, Elab, ppdg):
-
             m = {2212: 0.938, 211: 0.139, 321: 0.493}
             mp = m[2212]
 
@@ -635,10 +633,14 @@ class MCEqParticle:
             self.is_resonance = False
             return
 
-        # If particle is forced to be a "resonance"
-        if np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]:
-            self.mix_idx = d - 1
-            self.E_mix = self._energy_grid.c[self.mix_idx]
+        # If particle is forced to be a "resonance" or is not in standard_particles
+        pid = np.abs(self.pdg_id[0])
+        if (
+            pid in config.adv_set["force_resonance"]
+            and pid not in config.standard_particles
+        ):
+            self.mix_idx = d
+            self.E_mix = self._energy_grid.c[self.mix_idx - 1]
             self.is_mixed = False
             self.is_resonance = True
         # Particle can interact and decay
@@ -648,9 +650,10 @@ class MCEqParticle:
             mask = inv_declen != 0.0
             threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
             del mask
-            self.mix_idx = np.where(threshold > cross_over)[0][0]
+            self.mix_idx = np.where(threshold >= cross_over)[0][0]
+            if self.mix_idx != 0:
+                self.is_mixed = True
             self.E_mix = self._energy_grid.c[self.mix_idx]
-            self.is_mixed = True
             self.is_resonance = False
         # These particles don't interact but can decay (e.g. tau leptons)
         elif not self.can_interact and not self.is_stable:
@@ -1015,7 +1018,6 @@ class ParticleManager:
         self._update_particle_tables()
 
     def add_new_particle(self, new_mceq_particle):
-
         if new_mceq_particle in self.all_particles:
             info(
                 0,
@@ -1163,7 +1165,6 @@ class ParticleManager:
         return str_out
 
     def print_particle_tables(self, min_dbg_lev=2):
-
         info(min_dbg_lev, "Hadrons and stable particles:", no_caller=True)
         print_in_rows(
             min_dbg_lev,
