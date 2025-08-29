@@ -418,7 +418,7 @@ class MCEqRun:
         if (2212, 0) in self.pman:
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] = (1e-4 * p_top)
+            ] = 1e-4 * p_top
         else:
             info(
                 1,
@@ -428,7 +428,7 @@ class MCEqRun:
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
             self._phi0[
                 min_idx + self.pman[(2112, 0)].lidx : self.pman[(2112, 0)].uidx
-            ] = (1e-4 * n_top)
+            ] = 1e-4 * n_top
         elif (2212, 0) in self.pman:
             info(
                 2,
@@ -437,7 +437,7 @@ class MCEqRun:
             )
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] += (1e-4 * n_top)
+            ] += 1e-4 * n_top
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
@@ -1259,9 +1259,10 @@ class MatrixBuilder:
                     p._assign_hadr_dist_idx(s, p.hadridx, s.hadridx, cmat)
                     self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
 
-                cmat = self._zero_mat()
-                p._assign_hadr_dist_idx(s, p.hadridx, s.residx, cmat)
-                self._follow_chains(s, cmat, p, s.residx, self.C_blocks, reclev=1)
+                if s.is_mixed or s.is_resonance:
+                    cmat = self._zero_mat()
+                    p._assign_hadr_dist_idx(s, p.hadridx, s.residx, cmat)
+                    self._follow_chains(s, cmat, p, s.residx, self.C_blocks, reclev=1)
 
     def _construct_differential_operator(self):
         """Constructs a derivative operator for the contiuous losses.
