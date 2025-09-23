@@ -237,7 +237,7 @@ class HDF5Backend:
         eqv_lookup = defaultdict(list)
         for k in equivalences:
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
-
+        print(hdf_root.attrs["tuple_idcs"])
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
@@ -393,9 +393,7 @@ class HDF5Backend:
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
 
-            if (
-                config.muon_helicity_dependence and False
-            ):  # this is not necessary since don't have to overwrite polarized with polarized
+            if config.muon_helicity_dependence:  # this is not necessary since don't have to overwrite polarized with polarized
                 info(2, "Using helicity dependent decays.")
                 custom_index = self._gen_db_dictionary(
                     mceq_db["decays"]["polarized"],
@@ -407,10 +405,13 @@ class HDF5Backend:
 
                 # Remove manually TODO: Kaon decays to muons assumed
                 # only two-body
-                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)))
-                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)))
-                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)))
-                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)))
+                try:
+                    _ = dec_index["index_d"].pop(((211, 0), (-13, 0)))
+                    _ = dec_index["index_d"].pop(((-211, 0), (13, 0)))
+                    _ = dec_index["index_d"].pop(((321, 0), (-13, 0)))
+                    _ = dec_index["index_d"].pop(((-321, 0), (13, 0)))
+                except:
+                    pass
                 # _ = dec_index['index_d'].pop(((211,0),(14,0)))
                 # _ = dec_index['index_d'].pop(((-211,0),(-14,0)))
                 # _ = dec_index['index_d'].pop(((321,0),(14,0)))
@@ -853,6 +854,10 @@ class Decays:
         self.relations = index["relations"]
         self.index_d = index["index_d"]
         self.description = index["description"]
+        # for p in self.relations:
+        #     for d in self.relations[p]:
+        #         if p in self.relations[d]:
+        #             print(p, d)
         # Advanced options
         regenerate_index = False
         if parent_list:
@@ -862,6 +867,8 @@ class Decays:
                 if p in self.relations:
                     plist.append(p)
                     for d in self.relations[p]:
+                        if d[0] == p[0] and d[1] == p[1]:
+                            continue
                         _follow_decay_chain(d, plist)
                 else:
                     return plist

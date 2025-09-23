@@ -484,9 +484,9 @@ class MSIS00Atmosphere(EarthsAtmosphere):
             "PeaceRiver",
             "FtSumner",
         ]
-        assert (
-            location in msis_atmospheres
-        ), f"{location} not available for MSIS00Atmosphere"
+        assert location in msis_atmospheres, (
+            f"{location} not available for MSIS00Atmosphere"
+        )
 
         self._msis = cNRLMSISE00()
 
@@ -900,7 +900,6 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         )
 
     def set_theta(self, theta_deg):
-
         self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
         info(
             1,
@@ -946,7 +945,6 @@ class GeneralizedTarget:
         env_density=config.env_density,  # g/cm3
         env_name=config.env_name,
     ):
-
         self.len_target = len_target
         self.env_density = env_density
         self.env_name = env_name

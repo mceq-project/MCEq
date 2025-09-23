@@ -55,7 +55,9 @@ class MCEqRun:
         self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._int_cs = MCEq.data.InteractionCrossSections(mceq_hdf_db=self._mceq_db)
+        self._int_cs = MCEq.data.InteractionCrossSections(
+            mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
+        )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(
@@ -418,7 +420,7 @@ class MCEqRun:
         if (2212, 0) in self.pman:
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] = (1e-4 * p_top)
+            ] = 1e-4 * p_top
         else:
             info(
                 1,
@@ -428,7 +430,7 @@ class MCEqRun:
         if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
             self._phi0[
                 min_idx + self.pman[(2112, 0)].lidx : self.pman[(2112, 0)].uidx
-            ] = (1e-4 * n_top)
+            ] = 1e-4 * n_top
         elif (2212, 0) in self.pman:
             info(
                 2,
@@ -437,7 +439,7 @@ class MCEqRun:
             )
             self._phi0[
                 min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] += (1e-4 * n_top)
+            ] += 1e-4 * n_top
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
@@ -835,6 +837,7 @@ class MCEqRun:
             and config.leading_process == "decays"
         ):
             info(3, "using decays as leading eigenvalues")
+            info(10, "delta_X", config.stability_margin, max_ldec, X, ri(X))
 
             def delta_X(X):
                 return config.stability_margin / (max_ldec * ri(X))
@@ -860,6 +863,7 @@ class MCEqRun:
 
         dXmax = config.dXmax
         while max_X > X:
+            info(50, "Integration Path:", delta_X(X), dXmax, max_X)
             dX = min(delta_X(X), dXmax)
             if (
                 np.any(int_grid)
