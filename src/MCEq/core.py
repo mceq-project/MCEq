@@ -55,7 +55,9 @@ class MCEqRun:
         self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._int_cs = MCEq.data.InteractionCrossSections(mceq_hdf_db=self._mceq_db)
+        self._int_cs = MCEq.data.InteractionCrossSections(
+            mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
+        )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(
