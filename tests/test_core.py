@@ -577,27 +577,3 @@ def test_interaction_model_forwarding():
     # Verify that the interaction model is correctly set
     assert mceq._int_cs.iam == "QGSJETII04"
     assert mceq._interactions.iam == "QGSJETII04"
-
-
-def test_interaction_cross_sections_delayed_loading():
-    """Test that InteractionCrossSections can be initialized without loading a model."""
-    from MCEq.data import HDF5Backend, InteractionCrossSections
-
-    # Create HDF5Backend
-    mceq_db = HDF5Backend()
-
-    # Initialize InteractionCrossSections without a model
-    int_cs = InteractionCrossSections(mceq_hdf_db=mceq_db, interaction_model=None)
-
-    # Verify that no model is loaded initially
-    assert int_cs.iam is None
-    assert int_cs.parents is None
-    assert int_cs.index_d is None
-
-    # Load a model explicitly
-    int_cs.load("SIBYLL23C")
-
-    # Verify that the model is now loaded
-    assert int_cs.iam == "SIBYLL23C"
-    assert int_cs.parents is not None
-    assert int_cs.index_d is not None

@@ -885,7 +885,7 @@ class InteractionCrossSections:
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
-    def __init__(self, mceq_hdf_db, interaction_model=None):
+    def __init__(self, mceq_hdf_db, interaction_model):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
@@ -896,11 +896,9 @@ class InteractionCrossSections:
         #: Dictionary containing the distribuiton matrices
         self.index_d = None
         #: (str) Interaction Model name
-        self.iam = None
-        # Load defaults if model is provided
-        if interaction_model is not None:
-            self.iam = normalize_hadronic_model_name(interaction_model)
-            self.load(interaction_model)
+        self.iam = normalize_hadronic_model_name(interaction_model)
+        # Load defaults
+        self.load(interaction_model)
 
     def __getitem__(self, parent):
         """Return the cross section in :math:`\\text{cm}^2` as a dictionary
