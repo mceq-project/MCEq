@@ -560,3 +560,20 @@ def test_decay_z_factor(mceq_small):
     assert z.shape == mceq_small.e_grid.shape
     assert np.any(z > 0)
     assert not np.any(np.isnan(z))
+
+
+def test_interaction_model_forwarding():
+    """Test that user-provided interaction model is correctly forwarded to InteractionCrossSections."""
+    from MCEq.core import MCEqRun
+    import crflux.models as pm
+
+    # Create MCEqRun with a specific interaction model
+    mceq = MCEqRun(
+        interaction_model="QGSJETII04",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
+
+    # Verify that the interaction model is correctly set
+    assert mceq._int_cs.iam == "QGSJETII04"
+    assert mceq._interactions.iam == "QGSJETII04"

@@ -885,7 +885,7 @@ class InteractionCrossSections:
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
-    def __init__(self, mceq_hdf_db, interaction_model="SIBYLL2.3c"):
+    def __init__(self, mceq_hdf_db, interaction_model):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
