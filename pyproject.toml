@@ -135,17 +135,17 @@ directory = "changes"
 filename="CHANGELOG.md"
 issue_format = "[#{issue}](https://github.com/radionets-project/pyvisgen/pull/{issue})"
 
-[tool.towncrier.fragment.feat]
-name="Features"
+[tool.towncrier.fragment.api]
+name = "API Changes"
 
 [tool.towncrier.fragment.bugfix]
 name="Bug Fixes"
-
-[tool.towncrier.fragment.docs]
-name = "API Changes"
 
 [tool.towncrier.fragment.chore]
 name = "Maintencance"
 
 [tool.towncrier.fragment.docs]
 name = "Documentation Updates"
+
+[tool.towncrier.fragment.feat]
+name="Features"
