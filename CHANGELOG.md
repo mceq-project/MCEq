@@ -2,13 +2,6 @@
 
 <!-- towncrier release notes start -->
 
-# MCEq --version=1.3.6 (2025-11-04)
-
-## Maintencance
-
-- Adding `towncier` to the project. This enables simple and meaningful generation of future changelogs. ([#109](https://github.com/radionets-project/pyvisgen/pull/109))
-
-
 Version 1.3.0:
 
 - New buildsystem. Uses [scikit-build.core](https://github.com/scikit-build/scikit-build-core).
