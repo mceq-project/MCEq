@@ -92,7 +92,7 @@ jobs:
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: wheel-${{ matrix.py }}-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
@@ -128,7 +128,7 @@ jobs:
           # Verify the package is installed and importable
           python -c "import MCEq; print('MCEq imported successfully')"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: sdist
           path: dist/*.tar.gz
