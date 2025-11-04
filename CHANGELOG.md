@@ -1,5 +1,13 @@
 # Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
+
 <!-- towncrier release notes start -->
+
+# MCEq --version=1.3.6 (2025-11-04)
+
+## Maintencance
+
+- Adding `towncier` to the project. This enables simple and meaningful generation of future changelogs. ([#109](https://github.com/radionets-project/pyvisgen/pull/109))
+
 
 Version 1.3.0:
 

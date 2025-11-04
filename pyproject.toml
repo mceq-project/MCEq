@@ -133,7 +133,7 @@ package="MCEq"
 package_dir="src"
 directory = "changes"
 filename="CHANGELOG.md"
-issue_format = "[#{issue}](https://github.com/radionets-project/pyvisgen/pull/{issue})"
+issue_format = "[#{issue}](https://github.com/mceq-project/MCEq/pull/{issue})"
 
 [tool.towncrier.fragment.api]
 name = "API Changes"
