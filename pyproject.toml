@@ -148,4 +148,4 @@ name = "Maintencance"
 name = "Documentation Updates"
 
 [tool.towncrier.fragment.feat]
-name="Features"
+name="New Features"
