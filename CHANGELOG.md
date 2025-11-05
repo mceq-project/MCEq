@@ -1,5 +1,7 @@
 # Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
+<!-- towncrier release notes start -->
+
 Version 1.3.0:
 
 - New buildsystem. Uses [scikit-build.core](https://github.com/scikit-build/scikit-build-core).

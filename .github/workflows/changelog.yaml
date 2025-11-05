@@ -1,0 +1,23 @@
+name: Changelog
+
+on:
+  pull_request:
+    types: [opened, reopened, labeled, unlabeled, synchronize]
+
+env:
+  FRAGMENT_NAME: "changes/${{ github.event.number }}.*.md"
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for news fragment
+        if: ${{ ! contains( github.event.pull_request.labels.*.name, 'no-changelog-needed')}}
+        uses: andstor/file-existence-action@v3
+        with:
+          files: ${{ env.FRAGMENT_NAME }}
+          fail: true

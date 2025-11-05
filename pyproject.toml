@@ -127,3 +127,25 @@ docstring-code-format = true
 
 [tool.ruff.lint.isort]
 known-local-folder = ["pathutils"]
+
+[tool.towncrier]
+package="MCEq"
+package_dir="src"
+directory = "changes"
+filename="CHANGELOG.md"
+issue_format = "[#{issue}](https://github.com/mceq-project/MCEq/pull/{issue})"
+
+[tool.towncrier.fragment.api]
+name = "API Changes"
+
+[tool.towncrier.fragment.bugfix]
+name="Bug Fixes"
+
+[tool.towncrier.fragment.chore]
+name = "Maintencance"
+
+[tool.towncrier.fragment.docs]
+name = "Documentation Updates"
+
+[tool.towncrier.fragment.feat]
+name="New Features"
