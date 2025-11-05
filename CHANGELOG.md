@@ -2,6 +2,37 @@
 
 <!-- towncrier release notes start -->
 
+# MCEq 1.3.1 (2025-11-05)
+
+## Bug Fixes
+
+- Fixes `z_factor` calculation if minimal MCEq energy is above 2 GeV. Just failed before. ([#81](https://github.com/mceq-project/MCEq/pull/81))
+- Fixes/Updates backends for MCEq:
+  1. CUDA: Update from `cupy.cusparse.csrmv` to newer `cupyx.scipy.sparse`
+  2. Numpy: Fixed bug where numpy solver mutates the input arrays, resulting in wrong solutions for subsequent calls of `MCEqRun.solve()`
+  3. MKL: Fixed error due do not being able to find MKL library ([#83](https://github.com/mceq-project/MCEq/pull/83))
+- Threshold cross-over between resonance approximation and mixing was off-by-one.
+  1. Treats particles that are not in the standard_particle list as resonances.
+  2. Fixes condition for finding the mixing energy from `threshold>cross_over` to `threshold>=cross_over`. ([#100](https://github.com/mceq-project/MCEq/pull/100))
+- Fixes correctly setting the user-provided interaction model in the `init` of `MCEqRun`. Initialization failed if `SIBYLL2.3C` was not included in the database. ([#106](https://github.com/mceq-project/MCEq/pull/106))
+
+## Maintencance
+
+- Update the MKL backend of MCEq to use more modern `oneMKL` library. ([#63](https://github.com/mceq-project/MCEq/pull/63))
+- Cleaning up tests of MCEq. ([#64](https://github.com/mceq-project/MCEq/pull/64))
+- Adding new tests to `MCEq.core`. Enhances test coverage! ([#67](https://github.com/mceq-project/MCEq/pull/67))
+- Adding new tests to `MCEq.solvers`. Enhances test coverage! ([#74](https://github.com/mceq-project/MCEq/pull/74))
+- Adding new tests to `MCEq.geometry`. Covers densities and atmospheres. Enhances test coverage! ([#77](https://github.com/mceq-project/MCEq/pull/77))
+- Removes the `WHR_charm` class! Adds tests for `MCEq.charm_models`. Enhances test coverage! ([#80](https://github.com/mceq-project/MCEq/pull/80))
+- Adding `towncrier` to the project. This enables simple and meaningful generation of future changelogs. ([#109](https://github.com/mceq-project/MCEq/pull/109))
+
+## Documentation Updates
+
+- Completely updates the MCEq documentation to new `pydata_sphinx_theme`. Enjoy it on [mceq.readthedocs.io](https://mceq.readthedocs.io)! ([#82](https://github.com/mceq-project/MCEq/pull/82))
+- Adds `intersphinx` mappings to the Documentation. Enables cross-referencing to other external documentations. ([#91](https://github.com/mceq-project/MCEq/pull/91))
+- Fixes the ReadTheDocs build by changing the install method of the `docs` dependencies in `.readthedocs.yml`. ([#93](https://github.com/mceq-project/MCEq/pull/93))
+
+
 Version 1.3.0:
 
 - New buildsystem. Uses [scikit-build.core](https://github.com/scikit-build/scikit-build-core).
