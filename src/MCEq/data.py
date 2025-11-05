@@ -135,6 +135,8 @@ equivalences = {
 }
 
 equivalences["FLUKA"] = equivalences["DPMJET"]
+
+
 class HDF5Backend(object):
     """Provides access to tabulated data stored in an HDF5 file.
 
@@ -323,7 +325,7 @@ class HDF5Backend(object):
                 medium = "air"
             else:
                 self._check_subgroup_exists(
-                    mceq_db["hadronic_interactions"]["air"], mname
+                    mceq_db["hadronic_interactions"][self.medium], mname
                 )
                 medium = self.medium
 
@@ -452,7 +454,7 @@ class HDF5Backend(object):
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
-        if "DPMJETIII19" in mname or "FLUKA" in mname:
+        if "FLUKA" in mname:
             info(5, f"{mname} cross sections replaced by DPMIII191.")
             mname = "DPMJETIII191"
 
@@ -463,9 +465,6 @@ class HDF5Backend(object):
         if medium == "air-legacy" and "SIBYLL23" not in mname:
             info(5, "air-legacy target replaced by air for", mname)
             medium = "air"
-        elif medium == "ice":
-            info(5, "ice target replaced by water for", mname)
-            medium = "water"
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             self._check_subgroup_exists(mceq_db["cross_sections"], medium)
@@ -473,7 +472,7 @@ class HDF5Backend(object):
             cs_db = mceq_db["cross_sections"][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = list(cs_db.attrs["projectiles"])
+            parents = list(cs_db.attrs["parents"])
             for ip, p in enumerate(parents):
                 index_d[p] = cs_data[self._cuts, ip]
 
