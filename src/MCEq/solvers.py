@@ -199,7 +199,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     """
 
     from ctypes import c_int, c_char, POINTER, byref
-    from src.mceq_config import mkl
+    from MCEq import config
+
+    mkl = config.mkl
 
     np_fl = config.floatlen
 
