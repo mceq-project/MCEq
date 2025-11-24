@@ -21,7 +21,7 @@ jobs:
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v6
@@ -40,7 +40,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.3
         env:
@@ -73,7 +73,7 @@ jobs:
             arch: aarch64
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - if: ${{ matrix.arch == 'aarch64' }}
         uses: docker/setup-qemu-action@v3
@@ -103,7 +103,7 @@ jobs:
     name: source package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -165,7 +165,7 @@ jobs:
     needs: [release_check, upload]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
