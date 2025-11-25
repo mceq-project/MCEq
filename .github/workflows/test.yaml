@@ -36,7 +36,7 @@ jobs:
             installs: "mkl"
       fail-fast: false
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
       with:
         submodules: False
         fetch-depth: 3
