@@ -18,6 +18,7 @@ def test_solve_default(mceq_small):
 
 
 def test_solve_skip_integration_path(mceq_small):
+    mceq_small._calculate_integration_path(int_grid=None, grid_var="X")
     mceq_small.solve(skip_integration_path=True)
     sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
