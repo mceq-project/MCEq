@@ -8,6 +8,12 @@ from MCEq import config
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.particlemanager import ParticleManager
 
+# trapz was finally removed with numpy 2.4
+if hasattr(np, "trapezoid"):
+    trapz = np.trapezoid
+else:
+    trapz = np.trapz
+
 
 class MCEqRun:
     """Main class for handling the calculation.
@@ -896,11 +902,13 @@ class MCEqRun:
         )
         info(
             10,
-            f"Energy cutoff for particle number calculation {self.e_bins[ie_min]:4.3e} GeV",
+            f"Energy cutoff for particle number calculation {
+                self.e_bins[ie_min]:4.3e} GeV",
         )
         info(
             15,
-            f"First bin is between {self.e_bins[ie_min]:3.2e} and {self.e_bins[ie_min + 1]:3.2e} with midpoint {self.e_grid[ie_min]:3.2e}",
+            f"First bin is between {self.e_bins[ie_min]:3.2e} and {
+                self.e_bins[ie_min + 1]:3.2e} with midpoint {self.e_grid[ie_min]:3.2e}",
         )
         return np.sum(
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:]
@@ -1012,7 +1020,7 @@ class MCEqRun:
             #     min_idx = p_eidx + 1
             #     continue
             xlab, xdist = proj.dNdec_dxlab(e, sec)
-            zfac[p_eidx] = np.trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
+            zfac[p_eidx] = trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
         return zfac
 
 
@@ -1181,7 +1189,11 @@ class MatrixBuilder:
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
                 raise Exception(
-                    f"Dimension mismatch: matrix {self.dim_states}x{self.dim_states}, p={rp.name}:({rp.lidx},{rp.uidx}), c={rc.name}:({rc.lidx},{rc.uidx})"
+                    f"Dimension mismatch: matrix {self.dim_states}x{
+                        self.dim_states
+                    }, p={rp.name}:({rp.lidx},{rp.uidx}), c={rc.name}:({rc.lidx},{
+                        rc.uidx
+                    })"
                 )
         return csr_matrix(new_mat)
 
