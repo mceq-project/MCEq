@@ -1,8 +1,8 @@
+import importlib
+import pathlib
 import platform
 import sys
 import warnings
-import importlib
-import pathlib
 
 from MCEq import base_path
 

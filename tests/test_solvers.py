@@ -1,10 +1,10 @@
-import numpy as np
 import copy
+
+import numpy as np
+import pytest
 
 from MCEq import config
 from MCEq.solvers import solv_numpy
-
-import pytest
 
 
 def test_solv_numpy_runs(toy_solver_problem):
@@ -22,7 +22,7 @@ def test_solv_numpy_runs(toy_solver_problem):
 
 @pytest.mark.skipif(not config.has_cuda, reason="CUDA not available")
 def test_solv_CUDA_sparse_matches_numpy(toy_solver_problem):
-    from MCEq.solvers import solv_CUDA_sparse, CUDASparseContext
+    from MCEq.solvers import CUDASparseContext, solv_CUDA_sparse
 
     solution_numpy, _ = solv_numpy(*toy_solver_problem)
 
@@ -89,8 +89,8 @@ def test_cuda_numpy_solver_consistency(toy_solver_setup):
 
     Note: Requires CuPy >= 12.0.0 for modern sparse matrix interface compatibility.
     """
-    from MCEq.solvers import solv_CUDA_sparse, CUDASparseContext
     from MCEq import config
+    from MCEq.solvers import CUDASparseContext, solv_CUDA_sparse
 
     # Run NumPy solver
     solution_numpy, _ = solv_numpy(*toy_solver_setup)

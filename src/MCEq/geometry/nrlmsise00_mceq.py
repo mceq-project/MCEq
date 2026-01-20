@@ -1,3 +1,5 @@
+from ctypes import byref, c_double, c_int, pointer
+
 import MCEq.geometry.nrlmsise00.nrlmsise00 as cmsis
 from MCEq.geometry.atmosphere_parameters import (
     DAY_TIMES_SEC,
@@ -8,7 +10,6 @@ from MCEq.geometry.atmosphere_parameters import (
     MONTH_TO_DAY_OF_YEAR,
 )
 from MCEq.misc import info
-from ctypes import pointer, byref, c_double, c_int
 
 
 class NRLMSISE00Base:

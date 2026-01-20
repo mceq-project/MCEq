@@ -1,11 +1,12 @@
+import pathlib
+
 import crflux.models as pm
 import numpy as np
 import pytest
-import pathlib
 from scipy.sparse import csr_matrix
 
-from MCEq.core import MCEqRun
 from MCEq import config
+from MCEq.core import MCEqRun
 
 
 @pytest.fixture(scope="session")

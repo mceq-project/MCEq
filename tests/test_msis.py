@@ -2,8 +2,8 @@ from __future__ import print_function
 
 
 def test_msis(msis_expected_file):
-    import pathlib
     from ctypes import byref, c_double, c_int, pointer
+
     from MCEq.geometry.nrlmsise00.nrlmsise00 import (
         ap_array,
         msis,
