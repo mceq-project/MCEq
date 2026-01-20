@@ -3,9 +3,9 @@ import sys
 import numpy as np
 import pytest
 from pytest import approx
-from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
-import MCEq.geometry.density_profiles as dprof
 
+import MCEq.geometry.density_profiles as dprof
+from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
 
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
@@ -18,6 +18,7 @@ def test_solve_default(mceq_small):
 
 
 def test_solve_skip_integration_path(mceq_small):
+    mceq_small._calculate_integration_path(int_grid=None, grid_var="X")
     mceq_small.solve(skip_integration_path=True)
     sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
@@ -135,8 +136,9 @@ def test_set_interaction_model_update_particle_list(mceq):
     ids=["None", "proton"],
 )
 def test_mceq_init_particles_list(particle_list, projectiles):
-    from MCEq.core import MCEqRun
     import crflux.models as pm
+
+    from MCEq.core import MCEqRun
 
     mceq = MCEqRun(
         interaction_model="SIBYLL23C",
@@ -564,8 +566,9 @@ def test_decay_z_factor(mceq_small):
 
 def test_interaction_model_forwarding():
     """Test that user-provided interaction model is correctly forwarded to InteractionCrossSections."""
-    from MCEq.core import MCEqRun
     import crflux.models as pm
+
+    from MCEq.core import MCEqRun
 
     # Create MCEqRun with a specific interaction model
     mceq = MCEqRun(

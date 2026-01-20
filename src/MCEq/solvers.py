@@ -116,12 +116,12 @@ class CUDASparseContext:
 
         # Mimic the exact NumPy implementation:
         # phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
-        
+
         # Calculate: int_m @ curr_phi + dec_m @ (rho_inv * curr_phi)
         int_result = self.cu_int_m @ self.cu_curr_phi
         dec_result = self.cu_dec_m @ (rho_inv * self.cu_curr_phi)
         delta = int_result + dec_result
-        
+
         # Apply: curr_phi += delta * dX
         self.cu_curr_phi += delta * dX
 
@@ -192,7 +192,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
       :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import POINTER, byref, c_int, c_void_p, Structure
+    from ctypes import POINTER, Structure, byref, c_int, c_void_p
     from ctypes import c_double as fl_pr
 
     from MCEq.config import mkl
@@ -236,18 +236,18 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
     )
 
-    assert (
-        matrix_status == 0
-    ), f"MKL create_csr failed with status {matrix_status} on interaction matrix"
+    assert matrix_status == 0, (
+        f"MKL create_csr failed with status {matrix_status} on interaction matrix"
+    )
 
     dec_m_handle = c_void_p()
     matrix_status = create_csr(
         byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
     )
 
-    assert (
-        matrix_status == 0
-    ), f"MKL create_csr failed with status {matrix_status} on decay matrix"
+    assert matrix_status == 0, (
+        f"MKL create_csr failed with status {matrix_status} on decay matrix"
+    )
 
     # hints
     operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
@@ -271,9 +271,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         nsteps,
     )
 
-    assert (
-        hint_status == 0
-    ), f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
+    assert hint_status == 0, (
+        f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
+    )
 
     hint_status = gemv_hint(
         dec_m_handle,
@@ -282,24 +282,24 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         nsteps,
     )
 
-    assert (
-        hint_status == 0
-    ), f"MKL gemv_hint failed with status {hint_status} on decay matrix"
+    assert hint_status == 0, (
+        f"MKL gemv_hint failed with status {hint_status} on decay matrix"
+    )
 
     # add mkl_sparse_set_memory_hint???
     #
 
     optimize_status = optimize(int_m_handle)
 
-    assert (
-        optimize_status == 0
-    ), f"MKL mkl_sparse_optimize failed with status {optimize_status} on interaction matrix"
+    assert optimize_status == 0, (
+        f"MKL mkl_sparse_optimize failed with status {optimize_status} on interaction matrix"
+    )
 
     optimize_status = optimize(dec_m_handle)
 
-    assert (
-        optimize_status == 0
-    ), f"MKL mkl_sparse_optimize failed with status {optimize_status} on decay matrix"
+    assert optimize_status == 0, (
+        f"MKL mkl_sparse_optimize failed with status {optimize_status} on decay matrix"
+    )
 
     from time import time
 
