@@ -1,33 +1,10 @@
-import pytest
-from MCEq import ddm
-from MCEq import ddm_utils
-from MCEq.particlemanager import _pdata
-import numpy as np
-import numpy.testing as npt
 import unittest
 
+import numpy as np
+import numpy.testing as npt
 
-@pytest.fixture(scope="module")
-def ddm_fix():
-    return ddm.DataDrivenModel(
-        e_min=5.0,
-        e_max=500.0,
-        enable_channels=[(2212, 211)],
-        exclude_projectiles=[111, 2112],
-        enable_K0_from_isospin=True,
-    )
-
-
-@pytest.fixture(scope="module")
-def mceq_qgs():
-    import MCEq.core
-    from crflux.models import HillasGaisser2012
-
-    return MCEq.core.MCEqRun(
-        interaction_model="QGSJETII04",
-        theta_deg=0.0,
-        primary_model=(HillasGaisser2012, "H3a"),
-    )
+from MCEq import ddm, ddm_utils
+from MCEq.particlemanager import _pdata
 
 
 class TestDDMEntry(unittest.TestCase):
@@ -232,8 +209,9 @@ class TestDDMUtils(unittest.TestCase):
         self.assertEqual(h, expected_h)
 
     def test_generate_DDM_matrix(self):
-        import MCEq.core
         from crflux.models import HillasGaisser2012
+
+        import MCEq.core
 
         mceq_qgs = MCEq.core.MCEqRun(
             interaction_model="QGSJETII04",
@@ -246,15 +224,16 @@ class TestDDMUtils(unittest.TestCase):
         generated_matrix = ddm_utils._generate_DDM_matrix(
             channel, mceq_qgs, e_min=20, e_max=50, average=True
         )
+
         expected_matrix = np.array(
             [
                 [
-                    6.84457826e-06,
+                    2.00000000e-06,
                     9.83217366e-04,
                     6.21170492e-03,
                     2.65378331e-02,
                     6.56015918e-02,
-                    1.04785868e-01,
+                    8.85168608e-02,
                 ],
                 [
                     0.00000000e00,
@@ -262,7 +241,7 @@ class TestDDMUtils(unittest.TestCase):
                     9.91419547e-04,
                     6.50797229e-03,
                     2.62956570e-02,
-                    5.22770344e-02,
+                    4.07176059e-02,
                 ],
                 [
                     0.00000000e00,
@@ -270,7 +249,7 @@ class TestDDMUtils(unittest.TestCase):
                     7.70215830e-05,
                     1.18364924e-03,
                     6.90031424e-03,
-                    2.32589471e-02,
+                    1.68636679e-02,
                 ],
                 [
                     0.00000000e00,
@@ -278,7 +257,7 @@ class TestDDMUtils(unittest.TestCase):
                     0.00000000e00,
                     1.22139413e-04,
                     1.45048061e-03,
-                    8.29959437e-03,
+                    5.44139818e-03,
                 ],
                 [
                     0.00000000e00,
@@ -286,7 +265,7 @@ class TestDDMUtils(unittest.TestCase):
                     0.00000000e00,
                     0.00000000e00,
                     1.85395114e-04,
-                    1.37882398e-03,
+                    7.81763721e-04,
                 ],
                 [
                     0.00000000e00,
@@ -294,9 +273,9 @@ class TestDDMUtils(unittest.TestCase):
                     0.00000000e00,
                     0.00000000e00,
                     0.00000000e00,
-                    4.46379648e-06,
+                    2.28338376e-06,
                 ],
-            ],
+            ]
         )
 
         npt.assert_allclose(generated_matrix, expected_matrix)

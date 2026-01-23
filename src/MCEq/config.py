@@ -111,6 +111,9 @@ kernel_config = "auto"
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
+#: CUDA Floating point precision (default 32-bit 'float')
+cuda_fp_precision = 32
+
 #: Floating point precision (is set automatically)
 floatlen = None
 

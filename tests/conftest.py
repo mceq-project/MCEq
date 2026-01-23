@@ -44,6 +44,32 @@ def mceq_small():
     )
 
 
+@pytest.fixture(scope="module")
+def ddm_fix():
+    from MCEq import ddm
+
+    return ddm.DataDrivenModel(
+        e_min=5.0,
+        e_max=500.0,
+        enable_channels=[(2212, 211)],
+        exclude_projectiles=[111, 2112],
+        enable_K0_from_isospin=True,
+    )
+
+
+@pytest.fixture(scope="module")
+def mceq_qgs():
+    from crflux.models import HillasGaisser2012
+
+    import MCEq.core
+
+    return MCEq.core.MCEqRun(
+        interaction_model="QGSJETII04",
+        theta_deg=0.0,
+        primary_model=(HillasGaisser2012, "H3a"),
+    )
+
+
 @pytest.fixture
 def msis_expected_file(request):
     test_dir = pathlib.Path(request.fspath).parent

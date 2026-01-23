@@ -6,11 +6,11 @@ import numpy as np
 import numpy.typing as npt
 from scipy.integrate import quad
 
-import mceq_config as config
+from MCEq import config
 
+from .ddm_utils import _eval_spline, _generate_DDM_matrix, fmteb
 from .misc import info
 from .particlemanager import _pdata
-from .ddm_utils import fmteb, _eval_spline, _generate_DDM_matrix
 
 # isospin symmetries used in the DDM
 isospin_partners = {2212: 2112, -211: 211}
@@ -167,6 +167,7 @@ class _DDMEntry:
         >>> z_factor, z_error = entry.calc_zfactor_and_error()
         """
         from jacobi import propagate
+
         from MCEq import ddm_utils
 
         info(
@@ -190,9 +191,9 @@ class _DDMEntry:
                 **ddm_utils._QUAD_PARAMS,
             )[0]
             res = np.atleast_1d(res)
-            res[
-                (res < 0) | ~np.isfinite(res) | (res > ddm_utils._LIMIT_PROPAGATE)
-            ] = 0.0
+            res[(res < 0) | ~np.isfinite(res) | (res > ddm_utils._LIMIT_PROPAGATE)] = (
+                0.0
+            )
             return res.squeeze()
 
         y, C = propagate(func_int, self.tck[1], self.cov, **ddm_utils._PROPAGATE_PARAMS)
@@ -428,9 +429,9 @@ class _DDMChannel:
             If no entry is found for the given ebeam or spline index.
         """
 
-        assert (ebeam is not None) != (
-            idx is not None
-        ), "Define either ebeam or spl_idx"
+        assert (ebeam is not None) != (idx is not None), (
+            "Define either ebeam or spl_idx"
+        )
 
         if ebeam is not None:
             ebeam = fmteb(ebeam)
