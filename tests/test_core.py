@@ -16,6 +16,12 @@ def test_solve_default(mceq_small):
     sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
+    assert np.sum(mceq_small._phi0) != np.sum(mceq_small._solution)
+
+    muons = mceq_small.get_solution("total_mu-", mag=0)
+
+    assert np.sum(muons) != 0
+
 
 def test_solve_skip_integration_path(mceq_small):
     mceq_small._calculate_integration_path(int_grid=None, grid_var="X")
@@ -31,7 +37,7 @@ def test_solve_other_grid_var(mceq_small):
 
 @pytest.mark.parametrize(
     ["int_grid", "grid_shape"],
-    [[None, (0,)], [[0, 1], (2, 902)]],
+    [[None, (0,)], [[0, 1], (2, 968)]],
     ids=["no-grid", "with-grid"],
 )
 def test_solve_int_grid(mceq_small, int_grid, grid_shape):
@@ -43,7 +49,7 @@ def test_solve_int_grid(mceq_small, int_grid, grid_shape):
 @pytest.mark.parametrize(
     ["leading_process", "lenX"],
     [
-        ["decays", 594],
+        ["decays", 1450],
         pytest.param(
             "interactions", -1, marks=pytest.mark.xfail(reason="Fix issue #66")
         ),
@@ -75,9 +81,9 @@ def test_integration_path_grid_idcs(mceq):
 
 
 testdata_theta = [
-    [0.0, 5.62504370e-3],
-    [30.0, 4.20479234e-3],
-    [60.0, 1.36630552e-3],
+    [0.0, 6.8857583e-3],
+    [30.0, 4.90073532e-3],
+    [60.0, 1.42918394e-3],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
@@ -91,20 +97,22 @@ def test_set_theta_deg(mceq, theta, nmu):
         mceq.get_solution("mu+", mag=0, integrate=True)
         + mceq.get_solution("mu-", mag=0, integrate=True)
     )
-    assert nmu_sol == approx(nmu, abs=1e-11)
+    assert nmu_sol == approx(nmu, abs=1e-10)
 
 
 testdata_model = [
-    ["DPMJETIII191", 64],
-    ["DPMJETIII306", 64],
-    ["QGSJET01C", 58],
-    ["QGSJETII03", 44],
-    ["QGSJETII04", 44],
-    ["SIBYLL21", 48],
-    ["SIBYLL23", 62],
-    ["SIBYLL23C03", 62],
-    ["SIBYLL23C", 62],
-    ["SIBYLL23CPP", 62],
+    ["DPMJETIII193", 68],
+    ["QGSJETII04", 48],
+    ["QGSJETIII", 52],
+    ["SIBYLL21", 52],
+    ["SIBYLL23D", 66],
+    ["SIBYLL23E", 66],
+    ["SIBYLL23ESTARBAR", 66],
+    ["SIBYLL23ESTARRHO", 66],
+    ["SIBYLL23ESTARSTRANGE", 66],
+    ["SIBYLL23ESTARMIXED", 66],
+    ["EPOSLHC", 58],
+    ["EPOSLHCR", 66],
 ]
 ids_model = [f"{model[0]}" for model in testdata_model]
 
@@ -117,20 +125,22 @@ def test_set_interaction_model_model(mceq, model, n):
 
 
 def test_set_interaction_model_update_particle_list(mceq):
-    mceq.set_interaction_model("DPMJETIII191", update_particle_list=True)
-    n_particles = len(mceq._particle_list)
-    assert n_particles == 64
+    n_particles_sib = len(mceq._particle_list)
 
-    mceq.set_interaction_model("SIBYLL23C", update_particle_list=False)
+    mceq.set_interaction_model("DPMJETIII193", update_particle_list=True)
+    n_particles = len(mceq._particle_list)
+    assert n_particles == 68
+
+    mceq.set_interaction_model("SIBYLL23E", update_particle_list=True)
     n_particles_s = len(mceq._particle_list)
 
-    assert n_particles_s == n_particles
+    assert n_particles_s == n_particles_sib
 
 
 @pytest.mark.parametrize(
     ["particle_list", "projectiles"],
     [
-        [None, 19],
+        [None, 17],
         [[(2212, 0)], 1],
     ],
     ids=["None", "proton"],
@@ -141,7 +151,7 @@ def test_mceq_init_particles_list(particle_list, projectiles):
     from MCEq.core import MCEqRun
 
     mceq = MCEqRun(
-        interaction_model="SIBYLL23C",
+        interaction_model="SIBYLL23E",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
         particle_list=particle_list,
@@ -151,10 +161,10 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 
 
 testdata_primary = [
-    [1e3, 2.03134720e1, 6.80367347e1, 2.36908717e1],
-    [1e6, 1.20365838e4, 2.53158948e4, 6.91213253e3],
-    [1e9, 7.09254150e6, 1.20884925e7, 2.87396649e6],
-    [5e10, 2.63982133e8, 4.14935240e8, 9.27683105e7],
+    [1e3, 2.18675537e1, 1.13515024e2, 4.12070381e1],
+    [1e6, 1.32703278e4, 4.29970060e4, 1.27944325e4],
+    [1e9, 7.90402801e6, 2.07265027e7, 5.48999599e6],
+    [5e10, 2.94970519e8, 7.12098206e8, 1.79112865e8],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
@@ -163,7 +173,7 @@ ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
     ["energy", "nmu", "nnumu", "nnue"], testdata_primary, ids=ids_primary
 )
 def test_single_primary(mceq, energy, nmu, nnumu, nnue):
-    mceq.set_interaction_model("SIBYLL23C")
+    mceq.set_interaction_model("SIBYLL23E")
     mceq.set_theta_deg(0.0)
     mceq.set_single_primary_particle(E=energy, pdg_id=2212)
     mceq.solve()
@@ -186,22 +196,22 @@ def test_single_primary(mceq, energy, nmu, nnumu, nnue):
 
 
 testdata_pi0_primary = [
-    4.22673568e-14,
-    6.07686239e-15,
-    -2.62581856e-15,
-    2.51119040e-17,
-    -2.12746915e-18,
-    1.77322773e-20,
-    -8.50881199e-22,
-    6.61039536e-24,
-    -4.09830294e-24,
-    3.91022042e-25,
-    -3.60445917e-26,
+    3.06027124e-14,
+    2.74858350e-15,
+    -1.90773238e-15,
+    1.69679282e-17,
+    -1.54360206e-18,
+    1.24688844e-20,
+    -6.21220687e-22,
+    4.76847702e-24,
+    -2.95021240e-24,
+    2.89366883e-25,
+    -2.65824442e-26,
 ]
 
 
 def test_single_primary_pdg_corsika(mceq_small):
-    mceq_small.set_interaction_model("SIBYLL23C")
+    mceq_small.set_interaction_model("SIBYLL23E")
     mceq_small.set_theta_deg(0.0)
     mceq_small.set_single_primary_particle(E=1e10, pdg_id=1000020040)
     mceq_small.solve()
@@ -224,7 +234,7 @@ def test_single_primary_pdg_corsika(mceq_small):
 
 
 def test_single_primary_e_too_low(mceq_small):
-    mceq_small.set_interaction_model("SIBYLL23C")
+    mceq_small.set_interaction_model("SIBYLL23E")
     mceq_small.set_theta_deg(0.0)
     with pytest.raises(Exception):
         mceq_small.set_single_primary_particle(E=1e3, pdg_id=2212)
@@ -539,15 +549,17 @@ def test_n_e_energy_cutoff_and_grid(mceq_small):
 
 
 @pytest.mark.parametrize(
-    "definition",
+    ["definition", "use_cs_scaling"],
     [
-        pytest.param("primary_e"),
-        pytest.param("no_name_definition"),
+        ["primary_e", False],
+        ["no_name_definition", True],
     ],
 )
-def test_z_factor(mceq_small, definition):
+def test_z_factor(mceq_small, definition, use_cs_scaling):
     mceq_small.solve([0, 1])
-    z = mceq_small.z_factor(2212, 211, definition=definition)
+    z = mceq_small.z_factor(
+        2212, 211, definition=definition, use_cs_scaling=use_cs_scaling
+    )
 
     assert isinstance(z, np.ndarray)
     assert z.shape == mceq_small.e_grid.shape

@@ -1283,8 +1283,8 @@ class MCEqRun:
             # Like in Thunman et al. 1996
             for p_eidx, e in enumerate(self.e_grid):
                 if e < min_energy:
-                    min_idx = p_eidx
                     continue
+                min_idx = p_eidx
                 nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
                 if use_cs_scaling:
                     cs_fac = np.zeros(p_eidx - min_idx + 1)

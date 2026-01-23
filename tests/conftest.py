@@ -20,7 +20,7 @@ def mceq():
         config.set_mkl_threads(2)
 
     return MCEqRun(
-        interaction_model="SIBYLL23C",
+        interaction_model="SIBYLL23E",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
     )
@@ -38,7 +38,7 @@ def mceq_small():
         config.set_mkl_threads(2)
 
     return MCEqRun(
-        interaction_model="SIBYLL23C",
+        interaction_model="SIBYLL23E",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
     )

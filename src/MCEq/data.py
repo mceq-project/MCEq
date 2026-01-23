@@ -582,7 +582,7 @@ class Interactions:
         # #: (tuple) selection of a band of coeffictients (in xf)
         # self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = defaultdict(list)
+        self.mod_pprod = defaultdict(dict)
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid

@@ -201,6 +201,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     gemv_hint = mkl.mkl_sparse_set_mv_hint
     optimize = mkl.mkl_sparse_optimize
     # dense vector + dense vector
+    axpy = mkl.cblas_daxpy
     np_fl = config.floatlen
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
@@ -223,6 +224,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     cdzero = fl_pr(0.0)
     cdone = fl_pr(1.0)
     cizero = c_int(0)
+    cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
@@ -323,8 +325,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
             delta_phi,
         )
         # phi = delta_phi * dX + phi
-        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
-        # print(np.sum(npphi))
+        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
         if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))
