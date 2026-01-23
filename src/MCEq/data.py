@@ -1,10 +1,13 @@
-import six
-import numpy as np
-import h5py
-from os.path import join, isfile
 from collections import defaultdict
-from MCEq import config, asarray
-from .misc import normalize_hadronic_model_name, info, _eval_energy_cuts
+from os.path import isfile, join
+
+import h5py
+import numpy as np
+import six
+
+from MCEq import config
+
+from .misc import _eval_energy_cuts, info, normalize_hadronic_model_name
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -137,7 +140,7 @@ equivalences = {
 equivalences["FLUKA"] = equivalences["DPMJET"]
 
 
-class HDF5Backend(object):
+class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
     The file contains all necessary ingredients to run MCEq, i.e. no
@@ -150,17 +153,15 @@ class HDF5Backend(object):
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
             raise Exception(
-                'MCEq DB file {0} not found in "data" directory.'.format(
-                    config.mceq_db_fname
-                )
+                f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
             )
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
             raise Exception(
-                'Electromagnetic DB file {0} not found in "data" directory.'.format(
+                f'Electromagnetic DB file {
                     config.em_db_fname
-                )
+                } not found in "data" directory.'
             )
 
         with h5py.File(self.had_fname, "r") as mceq_db:
@@ -191,7 +192,7 @@ class HDF5Backend(object):
         from scipy.sparse import csr_matrix
 
         index_d = {}
-        relations = defaultdict(lambda: [])
+        relations = defaultdict(list)
         particle_list = []
         if "description" in hdf_root.attrs:
             description = hdf_root.attrs["description"]
@@ -217,7 +218,7 @@ class HDF5Backend(object):
         available_parents = sorted(list(set(available_parents)))
 
         # Reverse equivalences
-        eqv_lookup = defaultdict(lambda: [])
+        eqv_lookup = defaultdict(list)
         for k in equivalences:
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
@@ -237,7 +238,7 @@ class HDF5Backend(object):
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = asarray(
+            index_d[(parent_pdg, child_pdg)] = np.asarray(
                 (
                     csr_matrix(
                         (
@@ -253,7 +254,7 @@ class HDF5Backend(object):
 
             info(
                 20,
-                "This parent {0} is used for interactions of".format(parent_pdg[0]),
+                f"This parent {parent_pdg[0]} is used for interactions of",
                 [p[0] for p in eqv_lookup[parent_pdg]],
                 condition=len(equivalences) > 0,
             )
@@ -272,9 +273,7 @@ class HDF5Backend(object):
                     elif eqv_parent in available_parents:
                         info(
                             10,
-                            "Parent {0} has dedicated simulation.".format(
-                                eqv_parent[0]
-                            ),
+                            f"Parent {eqv_parent[0]} has dedicated simulation.",
                         )
                         continue
                     particle_list.append(eqv_parent)
@@ -282,9 +281,9 @@ class HDF5Backend(object):
                     relations[eqv_parent] = relations[parent_pdg]
                     info(
                         15,
-                        "equivalence of {0} and {1} interactions".format(
-                            eqv_parent[0], parent_pdg[0]
-                        ),
+                        f"equivalence of {eqv_parent[0]} and {
+                            parent_pdg[0]
+                        } interactions",
                     )
 
             read_idx += len_data[tupidx]
@@ -306,7 +305,7 @@ class HDF5Backend(object):
 
     def interaction_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
-        info(10, "Generating interaction db. mname={0}".format(mname))
+        info(10, f"Generating interaction db. mname={mname}")
         with h5py.File(self.had_fname, "r") as mceq_db:
             if (
                 self.medium not in mceq_db["hadronic_interactions"]
@@ -318,9 +317,9 @@ class HDF5Backend(object):
                 info(
                     1,
                     (
-                        "Production matrices for {0} in {1} not found."
+                        f"Production matrices for {mname} in {self.medium} not found."
                         + "Fall-back to air."
-                    ).format(mname, self.medium),
+                    ),
                 )
                 medium = "air"
             else:
@@ -388,7 +387,7 @@ class HDF5Backend(object):
                     ]
                     em_index["parents"].append((pid, h))
 
-                em_index["relations"] = defaultdict(lambda: [])
+                em_index["relations"] = defaultdict(list)
                 em_index["particles"] = []
 
                 for idx_tup in em_index["index_d"]:
@@ -412,7 +411,7 @@ class HDF5Backend(object):
         return int_index
 
     def decay_db(self, decay_dset_name):
-        info(10, "Generating decay db. dset_name={0}".format(decay_dset_name))
+        info(10, f"Generating decay db. dset_name={decay_dset_name}")
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             if config.muon_helicity_dependence:
@@ -434,7 +433,7 @@ class HDF5Backend(object):
             )
 
             # Refresh the metadata after modifying the index
-            dec_index["relations"] = defaultdict(lambda: [])
+            dec_index["relations"] = defaultdict(list)
             dec_index["particles"] = []
 
             for idx_tup in dec_index["index_d"]:
@@ -553,7 +552,7 @@ class HDF5Backend(object):
             return {"parents": sorted(list(index_d)), "index_d": index_d}
 
 
-class Interactions(object):
+class Interactions:
     """Class for managing the dictionary of interaction yield matrices.
 
     Args:
@@ -583,7 +582,7 @@ class Interactions(object):
         # #: (tuple) selection of a band of coeffictients (in xf)
         # self.band = None
         #: (tuple) modified particle combination for error prop.
-        self.mod_pprod = defaultdict(lambda: {})
+        self.mod_pprod = defaultdict(list)
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
@@ -615,30 +614,6 @@ class Interactions(object):
             self.parents = [
                 p for p in self.parents if p[0] in config.adv_set["allowed_projectiles"]
             ]
-
-        if config.adv_set["fix_dpmjet_neutral_kaons"] and "DPMJET" in self.iam:
-            # Fix bug in DPMJET-III K0 production matrices
-            # The numbers for the mixture of K= and K- are obtained
-            # from fitting the true zfactors for DPMJET-III with
-            # a sum of K+ and K-. The different values are expected
-            # from quark counting rules. This bug will be resolved
-            # in future versions.
-            info(3, "Applying fix for neutral kaons in DPMJET.")
-            for p in self.parents:
-                if abs(p[0]) < 100:
-                    continue
-                if p[0] in [2212, 2112]:
-                    # From fit to fixed distributions
-                    self.index_d[(p, (310, 0))] = 0.5 * (
-                        0.84 * self.index_d[(p, (321, 0))]
-                        + 1.09 * self.index_d[(p, (-321, 0))]
-                    )
-                else:
-                    # Generic isospin for other primaries
-                    self.index_d[(p, (310, 0))] = 0.5 * (
-                        self.index_d[(p, (321, 0))] + self.index_d[(p, (-321, 0))]
-                    )
-                self.index_d[(p, (130, 0))] = np.copy(self.index_d[(p, (310, 0))])
 
         self.particles = []
         for p in list(self.relations):
@@ -702,7 +677,7 @@ class Interactions(object):
         # Set lower triangular indices to 0. (should be not necessary)
         modmat[np.tril_indices(self.energy_grid.d, -1)] = 0.0
 
-        return asarray(modmat)
+        return np.asarray(modmat)
 
     def _set_mod_pprod(self, prim_pdg, sec_pdg, x_func, args):
         """Sets combination of parent/secondary for error propagation.
@@ -727,9 +702,7 @@ class Interactions(object):
             info(
                 5,
                 " no changes to particle production"
-                + " modification matrix of {0}/{1} for {2},{3}".format(
-                    prim_pdg, sec_pdg, x_func.__name__, args
-                ),
+                + f" modification matrix of {prim_pdg}/{sec_pdg} for {x_func.__name__},{args}",
             )
             return False
 
@@ -746,9 +719,7 @@ class Interactions(object):
         info(
             2,
             "modifying modify particle production"
-            + " matrix of {0}/{1} for {2},{3}".format(
-                prim_pdg, sec_pdg, x_func.__name__, args
-            ),
+            + f" matrix of {prim_pdg}/{sec_pdg} for {x_func.__name__},{args}",
         )
 
         kmat = self._gen_mod_matrix(x_func, *args)
@@ -847,9 +818,7 @@ class Interactions(object):
             for j, (argname, argv) in enumerate(self.mod_pprod[(prim_pdg, sec_pdg)]):
                 info(
                     2,
-                    "{0}: {1} -> {2}, func: {3}, arg: {4}".format(
-                        i + j, prim_pdg, sec_pdg, argname, argv
-                    ),
+                    f"{i + j}: {prim_pdg} -> {sec_pdg}, func: {argname}, arg: {argv}",
                     no_caller=True,
                 )
 
@@ -864,9 +833,7 @@ class Interactions(object):
         """
         info(10, "Called for", parent, child)
         if child not in self.relations[parent]:
-            raise Exception(
-                ("trying to get empty matrix {0} -> {1}").format(parent, child)
-            )
+            raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
         m = self.index_d[(parent, child)]
 
@@ -899,9 +866,7 @@ class Interactions(object):
         if (parent[0], child[0]) in list(self.mod_pprod):
             info(
                 5,
-                "using modified particle production for {0}/{1}".format(
-                    parent[0], child[0]
-                ),
+                f"using modified particle production for {parent[0]}/{child[0]}",
             )
             i = 0
             m = np.copy(m)
@@ -913,7 +878,7 @@ class Interactions(object):
         return m
 
 
-class Decays(object):
+class Decays:
     """Class for managing the dictionary of decay yield matrices.
 
     Args:
@@ -986,7 +951,7 @@ class Decays(object):
 
     def children(self, parent_pdg):
         if parent_pdg not in self.relations:
-            raise Exception("Parent {0} not in decay database.".format(parent_pdg))
+            raise Exception(f"Parent {parent_pdg} not in decay database.")
 
         return self.relations[parent_pdg]
 
@@ -1001,14 +966,12 @@ class Decays(object):
         """
         info(20, "entering with", parent, child)
         if child not in self.relations[parent]:
-            raise Exception(
-                ("trying to get empty matrix {0} -> {1}").format(parent, child)
-            )
+            raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
         return self.index_d[(parent, child)]
 
 
-class InteractionCrossSections(object):
+class InteractionCrossSections:
     """Class for managing the dictionary of hadron-air cross-sections.
 
     Args:
@@ -1025,7 +988,7 @@ class InteractionCrossSections(object):
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
-    def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII191"):
+    def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII193"):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -1098,7 +1061,7 @@ class InteractionCrossSections(object):
             return cs
 
 
-class ContinuousLosses(object):
+class ContinuousLosses:
     """Class for managing the dictionary of hadron-air cross-sections.
 
     Args:

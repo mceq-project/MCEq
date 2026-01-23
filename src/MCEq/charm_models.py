@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 :mod:`MCEq.charm_models` --- charmed particle production
 ========================================================
@@ -15,10 +14,12 @@ when overwriting a model yield file in
 :func:`Yields.set_custom_charm_model`.
 """
 
-import numpy as np
-from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
+
+import numpy as np
 from six import with_metaclass
+
+from MCEq.misc import info
 
 
 class CharmModel(with_metaclass(ABCMeta)):
@@ -118,8 +119,7 @@ class MRS_charm(CharmModel):
         E = np.asarray(E)
         if E.size > 1:
             return 2 * np.array([quad(self.dsig_dx, 0.05, 0.6, args=Ei)[0] for Ei in E])
-        else:
-            return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
+        return 2 * quad(self.dsig_dx, 0.05, 0.6, args=E)[0]
 
     def dsig_dx(self, x, E):
         """Returns the Feynman-:math:`x_F` distribution
@@ -139,7 +139,7 @@ class MRS_charm(CharmModel):
         n, A = None, None
         if E < 1e4:
             return 0.0
-        elif E >= 1e4 and E < 1e8:
+        if E >= 1e4 and E < 1e8:
             n = 7.6 + 0.025 * np.log(E / 1e4)
             A = 140 + (11.0 * np.log(E / 1e2)) ** 1.65
         elif E >= 1e8 and E <= 1e11:
@@ -202,8 +202,7 @@ class MRS_charm(CharmModel):
 
         if abs(sec) == 4122 and ((np.sign(proj) != np.sign(sec)) or abs(proj) < 1000):
             return self.no_prod
-        else:
-            self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
+        self.xdist = lambda e: self.LambdaC_dist(self.e_grid / e, e) / e
         if abs(sec) != 4122:
             self.xdist = lambda e: self.D_dist(self.e_grid / e, e, abs(sec)) / e
 
@@ -213,7 +212,7 @@ class MRS_charm(CharmModel):
         for i, e in enumerate(self.e_grid):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
 
-        info(3, "returning matrix for ({0},{1})".format(proj, sec))
+        info(3, f"returning matrix for ({proj},{sec})")
 
         return m_out
 
@@ -221,7 +220,7 @@ class MRS_charm(CharmModel):
         """Plots the meson, baryon and charm quark distribution as shown in
         the plot below.
 
-        .. figure:: graphics/MRS_test.png
+        .. figure:: ../_static/graphics/MRS_test.png
             :scale: 50 %
             :alt: output of test function
 
@@ -263,64 +262,3 @@ class MRS_charm(CharmModel):
         plt.xlabel(r"$\sqrt{s}$ [GeV]")
         plt.ylabel(r"$\sigma_{c\bar{c}}$ [mb]")
         plt.tight_layout()
-
-
-class WHR_charm(MRS_charm):
-    """Logan Wille, Francis Halzen, Hall Reno.
-
-    The approach is the same as in  A. D. Martin, M. G. Ryskin,
-    and A. M. Stasto, Acta Physica Polonica B 34, 3273 (2003).
-    The parameterization of the inclusive :math:`c\\bar{c}`
-    cross-section is replaced by interpolated tables from the
-    calculation. Fragmentation functions and certain scales are
-    needed to obtain meson and baryon fluxes as a function
-    of the kinematic variable :math:`x_F`. At high energies
-    and :math:`x_F > 0.05`, where this model is valid,
-    :math:`x_F \\approx x=E_c/E_{proj}`.
-    Here, these fragmentation functions are used:
-
-        - :math:`D`-mesons :math:`\\frac{4}{3} x`
-        - :math:`\\Lambda`-baryons :math:`\\frac{1}{1.47} x`
-
-    The production ratios between the different types of
-    :math:`D`-mesons are stored in the attribute :attr:`cs_scales`
-    and :attr:`D0_scale`, where :attr:`D0_scale` is the
-    :math:`c\\bar{c}` to :math:`D^0` ratio and :attr:`cs_scales`
-    stores the production ratios of :math:`D^\\pm/D^0`,
-    :math:`D_s/D^0` and :math:`\\Lambda_c/D^0`.
-
-    Since the model employs only perturbartive production of
-    charm, the charge conjugates are symmetric, i.e.
-    :math:`\\sigma_{D^+} = \\sigma_{D^-}` etc.
-
-    Args:
-      e_grid (np.array): energy grid as it is defined in
-                         :class:`MCEqRun`.
-      csm (np.array): inelastic cross-sections as used in
-                      :class:`MCEqRun`.
-    """
-
-    def __init__(self, e_grid, csm):
-        import pickle
-
-        self.sig_table = pickle.load(open("references/logan_charm.ppl", "rb"))
-        self.e_idcs = {}
-        for i, e in enumerate(e_grid):
-            self.e_idcs[e] = i
-
-        MRS_charm.__init__(self, e_grid, csm)
-
-    def dsig_dx(self, x, E):
-        """Returns the Feynman-:math:`x_F` distribution
-        of :math:`\\sigma_{c\\bar{c}}` in mb
-
-        Args:
-          x (float or np.array): :math:`x_F`
-          E (float): center-of-mass energy in GeV
-
-        Returns:
-          float: :math:`\\sigma_{c\\bar{c}}` in mb
-        """
-        res = self.sig_table[self.e_idcs[E]](x) * 1e-3  # mub -> mb
-        res[res < 0] = 0.0
-        return res

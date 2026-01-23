@@ -15,7 +15,7 @@
 repos:
 # Standard hooks
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.6.0
+  rev: v6.0.0
   hooks:
   - id: check-case-conflict
   - id: check-docstring-first
@@ -27,34 +27,32 @@ repos:
   - id: mixed-line-ending
   - id: sort-simple-yaml
   - id: file-contents-sorter
+  - id: trailing-whitespace
+    files: ^\.github/workflows/|.*\.py$
 
-# Python formatting
-- repo: https://github.com/psf/black
-  rev: 24.4.2
+# Ruff linter, replacement for flake8, pydocstyle, isort
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: 'v0.14.13'
   hooks:
-  - id: black
+    - id: ruff-check
+      types_or: [ python, pyi ]
+      args: [--fix, --show-fixes] # do not run on notebooks
+    - id: ruff-format
+      types_or: [ python, pyi ]
 
-# # Enable the following later
-# # Python docstring formatting
-# - repo: https://github.com/pycqa/pydocstyle
-#   rev: 6.1.1
-#   hooks:
-#   - id: pydocstyle
-#     files: impy/[^_].*\.py
-
-# Python linter (Flake8)
-- repo: https://github.com/pycqa/flake8
-  rev: 7.0.0
+# CMake formatting
+- repo: https://github.com/cheshirekow/cmake-format-precommit
+  rev: v0.6.13
   hooks:
-  - id: flake8
-    files: MCEq/[^_].*\.py
-    args: [--config, setup.cfg]
+  - id: cmake-format
+    additional_dependencies: [pyyaml]
+    types: [file]
+    files: (\.cmake|CMakeLists.txt)(.in)?$
+    
 
-# # CMake formatting
-# - repo: https://github.com/cheshirekow/cmake-format-precommit
-#   rev: v0.6.13
-#   hooks:
-#   - id: cmake-format
-#     additional_dependencies: [pyyaml]
-#     types: [file]
-#     files: (\.cmake|CMakeLists.txt)(.in)?$
+
+# towncrier
+- repo: https://github.com/twisted/towncrier
+  rev: 25.8.0
+  hooks:
+    - id: towncrier-check

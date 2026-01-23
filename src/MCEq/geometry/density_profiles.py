@@ -1,10 +1,17 @@
 from abc import ABCMeta, abstractmethod
-from six import with_metaclass
 from os.path import join
-import numpy as np
-from MCEq.misc import info
 
-import mceq_config as config
+import numpy as np
+from six import with_metaclass
+
+from MCEq import config
+
+# Import the new atmosphere data module
+from MCEq.geometry.atmosphere_parameters import (
+    get_atmosphere_parameters,
+    list_available_corsika_atmospheres,
+)
+from MCEq.misc import info
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):
@@ -32,7 +39,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self.thrad = None
         self.theta_deg = None
         self._max_den = config.max_density
-        self.max_theta = self.geom.theta_max_deg
+        self.max_theta = 90.0
         self.location = None
         self.season = None
 
@@ -61,22 +68,20 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         Raises:
             Exception: if :func:`set_theta` was not called before.
         """
-        from scipy.integrate import cumulative_trapezoid as cumtrapz
         from time import time
+
+        from scipy.integrate import cumulative_trapezoid
         from scipy.interpolate import UnivariateSpline
 
         if self.theta_deg is None:
             raise Exception("zenith angle not set")
-        else:
-            info(
-                5,
-                "Calculating spline of rho(X) for zenith {0:4.1f} degrees.".format(
-                    self.theta_deg
-                ),
-            )
+        info(
+            5,
+            f"Calculating spline of rho(X) for zenith {self.theta_deg:4.1f} degrees.",
+        )
 
         thrad = self.thrad
-        path_length = self.geom.pl(thrad)
+        path_length = self.geom.path_len(thrad)
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
         )
@@ -85,10 +90,10 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         now = time()
 
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)  #
+        X_int = cumulative_trapezoid(vec_rho_l(dl_vec), dl_vec)
         dl_vec = dl_vec[1:]
 
-        info(5, ".. took {0:1.2f}s".format(time() - now))
+        info(5, f".. took {time() - now:1.2f}s")
 
         # Save depth value at h_obs
         self._max_X = X_int[-1]
@@ -270,7 +275,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     the array _thickl can be calculated using :func:`calc_thickl` .
 
     Attributes:
-      _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters
+      _atm_param (:func:`numpy.array`): (5x5) Stores 5 atmospheric parameters
                                 _aatm, _batm, _catm, _thickl, _hlay
                                 for each of the 5 layers
 
@@ -282,208 +287,37 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     _atm_param = np.zeros(5, dtype="float64")
 
     def __init__(self, location, season=None):
-        cka_atmospheres = [
-            ("USStd", None),
-            ("BK_USStd", None),
-            ("Karlsruhe", None),
-            ("ANTARES/KM3NeT-ORCA", "Summer"),
-            ("ANTARES/KM3NeT-ORCA", "Winter"),
-            ("KM3NeT-ARCA", "Summer"),
-            ("KM3NeT-ARCA", "Winter"),
-            ("KM3NeT", None),
-            ("SouthPole", "December"),
-            ("SouthPole", "June"),
-            ("PL_SouthPole", "January"),
-            ("PL_SouthPole", "August"),
-        ]
-        assert (
-            location,
-            season,
-        ) in cka_atmospheres, "{0}/{1} not available for CorsikaAtmsophere".format(
-            location, season
-        )
+        # Check if the atmosphere is available
+        # Use the renamed list_available_atmospheres function
+        available_atmospheres = list_available_corsika_atmospheres()
+        if (location, season) not in available_atmospheres:
+            raise ValueError(
+                f"Atmosphere '{location}/{season}' not available. "
+                f"Available atmospheres: {available_atmospheres}"
+            )
+
         self.init_parameters(location, season)
         import MCEq.geometry.corsikaatm as corsika_acc
 
+        # Assuming corsika_acc is defined elsewhere or needs to be imported
         self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
-        """Initializes :attr:`_atm_param`. Parameters from ANTARES/KM3NET
-        are based on the work of T. Heid
-        (`see this issue <https://github.com/afedynitch/MCEq/issues/12>`_)
-
-        +---------------------+-------------------+------------------------------+
-        | location            | CORSIKA Table     | Description/season           |
-        +=====================+===================+==============================+
-        | "USStd"             |         23        |  US Standard atmosphere      |
-        +---------------------+-------------------+------------------------------+
-        | "BK_USStd"          |         37        |  Bianca Keilhauer's USStd    |
-        +---------------------+-------------------+------------------------------+
-        | "Karlsruhe"         |         24        |  AT115 / Karlsruhe           |
-        +---------------------+-------------------+------------------------------+
-        | "SouthPole"         |      26 and 28    |  MSIS-90-E for Dec and June  |
-        +---------------------+-------------------+------------------------------+
-        |"PL_SouthPole"       |      29 and 30    |  P. Lipari's  Jan and Aug    |
-        +---------------------+-------------------+------------------------------+
-        |"ANTARES/KM3NeT-ORCA"|    NA             |  PhD T. Heid                 |
-        +---------------------+-------------------+------------------------------+
-        | "KM3NeT-ARCA"       |    NA             |  PhD T. Heid                 |
-        +---------------------+-------------------+------------------------------+
-
+        """Initializes :attr:`_atm_param` by fetching them from the
+        `atmosphere_parameters` module.
 
         Args:
-          location (str): see table
-          season (str, optional): choice of season for supported locations
+          location (str): The location identifier.
+          season (str, optional): The season identifier.
 
         Raises:
-          Exception: if parameter set not available
+          Exception: if parameter set not available (via get_atmosphere_parameters)
         """
-        _aatm, _batm, _catm, _thickl, _hlay = None, None, None, None, None
-        if location == "USStd":
-            _aatm = np.array([-186.5562, -94.919, 0.61289, 0.0, 0.01128292])
-            _batm = np.array([1222.6562, 1144.9069, 1305.5948, 540.1778, 1.0])
-            _catm = np.array([994186.38, 878153.55, 636143.04, 772170.0, 1.0e9])
-            _thickl = np.array(
-                [1036.102549, 631.100309, 271.700230, 3.039494, 0.001280]
-            )
-            _hlay = np.array([0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-        elif location == "BK_USStd":
-            _aatm = np.array(
-                [-149.801663, -57.932486, 0.63631894, 4.3545369e-4, 0.01128292]
-            )
-            _batm = np.array([1183.6071, 1143.0425, 1322.9748, 655.69307, 1.0])
-            _catm = np.array([954248.34, 800005.34, 629568.93, 737521.77, 1.0e9])
-            _thickl = np.array(
-                [1033.804941, 418.557770, 216.981635, 4.344861, 0.001280]
-            )
-            _hlay = np.array([0.0, 7.0e5, 1.14e6, 3.7e6, 1.0e7])
-        elif location == "Karlsruhe":
-            _aatm = np.array([-118.1277, -154.258, 0.4191499, 5.4094056e-4, 0.01128292])
-            _batm = np.array([1173.9861, 1205.7625, 1386.7807, 555.8935, 1.0])
-            _catm = np.array([919546.0, 963267.92, 614315.0, 739059.6, 1.0e9])
-            _thickl = np.array(
-                [1055.858707, 641.755364, 272.720974, 2.480633, 0.001280]
-            )
-            _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-        elif location == "KM3NeT":  # averaged over detector and season
-            _aatm = np.array(
-                [
-                    -141.31449999999998,
-                    -8.256029999999999,
-                    0.6132505,
-                    -0.025998975,
-                    0.4024275,
-                ]
-            )
-            _batm = np.array(
-                [
-                    1153.0349999999999,
-                    1263.3325,
-                    1257.0724999999998,
-                    404.85974999999996,
-                    1.0,
-                ]
-            )
-            _catm = np.array([967990.75, 668591.75, 636790.0, 814070.75, 21426175.0])
-            _thickl = np.array(
-                [
-                    1011.8521512499999,
-                    275.84507575000003,
-                    51.0230705,
-                    2.983134,
-                    0.21927724999999998,
-                ]
-            )
-            _hlay = np.array([0.0, 993750.0, 2081250.0, 4150000.0, 6877500.0])
-        elif location == "ANTARES/KM3NeT-ORCA":
-            if season == "Summer":
-                _aatm = np.array([-158.85, -5.38682, 0.889893, -0.0286665, 0.50035])
-                _batm = np.array([1145.62, 1176.79, 1248.92, 415.543, 1.0])
-                _catm = np.array([998469.0, 677398.0, 636790.0, 823489.0, 16090500.0])
-                _thickl = np.array(
-                    [986.951713, 306.4668, 40.546793, 4.288721, 0.277182]
-                )
-                _hlay = np.array([0, 9.0e5, 22.0e5, 38.0e5, 68.2e5])
-            elif season == "Winter":
-                _aatm = np.array([-132.16, -2.4787, 0.298031, -0.0220264, 0.348021])
-                _batm = np.array([1120.45, 1203.97, 1163.28, 360.027, 1.0])
-                _catm = np.array([933697.0, 643957.0, 636790.0, 804486.0, 23109000.0])
-                _thickl = np.array(
-                    [988.431172, 273.033464, 37.185105, 1.162987, 0.192998]
-                )
-                _hlay = np.array([0, 9.5e5, 22.0e5, 47.0e5, 68.2e5])
-        elif location == "KM3NeT-ARCA":
-            if season == "Summer":
-                _aatm = np.array([-157.857, -28.7524, 0.790275, -0.0286999, 0.481114])
-                _batm = np.array([1190.44, 1171.0, 1344.78, 445.357, 1.0])
-                _catm = np.array([1006100.0, 758614.0, 636790.0, 817384.0, 16886800.0])
-                _thickl = np.array(
-                    [1032.679434, 328.978681, 80.601135, 4.420745, 0.264112]
-                )
-                _hlay = np.array([0, 9.0e5, 18.0e5, 38.0e5, 68.2e5])
-            elif season == "Winter":
-                _aatm = np.array([-116.391, 3.5938, 0.474803, -0.0246031, 0.280225])
-                _batm = np.array([1155.63, 1501.57, 1271.31, 398.512, 1.0])
-                _catm = np.array([933697.0, 594398.0, 636790.0, 810924.0, 29618400.0])
-                _thickl = np.array(
-                    [1039.346286, 194.901358, 45.759249, 2.060083, 0.142817]
-                )
-                _hlay = np.array([0, 12.25e5, 21.25e5, 43.0e5, 70.5e5])
-        elif location == "SouthPole":
-            if season == "December":
-                _aatm = np.array([-128.601, -39.5548, 1.13088, -0.00264960, 0.00192534])
-                _batm = np.array([1139.99, 1073.82, 1052.96, 492.503, 1.0])
-                _catm = np.array([861913.0, 744955.0, 675928.0, 829627.0, 5.8587010e9])
-                _thickl = np.array(
-                    [1011.398804, 588.128367, 240.955360, 3.964546, 0.000218]
-                )
-                _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-            elif season == "June":
-                _aatm = np.array(
-                    [-163.331, -65.3713, 0.402903, -0.000479198, 0.00188667]
-                )
-                _batm = np.array([1183.70, 1108.06, 1424.02, 207.595, 1.0])
-                _catm = np.array([875221.0, 753213.0, 545846.0, 793043.0, 5.9787908e9])
-                _thickl = np.array(
-                    [1020.370363, 586.143464, 228.374393, 1.338258, 0.000214]
-                )
-                _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-            else:
-                raise Exception(
-                    'CorsikaAtmosphere(): Season "'
-                    + season
-                    + '" not parameterized for location SouthPole.'
-                )
-        elif location == "PL_SouthPole":
-            if season == "January":
-                _aatm = np.array([-113.139, -7930635, -54.3888, -0.0, 0.00421033])
-                _batm = np.array([1133.10, 1101.20, 1085.00, 1098.00, 1.0])
-                _catm = np.array([861730.0, 826340.0, 790950.0, 682800.0, 2.6798156e9])
-                _thickl = np.array(
-                    [1019.966898, 718.071682, 498.659703, 340.222344, 0.000478]
-                )
-                _hlay = np.array([0.0, 2.67e5, 5.33e5, 8.0e5, 1.0e7])
-            elif season == "August":
-                _aatm = np.array([-59.0293, -21.5794, -7.14839, 0.0, 0.000190175])
-                _batm = np.array([1079.0, 1071.90, 1182.0, 1647.1, 1.0])
-                _catm = np.array([764170.0, 699910.0, 635650.0, 551010.0, 59.329575e9])
-                _thickl = np.array(
-                    [1019.946057, 391.739652, 138.023515, 43.687992, 0.000022]
-                )
-                _hlay = np.array([0.0, 6.67e5, 13.33e5, 2.0e6, 1.0e7])
-            else:
-                raise Exception(
-                    'CorsikaAtmosphere(): Season "'
-                    + season
-                    + '" not parameterized for location SouthPole.'
-                )
-        else:
-            raise Exception(
-                "CorsikaAtmosphere:init_parameters(): Location "
-                + str(location)
-                + " not parameterized."
-            )
+        # Use the renamed get_atmosphere_parameters function
+        _aatm, _batm, _catm, _thickl, _hlay = get_atmosphere_parameters(
+            location, season
+        )
 
         self._atm_param = np.array([_aatm, _batm, _catm, _thickl, _hlay])
 
@@ -578,9 +412,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
 
         thickl = []
         for h in self._atm_param[4]:
-            thickl.append(
-                "{0:4.6f}".format(quad(self.get_density, h, 112.8e5, epsrel=1e-4)[0])
-            )
+            thickl.append(f"{quad(self.get_density, h, 112.8e5, epsrel=1e-4)[0]:4.6f}")
         info(5, "_thickl = np.array([" + ", ".join(thickl) + "])")
         return thickl
 
@@ -656,13 +488,26 @@ class MSIS00Atmosphere(EarthsAtmosphere):
     def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
         from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
+        msis_atmospheres = [
+            "SouthPole",
+            "Karlsruhe",
+            "Geneva",
+            "Tokyo",
+            "SanGrasso",
+            "TelAviv",
+            "KSC",
+            "SoudanMine",
+            "Tsukuba",
+            "LynnLake",
+            "PeaceRiver",
+            "FtSumner",
+        ]
+        assert location in msis_atmospheres, (
+            f"{location} not available for MSIS00Atmosphere"
+        )
+
         self._msis = cNRLMSISE00()
 
-        assert (
-            location in self._msis.locations
-        ), "{0} not available for MSIS00Atmosphere".format(location)
-
-        assert bool(season) ^ bool(doy), "Define either season or doy"
         self.init_parameters(location, season, doy, use_loc_altitudes)
 
         EarthsAtmosphere.__init__(self)
@@ -690,6 +535,40 @@ class MSIS00Atmosphere(EarthsAtmosphere):
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
             self.geom.h_obs = self._msis.alt_surface
 
+    def _clear_cache(self):
+        """Clears the density model cache so that density profiles can be recalculated
+
+        It is a private method to wrap the logic of cache cleaning
+        """
+        self.theta_deg = None
+
+    def update_parameters(self, **kwargs):
+        """Updates parameters of the density model
+
+        Args:
+          location_coord (tuple of str): (longitude, latitude)
+          season (str): months of the year: January, February, etc.
+          doy (int): day of the year. 'doy' takes precedence over 'season' if both are set
+        """
+
+        self._clear_cache()
+        if not kwargs:
+            return
+
+        if "location_coord" in kwargs:
+            self.set_location_coord(*kwargs.get("location_coord"))
+
+        if "season" in kwargs:
+            self.set_season(kwargs.get("season"))
+
+        if "doy" in kwargs:
+            self.set_doy(kwargs.get("doy"))
+            if "season" in kwargs:
+                info(
+                    2,
+                    "Both 'season' and 'doy' are set in parameter list.\n'doy' takes precedence over 'season'",
+                )
+
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.
 
@@ -703,6 +582,47 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """
         return self._msis.get_density(h_cm)
 
+    def set_location(self, location):
+        """Changes MSIS location by strings defined in _msis_wrapper.
+
+        Args:
+          location (str): location as defined in :class:`NRLMSISE-00.`
+
+        """
+        self._msis.set_location(location)
+        self._clear_cache()
+
+    def set_location_coord(self, longitude, latitude):
+        """Changes MSIS location by longitude, latitude in _msis_wrapper
+
+        Args:
+          longitude (float): longitude of the location with abs(longitude) <= 180
+          latitude (float): latitude of the location with abs(latitude) <= 90
+
+        """
+        self._msis.set_location_coord(longitude, latitude)
+        self._clear_cache()
+
+    def set_season(self, month):
+        """Changes MSIS location by month strings defined in _msis_wrapper.
+
+        Args:
+          location (str): month as defined in :class:`NRLMSISE-00.`
+
+        """
+        self._msis.set_season(month)
+        self._clear_cache()
+
+    def set_doy(self, day_of_year):
+        """Changes MSIS season by day of year.
+
+        Args:
+          day_of_year (int): 1. Jan.=0, 1.Feb=32
+
+        """
+        self._msis.set_doy(day_of_year)
+        self._clear_cache()
+
     def get_temperature(self, h_cm):
         """Returns the temperature of air in K.
 
@@ -715,36 +635,6 @@ class MSIS00Atmosphere(EarthsAtmosphere):
           float: density :math:`T(h_{cm})` in K
         """
         return self._msis.get_temperature(h_cm)
-
-    def set_location(self, location):
-        """Changes MSIS location by strings defined in _msis_wrapper.
-
-        Args:
-          location (str): location as defined in :class:`NRLMSISE-00.`
-
-        """
-        self._msis.set_location(location)
-        self.theta_deg = None
-
-    def set_season(self, month):
-        """Changes MSIS location by month strings defined in _msis_wrapper.
-
-        Args:
-          location (str): month as defined in :class:`NRLMSISE-00.`
-
-        """
-        self._msis.set_season(month)
-        self.theta_deg = None
-
-    def set_doy(self, day_of_year):
-        """Changes MSIS season by day of year.
-
-        Args:
-          day_of_year (int): 1. Jan.=0, 1.Feb=32
-
-        """
-        self._msis.set_doy(day_of_year)
-        self.theta_deg = None
 
 
 class MSIS00IceCubeCentered(MSIS00Atmosphere):
@@ -864,8 +754,9 @@ class AIRSAtmosphere(EarthsAtmosphere):
           doy (int): Day Of Year
         """
         # from time import strptime
-        from matplotlib.dates import datestr2num, num2date
         from os import path
+
+        from matplotlib.dates import datestr2num, num2date
 
         def bytespdate2num(b):
             return datestr2num(b.decode("utf-8"))
@@ -1047,7 +938,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
         return ret
 
 
-class GeneralizedTarget(object):
+class GeneralizedTarget:
     """This class provides a way to run MCEq on piece-wise constant
     one-dimenional density profiles.
 
@@ -1059,7 +950,7 @@ class GeneralizedTarget(object):
 
     Note:
       If the target is not air or hydrogen, the result is approximate,
-      since seconray particle yields are provided for nucleon-air or
+      since seconday particle yields are provided for nucleon-air or
       proton-proton collisions. Depending on this choice one has to
       adjust the nuclear mass in :mod:`mceq_config`.
 
@@ -1123,8 +1014,11 @@ class GeneralizedTarget(object):
         """
 
         if start_position_cm < 0.0 or start_position_cm > self.len_target:
-            raise Exception("distance exceeds target dimensions.")
-        elif (
+            raise Exception(
+                "GeneralizedTarget::add_material(): "
+                + "distance exceeds target dimensions."
+            )
+        if (
             start_position_cm == self.mat_list[-1][0]
             and self.mat_list[-1][-1] == self.env_name
         ):
@@ -1340,6 +1234,7 @@ if __name__ == "__main__":
         ("SouthPole", "December"),
         ("PL_SouthPole", "January"),
         ("PL_SouthPole", "August"),
+        ("SDR_SouthPole", "April"),
     ]
     cka_surf_100 = []
     for loc, season in cka_atmospheres:
@@ -1350,11 +1245,7 @@ if __name__ == "__main__":
             x_vec,
             1 / cka_obj.r_X2rho(x_vec),
             lw=1.5,
-            label=(
-                "{0}/{1}".format(loc, season)
-                if season is not None
-                else "{0}".format(loc)
-            ),
+            label=(f"{loc}/{season}" if season is not None else f"{loc}"),
         )
         cka_surf_100.append((cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)))
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")
@@ -1383,7 +1274,7 @@ if __name__ == "__main__":
         msis_obj = MSIS00Atmosphere(loc, season)
         msis_obj.set_theta(0.0)
         x_vec = np.linspace(0, msis_obj.max_X, 5000)
-        plt.plot(x_vec, 1 / msis_obj.r_X2rho(x_vec), lw=1.5, label="{0}".format(loc))
+        plt.plot(x_vec, 1 / msis_obj.r_X2rho(x_vec), lw=1.5, label=f"{loc}")
         msis_surf_100.append((msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)))
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")
     plt.xlabel(r"Depth (g/cm$^2$)")

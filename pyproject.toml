@@ -1,0 +1,107 @@
+[build-system]
+requires = ["scikit-build-core"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "MCEq"
+version = "1.4.0"
+description = "Numerical cascade equation solver"
+readme = "README.md"
+authors = [{ name = "Anatoli Fedynitch", email = "afedynitch@gmail.com" }]
+license = { text = "BSD 3-Clause License" }
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: BSD License",
+]
+
+dependencies = [
+    "h5py",
+    "particletools",
+    "crflux>1.0.5",
+    "scipy",
+    "numpy",
+    "tqdm",
+    "requests",
+    "jacobi",
+]
+
+[project.optional-dependencies]
+cuda = ["cupy-cuda12x>=12.0.0"]
+
+[dependency-groups]
+test = ["pytest", "pytest-cov", "pytest-xdist"]
+docs = [
+    # Core
+    "sphinx>=8",
+    # Third-party extensions
+    "sphinx-automodapi>=0.2",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+    "nbsphinx>=0.9",
+    "sphinx-gallery>=0.19",
+    "pydata-sphinx-theme",
+    # Helpful runtime deps for nbsphinx / gallery
+    "ipython>=9",      # nicer notebook execution
+    "matplotlib>=3.10", # common for gallery images
+]
+
+
+[tool.scikit-build]
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["mceq_config", "src/MCEq"]
+
+[tool.setuptools.package-data]
+"MCEq" = ["data/README.md", "data/DDM_1.0.npy"]
+
+[project.urls]
+Changelog = "https://mceq.readthedocs.io/en/latest/en/latest/changelog.html"
+Documentation = "https://mceq.readthedocs.io/en/latest"
+Homepage = "https://github.com/afedynitch/MCEq"
+Issues = "https://github.com/afedynitch/MCEq/issues"
+
+[tool.ruff.lint]
+exclude = ["docs/examples/**"]
+
+extend-select = [
+    "I", # enable isort
+]
+
+ignore = [
+    "PLE1205", # Format check doesn't work with our custom logger
+    "PLC0415", # Import should be at top of file
+    "S101",    # Use of assert detected
+    "PT011",   # Also about too plain exceptions
+    "TRY003",  # I know my exception handling is bad
+    "EM101", # Blocks literals in raises
+    "PLR",  # Pylint stuff
+    "RUF012", # Would require a lot of ClassVar's
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.towncrier]
+package="MCEq"
+package_dir="src"
+directory = "changes"
+filename="CHANGELOG.md"
+issue_format = "[#{issue}](https://github.com/mceq-project/MCEq/pull/{issue})"
+
+[tool.towncrier.fragment.api]
+name = "API Changes"
+
+[tool.towncrier.fragment.bugfix]
+name="Bug Fixes"
+
+[tool.towncrier.fragment.chore]
+name = "Maintencance"
+
+[tool.towncrier.fragment.docs]
+name = "Documentation Updates"
+
+[tool.towncrier.fragment.feat]
+name="New Features"

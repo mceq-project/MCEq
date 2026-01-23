@@ -1,9 +1,10 @@
-from __future__ import print_function
-import sys
+import importlib
+import pathlib
 import platform
-import os.path as path
+import sys
+import warnings
 
-base_path = path.dirname(path.abspath(__file__))
+from MCEq import base_path
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -21,10 +22,10 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = path.join(base_path, "MCEq", "data")
+data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm193_v150.h5"
+mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai_Max_v150.h5"
@@ -48,7 +49,8 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
 #: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
 #: everything else will be attributed to the "conventional" category
-prompt_ctau = 2.6842  # cm (everything shorter-lived than K0s will be considered prompt)
+# cm (everything shorter-lived than K0s will be considered prompt)
+prompt_ctau = 2.6842
 
 #: Approximate value for the maximum density expected. Needed for the
 #: resonance approximation. Default value: air at the surface
@@ -64,11 +66,10 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6371.0e5  # Earth radius in cm
-h_obs = 0.0  # observation level in cm
-h_atm = 112.8e5  # top of the atmosphere in cm
+r_E = 6391.0e3  # Earth radius in m
+h_obs = 0.0  # observation level in m
+h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
-
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]
@@ -76,10 +77,9 @@ len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-
-#: Check if densities requested outside of target dimensions
-except_out_of_bounds = False
-
+#: Approximate value for the maximum density expected. Needed for the
+#: resonance approximation. Default value: air at the surface
+max_density = (0.001225,)
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
@@ -173,7 +173,7 @@ enable_default_tracking = True
 enable_energy_loss = True
 
 #: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
-generic_losses_all_charged = True
+generic_losses_all_charged = False
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
@@ -183,11 +183,11 @@ enable_cont_rad_loss = True
 fallback_to_air_cs = True
 
 #: enable EM ionization loss for electrons and positrons
-enable_em_ion = True
+enable_em_ion = False
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
-average_loss_operator = False
+average_loss_operator = True
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
@@ -213,11 +213,6 @@ adv_set = {
     "disable_interactions_of_unstable": False,
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
-    #: repair DPMJET-III K0S/L: due to a bug in matrix generation the
-    # matrices are not properly populated. As an intermediate fix, K0S/L
-    # are approximated from a mixture of K+,K- distributions. In future
-    # DPMEJET versions, this bug will be resolved and the parameter is temporal.
-    "fix_dpmjet_neutral_kaons": True,
     #: Disable resonance/prompt contribution (this group of options
     #: is either obsolete or needs maintenance.)
     #: "disable_resonance_decay" : False,
@@ -229,7 +224,7 @@ adv_set = {
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
     #: Disable particle (production)
-    "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
+    "disabled_particles": [],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Difficult to explain parameter
@@ -267,31 +262,97 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 pf = platform.platform()
 has_accelerate = False
 
+prefix = pathlib.Path(sys.prefix)
 if "Linux" in pf:
-    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.so")
+    mkl_libs = list((prefix / "lib").glob("libmkl_rt*"))
+    mkl_path = mkl_libs[0] if mkl_libs else prefix / "lib" / "libmkl_rt.so"
 elif "macOS" in pf:
-    mkl_path = path.join(sys.prefix, "lib", "libmkl_rt.dylib")
+    mkl_path = prefix / "lib" / "libmkl_rt.dylib"
     has_accelerate = True
 else:
-    # Windows case
-    mkl_path = path.join(sys.prefix, "Library", "bin", "mkl_rt.dll")
+    # Windows or unknown OS: search for mkl_rt*.dll in Library/bin and lib
+    mkl_path = None
+    mkl_dirs = [prefix / "Library" / "bin", prefix / "lib"]
+    mkl_candidates = []
+    for d in mkl_dirs:
+        if d.exists():
+            mkl_candidates.extend(d.glob("mkl_rt*.dll"))
+    if mkl_candidates:
+        mkl_path = mkl_candidates[0]
+    else:
+        # fallback to default path
+        mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
 
 # mkl library handler
 mkl = None
 
-# Check if MKL library found
-if path.isfile(mkl_path):
-    has_mkl = True
-else:
-    has_mkl = False
+has_mkl = bool(mkl_path.is_file())
 
 # Look for cupy module
-try:
-    import cupy
+has_cuda = importlib.util.find_spec("cupy") is not None
 
-    has_cuda = True
-except ImportError:
-    has_cuda = False
+# CUDA is usually fastest, then MKL. Fallback to numpy.
+if kernel_config == "auto":
+    if has_cuda:
+        kernel_config = "CUDA"
+    elif has_mkl:
+        kernel_config = "MKL"
+    else:
+        kernel_config = "numpy"
+else:
+    if kernel_config.lower() == "cuda" and not has_cuda:
+        raise Exception("CUDA unavailable. Make sure cupy is installed.")
+    elif kernel_config.lower() == "mkl" and not has_mkl:
+        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+
+if debug_level >= 2:
+    print(f"Auto-detected {kernel_config} solver.")
+
+
+def set_mkl_threads(nthreads):
+    global mkl_threads, mkl
+    from ctypes import byref, c_int, cdll
+
+    mkl = cdll.LoadLibrary(mkl_path)
+    # Set number of threads
+    mkl_threads = nthreads
+    mkl.mkl_set_num_threads(byref(c_int(nthreads)))
+    if debug_level >= 5:
+        print(f"MKL threads limited to {nthreads}")
+
+
+if has_mkl:
+    set_mkl_threads(mkl_threads)
+
+
+# Compatibility layer for dictionary access to config attributes
+# This is deprecated and will be removed in future
+
+
+class MCEqConfigCompatibility(dict):
+    """This class provides access to the attributes of the module as a
+    dictionary, as it was in the previous versions of MCEq
+
+    This method is deprecated and will be removed in future.
+    """
+
+    def __init__(self, namespace):
+        self.__dict__.update(namespace)
+        if debug_level > 1:
+            warn_str = (
+                "Config dictionary is deprecated. "
+                + "Use config.variable instead of config['variable']"
+            )
+            warnings.warn(warn_str, FutureWarning)
+
+    def __setitem__(self, key, value):
+        key = key.lower()
+        if key not in self.__dict__:
+            raise Exception("Unknown config key", key)
+        return super(MCEqConfigCompatibility, self).__setitem__(key, value)
+
+
+config = MCEqConfigCompatibility(globals())
 
 
 class FileIntegrityCheck:
@@ -328,8 +389,8 @@ class FileIntegrityCheck:
                     for byte_block in iter(lambda: file.read(4096), b""):
                         self.sha256_hash.update(byte_block)
                 self.hash_is_calculated = True
-            except EnvironmentError as ex:
-                print("FileIntegrityCheck: {0}".format(ex))
+            except OSError as ex:
+                print(f"FileIntegrityCheck: {ex}")
 
     def succeeded(self):
         self._calculate_hash()
@@ -343,9 +404,10 @@ class FileIntegrityCheck:
 def _download_file(url, outfile):
     """Downloads the MCEq database from github"""
 
-    from tqdm import tqdm
-    import requests
     import math
+
+    import requests
+    from tqdm import tqdm
 
     # Streaming, so we can iterate over the response.
     r = requests.get(url, stream=True)
@@ -373,27 +435,27 @@ release_tag = "builds_on_azure/"
 url = base_url + release_tag + mceq_db_fname
 # sha256 checksum of the file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
-file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
+file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
-filepath_to_database = path.join(data_dir, mceq_db_fname)
-# if path.isfile(filepath_to_database):
-#     is_file_complete = FileIntegrityCheck(
-#         filepath_to_database, file_checksum
-#     ).succeeded()
-# else:
-#     is_file_complete = False
-is_file_complete = True
+filepath_to_database = data_dir / mceq_db_fname
+if filepath_to_database.exists():
+    is_file_complete = FileIntegrityCheck(
+        filepath_to_database, file_checksum
+    ).succeeded()
+else:
+    is_file_complete = False
+
 if not is_file_complete:
-    print("Downloading for mceq database file {0}.".format(mceq_db_fname))
+    print(f"Downloading for mceq database file {mceq_db_fname}.")
     if debug_level >= 2:
         print(url)
     _download_file(url, filepath_to_database)
 
-# old_database = "mceq_db_lext_dpm191.h5"
-# filepath_to_old_database = path.join(data_dir, old_database)
+old_database = "mceq_db_lext_dpm191.h5"
+filepath_to_old_database = data_dir / old_database
 
-# if path.isfile(filepath_to_old_database):
-#     import os
+if filepath_to_old_database.exists():
+    import os
 
-#     print("Removing previous database {0}.".format(old_database))
-#     os.unlink(filepath_to_old_database)
+    print(f"Removing previous database {old_database}.")
+    os.unlink(filepath_to_old_database)

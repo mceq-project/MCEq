@@ -1,7 +1,8 @@
-from __future__ import print_function
 from collections import namedtuple
+
 import numpy as np
-import mceq_config as config
+
+from MCEq import config
 
 #: Energy grid (centers, bind widths, dimension)
 energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
@@ -102,24 +103,24 @@ def average_A_target(mat="auto"):
         )
 
 
-def gen_xmat(kinetic_energy_grid):
-    """Generates the x_lab (kinetic) matrix for a given energy grid.
+def theta_deg(cos_theta):
+    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
+    return np.rad2deg(np.arccos(cos_theta))
 
-    Args:
-        energy_grid: namedtuple
-            Kinetic energy grid containing the grid centers, bin widths, and dimension.
 
-    Returns:
-        numpy.ndarray
-            The x_lab matrix.
+def theta_rad(theta):
+    """Converts :math:`\\theta` from rad to degrees."""
+    return np.deg2rad(theta)
 
-    """
+
+def gen_xmat(energy_grid):
+    """Generates x_lab matrix for a given energy grid"""
     global _xmat
-    dims = (kinetic_energy_grid.d, kinetic_energy_grid.d)
+    dims = (energy_grid.d, energy_grid.d)
     if _xmat is None or _xmat.shape != dims:
         _xmat = np.zeros(dims)
-        for eidx in range(kinetic_energy_grid.d):
-            xvec = kinetic_energy_grid.c[: eidx + 1] / kinetic_energy_grid.c[eidx]
+        for eidx in range(energy_grid.d):
+            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
             _xmat[: eidx + 1, eidx] = xvec
     return _xmat
 
@@ -176,16 +177,15 @@ def getAZN(pdg_id):
     Z, A = 1, 1
     if pdg_id < 2000:
         return 0, 0, 0
-    elif pdg_id == 2112:
+    if pdg_id == 2112:
         return 1, 0, 1
-    elif pdg_id == 2212:
+    if pdg_id == 2212:
         return 1, 1, 0
-    elif pdg_id > 1000000000:
-        A = (pdg_id % 1000) // 10
-        Z = (pdg_id % 1000000) // 10000
+    if pdg_id > 1000000000:
+        A = pdg_id % 1000 / 10
+        Z = pdg_id % 1000000 / 10000
         return A, Z, A - Z
-    else:
-        return 1, 0, 0
+    return 1, 0, 0
 
 
 def getAZN_corsika(corsikaid):
@@ -214,15 +214,14 @@ def corsikaid2pdg(corsika_id):
     """Conversion of CORSIKA nuclear code to PDG nuclear code"""
     if corsika_id in [101, 14]:
         return 2212
-    elif corsika_id in [100, 13]:
+    if corsika_id in [100, 13]:
         return 2112
-    else:
-        A, Z, _ = getAZN_corsika(corsika_id)
-        # 10LZZZAAAI
-        pdg_id = 1000000000
-        pdg_id += 10 * A
-        pdg_id += 10000 * Z
-        return pdg_id
+    A, Z, _ = getAZN_corsika(corsika_id)
+    # 10LZZZAAAI
+    pdg_id = 1000000000
+    pdg_id += 10 * A
+    pdg_id += 10000 * Z
+    return pdg_id
 
 
 def pdg2corsikaid(pdg_id):
@@ -305,11 +304,7 @@ def info(min_dbg_level, *message, **kwargs):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-    condition = kwargs.pop("condition", min_dbg_level <= config.debug_level)
-    # Dont' process the if the function if nothing will happen
-    if not (condition or config.override_debug_fcn):
-        return
-
+    condition = kwargs.pop("condition", True)
     blank_caller = kwargs.pop("blank_caller", False)
     no_caller = kwargs.pop("no_caller", False)
     if config.override_debug_fcn and min_dbg_level < config.override_max_level:
