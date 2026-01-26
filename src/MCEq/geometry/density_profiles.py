@@ -993,7 +993,11 @@ class GeneralizedTarget:
     def set_length(self, new_length_cm):
         """Updates the total length of the target."""
         if new_length_cm < self.mat_list[-1][0]:
-            raise Exception("can not set length below lower boundary of last material.")
+            raise Exception(
+                "GeneralizedTarget::set_length(): "
+                + "can not set length below lower boundary of last "
+                + "material."
+            )
         self.len_target = new_length_cm
         self.mat_list[-1][1] = new_length_cm
         self._update_variables()
@@ -1109,7 +1113,7 @@ class GeneralizedTarget:
            float: density in g/cm**3
 
         Raises:
-            Exception: If requested depth exceeds target.
+            Exception: If requested position exceeds target.
         """
         X = np.atleast_1d(X)
         # allow for some small constant extrapolation for odepack solvers
@@ -1162,7 +1166,6 @@ class GeneralizedTarget:
             while not (li >= self.start_bounds[bi] and li <= self.end_bounds[bi]):
                 bi += 1
             res[i] = self.densities[bi]
-
 
         res = res.item() if res.size == 1 else res
 
