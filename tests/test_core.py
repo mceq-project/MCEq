@@ -1,5 +1,6 @@
 import sys
 
+import crflux.models as pm
 import numpy as np
 import pytest
 from pytest import approx
@@ -356,6 +357,27 @@ def test_get_solution_return_as(mceq_small, return_as, integrate):
             assert np.all(np.isfinite(result))
 
 
+def test_get_solution_dont_sum_helicities(mceq):
+    mceq.solve()
+
+    # Get solution with summed helicities (default)
+    solution_summed = mceq.get_solution("e-", dont_sum_helicities=False)
+    solution_left_do = mceq.get_solution("e-_l", dont_sum_helicities=False)
+    solution_right_do = mceq.get_solution("e-_r", dont_sum_helicities=False)
+
+    # Get individual helicity states
+    solution_left = mceq.get_solution("e-_l", dont_sum_helicities=True)
+    solution_right = mceq.get_solution("e-_r", dont_sum_helicities=True)
+    solution_0 = mceq.get_solution("e-", dont_sum_helicities=True)
+
+    # Manual sum should equal the summed solution
+    manual_sum = solution_left + solution_right + solution_0
+
+    assert solution_left == approx(solution_left_do)
+    assert solution_right == approx(solution_right_do)
+    assert solution_summed == approx(manual_sum)
+
+
 @pytest.mark.parametrize(
     "pdg_id",
     [
@@ -660,3 +682,29 @@ def test_xgrid_invalid_return_as(mceq_small):
     """Test xgrid raises exception for invalid return_as argument."""
     with pytest.raises(Exception, match="Unknown grid type"):
         mceq_small.xgrid("mu+", "invalid_type", return_bins=False)
+
+
+def test_get_set_state_vector_checkpoint_restore(mceq):
+    mceq.set_primary_model(pm.HillasGaisser2012, "H3a")
+
+    # First solve
+    mceq.solve()
+    order1, state1 = mceq._get_state_vector()
+    solution1 = mceq.get_solution("mu+", mag=0, integrate=True)
+
+    # Change something and solve again
+    mceq.set_theta_deg(30.0)
+    mceq.solve()
+    order2, state2 = mceq._get_state_vector()
+    solution2 = mceq.get_solution("mu+", mag=0, integrate=True)
+
+    # Solutions should be different
+    assert not np.allclose(solution1, solution2)
+    assert not np.allclose(state1, state2)
+
+    # Restore first state directly (without solving)
+    mceq._solution = np.copy(state1)
+    solution1_prime = mceq.get_solution("mu+", mag=0, integrate=True)
+
+    # Should match original solution
+    assert np.allclose(solution1, solution1_prime)
