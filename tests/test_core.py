@@ -42,7 +42,6 @@ def test_solve_other_grid_var(mceq_small):
 )
 def test_solve_int_grid(mceq_small, int_grid, grid_shape):
     mceq_small.solve(int_grid)
-    print(mceq_small.grid_sol.shape)
     assert mceq_small.grid_sol.shape == grid_shape
 
 

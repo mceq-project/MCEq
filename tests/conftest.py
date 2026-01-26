@@ -12,7 +12,6 @@ from MCEq.core import MCEqRun
 @pytest.fixture(scope="session")
 def mceq():
     config.debug_level = 2
-    config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
     config.e_min = 1e-1
     config.e_max = 1e11
@@ -29,7 +28,6 @@ def mceq():
 @pytest.fixture(scope="session")
 def mceq_small():
     config.debug_level = 2
-    config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
 
     config.e_min = 1e9
@@ -47,7 +45,6 @@ def mceq_small():
 @pytest.fixture(scope="session")
 def mceq_qgs():
     config.debug_level = 2
-    config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
     config.e_min = 1e-1
     config.e_max = 1e11
