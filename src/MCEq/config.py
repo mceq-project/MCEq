@@ -300,6 +300,8 @@ if kernel_config == "auto":
         kernel_config = "CUDA"
     elif has_mkl:
         kernel_config = "MKL"
+    elif has_accelerate:
+        kernel_config = "accelerate"
     else:
         kernel_config = "numpy"
 else:
@@ -307,6 +309,8 @@ else:
         raise Exception("CUDA unavailable. Make sure cupy is installed.")
     elif kernel_config.lower() == "mkl" and not has_mkl:
         raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+    elif kernel_config.lower() == "accelerate" and not has_accelerate:
+        raise Exception("Accelerate unavailable. Only on MacOS.")
 
 if debug_level >= 2:
     print(f"Auto-detected {kernel_config} solver.")
