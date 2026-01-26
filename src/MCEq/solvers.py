@@ -82,8 +82,8 @@ class CUDASparseContext:
 
     def set_matrices(self, int_m, dec_m):
         """Upload sparce matrices to GPU memory"""
-        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=config.floatlen)
-        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=config.floatlen)
+        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
+        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -102,7 +102,7 @@ class CUDASparseContext:
 
     def set_phi(self, phi):
         """Uploads initial condition to GPU memory."""
-        self.cu_curr_phi = self.cp.asarray(phi, dtype=config.floatlen)
+        self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
 
     def get_phi(self):
         """Downloads current solution from GPU memory."""

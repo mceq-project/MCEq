@@ -109,7 +109,7 @@ kernel_config = "auto"
 cuda_gpu_id = 0
 
 #: CUDA Floating point precision (default 32-bit 'float')
-cuda_fp_precision = 32
+cuda_fp_precision = 64
 
 #: Floating point precision (is set automatically)
 floatlen = None
