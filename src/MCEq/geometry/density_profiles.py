@@ -284,8 +284,6 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    _atm_param = np.zeros(5, dtype="float64")
-
     def __init__(self, location, season=None):
         # Check if the atmosphere is available
         # Use the renamed list_available_atmospheres function
