@@ -1162,6 +1162,10 @@ class GeneralizedTarget:
             while not (li >= self.start_bounds[bi] and li <= self.end_bounds[bi]):
                 bi += 1
             res[i] = self.densities[bi]
+
+
+        res = res.item() if res.size == 1 else res
+
         return res
 
     def draw_materials(self, axes=None, logx=False):
