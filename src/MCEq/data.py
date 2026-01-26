@@ -890,9 +890,7 @@ class Decays:
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
         self.parent_list = []
-        self._default_decay_dset = (
-            override_decay_db_name if override_decay_db_name else config.decay_db_name
-        )
+        self._default_decay_dset = override_decay_db_name
 
         if self._default_decay_dset is None:
             if config.muon_helicity_dependence:

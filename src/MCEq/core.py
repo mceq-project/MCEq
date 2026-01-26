@@ -1006,6 +1006,9 @@ class MCEqRun:
 
         self._solution, self.grid_sol = kernel(*args)
 
+        if isinstance(self.grid_sol, list):
+            self.grid_sol = np.asarray(self.grid_sol)
+
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
     def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):

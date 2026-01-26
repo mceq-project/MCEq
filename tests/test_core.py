@@ -591,3 +591,72 @@ def test_interaction_model_forwarding():
     # Verify that the interaction model is correctly set
     assert mceq._int_cs.iam == "QGSJETII04"
     assert mceq._interactions.iam == "QGSJETII04"
+
+
+def test_ptot_grid(mceq_small):
+    # Test without bins
+    ptot_centers = mceq_small.ptot_grid("mu+", return_bins=False)
+
+    assert len(ptot_centers) == len(mceq_small.e_grid)
+    assert np.all(ptot_centers > 0)
+    assert np.all(np.isfinite(ptot_centers))
+
+    # Test with bins
+    ptot_bins, ptot_centers_with_bins = mceq_small.ptot_grid("mu+", return_bins=True)
+
+    assert len(ptot_bins) == len(mceq_small.e_bins)
+    assert len(ptot_centers_with_bins) == len(mceq_small.e_grid)
+    assert np.allclose(ptot_centers, ptot_centers_with_bins)
+
+    # Check that centers are geometric mean of bins
+    expected_centers = np.sqrt(ptot_bins[1:] * ptot_bins[:-1])
+    assert np.allclose(ptot_centers_with_bins, expected_centers)
+
+
+def test_etot_grid(mceq_small):
+    # Test without bins
+    etot_centers = mceq_small.etot_grid("mu+", return_bins=False)
+
+    assert len(etot_centers) == len(mceq_small.e_grid)
+    assert np.all(etot_centers > 0)
+    assert np.all(np.isfinite(etot_centers))
+
+    # Test with bins
+    etot_bins, etot_centers_with_bins = mceq_small.etot_grid("mu+", return_bins=True)
+
+    assert len(etot_bins) == len(mceq_small.e_bins)
+    assert len(etot_centers_with_bins) == len(mceq_small.e_grid)
+    assert np.allclose(etot_centers, etot_centers_with_bins)
+
+    # Check that bins are kinetic + mass
+    mu_mass = mceq_small.pman["mu+"].mass
+    expected_bins = mceq_small.e_bins + mu_mass
+    assert np.allclose(etot_bins, expected_bins)
+
+
+@pytest.mark.parametrize(
+    ["return_as", "expected_method"],
+    [
+        ["kinetic energy", lambda mceq: (mceq.e_bins, mceq.e_grid)],
+        ["total energy", lambda mceq: mceq.etot_grid("mu+", return_bins=True)],
+        ["total momentum", lambda mceq: mceq.ptot_grid("mu+", return_bins=True)],
+    ],
+)
+@pytest.mark.parametrize("return_bins", [False, True])
+def test_xgrid(mceq_small, return_as, expected_method, return_bins):
+    result = mceq_small.xgrid("mu+", return_as, return_bins=return_bins)
+
+    if return_bins:
+        bins, centers = result
+        expected_bins, expected_centers = expected_method(mceq_small)
+        assert np.allclose(bins, expected_bins)
+        assert np.allclose(centers, expected_centers)
+    else:
+        expected_bins, expected_centers = expected_method(mceq_small)
+        assert np.allclose(result, expected_centers)
+
+
+def test_xgrid_invalid_return_as(mceq_small):
+    """Test xgrid raises exception for invalid return_as argument."""
+    with pytest.raises(Exception, match="Unknown grid type"):
+        mceq_small.xgrid("mu+", "invalid_type", return_bins=False)
