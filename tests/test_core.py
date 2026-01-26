@@ -378,6 +378,22 @@ def test_get_solution_dont_sum_helicities(mceq):
     assert solution_summed == approx(manual_sum)
 
 
+def test_solve_from_integration_path(mceq):
+    # Normal solve
+    mceq.solve()
+    solution_normal = np.copy(mceq._solution)
+
+    # Get the integration path that was used
+    nsteps, dX, rho_inv, grid_idcs = mceq.integration_path
+
+    # Solve using the same integration path
+    mceq.solve_from_integration_path(nsteps, dX, rho_inv, grid_idcs)
+    solution_from_path = mceq._solution
+
+    # Should give identical results
+    assert solution_normal == approx(solution_from_path)
+
+
 @pytest.mark.parametrize(
     "pdg_id",
     [
