@@ -108,11 +108,6 @@ def theta_deg(cos_theta):
     return np.rad2deg(np.arccos(cos_theta))
 
 
-def theta_rad(theta):
-    """Converts :math:`\\theta` from rad to degrees."""
-    return np.deg2rad(theta)
-
-
 def gen_xmat(energy_grid):
     """Generates x_lab matrix for a given energy grid"""
     global _xmat

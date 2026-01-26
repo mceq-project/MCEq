@@ -163,7 +163,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise Exception("Zenith angle not in allowed range.")
 
-        self.thrad = np.radians(theta_deg)
+        self.thrad = np.deg2rad(theta_deg)
         self.theta_deg = theta_deg
         self.calculate_density_spline()
 
@@ -673,7 +673,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         r = self.geom.r_E
         d = 1948  # m
 
-        theta_rad = det_zenith_deg / 180.0 * np.pi
+        theta_rad = np.deg2rad(det_zenith_deg)
 
         x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
             r - d
