@@ -488,11 +488,8 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -500,6 +497,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -526,11 +527,7 @@ class MCEqParticle:
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -538,6 +535,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -563,12 +564,12 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        try:
-            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
+        else:
+            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
     def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
