@@ -192,7 +192,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: :math:`1/\\rho` in cm**3/g
 
         """
-        return 1.0 / self.s_X2rho(X)  # type: ignore
+        return 1.0 / self.s_X2rho(X)
 
     def h2X(self, h):
         """Returns the depth along path as function of height above
@@ -208,7 +208,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: X  slant depth in g/cm**2
 
         """
-        return np.exp(self.s_h2X(h))  # type: ignore
+        return np.exp(self.s_h2X(h))
 
     def X2h(self, X):
         """Returns the height above surface as a function of slant depth
@@ -794,8 +794,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
             # p_levels = [
             #     float(s.strip()) for s in comline.split(' ')[3:] if s != ''
             # ][min_press_idx:]
-            dates = num2date(tab[:, 0])  # type: ignore
-            for di, date in enumerate(dates):  # type: ignore
+            dates = num2date(tab[:, 0])
+            for di, date in enumerate(dates):
                 if date.month == 6 and date.day == 1:
                     if date.year == 2010:
                         IC79_idx_1 = di

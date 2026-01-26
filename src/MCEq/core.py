@@ -1259,7 +1259,7 @@ class MCEqRun:
         zfac = np.zeros_like(self.e_grid)
 
         if config.has_cuda:
-            import cupy  # type: ignore
+            import cupy
 
             smat = cupy.asnumpy(smat)
             proj_cs = cupy.asnumpy(proj_cs)
