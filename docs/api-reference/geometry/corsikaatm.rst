@@ -1,12 +1,12 @@
 .. _data:
 ******************************************************************
-corsikaatm (:mod:`MCEq.geometry.corsikaatm.corsikaatm`)
+corsikaatm (:mod:`MCEq.geometry.corsikaatm`)
 ******************************************************************
-.. currentmodule:: MCEq.geometry.corsikaatm.corsikaatm
+.. currentmodule:: MCEq.geometry.corsikaatm
 
 
 
 Reference/API
 =============
-.. automodapi:: MCEq.geometry.corsikaatm.corsikaatm
+.. automodapi:: MCEq.geometry.corsikaatm
   :inherited-members:
