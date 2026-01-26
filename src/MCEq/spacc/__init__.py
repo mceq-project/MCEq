@@ -2,11 +2,11 @@ import atexit
 import os
 import sysconfig
 from ctypes import (
-    cdll,
-    c_int,
-    c_double,
-    c_longlong,
     POINTER,
+    c_double,
+    c_int,
+    c_longlong,
+    cdll,
 )
 
 base = os.path.dirname(os.path.abspath(__file__))

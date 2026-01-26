@@ -1,20 +1,17 @@
 from __future__ import print_function
 
-import mceq_config as config
-
-
-import crflux.models as pm
-import numpy as np
-
-import pytest
 import sys
 
+import crflux.models as pm
+import mceq_config as config
+import numpy as np
+import pytest
+
+import MCEq
 
 config.debug_level = 1
 config.kernel_config = "numpy"
 
-import MCEq
-import MCEq.core
 
 if config.has_mkl:
     MCEq.set_mkl_threads(2)
@@ -43,8 +40,9 @@ def mceq_qgs():
 
 
 def test_config_and_file_download():
-    import mceq_config as config
     import os
+
+    import mceq_config as config
 
     # Import of config triggers data download
     assert config.mceq_db_fname in os.listdir(config.data_dir)
@@ -93,7 +91,7 @@ def test_switch_interaction_models():
 
 
 def test_single_primary(mceq_qgs):
-    energies = [1e3, 1e6]#, 1e9, 5e10]
+    energies = [1e3, 1e6]  # , 1e9, 5e10]
     nmu, nnumu, nnue = [], [], []
     mceq_qgs.set_interaction_model("SIBYLL23D")
     mceq_qgs.set_theta_deg(0.0)
