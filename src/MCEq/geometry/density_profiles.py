@@ -1013,8 +1013,9 @@ class GeneralizedTarget:
 
         if start_position_cm < 0.0 or start_position_cm > self.len_target:
             raise Exception(
-                "GeneralizedTarget::add_material(): "
-                + "distance exceeds target dimensions."
+                "GeneralizedTarget::set_length(): "
+                + "can not set length below lower boundary of last "
+                + "material."
             )
         if (
             start_position_cm == self.mat_list[-1][0]
@@ -1023,7 +1024,10 @@ class GeneralizedTarget:
             self.mat_list[-1] = [start_position_cm, self.len_target, density, name]
 
         elif start_position_cm <= self.mat_list[-1][0]:
-            raise Exception("start_position_cm is ahead of previous material.")
+            raise Exception(
+                "GeneralizedTarget::add_material(): "
+                + "start_position_cm is ahead of previous material."
+            )
 
         else:
             self.mat_list[-1][1] = start_position_cm
@@ -1046,7 +1050,10 @@ class GeneralizedTarget:
             NotImplementedError: always
         """
 
-        raise NotImplementedError("Method not defined for this target class.")
+        raise NotImplementedError(
+            "GeneralizedTarget::set_theta(): Method"
+            + "not defined for this target class."
+        )
 
     def _integrate(self):
         """Walks through material list and computes the depth along the
@@ -1104,15 +1111,19 @@ class GeneralizedTarget:
         Raises:
             Exception: If requested depth exceeds target.
         """
-
-        if config.except_out_of_bounds and (np.min(X) < 0.0 or np.max(X) > self.max_X):
-            raise Exception(
-                "Depth {0:4.3f} exceeds target dimensions {1:4.3f}".format(
-                    np.max(X), self.max_X
-                )
+        X = np.atleast_1d(X)
+        # allow for some small constant extrapolation for odepack solvers
+        if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
+            X[-1] = self.max_X
+        if np.min(X) < 0.0 or np.max(X) > self.max_X:
+            # return self.get_density(self.s_X2h(self.max_X))
+            info(
+                0,
+                f"Depth {np.max(X):4.3f} exceeds target dimensions {self.max_X:4.3f}",
             )
+            raise Exception("Invalid input")
 
-        return self.densities[np.digitize(X, self.X_int[1:])]
+        return self.get_density(self.s_X2h(X))
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
@@ -1138,17 +1149,20 @@ class GeneralizedTarget:
         Raises:
             Exception: If requested depth exceeds target.
         """
+        l_cm = np.atleast_1d(l_cm)
+        res = np.zeros_like(l_cm)
 
-        if config.except_out_of_bounds and (
-            np.min(l_cm) < 0.0 or np.max(l_cm) > self.len_target
-        ):
+        if np.min(l_cm) < 0 or np.max(l_cm) > self.len_target:
             raise Exception(
-                "Position {0:4.3f} exceeds target dimensions {1:4.3f}".format(
-                    np.max(l_cm), self.len_target
-                )
+                "GeneralizedTarget::get_density(): "
+                + "requested position exceeds target legth."
             )
-
-        return self.densities[np.digitize(l_cm, self.end_bounds)]
+        for i, li in enumerate(l_cm):
+            bi = 0
+            while not (li >= self.start_bounds[bi] and li <= self.end_bounds[bi]):
+                bi += 1
+            res[i] = self.densities[bi]
+        return res
 
     def draw_materials(self, axes=None, logx=False):
         """Makes a plot of depth and density profile as a function

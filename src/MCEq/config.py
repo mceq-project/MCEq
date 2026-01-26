@@ -210,9 +210,6 @@ muon_helicity_dependence = True
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
 
-#: Raise exception when X is out of bounds
-except_out_of_bounds = True
-
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
     #: Disable particle production by all hadrons, except nucleons
