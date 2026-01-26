@@ -668,7 +668,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         Returns:
           float: latitude of the impact point in degrees
         """
-        r = self.geom.r_E
+        r = self.geom.r_E / 1e2  # cm to m
         d = 1948  # m
 
         theta_rad = np.deg2rad(det_zenith_deg)
