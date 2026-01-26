@@ -28,10 +28,7 @@ data_dir = pathlib.Path(base_path) / "data"
 mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai_Max_v150.h5"
-
-#: Decay database name
-decay_db_name = None
+em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -186,7 +183,7 @@ enable_cont_rad_loss = True
 fallback_to_air_cs = True
 
 #: enable EM ionization loss for electrons and positrons
-enable_em_ion = False
+enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
@@ -209,6 +206,14 @@ muon_helicity_dependence = True
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
+
+#: This is not used in the code as before, instead the low energy
+#: extension is compiled into the HDF backend files.
+low_energy_extension = {
+    "he_le_transition": 80,  # GeV
+    "nbins_interp": 3,
+    "use_unknown_cs": True,
+}
 
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
