@@ -104,10 +104,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         X_intp = [X for X in reversed(X_int[1:])]
         # This is an incomplete workaround for non-monothonic elevations for
         # upgoing trajectories.
-        if not self.theta_deg > 90.0:
-            self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        else:
-            self._s_h2X = None
+        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
 
