@@ -59,6 +59,7 @@ html_theme_options = {
         {"name": "API Reference", "url": "api-reference/index", "internal": True},
         {"name": "Cite Us", "url": "citeus", "internal": True},
         {"name": "References", "url": "citations", "internal": True},
+        {"name": "v1.4", "url": "v14v13_diff", "internal": True},
     ],
     "icon_links": [
         {
@@ -76,6 +77,7 @@ html_sidebars = {
     "citations": [],  # disable sidebar on References
     "example-gallery": [],  # disable sidebar on References
     "v12v11_diff": [],  # disable sidebar on References
+    "v14v13_diff": [],  # disable sidebar on References
 }
 
 html_show_sourcelink = False
