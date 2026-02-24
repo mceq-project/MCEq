@@ -7,7 +7,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "MCEq"
-copyright = "2025, Anatoli Fedynitch, Stefan Fröse"
+copyright = "2026, Anatoli Fedynitch, Stefan Fröse"
 author = "Anatoli Fedynitch, Stefan Fröse"
 
 # -- General configuration ---------------------------------------------------
@@ -56,10 +56,10 @@ html_theme_options = {
         {"name": "Quickstart", "url": "quickstart/index", "internal": True},
         {"name": "Tutorial", "url": "tutorial", "internal": True},
         {"name": "Example Gallery", "url": "example-gallery", "internal": True},
-        {"name": "API Reference", "url": "api-reference/index", "internal": True},
-        {"name": "Cite Us", "url": "citeus", "internal": True},
-        {"name": "References", "url": "citations", "internal": True},
         {"name": "v1.4", "url": "v14v13_diff", "internal": True},
+        {"name": "Cite Us", "url": "citeus", "internal": True},
+        {"name": "API Reference", "url": "api-reference/index", "internal": True},
+        {"name": "References", "url": "citations", "internal": True},
     ],
     "icon_links": [
         {
