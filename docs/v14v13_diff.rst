@@ -41,14 +41,15 @@ Baseline Comparison
 
 In the following we compare the aforementioned baseline models (Sibyll-2.1, QGSjetII04, Epos-LHC) in v1.4 against v1.3.
 
-Lepton Fluxes
-^^^^^^^^^^^^^
-
-The following plots illustrate the changes in the lepton fluxes between v1.3 and v1.4.
-
 These resulting ratios are impacted by the above listed changes.
 
 **SIBYLL21**: The drastic change you can see here results from previous mixup of particle IDs.
+
+**Low E Extension**: Within this region (below 80 GeV) all models are extended with DPMJetIII.
+The new database uses DPMJetIII-19.3 instead of DPMJetIII-19.1.
+
+Lepton Fluxes
+^^^^^^^^^^^^^
 
 .. figure:: _static/graphics/comparison14/muon_flux_ratio.png
     :width: 1024 px
@@ -62,6 +63,9 @@ These resulting ratios are impacted by the above listed changes.
     :width: 1024 px
     :align: left
 
+Lepton Charge and Flavor
+^^^^^^^^^^^^^^^^^^^^^^^^
+
 .. figure:: _static/graphics/comparison14/muon_charge_ratio.png
     :width: 1024 px
     :align: left
@@ -74,6 +78,22 @@ These resulting ratios are impacted by the above listed changes.
     :width: 1024 px
     :align: left
 
+New Model Fluxes
+----------------
+
+In this section you can find the lepton fluxes of all new and old models.
+
+.. figure:: _static/graphics/comparison14/muon_flux.png
+    :width: 1024 px
+    :align: left
+
+.. figure:: _static/graphics/comparison14/muon_neutrino_flux.png
+    :width: 1024 px
+    :align: left
+
+.. figure:: _static/graphics/comparison14/electron_neutrino_flux.png
+    :width: 1024 px
+    :align: left
 
 Contact
 =======
