@@ -25,11 +25,11 @@ Various models/parameterizations for particle interactions and atmospheric densi
   quickstart/index
   tutorial
   example-gallery
-  api-reference/index
+  v14v13_diff
   citeus
+  api-reference/index
   citations
   v12v11_diff
-  v14v13_diff
 
 
 .. grid:: 3

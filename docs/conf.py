@@ -68,6 +68,7 @@ html_theme_options = {
             "icon": "fa-brands fa-github",
         },
     ],
+    "announcement": "MCEq v1.4 is now available!",
 }
 
 html_sidebars = {

@@ -20,6 +20,7 @@ The significant changes are updates to the MCEq database!
 
    | The new database is composed of a set of **baseline models** (Sibyll-2.1, QGSjetII04, Epos-LHC),
    | to provide a comparison between MCEq v1.3 and v1.4, as well as a set of **new models** (Sibyll-2.3d, Sibyll-2.3e, QGSjetIII, DPMJetIII-19.3, Epos-LHC-R).
+   | All hadronic interaction yields in the database have been updated and various bugs have been fixed in the yield matrix construction.
 
 2. Decay Yields
 
@@ -29,7 +30,6 @@ The significant changes are updates to the MCEq database!
 3. Cross Sections
 
    | All cross sections are updated to **production** cross sections of the particle of interest.
-
 
 
 .. _Changelog: https://github.com/mceq-project/MCEq/blob/main/CHANGELOG.md
@@ -47,6 +47,9 @@ These resulting ratios are impacted by the above listed changes.
 
 **Low E Extension**: Within this region (below 80 GeV) all models are extended with DPMJetIII.
 The new database uses DPMJetIII-19.3 instead of DPMJetIII-19.1.
+
+**Ultra High Energies**: Towards 1e9 GeV and above the ratio is dominated by statistical flucations from the Monte Carlo generation of the 
+hadronic interaction matrices at high projectile energy.
 
 Lepton Fluxes
 ^^^^^^^^^^^^^
