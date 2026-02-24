@@ -20,12 +20,11 @@ The significant changes are updates to the MCEq database!
 
    | The new database is composed of a set of **baseline models** (Sibyll-2.1, QGSjetII04, Epos-LHC),
    | to provide a comparison between MCEq v1.3 and v1.4, as well as a set of **new models** (Sibyll-2.3d, Sibyll-2.3e, QGSjetIII, DPMJetIII-19.3, Epos-LHC-R).
-   | All hadronic interaction yields in the database have been updated and various bugs have been fixed in the yield matrix construction.
+   | All hadronic interaction yields in the database have been updated.
 
 2. Decay Yields
 
    | The calculation of decay yields moved completly to the *Pythia* interface of chromo_.
-   | Decays are now computed in the rest-frame of the particle of interest.
 
 3. Cross Sections
 
@@ -40,6 +39,7 @@ Baseline Comparison
 -------------------
 
 In the following we compare the aforementioned baseline models (Sibyll-2.1, QGSjetII04, Epos-LHC) in v1.4 against v1.3.
+In addition, we compare Sibyll-2.3c from v1.3 with Sibyll-2.3d from v1.4 for completness since it is no longer part of the database.
 
 These resulting ratios are impacted by the above listed changes.
 
