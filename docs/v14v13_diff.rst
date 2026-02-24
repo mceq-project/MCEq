@@ -17,12 +17,17 @@ For a more detailed list please refer to the latest Changelog_.
 The significant changes are updates to the MCEq database!
 
 1. Hadronic Interaction Models
+
    | The new database is composed of a set of **baseline models** (Sibyll-2.1, QGSjetII04, Epos-LHC),
    | to provide a comparison between MCEq v1.3 and v1.4, as well as a set of **new models** (Sibyll-2.3d, Sibyll-2.3e, QGSjetIII, DPMJetIII-19.3, Epos-LHC-R).
+
 2. Decay Yields
+
    | The calculation of decay yields moved completly to the *Pythia* interface of chromo_.
    | Decays are now computed in the rest-frame of the particle of interest.
+
 3. Cross Sections
+
    | All cross sections are updated to **production** cross sections of the particle of interest.
 
 
@@ -39,6 +44,12 @@ In the following we compare the aforementioned baseline models (Sibyll-2.1, QGSj
 Lepton Fluxes
 ^^^^^^^^^^^^^
 
+The following plots illustrate the changes in the lepton fluxes between v1.3 and v1.4.
+
+These resulting ratios are impacted by the above listed changes.
+
+**SIBYLL21**: The drastic change you can see here results from previous mixup of particle IDs.
+
 .. figure:: _static/graphics/comparison14/muon_flux_ratio.png
     :width: 1024 px
     :align: left
@@ -48,6 +59,18 @@ Lepton Fluxes
     :align: left
 
 .. figure:: _static/graphics/comparison14/electron_neutrino_flux_ratio.png
+    :width: 1024 px
+    :align: left
+
+.. figure:: _static/graphics/comparison14/muon_charge_ratio.png
+    :width: 1024 px
+    :align: left
+
+.. figure:: _static/graphics/comparison14/muon_neutrino_flavor_ratio.png
+    :width: 1024 px
+    :align: left
+
+.. figure:: _static/graphics/comparison14/electron_neutrino_flavor_ratio.png
     :width: 1024 px
     :align: left
 
