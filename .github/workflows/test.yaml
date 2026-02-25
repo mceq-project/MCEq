@@ -53,12 +53,13 @@ jobs:
     - name: Set DB path
       shell: bash
       run: |
-        echo "MCEQ_CI_DB=${{ github.workspace }}/src/MCEq/data/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
+        DB_DIR=$(python -c "import MCEq.config as c; print(c.data_dir)")
+        echo "MCEQ_CI_DB=${DB_DIR}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
 
     - name: Cache test database
       uses: actions/cache@v4
       with:
-        path: ${{ github.workspace }}/src/MCEq/data/mceq_db_v140reduced_compact.h5
+        path: ${{ env.MCEQ_CI_DB }}
         key: mceq-test-db-v1-${{ runner.os }}
 
     - name: Download test database if not cached
