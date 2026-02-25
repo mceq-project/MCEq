@@ -52,12 +52,14 @@ jobs:
       run: uv pip install --system . --group test ${{ matrix.installs }}
     - name: Set DB path
       shell: bash
-      run: echo "MCEQ_CI_DB=${{ runner.temp }}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
+      run: |
+        echo "MCEQ_CI_DB=${{ github.workspace }}/src/MCEq/data/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
+
     - name: Cache test database
       uses: actions/cache@v4
       with:
-        path: ${{ runner.temp }}/mceq_db_v140reduced_compact.h5
-        key: mceq-ci-db-${{ runner.os }}
+        path: ${{ github.workspace }}/src/MCEq/data/mceq_db_v140reduced_compact.h5
+        key: mceq-test-db-v1-${{ runner.os }}
 
     - name: Download test database if not cached
       shell: bash

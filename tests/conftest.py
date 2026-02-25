@@ -1,4 +1,3 @@
-import os
 import pathlib
 
 import crflux.models as pm
@@ -15,7 +14,6 @@ def mceq_sib21():
     config.debug_level = 2
     config.cuda_gpu_id = 0
 
-    config.data_dir = os.path.dirname(os.environ.get("MCEQ_CI_DB", ""))
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
 
     if config.has_mkl:
@@ -33,7 +31,6 @@ def mceq_qgs():
     config.debug_level = 2
     config.cuda_gpu_id = 0
 
-    config.data_dir = os.path.dirname(os.environ.get("MCEQ_CI_DB", ""))
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
 
     if config.has_mkl:
