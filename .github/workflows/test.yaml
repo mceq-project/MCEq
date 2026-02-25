@@ -53,7 +53,7 @@ jobs:
     - name: Set DB path
       shell: bash
       run: |
-        DB_DIR=$(python -c "import importlib.util; import MCEq.config as c; print(c.data_dir)")
+        DB_DIR=$(python -c "import importlib.util; import MCEq.config as c; print(c.data_dir)" | tr -d '\n\r')
         echo "MCEQ_CI_DB=${DB_DIR}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
 
     - name: Cache test database
