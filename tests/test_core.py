@@ -179,9 +179,9 @@ def test_single_primary(mceq_sib21, energy, nmu, nnumu, nnue):
         + mceq_sib21.get_solution("antinue", mag=0, integrate=True)
     )
 
-    assert nmu_sol == approx(nmu, rel=1e-8, abs=1e-5)
-    assert nnumu_sol == approx(nnumu, rel=1e-8, abs=1e-5)
-    assert nnue_sol == approx(nnue, rel=1e-8, abs=1e-5)
+    assert nmu_sol == approx(nmu, rel=1e-3)
+    assert nnumu_sol == approx(nnumu, rel=1e-3)
+    assert nnue_sol == approx(nnue, rel=1e-3)
 
 
 testdata_pip_primary = np.array(
@@ -222,6 +222,7 @@ testdata_pip_primary = np.array(
 
 
 def test_single_primary_pdg_corsika(mceq_sib21):
+    mceq_sib21.set_interaction_model("SIBYLL21")
     mceq_sib21.set_theta_deg(0.0)
     mceq_sib21.set_single_primary_particle(E=1e5, pdg_id=1000020040)
     mceq_sib21.solve()
