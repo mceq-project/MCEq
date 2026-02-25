@@ -11,25 +11,7 @@ from MCEq.core import MCEqRun
 
 
 @pytest.fixture(scope="session")
-def mceq():
-    config.debug_level = 2
-    config.cuda_gpu_id = 0
-
-    config.data_dir = os.path.dirname(os.environ.get("MCEQ_CI_DB", ""))
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
-
-    if config.has_mkl:
-        config.set_mkl_threads(2)
-
-    return MCEqRun(
-        interaction_model="SIBYLL21",
-        theta_deg=0.0,
-        primary_model=(pm.HillasGaisser2012, "H3a"),
-    )
-
-
-@pytest.fixture(scope="session")
-def mceq_small():
+def mceq_sib21():
     config.debug_level = 2
     config.cuda_gpu_id = 0
 

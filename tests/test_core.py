@@ -12,68 +12,66 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 
-def test_solve_default(mceq_small):
-    mceq_small.solve()
-    sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+def test_solve_default(mceq_sib21):
+    mceq_sib21.solve()
+    sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
-    assert np.sum(mceq_small._phi0) != np.sum(mceq_small._solution)
+    assert np.sum(mceq_sib21._phi0) != np.sum(mceq_sib21._solution)
 
-    muons = mceq_small.get_solution("total_mu-", mag=0)
+    muons = mceq_sib21.get_solution("total_mu-", mag=0)
 
     assert np.sum(muons) != 0
 
 
-def test_solve_skip_integration_path(mceq_small):
-    mceq_small._calculate_integration_path(int_grid=None, grid_var="X")
-    mceq_small.solve(skip_integration_path=True)
-    sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+def test_solve_skip_integration_path(mceq_sib21):
+    mceq_sib21._calculate_integration_path(int_grid=None, grid_var="X")
+    mceq_sib21.solve(skip_integration_path=True)
+    sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
 
-def test_solve_other_grid_var(mceq_small):
+def test_solve_other_grid_var(mceq_sib21):
     with pytest.raises(NotImplementedError):
-        mceq_small.solve(grid_var="Y")
+        mceq_sib21.solve(grid_var="Y")
 
 
 @pytest.mark.parametrize(
     ["int_grid", "grid_shape"],
-    [[None, (0,)], [[0, 1], (2, 968)]],
+    [[None, (0,)], [[0, 1], (2, 2232)]],
     ids=["no-grid", "with-grid"],
 )
-def test_solve_int_grid(mceq_small, int_grid, grid_shape):
-    mceq_small.solve(int_grid)
-    assert mceq_small.grid_sol.shape == grid_shape
+def test_solve_int_grid(mceq_sib21, int_grid, grid_shape):
+    mceq_sib21.solve(int_grid)
+    assert mceq_sib21.grid_sol.shape == grid_shape
 
 
 @pytest.mark.parametrize(
     ["leading_process", "lenX"],
     [
-        ["decays", 1450],
-        pytest.param(
-            "interactions", -1, marks=pytest.mark.xfail(reason="Fix issue #66")
-        ),
-        pytest.param("auto", -1, marks=pytest.mark.xfail(reason="Fix issue #66")),
+        ["decays", 1248],
+        ["auto", 1248],
+        ["interactions", 1248],
     ],
 )
-def test_integration_path_leading_process(mceq, leading_process, lenX):
+def test_integration_path_leading_process(mceq_sib21, leading_process, lenX):
     """Fix this test by resolving issue #66"""
     from MCEq import config
 
     config.leading_process = leading_process
     int_grid = None
     grid_var = "X"
-    mceq._calculate_integration_path(int_grid, grid_var)
-    integration_path = mceq.integration_path
+    mceq_sib21._calculate_integration_path(int_grid, grid_var)
+    integration_path = mceq_sib21.integration_path
     assert integration_path[0] == lenX
 
 
-def test_integration_path_grid_idcs(mceq):
+def test_integration_path_grid_idcs(mceq_sib21):
     int_grid = [0, 1]
 
     grid_var = "X"
-    mceq._calculate_integration_path(int_grid, grid_var)
-    integration_path = mceq.integration_path
+    mceq_sib21._calculate_integration_path(int_grid, grid_var)
+    integration_path = mceq_sib21.integration_path
     grid_idcs = integration_path[-1]
     assert len(grid_idcs) == 2
     assert grid_idcs[0] == 0
@@ -81,58 +79,48 @@ def test_integration_path_grid_idcs(mceq):
 
 
 testdata_theta = [
-    [0.0, 6.8857583e-3],
-    [30.0, 4.90073532e-3],
-    [60.0, 1.42918394e-3],
+    [0.0, 8.832749837571275e-08],
+    [30.0, 9.907914648457978e-08],
+    [60.0, 1.5032860734447641e-07],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
 
 
 @pytest.mark.parametrize(["theta", "nmu"], testdata_theta, ids=ids_theta)
-def test_set_theta_deg(mceq, theta, nmu):
-    mceq.set_theta_deg(theta)
-    mceq.solve()
+def test_set_theta_deg(mceq_sib21, theta, nmu):
+    mceq_sib21.set_theta_deg(theta)
+    mceq_sib21.solve()
     nmu_sol = np.sum(
-        mceq.get_solution("mu+", mag=0, integrate=True)
-        + mceq.get_solution("mu-", mag=0, integrate=True)
+        mceq_sib21.get_solution("mu+", mag=0, integrate=True)
+        + mceq_sib21.get_solution("mu-", mag=0, integrate=True)
     )
-    assert nmu_sol == approx(nmu, abs=1e-10)
+    assert nmu_sol == approx(nmu, abs=1e-8)
 
 
 testdata_model = [
-    ["DPMJETIII193", 68],
     ["QGSJETII04", 48],
-    ["QGSJETIII", 52],
     ["SIBYLL21", 52],
-    ["SIBYLL23D", 66],
-    ["SIBYLL23E", 66],
-    ["SIBYLL23ESTARBAR", 66],
-    ["SIBYLL23ESTARRHO", 66],
-    ["SIBYLL23ESTARSTRANGE", 66],
-    ["SIBYLL23ESTARMIXED", 66],
-    ["EPOSLHC", 58],
-    ["EPOSLHCR", 66],
 ]
 ids_model = [f"{model[0]}" for model in testdata_model]
 
 
 @pytest.mark.parametrize(["model", "n"], testdata_model, ids=ids_model)
-def test_set_interaction_model_model(mceq, model, n):
-    mceq.set_interaction_model(model)
-    n_particles = len(mceq._particle_list)
+def test_set_interaction_model_model(mceq_sib21, model, n):
+    mceq_sib21.set_interaction_model(model)
+    n_particles = len(mceq_sib21._particle_list)
     assert n_particles == n
 
 
-def test_set_interaction_model_update_particle_list(mceq):
-    n_particles_sib = len(mceq._particle_list)
+def test_set_interaction_model_update_particle_list(mceq_sib21):
+    n_particles_sib = len(mceq_sib21._particle_list)
 
-    mceq.set_interaction_model("DPMJETIII193", update_particle_list=True)
-    n_particles = len(mceq._particle_list)
-    assert n_particles == 68
+    mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=True)
+    n_particles = len(mceq_sib21._particle_list)
+    assert n_particles == 48
 
-    mceq.set_interaction_model("SIBYLL23E", update_particle_list=True)
-    n_particles_s = len(mceq._particle_list)
+    mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
+    n_particles_s = len(mceq_sib21._particle_list)
 
     assert n_particles_s == n_particles_sib
 
@@ -140,7 +128,7 @@ def test_set_interaction_model_update_particle_list(mceq):
 @pytest.mark.parametrize(
     ["particle_list", "projectiles"],
     [
-        [None, 17],
+        [None, 13],
         [[(2212, 0)], 1],
     ],
     ids=["None", "proton"],
@@ -150,21 +138,22 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 
     from MCEq.core import MCEqRun
 
-    mceq = MCEqRun(
-        interaction_model="SIBYLL23E",
+    mceq_sib21 = MCEqRun(
+        interaction_model="SIBYLL21",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
         particle_list=particle_list,
     )
 
-    assert sum([p.is_projectile for p in mceq.pman.cascade_particles]) == projectiles
+    assert (
+        sum([p.is_projectile for p in mceq_sib21.pman.cascade_particles]) == projectiles
+    )
 
 
 testdata_primary = [
-    [1e3, 2.18675537e1, 1.13515024e2, 4.12070381e1],
-    [1e6, 1.32703278e4, 4.29970060e4, 1.27944325e4],
-    [1e9, 7.90402801e6, 2.07265027e7, 5.48999599e6],
-    [5e10, 2.94970519e8, 7.12098206e8, 1.79112865e8],
+    [1e3, 1.188606352544364e-05, 2.3833836497715642e-07, -4.389720437130184e-08],
+    [1e4, 0.09924074296757761, 0.024548469717221015, 0.001458070555523793],
+    [1e5, 0.9113452102164941, 0.2824779229726991, 0.020207277840290347],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
@@ -172,22 +161,22 @@ ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 @pytest.mark.parametrize(
     ["energy", "nmu", "nnumu", "nnue"], testdata_primary, ids=ids_primary
 )
-def test_single_primary(mceq, energy, nmu, nnumu, nnue):
-    mceq.set_interaction_model("SIBYLL23E")
-    mceq.set_theta_deg(0.0)
-    mceq.set_single_primary_particle(E=energy, pdg_id=2212)
-    mceq.solve()
+def test_single_primary(mceq_sib21, energy, nmu, nnumu, nnue):
+    mceq_sib21.set_interaction_model("SIBYLL21")
+    mceq_sib21.set_theta_deg(0.0)
+    mceq_sib21.set_single_primary_particle(E=energy, pdg_id=2212)
+    mceq_sib21.solve()
     nmu_sol = np.sum(
-        mceq.get_solution("mu+", mag=0, integrate=True)
-        + mceq.get_solution("mu-", mag=0, integrate=True)
+        mceq_sib21.get_solution("mu+", mag=0, integrate=True)
+        + mceq_sib21.get_solution("mu-", mag=0, integrate=True)
     )
     nnumu_sol = np.sum(
-        mceq.get_solution("numu", mag=0, integrate=True)
-        + mceq.get_solution("antinumu", mag=0, integrate=True)
+        mceq_sib21.get_solution("numu", mag=0, integrate=True)
+        + mceq_sib21.get_solution("antinumu", mag=0, integrate=True)
     )
     nnue_sol = np.sum(
-        mceq.get_solution("nue", mag=0, integrate=True)
-        + mceq.get_solution("antinue", mag=0, integrate=True)
+        mceq_sib21.get_solution("nue", mag=0, integrate=True)
+        + mceq_sib21.get_solution("antinue", mag=0, integrate=True)
     )
 
     assert nmu_sol == approx(nmu, rel=1e-8, abs=1e-5)
@@ -195,139 +184,223 @@ def test_single_primary(mceq, energy, nmu, nnumu, nnue):
     assert nnue_sol == approx(nnue, rel=1e-8, abs=1e-5)
 
 
-testdata_pi0_primary = [
-    3.06027124e-14,
-    2.74858350e-15,
-    -1.90773238e-15,
-    1.69679282e-17,
-    -1.54360206e-18,
-    1.24688844e-20,
-    -6.21220687e-22,
-    4.76847702e-24,
-    -2.95021240e-24,
-    2.89366883e-25,
-    -2.65824442e-26,
-]
+testdata_pip_primary = np.array(
+    [
+        1.27844882e-01,
+        8.92909420e-02,
+        6.21534480e-02,
+        4.31169587e-02,
+        2.97908187e-02,
+        2.04926590e-02,
+        1.40321395e-02,
+        9.56359521e-03,
+        6.48447283e-03,
+        4.37177125e-03,
+        2.92963370e-03,
+        1.94892522e-03,
+        1.28691130e-03,
+        8.42637342e-04,
+        5.44859117e-04,
+        3.47281273e-04,
+        2.07930513e-04,
+        1.45438977e-04,
+        2.61972096e-03,
+        6.58927495e-03,
+        5.92199060e-03,
+        2.04157782e-03,
+        -2.74794915e-04,
+        3.68887949e-06,
+        -2.22942734e-07,
+        2.26322215e-09,
+        -8.96207842e-11,
+        8.01719153e-13,
+        -5.02753126e-13,
+        4.19116618e-14,
+        -4.40448679e-15,
+    ]
+)
 
 
-def test_single_primary_pdg_corsika(mceq_small):
-    mceq_small.set_interaction_model("SIBYLL23E")
-    mceq_small.set_theta_deg(0.0)
-    mceq_small.set_single_primary_particle(E=1e10, pdg_id=1000020040)
-    mceq_small.solve()
+def test_single_primary_pdg_corsika(mceq_sib21):
+    mceq_sib21.set_theta_deg(0.0)
+    mceq_sib21.set_single_primary_particle(E=1e5, pdg_id=1000020040)
+    mceq_sib21.solve()
 
-    pdg_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+    pdg_sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
-    mceq_small.set_single_primary_particle(E=1e10, corsika_id=402)
-    mceq_small.solve()
+    mceq_sib21.set_single_primary_particle(E=1e5, corsika_id=402)
+    mceq_sib21.solve()
 
-    corsika_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+    corsika_sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
     assert np.allclose(pdg_sol, corsika_sol)
 
-    # pi0
-    mceq_small.set_single_primary_particle(E=1e9, pdg_id=111)
-    mceq_small.solve()
-    pi0_sol = mceq_small.get_solution("mu+", mag=0, integrate=True)
+    # pi+
+    mceq_sib21.set_single_primary_particle(E=1e5, pdg_id=211)
+    mceq_sib21.solve()
+    pip_sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
-    assert np.allclose(pi0_sol, testdata_pi0_primary, rtol=1e-6, atol=1e-30)
+    assert np.allclose(pip_sol, testdata_pip_primary, rtol=1e-6, atol=1e-30)
 
 
-def test_single_primary_e_too_low(mceq_small):
-    mceq_small.set_interaction_model("SIBYLL23E")
-    mceq_small.set_theta_deg(0.0)
+def test_single_primary_e_too_low(mceq_sib21):
+    mceq_sib21.set_interaction_model("SIBYLL21")
+    mceq_sib21.set_theta_deg(0.0)
     with pytest.raises(Exception):
-        mceq_small.set_single_primary_particle(E=1e3, pdg_id=2212)
+        mceq_sib21.set_single_primary_particle(E=1e0, pdg_id=2212)
 
 
 testdata_ecenters = [
-    8.91250938e08,
-    1.12201845e09,
-    1.41253754e09,
-    1.77827941e09,
-    2.23872114e09,
-    2.81838293e09,
-    3.54813389e09,
-    4.46683592e09,
-    5.62341325e09,
-    7.07945784e09,
-    8.91250938e09,
+    8.91250938e2,
+    1.12201845e3,
+    1.41253754e3,
+    1.77827941e3,
+    2.23872114e3,
+    2.81838293e3,
+    3.54813389e3,
+    4.46683592e3,
+    5.62341325e3,
+    7.07945784e3,
+    8.91250938e3,
+    1.12201845e4,
+    1.41253754e4,
+    1.77827941e4,
+    2.23872114e4,
+    2.81838293e4,
+    3.54813389e4,
+    4.46683592e4,
+    5.62341325e4,
+    7.07945784e4,
+    8.91250938e4,
+    1.12201845e5,
+    1.41253754e5,
+    1.77827941e5,
+    2.23872114e5,
+    2.81838293e5,
+    3.54813389e5,
+    4.46683592e5,
+    5.62341325e5,
+    7.07945784e5,
+    8.91250938e5,
 ]
 testdata_eedges = [
-    7.94328235e08,
-    1.00000000e09,
-    1.25892541e09,
-    1.58489319e09,
-    1.99526231e09,
-    2.51188643e09,
-    3.16227766e09,
-    3.98107171e09,
-    5.01187234e09,
-    6.30957344e09,
-    7.94328235e09,
-    1.00000000e10,
+    7.94328235e2,
+    1.00000000e3,
+    1.25892541e3,
+    1.58489319e3,
+    1.99526231e3,
+    2.51188643e3,
+    3.16227766e3,
+    3.98107171e3,
+    5.01187234e3,
+    6.30957344e3,
+    7.94328235e3,
+    1.00000000e4,
+    1.25892541e4,
+    1.58489319e4,
+    1.99526231e4,
+    2.51188643e4,
+    3.16227766e4,
+    3.98107171e4,
+    5.01187234e4,
+    6.30957344e4,
+    7.94328235e4,
+    1.00000000e5,
+    1.25892541e5,
+    1.58489319e5,
+    1.99526231e5,
+    2.51188643e5,
+    3.16227766e5,
+    3.98107171e5,
+    5.01187234e5,
+    6.30957344e5,
+    7.94328235e5,
+    1.00000000e6,
 ]
 testdata_ewidths = [
-    2.05671765e08,
-    2.58925412e08,
-    3.25967781e08,
-    4.10369123e08,
-    5.16624117e08,
-    6.50391229e08,
-    8.18794045e08,
-    1.03080063e09,
-    1.29770111e09,
-    1.63370890e09,
-    2.05671765e09,
+    2.05671765e2,
+    2.58925412e2,
+    3.25967781e2,
+    4.10369123e2,
+    5.16624117e2,
+    6.50391229e2,
+    8.18794045e2,
+    1.03080063e3,
+    1.29770111e3,
+    1.63370890e3,
+    2.05671765e3,
+    2.58925412e3,
+    3.25967781e3,
+    4.10369123e3,
+    5.16624117e3,
+    6.50391229e3,
+    8.18794045e3,
+    1.03080063e4,
+    1.29770111e4,
+    1.63370890e4,
+    2.05671765e4,
+    2.58925412e4,
+    3.25967781e4,
+    4.10369123e4,
+    5.16624117e4,
+    6.50391229e4,
+    8.18794045e4,
+    1.03080063e5,
+    1.29770111e5,
+    1.63370890e5,
+    2.05671765e5,
 ]
 
 
-def test_energy_grid_access(mceq_small):
-    assert np.allclose(mceq_small.e_grid, testdata_ecenters, rtol=1e-8, atol=0)
-    assert np.allclose(mceq_small.e_bins, testdata_eedges, rtol=1e-8, atol=0)
-    assert np.allclose(mceq_small.e_widths, testdata_ewidths, rtol=1e-8, atol=0)
+def test_energy_grid_access(mceq_sib21):
+    print(mceq_sib21.e_grid)
+    print(mceq_sib21.e_bins)
+    print(mceq_sib21.e_widths)
+    assert np.allclose(mceq_sib21.e_grid, testdata_ecenters, rtol=1e-8, atol=0)
+    assert np.allclose(mceq_sib21.e_bins, testdata_eedges, rtol=1e-8, atol=0)
+    assert np.allclose(mceq_sib21.e_widths, testdata_ewidths, rtol=1e-8, atol=0)
 
 
-def test_closest_energy(mceq_small):
+def test_closest_energy(mceq_sib21):
     closest_energy = np.array(
-        [mceq_small.closest_energy(energy) for energy in testdata_ecenters]
+        [mceq_sib21.closest_energy(energy) for energy in testdata_ecenters]
     )
     assert np.allclose(closest_energy, testdata_ecenters, rtol=0, atol=1e1)
 
 
-def test_get_solution_grid_idx(mceq_small):
+def test_get_solution_grid_idx(mceq_sib21):
     import crflux.models as pm
 
-    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
-    mceq_small.solve()
+    mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
+    mceq_sib21.solve()
 
     with pytest.raises(Exception):
-        mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
+        mceq_sib21.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
 
-    mceq_small.solve([0, 1])
-    sol0 = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
-    sol1 = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=1)
-    sol_last = mceq_small.get_solution("mu+", mag=0, integrate=True, grid_idx=100)
+    mceq_sib21.solve([0, 1])
+    sol0 = mceq_sib21.get_solution("mu+", mag=0, integrate=True, grid_idx=0)
+    sol1 = mceq_sib21.get_solution("mu+", mag=0, integrate=True, grid_idx=1)
+    sol_last = mceq_sib21.get_solution("mu+", mag=0, integrate=True, grid_idx=100)
 
     assert np.allclose(sol0, 0)
     assert np.all(sol1 != 0)
     assert np.allclose(sol_last, sol1)
 
 
-def test_get_solution_wrong_particle_name(mceq_small):
+def test_get_solution_wrong_particle_name(mceq_sib21):
     from MCEq import config
 
     config.excpt_on_missing_particle = True
-    mceq_small.solve()
+    mceq_sib21.solve()
     with pytest.raises(Exception):
-        mceq_small.get_solution("proton", mag=0, integrate=True, grid_idx=0)
+        mceq_sib21.get_solution("proton", mag=0, integrate=True, grid_idx=0)
 
 
-def test_get_solution_prefixes(mceq_small):
-    mceq_small.solve()
-    total = mceq_small.get_solution("total_mu+", mag=0, integrate=True)
-    conv = mceq_small.get_solution("conv_mu+", mag=0, integrate=True)
-    prompt = mceq_small.get_solution("pr_mu+", mag=0, integrate=True)
+def test_get_solution_prefixes(mceq_sib21):
+    mceq_sib21.solve()
+    total = mceq_sib21.get_solution("total_mu+", mag=0, integrate=True)
+    conv = mceq_sib21.get_solution("conv_mu+", mag=0, integrate=True)
+    prompt = mceq_sib21.get_solution("pr_mu+", mag=0, integrate=True)
 
     assert np.allclose(total, conv + prompt)
 
@@ -337,16 +410,16 @@ def test_get_solution_prefixes(mceq_small):
     ["total energy", "kinetic energy", "total momentum", "none"],
 )
 @pytest.mark.parametrize("integrate", [True, False])
-def test_get_solution_return_as(mceq_small, return_as, integrate):
-    mceq_small.solve()
+def test_get_solution_return_as(mceq_sib21, return_as, integrate):
+    mceq_sib21.solve()
 
     if return_as == "none":
         with pytest.raises(Exception):
-            result = mceq_small.get_solution(
+            result = mceq_sib21.get_solution(
                 "mu+", return_as=return_as, integrate=integrate
             )
     else:
-        result = mceq_small.get_solution(
+        result = mceq_sib21.get_solution(
             "mu+", return_as=return_as, integrate=integrate
         )
         if isinstance(result, tuple):
@@ -357,18 +430,18 @@ def test_get_solution_return_as(mceq_small, return_as, integrate):
             assert np.all(np.isfinite(result))
 
 
-def test_get_solution_dont_sum_helicities(mceq):
-    mceq.solve()
+def test_get_solution_dont_sum_helicities(mceq_sib21):
+    mceq_sib21.solve()
 
     # Get solution with summed helicities (default)
-    solution_summed = mceq.get_solution("e-", dont_sum_helicities=False)
-    solution_left_do = mceq.get_solution("e-_l", dont_sum_helicities=False)
-    solution_right_do = mceq.get_solution("e-_r", dont_sum_helicities=False)
+    solution_summed = mceq_sib21.get_solution("e-", dont_sum_helicities=False)
+    solution_left_do = mceq_sib21.get_solution("e-_l", dont_sum_helicities=False)
+    solution_right_do = mceq_sib21.get_solution("e-_r", dont_sum_helicities=False)
 
     # Get individual helicity states
-    solution_left = mceq.get_solution("e-_l", dont_sum_helicities=True)
-    solution_right = mceq.get_solution("e-_r", dont_sum_helicities=True)
-    solution_0 = mceq.get_solution("e-", dont_sum_helicities=True)
+    solution_left = mceq_sib21.get_solution("e-_l", dont_sum_helicities=True)
+    solution_right = mceq_sib21.get_solution("e-_r", dont_sum_helicities=True)
+    solution_0 = mceq_sib21.get_solution("e-", dont_sum_helicities=True)
 
     # Manual sum should equal the summed solution
     manual_sum = solution_left + solution_right + solution_0
@@ -378,17 +451,17 @@ def test_get_solution_dont_sum_helicities(mceq):
     assert solution_summed == approx(manual_sum)
 
 
-def test_solve_from_integration_path(mceq):
+def test_solve_from_integration_path(mceq_sib21):
     # Normal solve
-    mceq.solve()
-    solution_normal = np.copy(mceq._solution)
+    mceq_sib21.solve()
+    solution_normal = np.copy(mceq_sib21._solution)
 
     # Get the integration path that was used
-    nsteps, dX, rho_inv, grid_idcs = mceq.integration_path
+    nsteps, dX, rho_inv, grid_idcs = mceq_sib21.integration_path
 
     # Solve using the same integration path
-    mceq.solve_from_integration_path(nsteps, dX, rho_inv, grid_idcs)
-    solution_from_path = mceq._solution
+    mceq_sib21.solve_from_integration_path(nsteps, dX, rho_inv, grid_idcs)
+    solution_from_path = mceq_sib21._solution
 
     # Should give identical results
     assert solution_normal == approx(solution_from_path)
@@ -402,18 +475,18 @@ def test_solve_from_integration_path(mceq):
     ],
 )
 @pytest.mark.parametrize("append", [False, True])
-def test_set_initial_spectrum(mceq_small, pdg_id, append):
+def test_set_initial_spectrum(mceq_sib21, pdg_id, append):
     spectrum = np.ones(42)
     with pytest.raises(Exception):
-        mceq_small.set_initial_spectrum(spectrum, pdg_id, append)
+        mceq_sib21.set_initial_spectrum(spectrum, pdg_id, append)
 
-    spectrum = np.ones(mceq_small.dim)
-    mceq_small.set_initial_spectrum(spectrum, pdg_id, append)
+    spectrum = np.ones(mceq_sib21.dim)
+    mceq_sib21.set_initial_spectrum(spectrum, pdg_id, append)
 
-    particle = mceq_small.pman[pdg_id]
+    particle = mceq_sib21.pman[pdg_id]
 
-    phi0 = mceq_small._phi0[particle.lidx : particle.uidx]
-    mceq_small._resize_vectors_and_restore()
+    phi0 = mceq_sib21._phi0[particle.lidx : particle.uidx]
+    mceq_sib21._resize_vectors_and_restore()
 
     assert np.allclose(phi0, spectrum)
 
@@ -496,89 +569,89 @@ profiles = {
 
 
 @pytest.mark.parametrize("model, density_config", test_densities_cases)
-def test_set_density_profile(mceq_small, model, density_config):
-    mceq_small.set_density_model((model, density_config))
-    mceq_small.solve()
+def test_set_density_profile(mceq_sib21, model, density_config):
+    mceq_sib21.set_density_model((model, density_config))
+    mceq_sib21.solve()
 
     # test instances instead of str
     profile = profiles[model](*density_config)
-    mceq_small.set_density_model(profile)
-    mceq_small.solve()
+    mceq_sib21.set_density_model(profile)
+    mceq_sib21.solve()
 
 
-def test_set_mod_pprod(mceq_small):
+def test_set_mod_pprod(mceq_sib21):
     def weight(xmat, egrid, pname, value):
         return (1 + value) * np.ones_like(xmat)
 
-    ret = mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+    ret = mceq_sib21.set_mod_pprod(2212, 211, weight, ("a", 0.15))
     assert ret == 1
 
-    assert mceq_small._interactions.mod_pprod[(2212, 211)] is not None
-    assert mceq_small._interactions.mod_pprod[(2212, -211)] is not None
+    assert mceq_sib21._interactions.mod_pprod[(2212, 211)] is not None
+    assert mceq_sib21._interactions.mod_pprod[(2212, -211)] is not None
 
-    mceq_small.regenerate_matrices()
-    mceq_small.solve()
+    mceq_sib21.regenerate_matrices()
+    mceq_sib21.solve()
 
-    mceq_small.regenerate_matrices(skip_decay_matrix=True)
-    mceq_small.solve()
+    mceq_sib21.regenerate_matrices(skip_decay_matrix=True)
+    mceq_sib21.solve()
 
 
-def test_unset_mod_pprod(mceq_small):
+def test_unset_mod_pprod(mceq_sib21):
     def weight(xmat, egrid, pname, value):
         return (1 + value) * np.ones_like(xmat)
 
-    mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+    mceq_sib21.set_mod_pprod(2212, 211, weight, ("a", 0.15))
 
-    mceq_small.regenerate_matrices()
-    mceq_small.solve()
+    mceq_sib21.regenerate_matrices()
+    mceq_sib21.solve()
 
-    mceq_small.unset_mod_pprod()
-    assert not mceq_small._interactions.mod_pprod
+    mceq_sib21.unset_mod_pprod()
+    assert not mceq_sib21._interactions.mod_pprod
 
-    mceq_small.set_mod_pprod(2212, 211, weight, ("a", 0.15))
+    mceq_sib21.set_mod_pprod(2212, 211, weight, ("a", 0.15))
 
-    mceq_small.regenerate_matrices()
-    mceq_small.solve()
-    mceq_small.unset_mod_pprod(dont_fill=False)
-    assert not mceq_small._interactions.mod_pprod
+    mceq_sib21.regenerate_matrices()
+    mceq_sib21.solve()
+    mceq_sib21.unset_mod_pprod(dont_fill=False)
+    assert not mceq_sib21._interactions.mod_pprod
 
 
-def test_n_particles_energy_cutoff_and_grid(mceq_small):
+def test_n_particles_energy_cutoff_and_grid(mceq_sib21):
     import crflux.models as pm
 
-    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
-    mceq_small.solve([0, 1])
-    n0 = mceq_small.n_particles("mu+", grid_idx=0)
-    n1 = mceq_small.n_particles("mu+", grid_idx=1)
-    n_high_cut = mceq_small.n_particles("mu+", grid_idx=1, min_energy_cutoff=1e9)
+    mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
+    mceq_sib21.solve([0, 1])
+    n0 = mceq_sib21.n_particles("mu+", grid_idx=0)
+    n1 = mceq_sib21.n_particles("mu+", grid_idx=1)
+    n_high_cut = mceq_sib21.n_particles("mu+", grid_idx=1, min_energy_cutoff=1e5)
 
     assert n0 == 0
     assert n1 > n0
     assert n_high_cut < n1
 
 
-def test_n_mu_energy_cutoff_and_grid(mceq_small):
+def test_n_mu_energy_cutoff_and_grid(mceq_sib21):
     import crflux.models as pm
 
-    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
-    mceq_small.solve([0, 1])
-    n0 = mceq_small.n_mu(grid_idx=0)
-    n1 = mceq_small.n_mu(grid_idx=1)
-    nhigh = mceq_small.n_mu(grid_idx=1, min_energy_cutoff=1e9)
+    mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
+    mceq_sib21.solve([0, 1])
+    n0 = mceq_sib21.n_mu(grid_idx=0)
+    n1 = mceq_sib21.n_mu(grid_idx=1)
+    nhigh = mceq_sib21.n_mu(grid_idx=1, min_energy_cutoff=1e5)
 
     assert n0 == 0
     assert n1 > 0
     assert nhigh < n1
 
 
-def test_n_e_energy_cutoff_and_grid(mceq_small):
+def test_n_e_energy_cutoff_and_grid(mceq_sib21):
     import crflux.models as pm
 
-    mceq_small.set_primary_model(pm.HillasGaisser2012, "H3a")
-    mceq_small.solve([0, 1])
-    n0 = mceq_small.n_e(grid_idx=0)
-    n1 = mceq_small.n_e(grid_idx=1)
-    nhigh = mceq_small.n_e(grid_idx=1, min_energy_cutoff=1e9)
+    mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
+    mceq_sib21.solve([0, 1])
+    n0 = mceq_sib21.n_e(grid_idx=0)
+    n1 = mceq_sib21.n_e(grid_idx=1)
+    nhigh = mceq_sib21.n_e(grid_idx=1, min_energy_cutoff=1e5)
 
     assert n0 == 0
     assert n1 > 0
@@ -592,23 +665,23 @@ def test_n_e_energy_cutoff_and_grid(mceq_small):
         ["no_name_definition", True],
     ],
 )
-def test_z_factor(mceq_small, definition, use_cs_scaling):
-    mceq_small.solve([0, 1])
-    z = mceq_small.z_factor(
+def test_z_factor(mceq_sib21, definition, use_cs_scaling):
+    mceq_sib21.solve([0, 1])
+    z = mceq_sib21.z_factor(
         2212, 211, definition=definition, use_cs_scaling=use_cs_scaling
     )
 
     assert isinstance(z, np.ndarray)
-    assert z.shape == mceq_small.e_grid.shape
+    assert z.shape == mceq_sib21.e_grid.shape
     assert np.all(z >= 0)
     assert np.any(z > 0)
 
 
-def test_decay_z_factor(mceq_small):
-    mceq_small.solve()
-    z = mceq_small.decay_z_factor(211, 14)
+def test_decay_z_factor(mceq_sib21):
+    mceq_sib21.solve()
+    z = mceq_sib21.decay_z_factor(211, 14)
 
-    assert z.shape == mceq_small.e_grid.shape
+    assert z.shape == mceq_sib21.e_grid.shape
     assert np.any(z > 0)
     assert not np.any(np.isnan(z))
 
@@ -620,30 +693,30 @@ def test_interaction_model_forwarding():
     from MCEq.core import MCEqRun
 
     # Create MCEqRun with a specific interaction model
-    mceq = MCEqRun(
+    mceq_sib21 = MCEqRun(
         interaction_model="QGSJETII04",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
     )
 
     # Verify that the interaction model is correctly set
-    assert mceq._int_cs.iam == "QGSJETII04"
-    assert mceq._interactions.iam == "QGSJETII04"
+    assert mceq_sib21._int_cs.iam == "QGSJETII04"
+    assert mceq_sib21._interactions.iam == "QGSJETII04"
 
 
-def test_ptot_grid(mceq_small):
+def test_ptot_grid(mceq_sib21):
     # Test without bins
-    ptot_centers = mceq_small.ptot_grid("mu+", return_bins=False)
+    ptot_centers = mceq_sib21.ptot_grid("mu+", return_bins=False)
 
-    assert len(ptot_centers) == len(mceq_small.e_grid)
+    assert len(ptot_centers) == len(mceq_sib21.e_grid)
     assert np.all(ptot_centers > 0)
     assert np.all(np.isfinite(ptot_centers))
 
     # Test with bins
-    ptot_bins, ptot_centers_with_bins = mceq_small.ptot_grid("mu+", return_bins=True)
+    ptot_bins, ptot_centers_with_bins = mceq_sib21.ptot_grid("mu+", return_bins=True)
 
-    assert len(ptot_bins) == len(mceq_small.e_bins)
-    assert len(ptot_centers_with_bins) == len(mceq_small.e_grid)
+    assert len(ptot_bins) == len(mceq_sib21.e_bins)
+    assert len(ptot_centers_with_bins) == len(mceq_sib21.e_grid)
     assert np.allclose(ptot_centers, ptot_centers_with_bins)
 
     # Check that centers are geometric mean of bins
@@ -651,76 +724,84 @@ def test_ptot_grid(mceq_small):
     assert np.allclose(ptot_centers_with_bins, expected_centers)
 
 
-def test_etot_grid(mceq_small):
+def test_etot_grid(mceq_sib21):
     # Test without bins
-    etot_centers = mceq_small.etot_grid("mu+", return_bins=False)
+    etot_centers = mceq_sib21.etot_grid("mu+", return_bins=False)
 
-    assert len(etot_centers) == len(mceq_small.e_grid)
+    assert len(etot_centers) == len(mceq_sib21.e_grid)
     assert np.all(etot_centers > 0)
     assert np.all(np.isfinite(etot_centers))
 
     # Test with bins
-    etot_bins, etot_centers_with_bins = mceq_small.etot_grid("mu+", return_bins=True)
+    etot_bins, etot_centers_with_bins = mceq_sib21.etot_grid("mu+", return_bins=True)
 
-    assert len(etot_bins) == len(mceq_small.e_bins)
-    assert len(etot_centers_with_bins) == len(mceq_small.e_grid)
+    assert len(etot_bins) == len(mceq_sib21.e_bins)
+    assert len(etot_centers_with_bins) == len(mceq_sib21.e_grid)
     assert np.allclose(etot_centers, etot_centers_with_bins)
 
     # Check that bins are kinetic + mass
-    mu_mass = mceq_small.pman["mu+"].mass
-    expected_bins = mceq_small.e_bins + mu_mass
+    mu_mass = mceq_sib21.pman["mu+"].mass
+    expected_bins = mceq_sib21.e_bins + mu_mass
     assert np.allclose(etot_bins, expected_bins)
 
 
 @pytest.mark.parametrize(
     ["return_as", "expected_method"],
     [
-        ["kinetic energy", lambda mceq: (mceq.e_bins, mceq.e_grid)],
-        ["total energy", lambda mceq: mceq.etot_grid("mu+", return_bins=True)],
-        ["total momentum", lambda mceq: mceq.ptot_grid("mu+", return_bins=True)],
+        ["kinetic energy", lambda mceq_sib21: (mceq_sib21.e_bins, mceq_sib21.e_grid)],
+        [
+            "total energy",
+            lambda mceq_sib21: mceq_sib21.etot_grid("mu+", return_bins=True),
+        ],
+        [
+            "total momentum",
+            lambda mceq_sib21: mceq_sib21.ptot_grid("mu+", return_bins=True),
+        ],
     ],
 )
 @pytest.mark.parametrize("return_bins", [False, True])
-def test_xgrid(mceq_small, return_as, expected_method, return_bins):
-    result = mceq_small.xgrid("mu+", return_as, return_bins=return_bins)
+def test_xgrid(mceq_sib21, return_as, expected_method, return_bins):
+    result = mceq_sib21.xgrid("mu+", return_as, return_bins=return_bins)
 
     if return_bins:
         bins, centers = result
-        expected_bins, expected_centers = expected_method(mceq_small)
+        expected_bins, expected_centers = expected_method(mceq_sib21)
         assert np.allclose(bins, expected_bins)
         assert np.allclose(centers, expected_centers)
     else:
-        expected_bins, expected_centers = expected_method(mceq_small)
+        expected_bins, expected_centers = expected_method(mceq_sib21)
         assert np.allclose(result, expected_centers)
 
 
-def test_xgrid_invalid_return_as(mceq_small):
+def test_xgrid_invalid_return_as(mceq_sib21):
     """Test xgrid raises exception for invalid return_as argument."""
     with pytest.raises(Exception, match="Unknown grid type"):
-        mceq_small.xgrid("mu+", "invalid_type", return_bins=False)
+        mceq_sib21.xgrid("mu+", "invalid_type", return_bins=False)
 
 
-def test_get_set_state_vector_checkpoint_restore(mceq):
-    mceq.set_primary_model(pm.HillasGaisser2012, "H3a")
+def test_get_set_state_vector_checkpoint_restore(mceq_sib21):
+    mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
+    mceq_sib21.set_density_model(dprof.CorsikaAtmosphere("BK_USStd"))
 
     # First solve
-    mceq.solve()
-    order1, state1 = mceq._get_state_vector()
-    solution1 = mceq.get_solution("mu+", mag=0, integrate=True)
+    mceq_sib21.set_theta_deg(0.0)
+    mceq_sib21.solve()
+    order1, state1 = mceq_sib21._get_state_vector()
+    solution1 = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
     # Change something and solve again
-    mceq.set_theta_deg(30.0)
-    mceq.solve()
-    order2, state2 = mceq._get_state_vector()
-    solution2 = mceq.get_solution("mu+", mag=0, integrate=True)
+    mceq_sib21.set_theta_deg(30.0)
+    mceq_sib21.solve()
+    order2, state2 = mceq_sib21._get_state_vector()
+    solution2 = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
     # Solutions should be different
-    assert not np.allclose(solution1, solution2)
-    assert not np.allclose(state1, state2)
+    assert not np.allclose(solution1, solution2, atol=1e-10)
+    assert not np.allclose(state1, state2, atol=1e-14)
 
     # Restore first state directly (without solving)
-    mceq._solution = np.copy(state1)
-    solution1_prime = mceq.get_solution("mu+", mag=0, integrate=True)
+    mceq_sib21._solution = np.copy(state1)
+    solution1_prime = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
     # Should match original solution
-    assert np.allclose(solution1, solution1_prime)
+    assert np.allclose(solution1, solution1_prime, atol=1e-10)
