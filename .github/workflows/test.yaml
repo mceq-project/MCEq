@@ -50,6 +50,21 @@ jobs:
         allow-prereleases: true
     - name: Install requirements
       run: uv pip install --system . --group test ${{ matrix.installs }}
+    - name: Set DB path
+      shell: bash
+      run: echo "MCEQ_CI_DB=${{ runner.temp }}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
+    - name: Cache test database
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/mceq_db_v140reduced_compact.h5
+        key: mceq-ci-db-${{ runner.os }}
+
+    - name: Download test database if not cached
+      shell: bash
+      run: |
+        if [ ! -f "$MCEQ_CI_DB" ]; then
+          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o "$MCEQ_CI_DB"
+        fi
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
     - name: Upload coverage reports to Codecov
