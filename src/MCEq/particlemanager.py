@@ -708,7 +708,7 @@ class MCEqParticle:
             or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
             or config.adv_set["no_mixing"]
             or self.pdg_id[0] in config.adv_set["disable_decays"]
-        ):
+        ) and self.is_mixed is not True:
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -731,10 +731,15 @@ class MCEqParticle:
             mask = inv_declen != 0.0
             threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
             del mask
-            self.mix_idx = np.where(threshold >= cross_over)[0][0]
+            mix_idx_check = np.where(threshold >= cross_over)[0]
+            if len(mix_idx_check) != 0:
+                self.mix_idx = mix_idx_check[0]
+                self.E_mix = self._energy_grid.c[self.mix_idx]
+            else:
+                self.mix_idx = np.where(threshold < cross_over)[0][-1] + 1
+                self.E_mix = self._energy_grid.c[self.mix_idx - 1]
             if self.mix_idx != 0:
                 self.is_mixed = True
-            self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_resonance = False
         # These particles don't interact but can decay (e.g. tau leptons)
         elif not self.can_interact and not self.is_stable:
