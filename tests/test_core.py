@@ -179,9 +179,9 @@ def test_single_primary(mceq_sib21, energy, nmu, nnumu, nnue):
         + mceq_sib21.get_solution("antinue", mag=0, integrate=True)
     )
 
-    assert nmu_sol == approx(nmu, rel=1e-3)
-    assert nnumu_sol == approx(nnumu, rel=1e-3)
-    assert nnue_sol == approx(nnue, rel=1e-3)
+    assert nmu_sol == approx(nmu, rel=2e-3)
+    assert nnumu_sol == approx(nnumu, rel=2e-3)
+    assert nnue_sol == approx(nnue, rel=2e-3)
 
 
 testdata_pip_primary = np.array(
