@@ -50,12 +50,6 @@ jobs:
         allow-prereleases: true
     - name: Install requirements
       run: uv pip install --system . --group test ${{ matrix.installs }}
-    - name: Debug spacc
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        python -c "import importlib.util; import MCEq.spacc as spacc; print(dir(spacc))"
-        find / -name "_libspacc*" 2>/dev/null
     - name: Set DB path
       shell: bash
       run: |
