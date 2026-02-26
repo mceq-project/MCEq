@@ -4,10 +4,13 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "MCEq"
-version = "1.3.1"
+version = "1.4.0"
 description = "Numerical cascade equation solver"
 readme = "README.md"
-authors = [{ name = "Anatoli Fedynitch", email = "afedynitch@gmail.com" }]
+authors = [
+  { name = "Anatoli Fedynitch", email = "afedynitch@gmail.com" },
+  { name = "Stefan Fröse", email = "stefanfroese@as.edu.tw" },
+]
 license = { text = "BSD 3-Clause License" }
 classifiers = [
     "Programming Language :: Python",
@@ -105,3 +108,10 @@ name = "Documentation Updates"
 
 [tool.towncrier.fragment.feat]
 name="New Features"
+
+[tool.coverage.report]
+exclude_lines = [
+    "if config.enable_em:",
+    "cuda",
+    "CUDA"
+]

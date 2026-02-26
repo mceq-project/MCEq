@@ -10,22 +10,102 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 #: Matrix with x_lab=E_child/E_parent values
 _xmat = None
 
+_target_masses = {
+    # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    "air": sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    "water": 1.0 / 3.0 * (2.0 + 16.0),
+    "ice": 1.0 / 3.0 * (2.0 + 16.0),
+    "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
+    "rock": 22.0,
+    "hydrogen": 1.0,
+    "iron": 26.0,
+}
+
+
+def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
+    """Evaluate the energy cuts and return the corresponding indices and slice.
+
+    Args:
+        e_centers: numpy.ndarray
+            Array of energy grid centers.
+        e_min: float, optional
+            Minimum energy value. Default is None.
+        e_max: float, optional
+            Maximum energy value. Default is None.
+
+    Returns:
+        min_idx: int
+            Index corresponding to the minimum energy value.
+        max_idx: int
+            Index corresponding to the maximum energy value.
+        energy_slice: slice
+            Slice corresponding to the energy range.
+
+    """
+    min_idx, max_idx = 0, len(e_centers)
+    energy_slice = slice(None)
+    if e_min is not None:
+        min_idx = np.argmin(np.abs(e_centers - e_min))
+        energy_slice = slice(min_idx, None)
+    if e_max is not None:
+        max_idx = np.argmin(np.abs(e_centers - e_max)) + 1
+        energy_slice = slice(min_idx, max_idx)
+    return min_idx, max_idx, energy_slice
+
 
 def normalize_hadronic_model_name(name):
+    """Converts a hadronic model name into a standard form.
+
+    Args:
+        name: str
+            Hadronic model name.
+
+    Returns:
+        str
+            Normalized hadronic model name.
+
+    """
     import re
 
-    """Converts hadronic model name into standard form"""
     return re.sub("[-.]", "", name).upper()
+
+
+def average_A_target(mat="auto"):
+    """Average target mass number.
+
+    For air <A> = 14.6568 (using mass fractions from
+    https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
+    Other media supported are co2, rock, ice, water, and hydrogen.
+
+    Args:
+        mat: str or float, optional
+            Interaction medium or custom target mass number. Default is "auto".
+
+    Returns:
+        float
+            Average target mass number.
+
+    Raises:
+        ValueError:
+            If `mat` is not a valid option.
+
+    """
+    if isinstance(mat, str) and mat.lower() == "auto":
+        return _target_masses[config.interaction_medium.lower()]
+    elif isinstance(mat, str) and mat.lower() in _target_masses:
+        return _target_masses[mat.lower()]
+    elif isinstance(mat, float) or isinstance(mat, int):
+        return float(mat)
+    else:
+        raise ValueError(
+            "mceq_config.A_target is expected to be a "
+            + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+        )
 
 
 def theta_deg(cos_theta):
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
     return np.rad2deg(np.arccos(cos_theta))
-
-
-def theta_rad(theta):
-    """Converts :math:`\\theta` from rad to degrees."""
-    return np.deg2rad(theta)
 
 
 def gen_xmat(energy_grid):
@@ -118,7 +198,7 @@ def getAZN_corsika(corsikaid):
         return getAZN(2212)
     if corsikaid >= 100:
         Z = corsikaid % 100
-        A = (corsikaid - Z) / 100
+        A = (corsikaid - Z) // 100
     else:
         Z, A = 0, 0
 

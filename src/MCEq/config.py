@@ -25,7 +25,7 @@ print_module = False
 data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm191_v12.h5"
+mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
@@ -43,20 +43,30 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC',('SouthPole','January'))
 #: density_model = ('GeneralizedTarget', None)
 
-#: Definition of prompt: default ctau < 0.123 cm (that of D0)
-prompt_ctau = 0.123
+#: Definition of prompt (only for correct accounting). Leptons from parent particles
+#: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
+#: everything else will be attributed to the "conventional" category
+# cm (everything shorter-lived than K0s will be considered prompt)
+prompt_ctau = 2.6842
 
-#: Average mass of target (for interaction length calculations)
+#: Approximate value for the maximum density expected. Needed for the
+#: resonance approximation. Default value: air at the surface
+max_density = 0.001225
+#: Material for interaction lengths, ionization and radiation (=continuous) loss terms
+#: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen', 'iron'
+interaction_medium = "air"
+
+#: Average target mass (for interaction length calculations)
 #: Change parameter only in combination with interaction model setting.
-#: By default all particle production matrices are calculated for air targets
-#: expect those for models with '_pp' suffix. These are valid for hydrogen targets.
-#: <A> = 14.6568 for air as below (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-A_target = sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]])
+#: By default, secondary particle production matrices are calculated for air targets
+#: If set to 'auto', use default according to the "interaction_medium" settings below
+A_target = "auto"
 
 #: parameters for EarthGeometry
 r_E = 6391.0e3  # Earth radius in m
 h_obs = 0.0  # observation level in m
 h_atm = 112.8e3  # top of the atmosphere in m
+X_start = 0.0  # starting slant depth in g/cm^-2
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]
@@ -67,9 +77,6 @@ env_name = "air"
 #: Approximate value for the maximum density expected. Needed for the
 #: resonance approximation. Default value: air at the surface
 max_density = (0.001225,)
-#: Material for ionization and radiation (=continuous) loss terms
-#: Currently available choices: 'air', 'water', 'ice'
-dedx_material = "air"
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
@@ -93,16 +100,19 @@ enable_em = False
 #: Selection of integrator (euler/odepack)
 integrator = "euler"
 
-#: euler kernel implementation (numpy/MKL/CUDA).
+#: euler kernel implementation (numpy/MKL/CUDA/accelerate).
 #: With serious nVidia GPUs CUDA a few times faster than MKL
 #: autodetection of fastest kernel below
-kernel_config = "numpy"
+kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
 #: CUDA Floating point precision (default 32-bit 'float')
-cuda_fp_precision = 32
+cuda_fp_precision = 64
+
+#: Floating point precision (is set automatically)
+floatlen = None
 
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
@@ -144,19 +154,36 @@ stability_margin = 0.95
 hybrid_crossover = 0.5
 
 #: Maximal integration step dX in g/cm2. No limit necessary in most cases,
-#: use for debugging purposes when searching for stability issues.
-dXmax = 10.0
+#: use for debugging purposes when searching for stability issues, especially
+#: if e_min is < 1 GeV.
+dXmax = 1.0
+
+#: Minimal CR nucleon energy in primary model. If (low energy)
+#: hadronic interaction model doesn't properly implement interactions
+#: or cross sections, nucleons can "drop through" without cascading
+
+minimal_primary_energy = 3.0
 
 #: Enable default tracking particles, such as pi_numu, pr_mu+, etc.
 #: If only total fluxes are of interest, disable this feature to gain
 #: performance since the eqution system becomes smaller and sparser
 enable_default_tracking = True
 
-#: Muon energy loss according to Kokoulin et al.
-enable_muon_energy_loss = True
+#: Ionization and radiative losses according to stopping power tables (PDG)
+enable_energy_loss = True
 
-#: enable EM ionization loss
-enable_em_ion = False
+#: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
+generic_losses_all_charged = False
+
+#: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
+#: electromagnetic cross sections available
+enable_cont_rad_loss = True
+
+#: Fall-back to air production matrices if medium not included in data file
+fallback_to_air_cs = True
+
+#: enable EM ionization loss for electrons and positrons
+enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
@@ -218,6 +245,10 @@ adv_set = {
     "force_resonance": [],
     #: Disable mixing between resonance approx. and full propagation
     "no_mixing": False,
+    #: Force the interaction cross sections to a specific model
+    "forced_int_cs": None,
+    #: Replace only the meson air cross sections with that from a different model
+    "replace_meson_cross_sections_with": None,
 }
 
 #: Particles for compact mode
@@ -237,6 +268,7 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: Autodetect best solver
 #: determine shared library extension and MKL path
 pf = platform.platform()
+has_accelerate = False
 
 prefix = pathlib.Path(sys.prefix)
 if "Linux" in pf:
@@ -268,12 +300,23 @@ has_mkl = bool(mkl_path.is_file())
 has_cuda = importlib.util.find_spec("cupy") is not None
 
 # CUDA is usually fastest, then MKL. Fallback to numpy.
-if has_cuda:
-    kernel_config = "CUDA"
-elif has_mkl:
-    kernel_config = "MKL"
+if kernel_config == "auto":
+    if has_cuda:
+        kernel_config = "CUDA"
+    elif has_mkl:
+        kernel_config = "MKL"
+    elif has_accelerate:
+        kernel_config = "accelerate"
+    else:
+        kernel_config = "numpy"
 else:
-    kernel_config = "numpy"
+    if kernel_config.lower() == "cuda" and not has_cuda:
+        raise Exception("CUDA unavailable. Make sure cupy is installed.")
+    elif kernel_config.lower() == "mkl" and not has_mkl:
+        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+    elif kernel_config.lower() == "accelerate" and not has_accelerate:
+        raise Exception("Accelerate unavailable. Only on MacOS.")
+
 if debug_level >= 2:
     print(f"Auto-detected {kernel_config} solver.")
 
@@ -336,7 +379,7 @@ class FileIntegrityCheck:
         hex of sha256 checksum
     Methods
     -------
-    is_passed():
+    succeeded():
         returns True if checksum and calculated checksum of the file are equal
 
     get_file_checksum():
@@ -361,7 +404,7 @@ class FileIntegrityCheck:
             except OSError as ex:
                 print(f"FileIntegrityCheck: {ex}")
 
-    def is_passed(self):
+    def succeeded(self):
         self._calculate_hash()
         return self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum
 
@@ -404,13 +447,13 @@ release_tag = "builds_on_azure/"
 url = base_url + release_tag + mceq_db_fname
 # sha256 checksum of the file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
-file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
+file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
 filepath_to_database = data_dir / mceq_db_fname
 if filepath_to_database.exists():
     is_file_complete = FileIntegrityCheck(
         filepath_to_database, file_checksum
-    ).is_passed()
+    ).succeeded()
 else:
     is_file_complete = False
 

@@ -1,6 +1,6 @@
 from ctypes import byref, c_double, c_int, pointer
 
-import MCEq.geometry.nrlmsise00.nrlmsise00 as cmsis
+import MCEq.geometry.nrlmsise00 as cmsis
 from MCEq.geometry.atmosphere_parameters import (
     DAY_TIMES_SEC,
     DEFAULT_AP,

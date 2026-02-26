@@ -11,7 +11,7 @@ from MCEq.geometry.atmosphere_parameters import (
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
-from MCEq.misc import info, theta_rad
+from MCEq.misc import info
 
 
 class EarthsAtmosphere(with_metaclass(ABCMeta)):
@@ -102,7 +102,8 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         # Interpolate with bi-splines without smoothing
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
-
+        # This is an incomplete workaround for non-monothonic elevations for
+        # upgoing trajectories.
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
@@ -159,9 +160,21 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise Exception("Zenith angle not in allowed range.")
 
-        self.thrad = theta_rad(theta_deg)
+        self.thrad = np.deg2rad(theta_deg)
         self.theta_deg = theta_deg
         self.calculate_density_spline()
+
+    def set_h_obs(self, h_obs):
+        """Set the elevation of the observation (detector) level in cm."""
+
+        self.geom.set_h_obs(h_obs)
+        if isinstance(self, MSIS00IceCubeCentered):
+            self.max_theta = 180.0
+        else:
+            self.max_theta = self.geom.theta_max_deg
+
+        if self.theta_deg:
+            self.calculate_density_spline()
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
@@ -268,8 +281,6 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    _atm_param = None
-
     def __init__(self, location, season=None):
         # Check if the atmosphere is available
         # Use the renamed list_available_atmospheres function
@@ -281,9 +292,10 @@ class CorsikaAtmosphere(EarthsAtmosphere):
             )
 
         self.init_parameters(location, season)
-        import MCEq.geometry.corsikaatm.corsikaatm as corsika_acc
+        import MCEq.geometry.corsikaatm as corsika_acc
 
-        self.corsika_acc = corsika_acc  # Assuming corsika_acc is defined elsewhere or needs to be imported
+        # Assuming corsika_acc is defined elsewhere or needs to be imported
+        self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
@@ -464,7 +476,8 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
     Args:
       location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
+      season (str,optional): months (January, February, etc.)
+      doy (int, optional): day of year
     """
 
     def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
@@ -617,6 +630,76 @@ class MSIS00Atmosphere(EarthsAtmosphere):
           float: density :math:`T(h_{cm})` in K
         """
         return self._msis.get_temperature(h_cm)
+
+
+class MSIS00IceCubeCentered(MSIS00Atmosphere):
+    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
+    setting with the zenith angle of the detector.
+
+    Args:
+      location (str): see :func:`init_parameters`
+      season (str,optional): see :func:`init_parameters`
+    """
+
+    def __init__(self, location, season):
+        if location != "SouthPole":
+            info(2, "location forced to the South Pole")
+            location = "SouthPole"
+
+        super().__init__(location, season)
+
+        # Allow for upgoing zenith angles
+        self.max_theta = 180.0
+
+    def _latitude(self, det_zenith_deg):
+        """Returns the geographic latitude of the shower impact point.
+
+        Assumes a spherical earth. The detector is 1948m under the
+        surface.
+
+        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
+
+        Args:
+          det_zenith_deg (float): zenith angle at detector in degrees
+
+        Returns:
+          float: latitude of the impact point in degrees
+        """
+        r = self.geom.r_E / 1e2  # cm to m
+        d = 1948  # m
+
+        theta_rad = np.deg2rad(det_zenith_deg)
+
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
+            r - d
+        ) * np.cos(theta_rad)
+
+        return (
+            -90.0
+            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            / np.pi
+            * 180.0
+        )
+
+    def set_theta(self, theta_deg):
+        self._msis.set_location_coord(longitude=0.0, latitude=self._latitude(theta_deg))
+        info(
+            1,
+            "latitude = {0:5.2f} for zenith angle = {1:5.2f}".format(
+                self._latitude(theta_deg), theta_deg
+            ),
+        )
+        downgoing_theta_deg = theta_deg
+        if theta_deg > 90.0:
+            downgoing_theta_deg = 180.0 - theta_deg
+            info(
+                1,
+                "theta = {0:5.2f} below horizon. using theta = {1:5.2f}".format(
+                    theta_deg, downgoing_theta_deg
+                ),
+            )
+        super().set_theta(downgoing_theta_deg)
+        self.theta_deg = theta_deg
 
 
 class AIRSAtmosphere(EarthsAtmosphere):
@@ -850,73 +933,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
         return ret
 
 
-class MSIS00IceCubeCentered(MSIS00Atmosphere):
-    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
-    setting with the zenith angle of the detector.
-
-    Args:
-      location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
-    """
-
-    def __init__(self, location, season):
-        if location != "SouthPole":
-            info(2, "location forced to the South Pole")
-            location = "SouthPole"
-
-        MSIS00Atmosphere.__init__(self, location, season)
-
-        # Allow for upgoing zenith angles
-        self.max_theta = 180.0
-
-    def latitude(self, det_zenith_deg):
-        """Returns the geographic latitude of the shower impact point.
-
-        Assumes a spherical earth. The detector is 1948m under the
-        surface.
-
-        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
-
-        Args:
-          det_zenith_deg (float): zenith angle at detector in degrees
-
-        Returns:
-          float: latitude of the impact point in degrees
-        """
-        r = self.geom.r_E
-        d = 1948  # m
-
-        theta_rad = det_zenith_deg / 180.0 * np.pi
-
-        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
-            r - d
-        ) * np.cos(theta_rad)
-
-        return (
-            -90.0
-            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
-            / np.pi
-            * 180.0
-        )
-
-    def set_theta(self, theta_deg):
-        self._msis.set_location_coord(longitude=0.0, latitude=self.latitude(theta_deg))
-        info(
-            1,
-            f"latitude = {self.latitude(theta_deg):5.2f} for zenith angle = {theta_deg:5.2f}",
-        )
-        downgoing_theta_deg = theta_deg
-        if theta_deg > 90.0:
-            downgoing_theta_deg = 180.0 - theta_deg
-            info(
-                1,
-                f"theta = {theta_deg:5.2f} below horizon. using theta = {downgoing_theta_deg:5.2f}",
-            )
-        MSIS00Atmosphere.set_theta(self, downgoing_theta_deg)
-
-        self.theta_deg = theta_deg
-
-
 class GeneralizedTarget:
     """This class provides a way to run MCEq on piece-wise constant
     one-dimenional density profiles.
@@ -972,10 +988,7 @@ class GeneralizedTarget:
         self._integrate()
 
     def set_length(self, new_length_cm):
-        """Updates the total length of the target.
-
-        Usually the length is set
-        """
+        """Updates the total length of the target."""
         if new_length_cm < self.mat_list[-1][0]:
             raise Exception(
                 "GeneralizedTarget::set_length(): "
@@ -1001,8 +1014,9 @@ class GeneralizedTarget:
 
         if start_position_cm < 0.0 or start_position_cm > self.len_target:
             raise Exception(
-                "GeneralizedTarget::add_material(): "
-                + "distance exceeds target dimensions."
+                "GeneralizedTarget::set_length(): "
+                + "can not set length below lower boundary of last "
+                + "material."
             )
         if (
             start_position_cm == self.mat_list[-1][0]
@@ -1022,14 +1036,8 @@ class GeneralizedTarget:
 
         info(
             2,
-            (
-                "{0}::add_material(): Material '{1}' added. "
-                + "location on path {2} to {3} m"
-            ).format(
-                self.__class__.__name__,
-                name,
-                self.mat_list[-1][0],
-                self.mat_list[-1][1],
+            ("Material '{0}' added between {1:4.1f} and {2:4.1f} m").format(
+                name, self.mat_list[-1][0] / 1e2, self.mat_list[-1][1] / 1e2
             ),
         )
 
@@ -1102,7 +1110,7 @@ class GeneralizedTarget:
            float: density in g/cm**3
 
         Raises:
-            Exception: If requested depth exceeds target.
+            Exception: If requested position exceeds target.
         """
         X = np.atleast_1d(X)
         # allow for some small constant extrapolation for odepack solvers
@@ -1140,7 +1148,7 @@ class GeneralizedTarget:
            float: density in g/cm**3
 
         Raises:
-            Exception: If requested position exceeds target length.
+            Exception: If requested depth exceeds target.
         """
         l_cm = np.atleast_1d(l_cm)
         res = np.zeros_like(l_cm)
@@ -1155,6 +1163,9 @@ class GeneralizedTarget:
             while not (li >= self.start_bounds[bi] and li <= self.end_bounds[bi]):
                 bi += 1
             res[i] = self.densities[bi]
+
+        res = res.item() if res.size == 1 else res
+
         return res
 
     def draw_materials(self, axes=None, logx=False):
@@ -1253,7 +1264,6 @@ if __name__ == "__main__":
             label=(f"{loc}/{season}" if season is not None else f"{loc}"),
         )
         cka_surf_100.append((cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)))
-    print(cka_surf_100)
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")
     plt.xlabel(r"Depth (g/cm$^2$)")
     plt.legend(loc="upper left")
@@ -1282,7 +1292,6 @@ if __name__ == "__main__":
         x_vec = np.linspace(0, msis_obj.max_X, 5000)
         plt.plot(x_vec, 1 / msis_obj.r_X2rho(x_vec), lw=1.5, label=f"{loc}")
         msis_surf_100.append((msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)))
-    print(msis_surf_100)
     plt.ylabel(r"Density $\rho$ (g/cm$^3$)")
     plt.xlabel(r"Depth (g/cm$^2$)")
     plt.legend(loc="upper left")

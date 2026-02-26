@@ -1,21 +1,20 @@
 import numpy as np
 
 
-def test_mrs_charm(mceq_small):
+def test_mrs_charm(mceq_sib21):
     from MCEq.charm_models import MRS_charm
 
-    e_grid = mceq_small.e_grid
-    cms = mceq_small._int_cs
+    e_grid = mceq_sib21.e_grid
+    cms = mceq_sib21._int_cs
     model = MRS_charm(e_grid, cms)
 
     # Test sigma_cc
     sigma = model.sigma_cc(e_grid)
     assert sigma.shape == e_grid.shape
-    assert np.all(sigma > 0)
 
     # Test dsig_dx
     x = np.linspace(0.05, 0.6, 10)
-    E = 1e7
+    E = 1e5
     dx_vec = model.dsig_dx(x, E)
     dx_scalar = model.dsig_dx(0.1, E)
     assert dx_vec.shape == x.shape

@@ -1,7 +1,6 @@
 import numpy as np
 
 from MCEq import config
-from MCEq.misc import theta_rad
 
 
 class EarthGeometry:
@@ -25,13 +24,12 @@ class EarthGeometry:
         import matplotlib.pyplot as plt
         import numpy as np
         from MCEq.geometry.geometry import *
-        from MCEq.misc import theta_rad
 
         earth = EarthGeometry()
 
         theta_list = np.linspace(0, 90, 500)
         h_vec = np.linspace(0, earth.h_atm, 500)
-        th_list_rad = theta_rad(theta_list)
+        th_list_rad = np.deg2rad(theta_list)
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
         plt.plot(theta_list, earth.path_len(th_list_rad) / 1e5, lw=2)
@@ -59,7 +57,7 @@ class EarthGeometry:
 
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
-        plt.plot(h_vec / 1e5, earth.delta_l(h_vec, theta_rad(85.0)) / 1e5, lw=2)
+        plt.plot(h_vec / 1e5, earth.delta_l(h_vec, np.deg2rad(85.0)) / 1e5, lw=2)
         plt.ylabel(r"Path length $\Delta l(h)$ in km")
         plt.xlabel(r"atm. height $h_{atm}$ in km")
         ax = plt.gca()
@@ -71,7 +69,7 @@ class EarthGeometry:
         fig = plt.figure(figsize=(5, 4))
         fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
         for theta in [30.0, 60.0, 70.0, 80.0, 85.0, 90.0]:
-            theta_path = theta_rad(theta)
+            theta_path = np.deg2rad(theta)
             delta_l_vec = np.linspace(0, earth.path_len(theta_path), 1000)
             plt.plot(
                 delta_l_vec / 1e5,
@@ -179,7 +177,7 @@ if __name__ == "__main__":
 
     theta_list = np.linspace(0, 90, 500)
     h_vec = np.linspace(0, earth.h_atm, 500)
-    th_list_rad = theta_rad(theta_list)
+    th_list_rad = np.deg2rad(theta_list)
     fig = plt.figure(figsize=(5, 4))
     fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
     plt.plot(theta_list, earth.path_len(th_list_rad) / 1e5, lw=2)
@@ -207,7 +205,7 @@ if __name__ == "__main__":
 
     fig = plt.figure(figsize=(5, 4))
     fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
-    plt.plot(h_vec / 1e5, earth.delta_l(h_vec, theta_rad(85.0)) / 1e5, lw=2)
+    plt.plot(h_vec / 1e5, earth.delta_l(h_vec, np.deg2rad(85.0)) / 1e5, lw=2)
     plt.ylabel(r"Path length $\Delta l(h)$ in km")
     plt.xlabel(r"atm. height $h_{atm}$ in km")
     ax = plt.gca()
@@ -219,7 +217,7 @@ if __name__ == "__main__":
     fig = plt.figure(figsize=(5, 4))
     fig.set_tight_layout(dict(rect=[0.00, 0.00, 1, 1]))
     for theta in [30.0, 60.0, 70.0, 80.0, 85.0, 90.0]:
-        theta_path = theta_rad(theta)
+        theta_path = np.deg2rad(theta)
         delta_l_vec = np.linspace(0, earth.path_len(theta_path), 1000)
         plt.plot(
             delta_l_vec / 1e5,

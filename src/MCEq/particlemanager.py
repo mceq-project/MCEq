@@ -5,7 +5,7 @@ import six
 from particletools.tables import PYTHIAParticleData
 
 from MCEq import config
-from MCEq.misc import getAZN, info, print_in_rows
+from MCEq.misc import average_A_target, getAZN, info, print_in_rows
 
 info(5, "Initialization of PYTHIAParticleData object")
 _pdata = PYTHIAParticleData()
@@ -44,7 +44,13 @@ class MCEqParticle:
     """
 
     def __init__(
-        self, pdg_id, helicity, energy_grid=None, cs_db=None, init_pdata_defaults=True
+        self,
+        pdg_id,
+        helicity,
+        energy_grid=None,
+        cs_db=None,
+        init_pdata_defaults=True,
+        A_target=average_A_target(),
     ):
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
@@ -56,10 +62,14 @@ class MCEqParticle:
         self.is_hadron = False
         #: (bool) particle is a lepton
         self.is_lepton = False
+        #: (bool) particle is charged
+        self.is_charged = False
         #: (float) ctau in cm
         self.ctau = None
         #: (float) mass in GeV
         self.mass = None
+        #: (int) Charge
+        self.charge = None
         #: (str) species name in string representation
         self.name = None
         #: Mass, charge, neutron number
@@ -95,8 +105,11 @@ class MCEqParticle:
         #: (int) energy grid index, where transition between
         # hadron and resonance occurs
         self.mix_idx = 0
+        #: (float) interaction threshold (idx where cs>0)
+        self.int_idx = 0
         #: (float) critical energy in air at the surface
         self.E_crit = 0
+
         # Energy and cross section dependent inits
         self.current_cross_sections = None
         self._energy_grid = energy_grid
@@ -111,7 +124,7 @@ class MCEqParticle:
         self.decay_dists = {}
 
         # A_target
-        self.A_target = config.A_target
+        self.A_target = A_target
 
         if init_pdata_defaults:
             self._init_defaults_from_pythia_database()
@@ -130,6 +143,11 @@ class MCEqParticle:
         self.is_lepton = _pdata.is_lepton(self.pdg_id[0])
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(self.pdg_id[0])
+        if self.is_nucleus:
+            self.charge = self.Z
+        else:
+            self.charge = int(_pdata.charge(self.pdg_id[0]))
+        self.is_charged = bool(abs(self.charge))
         #: (float) ctau in cm
         self.ctau = _pdata.ctau(self.pdg_id[0])
         #: (float) mass in GeV
@@ -177,8 +195,10 @@ class MCEqParticle:
         self.cs = cs_db[self.pdg_id[0]]
         if sum(self.cs) > 0:
             self.can_interact = True
+            # self._interaction_threshold()
         else:
             self.can_interact = False
+
         self._critical_energy()
         self._calculate_mixing_energy()
 
@@ -192,11 +212,15 @@ class MCEqParticle:
         self.current_hadronic_model = hadronic_db.iam
         # Collect MCEqParticle references to children
         # instead of PDG ID as index
+        # Also copy over tracking relations if they exist
+        tracking_relations = [
+            tr_ref for tr_ref in self.hadr_secondaries if tr_ref.is_tracking
+        ]
         if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
             self.hadr_secondaries = [
                 pmanager.pdg2pref[pid] for pid in hadronic_db.relations[self.pdg_id]
-            ]
+            ] + tracking_relations
             self.hadr_yields = {}
             for s in self.hadr_secondaries:
                 self.hadr_yields[s] = hadronic_db.get_matrix(self.pdg_id, s.pdg_id)
@@ -204,6 +228,14 @@ class MCEqParticle:
             self.is_projectile = False
             self.hadr_secondaries = []
             self.hadr_yields = {}
+
+        if self.is_tracking:
+            # Copy properties of the original particle for tracking
+            orig_part = pmanager.pdg2pref[self.pdg_id]
+            self.is_projectile = orig_part.is_projectile
+            if orig_part in orig_part.hadr_secondaries:
+                self.hadr_secondaries.append(self)
+                self.hadr_yields[self] = orig_part.hadr_yields[orig_part]
 
     def add_hadronic_production_channel(self, child, int_matrix):
         """Add a new particle that is produced in hadronic interactions.
@@ -270,7 +302,9 @@ class MCEqParticle:
         if tracking_particle.pdg_id not in list(children_d):
             info(
                 17,
-                f"Parent particle {self.name} does not decay into {tracking_particle.name}",
+                f"Parent particle {self.name} does not decay into {
+                    tracking_particle.name
+                }",
             )
             return False
         # Copy the decay distribution from original PDG
@@ -287,10 +321,12 @@ class MCEqParticle:
         if tracking_particle.pdg_id not in list(secondaries_d):
             info(
                 17,
-                f"Parent particle {self.name} does not produce {tracking_particle.name} at the vertex",
+                f"Parent particle {self.name} does not produce {
+                    tracking_particle.name
+                } at the vertex",
             )
             return False
-        # Copy the decay distribution from original PDG
+        # Copy the interaction matrix from original PDG
         self.hadr_secondaries.append(tracking_particle)
         self.hadr_yields[tracking_particle] = self.hadr_yields[
             secondaries_d[tracking_particle.pdg_id]
@@ -452,7 +488,20 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
-        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+
+        if config.kernel_config == "CUDA":
+            import cupy
+
+            xl_dist = (
+                en
+                * xl_grid
+                * cupy.asnumpy(m[: eidx + 1, eidx])
+                / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+            )
 
         return xl_grid, xl_dist
 
@@ -477,7 +526,20 @@ class MCEqParticle:
 
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
-        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+
+        if config.kernel_config == "CUDA":
+            import cupy
+
+            xl_dist = (
+                en
+                * xl_grid
+                * cupy.asnumpy(m[: eidx + 1, eidx])
+                / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+            )
 
         return xl_grid, xl_dist
 
@@ -502,8 +564,12 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
+        if config.kernel_config == "CUDA":
+            import cupy
 
+            elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
+        else:
+            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
     def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
@@ -590,14 +656,28 @@ class MCEqParticle:
         are balanced.
 
         Approximate value in Air.
-
-        Returns:
-          (float): :math:`\\frac{m\\ 6.4 \\text{km}}{c\\tau}` in GeV
         """
         if self.is_stable or self.ctau <= 0.0:
             self.E_crit = np.inf
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
+
+    def _interaction_threshold(self):
+        """Finds minimal energy grid idx where interaction cross sections
+        becomes > 0.
+
+        Only for interacting particles.
+        """
+        if self.can_interact:
+            self.int_idx = (self.cs != 0).argmax()
+            info(
+                10,
+                "Interaction threshold for {0} is {1:5.3f} GeV".format(
+                    self.name, self._energy_grid.c[self.int_idx]
+                ),
+            )
+        else:
+            self.int_idx = 0
 
     def _calculate_mixing_energy(self):
         """Calculates interaction/decay length in Air and decides if
@@ -614,6 +694,7 @@ class MCEqParticle:
                                decay length)
         """
 
+        info(10, "Calculating mixing energy for", self.name)
         cross_over = config.hybrid_crossover
         max_density = config.max_density
 
@@ -627,7 +708,7 @@ class MCEqParticle:
             or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
             or config.adv_set["no_mixing"]
             or self.pdg_id[0] in config.adv_set["disable_decays"]
-        ):
+        ) and self.is_mixed is not True:
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
@@ -650,10 +731,15 @@ class MCEqParticle:
             mask = inv_declen != 0.0
             threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
             del mask
-            self.mix_idx = np.where(threshold >= cross_over)[0][0]
+            mix_idx_check = np.where(threshold >= cross_over)[0]
+            if len(mix_idx_check) != 0:
+                self.mix_idx = mix_idx_check[0]
+                self.E_mix = self._energy_grid.c[self.mix_idx]
+            else:
+                self.mix_idx = np.where(threshold < cross_over)[0][-1] + 1
+                self.E_mix = self._energy_grid.c[self.mix_idx - 1]
             if self.mix_idx != 0:
                 self.is_mixed = True
-            self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_resonance = False
         # These particles don't interact but can decay (e.g. tau leptons)
         elif not self.can_interact and not self.is_stable:
@@ -664,7 +750,7 @@ class MCEqParticle:
             self.is_resonance = False
         # Particle is stable but that should be handled above
         else:
-            print(self.name, "This case shouldn't occur.")
+            info(0, "This case shouldn't occur. Particle =", self.name)
             threshold = np.inf
             self.mix_idx = 0
             self.is_mixed = False
@@ -710,7 +796,9 @@ class ParticleManager:
         Jonas Heinze (DESY)
     """
 
-    def __init__(self, pdg_id_list, energy_grid, cs_db, mod_table=None):
+    def __init__(
+        self, pdg_id_list, energy_grid, cs_db, medium=config.interaction_medium
+    ):
         # (dict) Dimension of primary grid
         self._energy_grid = energy_grid
         # Particle index shortcuts
@@ -743,6 +831,8 @@ class ParticleManager:
         self.current_hadronic_model = None
         # Cross section database
         self._cs_db = cs_db
+        # Medium
+        self._medium = medium
         # Dictionary to save te tracking particle config
         self.tracking_relations = []
         # Save the tracking relations requested by default tracking
@@ -813,9 +903,24 @@ class ParticleManager:
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
+            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
+                # Stopping power dEdX is almost the same for all charged particles.
+                # What changes is gamm*beta. We interpolate the dEdX tables
+                # stored for protons to different energy grids.
+                # Compute beta*gamma from kinetic energy
+                betagamma_p = (
+                    np.sqrt((self._energy_grid.c + p.mass) ** 2 - p.mass**2) / p.mass
+                )
+                p.dEdX = -np.exp(contloss_db.generic_spl(np.log(betagamma_p)))
+                p.has_contloss = True
 
     def add_tracking_particle(
-        self, parent_list, child_pdg, alias_name, from_interactions=False
+        self,
+        parent_list,
+        child_pdg,
+        alias_name,
+        from_interactions=False,
+        include_antiparticle=False,
     ):
         """Allows tracking decay and particle production chains.
 
@@ -849,10 +954,11 @@ class ParticleManager:
                 child_pdg,
                 alias_name,
                 from_interactions,
+                include_antiparticle,
             ) in self._tracking_requested:
                 continue
             self._tracking_requested.append(
-                (p, child_pdg, alias_name, from_interactions)
+                (p, child_pdg, alias_name, from_interactions, include_antiparticle)
             )
 
         # Check if tracking particle with the alias not yet defined
@@ -885,19 +991,31 @@ class ParticleManager:
                     break
                 info(
                     20,
-                    f"{i}: trying to find unique_pdg ({tracking_particle.name}) for {unique_child_pdg}",
+                    f"{i}: trying to find unique_pdg ({tracking_particle.name}) for {
+                        unique_child_pdg
+                    }",
                 )
                 unique_child_pdg = (
                     unique_child_pdg[0] + int(copysign(10000, child_pdg[0])),
                     tracking_particle.helicity,
                 )
             tracking_particle.unique_pdg_id = unique_child_pdg
+            info(
+                10,
+                "Creating new tracking particle {0} with unique ID {1}".format(
+                    tracking_particle.name, unique_child_pdg
+                ),
+            )
 
         # Track if attempt to add the tracking particle succeeded at least once
         track_success = False
-        # Include antiparticle
+        # Include antiparticle if requested
+        if include_antiparticle:
+            par_list = list(set(parent_list + [(-p, h) for (p, h) in parent_list]))
+        else:
+            par_list = list(set(parent_list))
 
-        for parent_pdg in list(set(parent_list + [(-p, h) for (p, h) in parent_list])):
+        for parent_pdg in par_list:
             if parent_pdg not in self.pdg2pref:
                 info(15, f"Parent particle {parent_pdg} does not exist.")
                 continue
@@ -909,13 +1027,17 @@ class ParticleManager:
             ) in self.tracking_relations:
                 info(
                     20,
-                    f"Tracking of {tracking_particle.name} from {self.pdg2pref[parent_pdg].name} already activated.",
+                    f"Tracking of {tracking_particle.name} from {
+                        self.pdg2pref[parent_pdg].name
+                    } already activated.",
                 )
                 continue
 
             if not from_interactions:
+                info(15, "Child {0} tracks decays".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_decays
             else:
+                info(15, "Child {0} tracks interactions".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_interactions
 
             # Check if the tracking is successful. If not the particle is not
@@ -943,9 +1065,25 @@ class ParticleManager:
         exclude_em=True,
         from_interactions=False,
         use_helicities=False,
+        include_antiparticle=False,
     ):
         """Adds tracking particles for all leptons coming from decays of parents
         in `parent_pdg_list`.
+
+        Args:
+
+            parent_pdg_list (list): PDG IDs of parent particles
+                                    that leptons originate from
+            prefix (list): prefix for each lepton name that will be
+                           identified as coming from these parent particles
+            exclude_em (bool, optional): exclude electromagnetic (e+-, gamma)
+                from leptons
+            from_interactions (bool, optional): track particles coming from
+                interactions of parents instead of decays
+            use_helicities (bool, optional): ignore leptons with
+                non-zero/defined helicity
+            include_antiparticle (bool, optional): ex. [211, 321] will be
+                automatically converted to [211,-211,321,-321]
         """
 
         leptons = [
@@ -958,7 +1096,11 @@ class ParticleManager:
             if not use_helicities and lepton.pdg_id[1] != 0:
                 continue
             self.add_tracking_particle(
-                parent_pdg_list, lepton.pdg_id, prefix + lepton.name, from_interactions
+                parent_pdg_list,
+                lepton.pdg_id,
+                prefix + lepton.name,
+                from_interactions,
+                include_antiparticle,
             )
 
     def _init_categories(self, particle_pdg_list):
@@ -992,7 +1134,13 @@ class ParticleManager:
 
         # Initialize particle objects
         particle_list = [
-            MCEqParticle(pdg, hel, self._energy_grid, self._cs_db)
+            MCEqParticle(
+                pdg,
+                hel,
+                self._energy_grid,
+                self._cs_db,
+                A_target=average_A_target(self._medium),
+            )
             for pdg, hel in particles
         ]
 
@@ -1021,21 +1169,27 @@ class ParticleManager:
         if new_mceq_particle in self.all_particles:
             info(
                 0,
-                f"Particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} has already been added. Use it.",
+                f"Particle {new_mceq_particle.name}/{
+                    new_mceq_particle.pdg_id
+                } has already been added. Use it.",
             )
             return
 
         if not new_mceq_particle.is_resonance:
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is not a resonance.",
+                f"New particle {new_mceq_particle.name}/{
+                    new_mceq_particle.pdg_id
+                } is not a resonance.",
             )
             new_mceq_particle.mceqidx = len(self.cascade_particles)
             self.cascade_particles.append(new_mceq_particle)
         else:
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is a resonance.",
+                f"New particle {new_mceq_particle.name}/{
+                    new_mceq_particle.pdg_id
+                } is a resonance.",
             )
             self.resonances.append(new_mceq_particle)
 
@@ -1087,11 +1241,11 @@ class ParticleManager:
         # Clear tracking_relations for this initialization
         self.tracking_relations = []
 
-        for pid, cid, alias, int_dec in self._tracking_requested:
+        for pid, cid, alias, int_dec, incl_anti in self._tracking_requested:
             if pid not in self.pdg2pref:
                 info(15, "Can not restore {0}, since not in particle list.")
                 continue
-            self.add_tracking_particle([pid], cid, alias, int_dec)
+            self.add_tracking_particle([pid], cid, alias, int_dec, incl_anti)
 
     def _init_default_tracking(self):
         """Add default tracking particles for leptons from pi, K, and mu"""
@@ -1107,7 +1261,11 @@ class ParticleManager:
             ([(310, 0), (130, 0)], "K0_", False),
         ]:
             self.track_leptons_from(
-                parents, prefix, exclude_em=True, use_helicities=with_helicity
+                parents,
+                prefix,
+                exclude_em=True,
+                use_helicities=with_helicity,
+                include_antiparticle=True,
             )
 
         # Track prompt leptons
@@ -1148,7 +1306,11 @@ class ParticleManager:
             return self.pdg2pref[pdg_id_or_name]
         if isinstance(pdg_id_or_name, six.integer_types):
             return self.pdg2pref[(pdg_id_or_name, 0)]
-        return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
+        else:
+            try:
+                return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
+            except KeyError:
+                return self.pname2pref[pdg_id_or_name]
 
     def keys(self):
         """Returns pdg_ids of all particles"""

@@ -18,10 +18,10 @@ Submodules
   :glob:
 
   atmosphere_parameters
-  corsikaatm/index
+  corsikaatm
   density_profiles
   geometry
-  nrlmsise00/index
+  nrlmsise00
   nrlmsise00_mceq
 
 

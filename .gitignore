@@ -2,7 +2,6 @@
 *.pyd
 data/*
 docs/_build
-docs/api
 .vscode
 examples/.ipynb*
 _skbuild
@@ -16,5 +15,7 @@ dist
 MCEq/geometry/corsikaatm/libcorsikaatm.cp37-win_amd64.pyd
 *.afdesign
 MCEq/data/GSF_spline_20171007.pkl.bz2
-.venv_*
+MCEq/data/CarbonTargetFits_inclna49K_pp2pC4.npy
 .DS_Store
+docs/examples/H3a_theta_60_sib23c.txt
+.venv_*

@@ -10,38 +10,99 @@ from MCEq.core import MCEqRun
 
 
 @pytest.fixture(scope="session")
-def mceq():
+def mceq_sib21():
     config.debug_level = 2
-    config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
-    config.e_min = 1e-1
-    config.e_max = 1e11
+
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+
     if config.has_mkl:
         config.set_mkl_threads(2)
 
     return MCEqRun(
-        interaction_model="SIBYLL23C",
+        interaction_model="SIBYLL21",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
     )
 
 
 @pytest.fixture(scope="session")
-def mceq_small():
+def mceq_qgs():
     config.debug_level = 2
-    config.kernel_config = "numpy"
     config.cuda_gpu_id = 0
 
-    config.e_min = 1e9
-    config.e_max = 1e10
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+
     if config.has_mkl:
         config.set_mkl_threads(2)
 
     return MCEqRun(
-        interaction_model="SIBYLL23C",
+        interaction_model="QGSJETII04",
         theta_deg=0.0,
         primary_model=(pm.HillasGaisser2012, "H3a"),
     )
+
+
+@pytest.fixture(scope="function")
+def ddm_entry():
+    from MCEq import ddm, ddm_utils
+
+    entry = ddm._DDMEntry(
+        ebeam=ddm_utils.fmteb(2.0),
+        projectile=2212,
+        secondary=211,
+        x17=False,
+        tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
+        cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        tv=1.0,
+        te=0.1,
+        spl_idx=1,
+    )
+    return entry
+
+
+@pytest.fixture(scope="function")
+def ddm_channel():
+    from MCEq import ddm, ddm_utils
+
+    ch = ddm._DDMChannel(projectile=2212, secondary=211)
+    ch.add_entry(
+        ebeam=ddm_utils.fmteb(2.0),
+        projectile=2212,
+        secondary=211,
+        x17=False,
+        tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
+        cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        tv=1.0,
+        te=1.0,
+    )
+
+    return ch
+
+
+@pytest.fixture(scope="function")
+def ddm_spline_db():
+    from MCEq import ddm
+
+    db = ddm.DDMSplineDB(
+        enable_channels=[(2212, 211)],
+        exclude_projectiles=[111, 2112],
+    )
+    return db
+
+
+@pytest.fixture(scope="function")
+def data_driven_model():
+    from MCEq import ddm
+
+    _ddm = ddm.DataDrivenModel(
+        e_min=5.0,
+        e_max=500.0,
+        enable_channels=[(2212, 211)],
+        exclude_projectiles=[111, 2112],
+        enable_K0_from_isospin=True,
+    )
+    return _ddm
 
 
 @pytest.fixture

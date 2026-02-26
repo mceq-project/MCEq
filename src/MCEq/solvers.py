@@ -56,7 +56,7 @@ class CUDASparseContext:
     :func:`solv_CUDA_sparse`.
     """
 
-    def __init__(self, int_m, dec_m, device_id=0):
+    def __init__(self, int_m, dec_m, device_id=config.cuda_gpu_id):
         if config.cuda_fp_precision == 32:
             self.fl_pr = np.float32
         elif config.cuda_fp_precision == 64:
@@ -70,7 +70,6 @@ class CUDASparseContext:
 
             self.cp = cp
             self.cpx = cpx
-            self.cubl = cp.cuda.cublas
         except ImportError:
             raise Exception(
                 "solv_CUDA_sparse(): CuPy not installed or not available.\n"
@@ -78,15 +77,13 @@ class CUDASparseContext:
                 + "CuPy 12.0+ is required for modern sparse matrix interface compatibility."
             )
 
-        cp.cuda.Device(config.cuda_gpu_id).use()
-        self.cubl_handle = self.cubl.create()
+        cp.cuda.Device(device_id).use()
         self.set_matrices(int_m, dec_m)
 
     def set_matrices(self, int_m, dec_m):
         """Upload sparce matrices to GPU memory"""
         self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
         self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
-        self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0], dtype=self.fl_pr)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -173,7 +170,8 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     # mu_loss_handler):
     """`Intel MKL sparse BLAS
-    <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_
+    <https://software.intel.com/en-us/articles/
+    intel-mkl-sparse-blas-overview?language=en>`_
     implementation of forward-euler integration.
 
     Function requires that the path to the MKL runtime library ``libmkl_rt.[so/dylib]``
@@ -204,7 +202,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     optimize = mkl.mkl_sparse_optimize
     # dense vector + dense vector
     axpy = mkl.cblas_daxpy
-    np_fl = np.float64
+    np_fl = config.floatlen
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -236,9 +234,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
     )
 
-    assert matrix_status == 0, (
-        f"MKL create_csr failed with status {matrix_status} on interaction matrix"
-    )
+    assert matrix_status == 0, f"MKL create_csr failed with status {
+        matrix_status
+    } on interaction matrix"
 
     dec_m_handle = c_void_p()
     matrix_status = create_csr(
@@ -291,15 +289,15 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     optimize_status = optimize(int_m_handle)
 
-    assert optimize_status == 0, (
-        f"MKL mkl_sparse_optimize failed with status {optimize_status} on interaction matrix"
-    )
+    assert optimize_status == 0, f"MKL mkl_sparse_optimize failed with status {
+        optimize_status
+    } on interaction matrix"
 
     optimize_status = optimize(dec_m_handle)
 
-    assert optimize_status == 0, (
-        f"MKL mkl_sparse_optimize failed with status {optimize_status} on decay matrix"
-    )
+    assert optimize_status == 0, f"MKL mkl_sparse_optimize failed with status {
+        optimize_status
+    } on decay matrix"
 
     from time import time
 
@@ -341,6 +339,72 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     return npphi, np.asarray(grid_sol)
 
 
+def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_idcs):
+    # mu_loss_handler):
+    """Apple Accelerate (vecLib) implementation.
+
+    Args:
+      nsteps (int): number of integration steps
+      dX (numpy.array[nsteps]): vector of step-sizes
+        :math:`\\Delta X_i` in g/cm**2
+      rho_inv (numpy.array[nsteps]): vector of density values
+        :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (numpy.array): interaction matrix :eq:`int_matrix`
+        in dense or sparse representation
+      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in
+        dense or sparse representation
+      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      grid_idcs (list): indices at which longitudinal solutions
+        have to be saved.
+
+    Returns:
+      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+    """
+
+    from ctypes import POINTER, c_double
+
+    import MCEq.spacc as spacc
+
+    dim_phi = int(phi.shape[0])
+    npphi = np.copy(phi)
+    phi = npphi.ctypes.data_as(POINTER(c_double))
+    npdelta_phi = np.zeros_like(npphi)
+    delta_phi = npdelta_phi.ctypes.data_as(POINTER(c_double))
+
+    grid_step = 0
+    grid_sol = []
+
+    from time import time
+
+    start = time()
+
+    for step in range(nsteps):
+        # delta_phi = int_m.dot(phi)
+        npdelta_phi *= 0
+        spacc_int_m.gemv_ctargs(1.0, phi, delta_phi)
+
+        # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
+        spacc_dec_m.gemv_ctargs(rho_inv[step], phi, delta_phi)
+
+        # phi = delta_phi * dX + phi
+        spacc.daxpy(dim_phi, dX[step], delta_phi, phi)
+
+        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
+            grid_sol.append(np.copy(npphi))
+            grid_step += 1
+
+    info(
+        2,
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
+    )
+
+    return npphi, np.asarray(grid_sol)
+
+
 # # TODO: Debug this and transition to BDF
 # def _odepack(dXstep=.1,
 #                 initial_depth=0.0,
@@ -351,10 +415,12 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 #     """Solves the transport equations with solvers from ODEPACK.
 
 #     Args:
-#         dXstep (float): external step size (adaptive sovlers make more steps internally)
+#         dXstep (float): external step size (adaptive sovlers make more
+#           steps internally)
 #         initial_depth (float): starting depth in g/cm**2
 #         int_grid (list): list of depths at which results are recorded
-#         grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+# grid_var (str): Can be depth `X` or something else (currently only `X`
+# supported)
 
 #     """
 #     from scipy.integrate import ode

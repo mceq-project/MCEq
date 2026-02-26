@@ -7,7 +7,7 @@ import six
 
 from MCEq import config
 
-from .misc import info, normalize_hadronic_model_name
+from .misc import _eval_energy_cuts, info, normalize_hadronic_model_name
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -137,6 +137,8 @@ equivalences = {
     },
 }
 
+equivalences["FLUKA"] = equivalences["DPMJET"]
+
 
 class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
@@ -146,7 +148,7 @@ class HDF5Backend:
     and it will change infrequently.
     """
 
-    def __init__(self):
+    def __init__(self, medium=config.interaction_medium):
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
@@ -157,7 +159,9 @@ class HDF5Backend:
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
             raise Exception(
-                f'Electromagnetic DB file {config.em_db_fname} not found in "data" directory.'
+                f'Electromagnetic DB file {
+                    config.em_db_fname
+                } not found in "data" directory.'
             )
 
         with h5py.File(self.had_fname, "r") as mceq_db:
@@ -167,29 +171,22 @@ class HDF5Backend:
             self.version = (
                 mceq_db.attrs["version"] if "version" in mceq_db.attrs else "1.0.0"
             )
-            self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(
-                ca["e_grid"]
+            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
+                ca["e_grid"], config.e_min, config.e_max
             )
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
-                self.max_idx - self.min_idx,
+                int(self.max_idx - self.min_idx),
             )
-            self.dim_full = ca["e_dim"]
+            self.dim_full = int(ca["e_dim"])
+
+        self.medium = medium
 
     @property
     def energy_grid(self):
         return self._energy_grid
-
-    def _eval_energy_cuts(self, e_centers):
-        min_idx, max_idx = 0, len(e_centers)
-        slice0, slice1 = None, None
-        if config.e_min is not None:
-            min_idx = slice0 = np.argmin(np.abs(e_centers - config.e_min))
-        if config.e_max is not None:
-            max_idx = slice1 = np.argmin(np.abs(e_centers - config.e_max)) + 1
-        return min_idx, max_idx, slice(slice0, slice1)
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
         from scipy.sparse import csr_matrix
@@ -201,8 +198,8 @@ class HDF5Backend:
             description = hdf_root.attrs["description"]
         else:
             description = None
-        mat_data = hdf_root[:, :]
-        indptr_data = indptrs[:]
+        mat_data = np.asarray(hdf_root[:, :], dtype=config.floatlen)
+        indptr_data = np.asarray(indptrs[:])
         len_data = hdf_root.attrs["len_data"]
         if hdf_root.attrs["tuple_idcs"].shape[1] == 4:
             model_particles = sorted(
@@ -241,17 +238,18 @@ class HDF5Backend:
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg, child_pdg)] = (
-                csr_matrix(
-                    (
-                        mat_data[0, read_idx : read_idx + len_data[tupidx]],
-                        mat_data[1, read_idx : read_idx + len_data[tupidx]],
-                        indptr_data[tupidx, :],
-                    ),
-                    shape=(self.dim_full, self.dim_full),
-                )[self._cuts, self.min_idx : self.max_idx]
-            ).toarray()
-
+            index_d[(parent_pdg, child_pdg)] = np.asarray(
+                (
+                    csr_matrix(
+                        (
+                            mat_data[0, read_idx : read_idx + len_data[tupidx]],
+                            mat_data[1, read_idx : read_idx + len_data[tupidx]],
+                            indptr_data[tupidx, :],
+                        ),
+                        shape=(self.dim_full, self.dim_full),
+                    )[self._cuts, self.min_idx : self.max_idx]
+                ).toarray()
+            )
             relations[parent_pdg].append(child_pdg)
 
             info(
@@ -272,7 +270,7 @@ class HDF5Backend:
                             "parent.",
                         )
                         continue
-                    if eqv_parent in available_parents:
+                    elif eqv_parent in available_parents:
                         info(
                             10,
                             f"Parent {eqv_parent[0]} has dedicated simulation.",
@@ -283,7 +281,9 @@ class HDF5Backend:
                     relations[eqv_parent] = relations[parent_pdg]
                     info(
                         15,
-                        f"equivalence of {eqv_parent[0]} and {parent_pdg[0]} interactions",
+                        f"equivalence of {eqv_parent[0]} and {
+                            parent_pdg[0]
+                        } interactions",
                     )
 
             read_idx += len_data[tupidx]
@@ -297,7 +297,7 @@ class HDF5Backend:
         }
 
     def _check_subgroup_exists(self, subgroup, mname):
-        available_models = list(subgroup)
+        available_models = [m for m in list(subgroup) if "indptrs" not in m]
         if mname not in available_models:
             info(0, "Invalid choice/model", mname)
             info(0, "Choose from:\n", "\n".join(available_models))
@@ -307,7 +307,27 @@ class HDF5Backend:
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, f"Generating interaction db. mname={mname}")
         with h5py.File(self.had_fname, "r") as mceq_db:
-            self._check_subgroup_exists(mceq_db["hadronic_interactions"], mname)
+            if (
+                self.medium not in mceq_db["hadronic_interactions"]
+                or mname not in mceq_db["hadronic_interactions"][self.medium]
+            ) and config.fallback_to_air_cs:
+                self._check_subgroup_exists(
+                    mceq_db["hadronic_interactions"]["air"], mname
+                )
+                info(
+                    1,
+                    (
+                        f"Production matrices for {mname} in {self.medium} not found."
+                        + "Fall-back to air."
+                    ),
+                )
+                medium = "air"
+            else:
+                self._check_subgroup_exists(
+                    mceq_db["hadronic_interactions"][self.medium], mname
+                )
+                medium = self.medium
+
             if "SIBYLL21" in mname:
                 eqv = equivalences["SIBYLL21"]
             elif "SIBYLL23" in mname:
@@ -322,29 +342,66 @@ class HDF5Backend:
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
+            elif "FLUKA" in mname:
+                eqv = equivalences["FLUKA"]
+            else:
+                raise ValueError("Unknown equivalence table for", mname)
             int_index = self._gen_db_dictionary(
-                mceq_db["hadronic_interactions"][mname],
-                mceq_db["hadronic_interactions"][mname + "_indptrs"],
+                mceq_db["hadronic_interactions"][medium][mname],
+                mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
                 equivalences=eqv,
             )
 
         # Append electromagnetic interaction matrices from EmCA
         if config.enable_em:
+            if medium == "ice":
+                info(5, "Electromagnetic cross sections for ice replaced by water.")
+                medium = "water"
+
             with h5py.File(self.em_fname, "r") as em_db:
                 info(2, "Injecting EmCA matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
+                self._check_subgroup_exists(em_db["electromagnetic"], self.medium)
                 em_index = self._gen_db_dictionary(
-                    em_db["electromagnetic"]["emca_mats"],
-                    em_db["electromagnetic"]["emca_mats" + "_indptrs"],
+                    em_db["electromagnetic"][self.medium]["emca_mats"],
+                    em_db["electromagnetic"][self.medium]["emca_mats" + "_indptrs"],
                 )
-                int_index["parents"] = sorted(
-                    int_index["parents"] + em_index["parents"]
+            if config.muon_helicity_dependence:
+                # This is only approximately valid and is done for consistency.
+                # Typically electrons would quickly depolarize due to multiple
+                # scattering but this requires additional matrices for
+                # (-11,1) -> (-11,0) etc. that are not available now.
+                from itertools import product
+
+                info(
+                    5,
+                    "Copy bremsstrahlung and photon emission to "
+                    + "polarised electrons and muons.",
                 )
-                int_index["particles"] = sorted(
-                    list(set(int_index["particles"] + em_index["particles"]))
-                )
-                int_index["relations"].update(em_index["relations"])
-                int_index["index_d"].update(em_index["index_d"])
+                for pid, h in product([11, -11, 13, -13], [-1, 1]):
+                    em_index["index_d"][((pid, h), (pid, h))] = em_index["index_d"][
+                        ((pid, 0), (pid, 0))
+                    ]
+                    em_index["index_d"][((pid, h), (22, 0))] = em_index["index_d"][
+                        ((pid, 0), (22, 0))
+                    ]
+                    em_index["parents"].append((pid, h))
+
+                em_index["relations"] = defaultdict(list)
+                em_index["particles"] = []
+
+                for idx_tup in em_index["index_d"]:
+                    parent, child = idx_tup
+                    em_index["relations"][parent].append(child)
+                    em_index["particles"].append(parent)
+                    em_index["particles"].append(child)
+
+            int_index["parents"] = sorted(int_index["parents"] + em_index["parents"])
+            int_index["particles"] = sorted(
+                list(set(int_index["particles"] + em_index["particles"]))
+            )
+            int_index["relations"].update(em_index["relations"])
+            int_index["index_d"].update(em_index["index_d"])
 
         if int_index["description"] is not None:
             int_index["description"] += "\nInteraction model name: " + mname
@@ -357,65 +414,93 @@ class HDF5Backend:
         info(10, f"Generating decay db. dset_name={decay_dset_name}")
 
         with h5py.File(self.had_fname, "r") as mceq_db:
+            if config.muon_helicity_dependence:
+                if decay_dset_name != "polarized":
+                    info(
+                        0,
+                        "Warning: "
+                        + f"Does this decay dataset '{decay_dset_name}'"
+                        + " include polarization?",
+                    )
+                else:
+                    decay_dset_name = "polarized"
+                info(2, "Using helicity dependent decays.")
+
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][decay_dset_name],
                 mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
 
-            if config.muon_helicity_dependence:
-                info(2, "Using helicity dependent decays.")
-                custom_index = self._gen_db_dictionary(
-                    mceq_db["decays"]["custom_decays"],
-                    mceq_db["decays"]["custom_decays" + "_indptrs"],
-                )
+            # Refresh the metadata after modifying the index
+            dec_index["relations"] = defaultdict(list)
+            dec_index["particles"] = []
 
-                info(5, "Replacing decay from custom decay_db.")
-                dec_index["index_d"].update(custom_index["index_d"])
+            for idx_tup in dec_index["index_d"]:
+                parent, child = idx_tup
+                dec_index["relations"][parent].append(child)
+                dec_index["particles"].append(parent)
+                dec_index["particles"].append(child)
 
-                # Remove manually TODO: Kaon decays to muons assumed
-                # only two-body
-                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)))
-                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)))
-                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)))
-                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)))
-                # _ = dec_index['index_d'].pop(((211,0),(14,0)))
-                # _ = dec_index['index_d'].pop(((-211,0),(-14,0)))
-                # _ = dec_index['index_d'].pop(((321,0),(14,0)))
-                # _ = dec_index['index_d'].pop(((-321,0),(-14,0)))
-
-                dec_index["relations"] = defaultdict(list)
-                dec_index["particles"] = []
-
-                for idx_tup in dec_index["index_d"]:
-                    parent, child = idx_tup
-                    dec_index["relations"][parent].append(child)
-                    dec_index["particles"].append(parent)
-                    dec_index["particles"].append(child)
-
-                dec_index["parents"] = sorted(list(dec_index["relations"]))
-                dec_index["particles"] = sorted(list(set(dec_index["particles"])))
-
+            dec_index["parents"] = sorted(list(dec_index["relations"]))
+            dec_index["particles"] = sorted(list(set(dec_index["particles"])))
         return dec_index
 
     def cs_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
+        medium = self.medium
+        if "SIBYLL23C" in mname or "SIBYLL23DSTAR" in mname:
+            info(5, f"{mname} cross sections replaced by 23D.")
+            mname = "SIBYLL23D"
+
+        if "FLUKA" in mname:
+            info(5, f"{mname} cross sections replaced by DPMIII191.")
+            mname = "DPMJETIII191"
+
+        if config.adv_set["forced_int_cs"] is not None:
+            mname = config.adv_set["forced_int_cs"]
+            info(1, "All interaction cross sections forced to", mname)
+
+        if medium == "air-legacy" and "SIBYLL23" not in mname:
+            info(5, "air-legacy target replaced by air for", mname)
+            medium = "air"
+
         with h5py.File(self.had_fname, "r") as mceq_db:
-            self._check_subgroup_exists(mceq_db["cross_sections"], mname)
-            cs_db = mceq_db["cross_sections"][mname]
+            self._check_subgroup_exists(mceq_db["cross_sections"], medium)
+            self._check_subgroup_exists(mceq_db["cross_sections"][medium], mname)
+            cs_db = mceq_db["cross_sections"][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = list(cs_db.attrs["projectiles"])
+            parents = list(cs_db.attrs["parents"])
             for ip, p in enumerate(parents):
                 index_d[p] = cs_data[self._cuts, ip]
+
+        if config.adv_set["replace_meson_cross_sections_with"] is not None:
+            mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
+            info(1, "Meson cross sections forced to", mname_mesons)
+            with h5py.File(self.had_fname, "r") as mceq_db:
+                self._check_subgroup_exists(mceq_db["cross_sections"], medium)
+                self._check_subgroup_exists(
+                    mceq_db["cross_sections"][medium], mname_mesons
+                )
+                mes_cs_db = mceq_db["cross_sections"][medium][mname_mesons]
+                mes_cs_data = mes_cs_db[:]
+                mes_parents = list(mes_cs_db.attrs["projectiles"])
+                for ip, p in enumerate(mes_parents):
+                    if p in index_d and (100 < abs(p) < 2000):
+                        info(1, "Meson cross sections for", p, "replaced.")
+                        index_d[p] = mes_cs_data[self._cuts, ip]
 
         # Append electromagnetic interaction cross sections from EmCA
         if config.enable_em:
             with h5py.File(self.em_fname, "r") as em_db:
                 info(2, "Injecting EmCA matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
-                em_cs = em_db["electromagnetic"]["cs"][:]
-                em_parents = list(em_db["electromagnetic"]["cs"].attrs["projectiles"])
+                self._check_subgroup_exists(em_db["electromagnetic"], medium)
+                em_cs = em_db["electromagnetic"][medium]["cs"][:]
+                em_parents = list(
+                    em_db["electromagnetic"][medium]["cs"].attrs["projectiles"]
+                )
 
                 for ip, p in enumerate(em_parents):
                     if p in index_d:
@@ -425,28 +510,46 @@ class HDF5Backend:
 
         return {"parents": parents, "index_d": index_d}
 
-    def continuous_loss_db(self, medium="air"):
+    def continuous_loss_db(self):
         with h5py.File(self.had_fname, "r") as mceq_db:
-            self._check_subgroup_exists(mceq_db["continuous_losses"], medium)
-            cl_db = mceq_db["continuous_losses"][medium]
-
+            self._check_subgroup_exists(mceq_db["continuous_losses"], self.medium)
+            if config.enable_em or not config.enable_cont_rad_loss:
+                loss_case = "ionization"
+            else:
+                loss_case = "total"
+            cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
+            # No rad losses for hadrons implememented
+            cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
             index_d = {}
-            for pstr in list(cl_db):
-                for hel in [0, 1, -1]:
-                    index_d[(int(pstr), hel)] = cl_db[pstr][self._cuts]
-            if config.enable_em:
-                with h5py.File(self.em_fname, "r") as em_db:
-                    info(2, "Injecting EmCA matrices into interaction_db.")
-                    self._check_subgroup_exists(em_db, "electromagnetic")
-                    for hel in [0, 1, -1]:
-                        index_d[(11, hel)] = em_db["electromagnetic"]["dEdX 11"][
-                            self._cuts
-                        ]
-                        index_d[(-11, hel)] = em_db["electromagnetic"]["dEdX -11"][
-                            self._cuts
-                        ]
+            generic_dedx = None
 
-        return {"parents": sorted(list(index_d)), "index_d": index_d}
+            for k in list(cl_db):
+                if k != "hadron":
+                    for hel in [0, 1, -1]:
+                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                else:
+                    # Tuple (boost, dEdx)
+                    generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
+
+            # if config.enable_em:
+            #     with h5py.File(self.em_fname, "r") as em_db:
+            #         info(2, "Injecting EmCA matrices into interaction_db.")
+            #         self._check_subgroup_exists(em_db, "electromagnetic")
+            #         for hel in [0, 1, -1]:
+            #             index_d[(11, hel)] = em_db["electromagnetic"][self.medium][
+            #                 "dEdX 11"
+            #             ][self._cuts]
+            #             index_d[(-11, hel)] = em_db["electromagnetic"][self.medium][
+            #                 "dEdX -11"
+            #             ][self._cuts]
+        if generic_dedx is not None:
+            return {
+                "parents": sorted(list(index_d)),
+                "index_d": index_d,
+                "generic": generic_dedx,
+            }
+        else:
+            return {"parents": sorted(list(index_d)), "index_d": index_d}
 
 
 class Interactions:
@@ -561,7 +664,7 @@ class Interactions:
           args (tuple): arguments of `x_func`
 
         Returns:
-          (:func:`numpy.array`): modification matrix
+          (numpy.array): modification matrix
         """
         from MCEq.misc import gen_xmat
 
@@ -574,7 +677,7 @@ class Interactions:
         # Set lower triangular indices to 0. (should be not necessary)
         modmat[np.tril_indices(self.energy_grid.d, -1)] = 0.0
 
-        return modmat
+        return np.asarray(modmat)
 
     def _set_mod_pprod(self, prim_pdg, sec_pdg, x_func, args):
         """Sets combination of parent/secondary for error propagation.
@@ -703,7 +806,7 @@ class Interactions:
         elif abs(sec_pdg) == symm_pdg:
             mpli[(symm_pdg, prim_pdg)][("isospin", args)] = kmat
         else:
-            raise Exception("No isospin relation found for secondary" + str(sec_pdg))
+            info(0, " Warning: No isospin relation found for secondary" + str(sec_pdg))
 
         # Tell MCEqRun to regenerate the matrices if something has changed
         return True
@@ -726,7 +829,7 @@ class Interactions:
           parent (int): PDG ID of parent particle
           child (int): PDG ID of final state child/secondary particle
         Returns:
-          :func:`numpy.array`: yield matrix
+          numpy.array: yield matrix
         """
         info(10, "Called for", parent, child)
         if child not in self.relations[parent]:
@@ -782,12 +885,18 @@ class Decays:
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, default_decay_dset="full_decays"):
+    def __init__(self, mceq_hdf_db, override_decay_db_name=None):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
         self.parent_list = []
-        self._default_decay_dset = default_decay_dset
+        self._default_decay_dset = override_decay_db_name
+
+        if self._default_decay_dset is None:
+            if config.muon_helicity_dependence:
+                self._default_decay_dset = "polarized"
+            else:
+                self._default_decay_dset = "unpolarized"
 
     def load(self, parent_list=None, decay_dset=None):
         # Load tables and index from file
@@ -851,7 +960,7 @@ class Decays:
           parent (int): PDG ID of parent particle
           child (int): PDG ID of final state child particle
         Returns:
-          :func:`numpy.array`: decay matrix
+          numpy.array: decay matrix
         """
         info(20, "entering with", parent, child)
         if child not in self.relations[parent]:
@@ -877,7 +986,7 @@ class InteractionCrossSections:
     #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
     mbarn2cm2 = GeVcm**2 / GeV2mbarn
 
-    def __init__(self, mceq_hdf_db, interaction_model):
+    def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII193"):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -888,8 +997,6 @@ class InteractionCrossSections:
         self.index_d = None
         #: (str) Interaction Model name
         self.iam = normalize_hadronic_model_name(interaction_model)
-        # Load defaults
-        self.load(interaction_model)
 
     def __getitem__(self, parent):
         """Return the cross section in :math:`\\text{cm}^2` as a dictionary
@@ -921,7 +1028,7 @@ class InteractionCrossSections:
                                  else :math:`\\text{cm}^2`
 
         Returns:
-          :func:`numpy.array`: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
+          numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
         """
 
         message_templ = "replacing {0} with {1} cross section"
@@ -948,7 +1055,8 @@ class InteractionCrossSections:
 
         if not mbarn:
             return self.mbarn2cm2 * cs
-        return cs
+        else:
+            return cs
 
 
 class ContinuousLosses:
@@ -959,7 +1067,7 @@ class ContinuousLosses:
       material (str): name of the material (not fully implemented)
     """
 
-    def __init__(self, mceq_hdf_db, material=config.dedx_material):
+    def __init__(self, mceq_hdf_db):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -969,7 +1077,7 @@ class ContinuousLosses:
         #: Dictionary containing the distribuiton matrices
         self.index_d = None
         # Load defaults
-        self.load_db(material)
+        self.load_db()
 
     def __getitem__(self, parent):
         """Return the cross section in :math:`\\text{cm}^2` as
@@ -980,9 +1088,15 @@ class ContinuousLosses:
         """Defines the `in` operator to look for particles"""
         return key in self.parents
 
-    def load_db(self, material):
-        # Load tables and index from file
-        index = self.mceq_db.continuous_loss_db(material)
+    def load_db(self):
+        from scipy.interpolate import InterpolatedUnivariateSpline
 
+        # Load tables and index from file
+        index = self.mceq_db.continuous_loss_db()
         self.parents = index["parents"]
         self.index_d = index["index_d"]
+        if "generic" not in index and config.generic_losses_all_charged:
+            raise Exception("New data file needed to support generic losses.")
+        self.generic_spl = InterpolatedUnivariateSpline(
+            np.log(index["generic"][0]), np.log(index["generic"][1]), k=1
+        )
