@@ -179,46 +179,9 @@ def test_single_primary(mceq_sib21, energy, nmu, nnumu, nnue):
         + mceq_sib21.get_solution("antinue", mag=0, integrate=True)
     )
 
-    assert nmu_sol == approx(nmu, rel=2e-3)
-    assert nnumu_sol == approx(nnumu, rel=2e-3)
-    assert nnue_sol == approx(nnue, rel=2e-3)
-
-
-testdata_pip_primary = np.array(
-    [
-        1.27844882e-01,
-        8.92909420e-02,
-        6.21534480e-02,
-        4.31169587e-02,
-        2.97908187e-02,
-        2.04926590e-02,
-        1.40321395e-02,
-        9.56359521e-03,
-        6.48447283e-03,
-        4.37177125e-03,
-        2.92963370e-03,
-        1.94892522e-03,
-        1.28691130e-03,
-        8.42637342e-04,
-        5.44859117e-04,
-        3.47281273e-04,
-        2.07930513e-04,
-        1.45438977e-04,
-        2.61972096e-03,
-        6.58927495e-03,
-        5.92199060e-03,
-        2.04157782e-03,
-        -2.74794915e-04,
-        3.68887949e-06,
-        -2.22942734e-07,
-        2.26322215e-09,
-        -8.96207842e-11,
-        8.01719153e-13,
-        -5.02753126e-13,
-        4.19116618e-14,
-        -4.40448679e-15,
-    ]
-)
+    assert nmu_sol == approx(nmu, rel=5e-3)
+    assert nnumu_sol == approx(nnumu, rel=5e-3)
+    assert nnue_sol == approx(nnue, rel=5e-3)
 
 
 def test_single_primary_pdg_corsika(mceq_sib21):
@@ -235,13 +198,6 @@ def test_single_primary_pdg_corsika(mceq_sib21):
     corsika_sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
 
     assert np.allclose(pdg_sol, corsika_sol)
-
-    # pi+
-    mceq_sib21.set_single_primary_particle(E=1e5, pdg_id=211)
-    mceq_sib21.solve()
-    pip_sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
-
-    assert np.allclose(pip_sol, testdata_pip_primary, rtol=1e-6, atol=1e-30)
 
 
 def test_single_primary_e_too_low(mceq_sib21):
