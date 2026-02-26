@@ -4,6 +4,7 @@ MCEq v1.4
 #########
 
 Welcome to MCEq v1.4, a long foreseen release!
+
 | With this versions we updated major parts of the MCEq database.
 | We introduce **new Hadronic Interaction Models**, **updated decay yields**, and **updated cross sections**.
 | The **Data Driven Model (DDM)** is additionally available with this release.
