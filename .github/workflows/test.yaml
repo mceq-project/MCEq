@@ -50,6 +50,9 @@ jobs:
         allow-prereleases: true
     - name: Install requirements
       run: uv pip install --system . --group test ${{ matrix.installs }}
+    - name: Check MKL version
+      if: runner.os != 'macOS'
+      run: python -c "import mkl; print(mkl.__version__)"
     - name: Set DB path
       shell: bash
       run: |
