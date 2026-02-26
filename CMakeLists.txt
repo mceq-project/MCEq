@@ -29,9 +29,7 @@ if(APPLE)
   # –– declare and name the extension with the correct SOABI suffix
   python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
 
-  target_link_libraries(_libspacc PRIVATE "-framework Accelerate")
-
   # –– install into <INSTALL_DIR>/spacc (so in editable→gemm/spacc)
-  install(TARGETS _libspacc # on macOS, MODULE behaves like LIBRARY
-          DESTINATION ${INSTALL_DIR}/spacc)
+  install(TARGETS _libspacc LIBRARY # on macOS, MODULE behaves like LIBRARY
+                                    DESTINATION ${INSTALL_DIR}/spacc)
 endif()
