@@ -52,7 +52,7 @@ jobs:
       run: uv pip install --system . --group test ${{ matrix.installs }}
     - name: Check MKL version
       if: runner.os != 'macOS'
-      run: python -c "import mkl; print(mkl.__version__)"
+      run: pip show mkl
     - name: Set DB path
       shell: bash
       run: |
