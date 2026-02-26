@@ -108,3 +108,8 @@ name = "Documentation Updates"
 
 [tool.towncrier.fragment.feat]
 name="New Features"
+
+[tool.coverage.report]
+exclude_lines = [
+    "if config.enable_em:",
+]
