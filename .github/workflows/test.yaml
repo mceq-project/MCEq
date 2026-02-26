@@ -24,15 +24,15 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            python-version: "3.14"
+            python-version: "3.12"
             installs: "mkl numpy>=2 scipy matplotlib"
 
           - os: macos-14
-            python-version: "3.14"
+            python-version: "3.12"
             installs: ""
 
           - os: ubuntu-latest
-            python-version: "3.14"
+            python-version: "3.13"
             installs: "mkl"
       fail-fast: false
     steps:

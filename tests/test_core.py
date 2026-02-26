@@ -162,7 +162,7 @@ ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
     ["energy", "nmu", "nnumu", "nnue"], testdata_primary, ids=ids_primary
 )
 def test_single_primary(mceq_sib21, energy, nmu, nnumu, nnue):
-    mceq_sib21.set_interaction_model("SIBYLL21")
+    mceq_sib21.set_interaction_model("SIBYLL21", force=True)
     mceq_sib21.set_theta_deg(0.0)
     mceq_sib21.set_single_primary_particle(E=energy, pdg_id=2212)
     mceq_sib21.solve()
@@ -222,7 +222,7 @@ testdata_pip_primary = np.array(
 
 
 def test_single_primary_pdg_corsika(mceq_sib21):
-    mceq_sib21.set_interaction_model("SIBYLL21")
+    mceq_sib21.set_interaction_model("SIBYLL21", force=True)
     mceq_sib21.set_theta_deg(0.0)
     mceq_sib21.set_single_primary_particle(E=1e5, pdg_id=1000020040)
     mceq_sib21.solve()
@@ -245,7 +245,7 @@ def test_single_primary_pdg_corsika(mceq_sib21):
 
 
 def test_single_primary_e_too_low(mceq_sib21):
-    mceq_sib21.set_interaction_model("SIBYLL21")
+    mceq_sib21.set_interaction_model("SIBYLL21", force=True)
     mceq_sib21.set_theta_deg(0.0)
     with pytest.raises(Exception):
         mceq_sib21.set_single_primary_particle(E=1e0, pdg_id=2212)
