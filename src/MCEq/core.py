@@ -254,14 +254,14 @@ class MCEqRun:
         Some special prefixes are accepted for lepton names:
 
         - the total flux of muons, muon neutrinos etc. from all sources/mothers
-          can be retrieved by the prefix ``total_``, i.e. ``total_numu``
+          can be retrieved without a prefix ``mu+`` or with the prefix ``total_mu+``,
+          ``total_numu``
         - the conventional flux of muons, muon neutrinos etc. from all sources
           can be retrieved by the prefix ``conv_``, i.e. ``conv_numu``
+        - the prompt flux of muons, muon neutrinos etc. from all sources
+          can be retrieved by the prefix ``pr_``, i.e. ``pr_numu``
         - correspondigly, the flux of leptons which originated from the decay
           of a charged pion carries the prefix ``pi_`` and from a kaon ``k_``
-        - conventional leptons originating neither from pion nor from kaon
-          decay are collected in a category without any prefix, e.g. ``numu`` or
-          ``mu+``
 
         Args:
           particle_name (str): The name of the particle such, e.g.
@@ -275,6 +275,11 @@ class MCEqRun:
             not specified the flux at the surface is returned
           integrate (bool, optional): return averge particle number instead of
           flux (multiply by bin width)
+          return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
+            or ``total momentum`` flux. This defaults to ``kinetic energy`` and is in general taken from
+            ``MCEq.config.return_as``
+          dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helcities,
+            e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helcity for mu+.
 
         Returns:
           (:func: numpy.array): flux of particles on energy grid :attr:`e_grid`
