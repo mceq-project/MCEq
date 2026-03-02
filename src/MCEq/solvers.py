@@ -230,22 +230,18 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     grid_sol = []
 
     int_m_handle = c_void_p()
-    matrix_status = create_csr(
+    mst = create_csr(
         byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
     )
 
-    assert matrix_status == 0, f"MKL create_csr failed with status {
-        matrix_status
-    } on interaction matrix"
+    assert mst == 0, f"MKL create_csr failed with status {mst} on interaction matrix"
 
     dec_m_handle = c_void_p()
-    matrix_status = create_csr(
+    mst = create_csr(
         byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
     )
 
-    assert matrix_status == 0, (
-        f"MKL create_csr failed with status {matrix_status} on decay matrix"
-    )
+    assert mst == 0, f"MKL create_csr failed with status {mst} on decay matrix"
 
     # hints
     operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
@@ -287,17 +283,15 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     # add mkl_sparse_set_memory_hint???
     #
 
-    optimize_status = optimize(int_m_handle)
+    o = optimize(int_m_handle)
 
-    assert optimize_status == 0, f"MKL mkl_sparse_optimize failed with status {
-        optimize_status
-    } on interaction matrix"
+    assert o == 0, (
+        f"MKL mkl_sparse_optimize failed with status {o} on interaction matrix"
+    )
 
-    optimize_status = optimize(dec_m_handle)
+    o = optimize(dec_m_handle)
 
-    assert optimize_status == 0, f"MKL mkl_sparse_optimize failed with status {
-        optimize_status
-    } on decay matrix"
+    assert o == 0, f"MKL mkl_sparse_optimize failed with status {o} on decay matrix"
 
     from time import time
 

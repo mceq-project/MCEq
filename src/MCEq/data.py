@@ -158,10 +158,9 @@ class HDF5Backend:
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.had_fname):
+            _n = config.em_db_fname
             raise Exception(
-                f'Electromagnetic DB file {
-                    config.em_db_fname
-                } not found in "data" directory.'
+                f'Electromagnetic DB file {_n} not found in "data" directory.'
             )
 
         with h5py.File(self.had_fname, "r") as mceq_db:
@@ -279,11 +278,11 @@ class HDF5Backend:
                     particle_list.append(eqv_parent)
                     index_d[(eqv_parent, child_pdg)] = index_d[(parent_pdg, child_pdg)]
                     relations[eqv_parent] = relations[parent_pdg]
+                    _e = eqv_parent[0]
+                    _p = parent_pdg[0]
                     info(
                         15,
-                        f"equivalence of {eqv_parent[0]} and {
-                            parent_pdg[0]
-                        } interactions",
+                        f"equivalence of {_e} and {_p} interactions",
                     )
 
             read_idx += len_data[tupidx]

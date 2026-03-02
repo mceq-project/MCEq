@@ -89,9 +89,8 @@ def test_msis_atm(loc, season, expected):
     msis_obj = MSIS00Atmosphere(loc, season)
     if expected is None:
         ref = (float(msis_obj.max_X), float(1.0 / msis_obj.r_X2rho(100.0)))
-        msg = f"MSIS-00 reference data for {loc} in {
-            season
-        } not available. Creating a new one. {ref}"
+        msg = f"MSIS-00 reference data for {loc} in {season} not available."
+        msg += f" Creating a new one. {ref}"
         pytest.fail(msg)
     assert np.allclose([msis_obj.max_X, 1.0 / msis_obj.r_X2rho(100.0)], expected)
 

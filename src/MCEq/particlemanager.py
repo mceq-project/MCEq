@@ -300,11 +300,11 @@ class MCEqParticle:
         for c in self.children:
             children_d[c.pdg_id] = c
         if tracking_particle.pdg_id not in list(children_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not decay into {
-                    tracking_particle.name
-                }",
+                f"Parent particle {_n} does not decay into {_tn}",
             )
             return False
         # Copy the decay distribution from original PDG
@@ -319,11 +319,11 @@ class MCEqParticle:
         for s in self.hadr_secondaries:
             secondaries_d[s.pdg_id] = s
         if tracking_particle.pdg_id not in list(secondaries_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not produce {
-                    tracking_particle.name
-                } at the vertex",
+                f"Parent particle {_n} does not produce {_tn} at the vertex",
             )
             return False
         # Copy the interaction matrix from original PDG
@@ -989,11 +989,11 @@ class ParticleManager:
             for i in range(100):
                 if unique_child_pdg not in list(self.pdg2pref):
                     break
+                _tn = tracking_particle.name
+                _u = unique_child_pdg
                 info(
                     20,
-                    f"{i}: trying to find unique_pdg ({tracking_particle.name}) for {
-                        unique_child_pdg
-                    }",
+                    f"{i}: trying to find unique_pdg ({_tn}) for {_u}",
                 )
                 unique_child_pdg = (
                     unique_child_pdg[0] + int(copysign(10000, child_pdg[0])),
@@ -1025,11 +1025,11 @@ class ParticleManager:
                 alias_name,
                 from_interactions,
             ) in self.tracking_relations:
+                _tn = tracking_particle.name
+                _n = self.pdg2pref[parent_pdg].name
                 info(
                     20,
-                    f"Tracking of {tracking_particle.name} from {
-                        self.pdg2pref[parent_pdg].name
-                    } already activated.",
+                    f"Tracking of {_tn} from {_n} already activated.",
                 )
                 continue
 
@@ -1167,29 +1167,29 @@ class ParticleManager:
 
     def add_new_particle(self, new_mceq_particle):
         if new_mceq_particle in self.all_particles:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 0,
-                f"Particle {new_mceq_particle.name}/{
-                    new_mceq_particle.pdg_id
-                } has already been added. Use it.",
+                f"Particle {_n}/{_p} has already been added. Use it.",
             )
             return
 
         if not new_mceq_particle.is_resonance:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{
-                    new_mceq_particle.pdg_id
-                } is not a resonance.",
+                f"New particle {_n}/{_p} is not a resonance.",
             )
             new_mceq_particle.mceqidx = len(self.cascade_particles)
             self.cascade_particles.append(new_mceq_particle)
         else:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{
-                    new_mceq_particle.pdg_id
-                } is a resonance.",
+                f"New particle {_n}/{_p} is a resonance.",
             )
             self.resonances.append(new_mceq_particle)
 
