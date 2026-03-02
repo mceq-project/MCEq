@@ -59,7 +59,6 @@ html_theme_options = {
         {"name": "v1.4", "url": "v14v13_diff", "internal": True},
         {"name": "Cite Us", "url": "citeus", "internal": True},
         {"name": "API Reference", "url": "api-reference/index", "internal": True},
-        {"name": "References", "url": "citations", "internal": True},
     ],
     "icon_links": [
         {
@@ -75,7 +74,6 @@ html_sidebars = {
     "quickstart/index": [],  # disable sidebar on Quickstart
     "tutorial": [],
     "citeus": [],  # disable sidebar on Cite Us
-    "citations": [],  # disable sidebar on References
     "example-gallery": [],  # disable sidebar on References
     "v12v11_diff": [],  # disable sidebar on References
     "v14v13_diff": [],  # disable sidebar on References

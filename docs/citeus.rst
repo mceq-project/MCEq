@@ -50,6 +50,12 @@ Atmosphere
 Hadronic interaction models
 ===========================
 
+* `SIBYLL★ <https://inspirehep.net/literature/2774307>`_:
+    | *Sibyll★*
+    | F. Riehn,  A. Fedynitch, R. Engel
+    | Astropart.Phys. 160 (2024) 102964
+    | `arXiv:2404.02636 <https://arxiv.org/pdf/2404.02636>`_
+    
 * `SIBYLL-2.3d & c <https://inspirehep.net/literature/1768983>`_:
     | *Hadronic interaction model sibyll 2.3d and extensive air showers*
     | F. Riehn, R. Engel, A. Fedynitch, T. K. Gaisser, T. Stanev
