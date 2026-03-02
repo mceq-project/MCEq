@@ -917,6 +917,7 @@ class MCEqRun:
         # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix
         # on demand
         self.pman.set_interaction_model(self._int_cs, self._interactions, force=True)
+        self._resize_vectors_and_restore()
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=skip_decay_matrix
         )

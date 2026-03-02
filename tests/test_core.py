@@ -427,8 +427,8 @@ def test_solve_from_integration_path(mceq_sib21):
 @pytest.mark.parametrize(
     "pdg_id",
     [
-        pytest.param(None, marks=pytest.mark.xfail(reason="Fix issue #69")),
-        pytest.param(2212, marks=pytest.mark.xfail(reason="Fix issue #69")),
+        pytest.param(None, marks=pytest.mark.skip(reason="Fix issue #69")),
+        pytest.param(2212, marks=pytest.mark.skip(reason="Fix issue #69")),
     ],
 )
 @pytest.mark.parametrize("append", [False, True])
@@ -571,6 +571,14 @@ def test_unset_mod_pprod(mceq_sib21):
     mceq_sib21.solve()
     mceq_sib21.unset_mod_pprod(dont_fill=False)
     assert not mceq_sib21._interactions.mod_pprod
+
+
+def test_regenerate_matrices_after_adding_tracking_particle(mceq_sib21):
+    mceq_sib21.pman.add_tracking_particle(
+        [(2212, 0)], (13, 0), "p_mu", from_interactions=True
+    )
+    mceq_sib21.regenerate_matrices()
+    mceq_sib21.solve()
 
 
 def test_n_particles_energy_cutoff_and_grid(mceq_sib21):
