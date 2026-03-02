@@ -798,8 +798,6 @@ class MCEqRun:
                 self.density_model = dprof.IsothermalAtmosphere(*model_config)
             elif base_model == "GeneralizedTarget":
                 self.density_model = dprof.GeneralizedTarget()
-            else:
-                raise ValueError("Unknown atmospheric base model.")
         else:
             self.density_model = density_model_or_config
 
