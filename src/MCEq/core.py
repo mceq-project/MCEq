@@ -278,8 +278,8 @@ class MCEqRun:
           return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
             or ``total momentum`` flux. This defaults to ``kinetic energy`` and is in general taken from
             ``MCEq.config.return_as``
-          dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helcities,
-            e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helcity for mu+.
+          dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helicities,
+            e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helicity for mu+.
 
         Returns:
           (:func: numpy.array): flux of particles on energy grid :attr:`e_grid`
