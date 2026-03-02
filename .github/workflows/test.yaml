@@ -60,7 +60,7 @@ jobs:
         echo "MCEQ_CI_DB=${DB_DIR}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
 
     - name: Cache test database
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ env.MCEQ_CI_DB }}
         key: mceq-test-db-v1-${{ runner.os }}
