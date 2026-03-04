@@ -55,7 +55,7 @@ jobs:
 
   wheels:
     needs: release_check
-    if: needs.release_check.outputs.should_release == 'true'
+    if: needs.release_check.outputs.should_release == 'true' || github.event_name == 'workflow_dispatch'
     name: ${{ matrix.py }} ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
