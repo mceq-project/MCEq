@@ -1,4 +1,5 @@
 import importlib
+import os
 import pathlib
 import platform
 import sys
@@ -291,10 +292,12 @@ else:
         # fallback to default path
         mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
 
+    mkl_path = os.fspath(mkl_path)
+
 # mkl library handler
 mkl = None
 
-has_mkl = bool(mkl_path.is_file())
+has_mkl = bool(pathlib.Path(mkl_path).is_file())
 
 # Look for cupy module
 has_cuda = importlib.util.find_spec("cupy") is not None

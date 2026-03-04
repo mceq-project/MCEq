@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from scipy.interpolate import splrep
 
 from MCEq.particlemanager import _pdata
 
@@ -215,13 +216,12 @@ def test_ddm_utils_eval_spline():
     from MCEq import ddm_utils
 
     x = np.linspace(0.1, 0.99, 10)
-    tck = (
-        np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0]),
-        np.array([0.5, 0.4, 0.3, 0.2, 0.1, 0.0]),
-        3,
-    )
+    x_fit = np.linspace(0.1, 0.99, 20)
+    y_fit = np.exp(-x_fit)
+    tck = splrep(x_fit, y_fit, k=3)
+    cov = np.eye(len(tck[1]))
+
     x17 = True
-    cov = np.eye(6)
 
     # Test without error
     res = ddm_utils._eval_spline(x, tck, x17, cov)

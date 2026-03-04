@@ -1222,15 +1222,16 @@ class MCEqRun:
         ie_min = np.argmin(
             np.abs(self.e_bins - self.e_bins[self.e_bins >= min_energy_cutoff][0])
         )
+        _e = self.e_bins[ie_min]
+        _e_n = self.e_bins[ie_min + 1]
+        _e_m = self.e_grid[ie_min]
         info(
             10,
-            f"Energy cutoff for particle number calculation {
-                self.e_bins[ie_min]:4.3e} GeV",
+            f"Energy cutoff for particle number calculation {_e:4.3e} GeV",
         )
         info(
             15,
-            f"First bin is between {self.e_bins[ie_min]:3.2e} and {
-                self.e_bins[ie_min + 1]:3.2e} with midpoint {self.e_grid[ie_min]:3.2e}",
+            f"First bin is between {_e:3.2e} and {_e_n:3.2e} with midpoint {_e_m:3.2e}",
         )
         return np.sum(
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:]
@@ -1541,11 +1542,16 @@ class MatrixBuilder:
             try:
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
+                _d = self.dim_states
+                _n = rp.name
+                _l = rp.lidx
+                _u = rp.uidx
+                _nc = rc.name
+                _lc = rc.lidx
+                _uc = rc.uidx
                 raise Exception(
                     "Dimension mismatch: matrix "
-                    + f"{self.dim_states}x{self.dim_states}, p={rp.name}:({rp.lidx},{
-                        rp.uidx
-                    }), c={rc.name}:({rc.lidx},{rc.uidx})"
+                    + f"{_d}x{_d}, p={_n}:({_l},{_u}), c={_nc}:({_lc},{_uc})"
                 )
         return csr_matrix(new_mat)
 
