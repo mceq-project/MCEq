@@ -1,50 +1,44 @@
-# Changes in MCEq since moving from MCEq_classic to the 1.X.X versions
+<!-- towncrier release notes start -->
 
-Version 1.3.8:
+# MCEq 1.3.1 (2025-11-05)
 
-- New default data file in preparation for 1.4 update
-- Recomputed decay database and separated 3-body (3b) decays of Kaons
-- Unpolarized 3b decay of kaons full accounted for helicity dependent calculations
+## Bug Fixes
 
-Version 1.3.7:
+- Fixes `z_factor` calculation if minimal MCEq energy is above 2 GeV. Just failed before. ([#81](https://github.com/mceq-project/MCEq/pull/81))
+- Fixes/Updates backends for MCEq:
+  1. CUDA: Update from `cupy.cusparse.csrmv` to newer `cupyx.scipy.sparse`
+  2. Numpy: Fixed bug where numpy solver mutates the input arrays, resulting in wrong solutions for subsequent calls of `MCEqRun.solve()`
+  3. MKL: Fixed error due do not being able to find MKL library ([#83](https://github.com/mceq-project/MCEq/pull/83))
+- Threshold cross-over between resonance approximation and mixing was off-by-one.
+  1. Treats particles that are not in the standard_particle list as resonances.
+  2. Fixes condition for finding the mixing energy from `threshold>cross_over` to `threshold>=cross_over`. ([#100](https://github.com/mceq-project/MCEq/pull/100))
+- Fixes correctly setting the user-provided interaction model in the `init` of `MCEqRun`. Initialization failed if `SIBYLL2.3C` was not included in the database. ([#106](https://github.com/mceq-project/MCEq/pull/106))
 
-- New interface to Apple Accelerate/vecLib library for accelerated computation on Apple Silicon macs
-- Geometry/atmosphere interfaces moved to package level from redundant python source files
-- Merged AArch64 on linux support from master
-- Some advanced options to mix and match yields and inelastic cross sections from different models
-- Different Z-Factor function in DDM
+## Maintencance
 
-Version 1.3.5:
+- Update the MKL backend of MCEq to use more modern `oneMKL` library. ([#63](https://github.com/mceq-project/MCEq/pull/63))
+- Cleaning up tests of MCEq. ([#64](https://github.com/mceq-project/MCEq/pull/64))
+- Adding new tests to `MCEq.core`. Enhances test coverage! ([#67](https://github.com/mceq-project/MCEq/pull/67))
+- Adding new tests to `MCEq.solvers`. Enhances test coverage! ([#74](https://github.com/mceq-project/MCEq/pull/74))
+- Adding new tests to `MCEq.geometry`. Covers densities and atmospheres. Enhances test coverage! ([#77](https://github.com/mceq-project/MCEq/pull/77))
+- Removes the `WHR_charm` class! Adds tests for `MCEq.charm_models`. Enhances test coverage! ([#80](https://github.com/mceq-project/MCEq/pull/80))
+- Adding `towncrier` to the project. This enables simple and meaningful generation of future changelogs. ([#109](https://github.com/mceq-project/MCEq/pull/109))
 
-- Code formatter changed to black
-- Additional functions to help returning total momentum or energy spectra (instead of kinetic)
-- changing observation level `mceq.density_profile.set_h_obs()` triggers density spline recomputation
+## Documentation Updates
 
-Version 1.3.4:
+- Completely updates the MCEq documentation to new `pydata_sphinx_theme`. Enjoy it on [mceq.readthedocs.io](https://mceq.readthedocs.io)! ([#82](https://github.com/mceq-project/MCEq/pull/82))
+- Adds `intersphinx` mappings to the Documentation. Enables cross-referencing to other external documentations. ([#91](https://github.com/mceq-project/MCEq/pull/91))
+- Fixes the ReadTheDocs build by changing the install method of the `docs` dependencies in `.readthedocs.yml`. ([#93](https://github.com/mceq-project/MCEq/pull/93))
 
-- DPMJET-III K0 bug discovered and worked around. K0S/L matrices were not generated properly. The workaround is to construct K0 distributions from a sum of K+ and K- with proportions determined from a fit of the Zfactors to the true K0S/L distributions. K0S is equal to K0L by definition in all of the models.
-- Source dist fix. Package should now compile under Python 3.9 or other custom platforms easily via pip.
 
-Version 1.3.3:
+Version 1.3.0:
 
-- Initialization moved almost entirely to GPU if available, matrix construction may be x2-x3 faster before
-- Config defaults "auto" setting for `kernel_config` and respects other custom settings
-- GPU sparse solver simplified
-- Floating point precision defaults always to fp32 (see `config.floatlen`). MKL doesn't work with fp32 for some reason.
+- New buildsystem. Uses [scikit-build.core](https://github.com/scikit-build/scikit-build-core).
+- `mceq_config` deprecated, use `import MCEq.config`
+- Updated tests
+- New atmosphere models for the South Pole
+- Some linting
 
-Version 1.3.1:
-
-- Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen | iron`
-- Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`
-- Update to air interaction cross section, which is now consistently computed for mixture of N, O and Ar
-- The pre-averaged cross section for air in SIBYLL2.3 models can be selected with medium='air-legacy'
-- `A_target = 'auto'` will pic correct mass number for the selected medium
-- Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`
-- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model
-- Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
-- MCEqRun.density_model.set_h_obs can be used to change observation level altitude
-- Zenith angles > 90 accepted for h_obs > 0 since up-going cascades can develop from below the horizon (different to IceCube centered)
-- deprecation warning forced for config access via dictionary (instead of module)
 
 Version 1.2.6:
 

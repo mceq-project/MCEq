@@ -4,9 +4,15 @@ import numpy as np
 import six
 
 import MCEq.data
-from MCEq import asarray, config, csr_matrix, diag, eye, linalg, ones, zeros
+from MCEq import config
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.particlemanager import ParticleManager
+
+# trapz was finally removed with numpy 2.4
+if hasattr(np, "trapezoid"):
+    trapz = np.trapezoid
+else:
+    trapz = np.trapz
 
 
 class MCEqRun:
@@ -32,7 +38,7 @@ class MCEqRun:
 
 
     Args:
-      interaction_model (string): interaction model name, e.g. SIBYLL-2.3D
+      interaction_model (string): interaction model name, e.g. SIBYLL2.3E
       primary_model (class, param_tuple): classes derived from
         :class:`crflux.models.PrimaryFlux` and its parameters as tuple
       theta_deg (float): zenith angle :math:`\\theta` in degrees,
@@ -58,7 +64,9 @@ class MCEqRun:
         self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._int_cs = MCEq.data.InteractionCrossSections(mceq_hdf_db=self._mceq_db)
+        self._int_cs = MCEq.data.InteractionCrossSections(
+            mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
+        )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db)
@@ -241,14 +249,14 @@ class MCEqRun:
         Some special prefixes are accepted for lepton names:
 
         - the total flux of muons, muon neutrinos etc. from all sources/mothers
-          can be retrieved by the prefix ``total_``, i.e. ``total_numu``
+          can be retrieved without a prefix ``mu+`` or with the prefix ``total_mu+``,
+          ``total_numu``
         - the conventional flux of muons, muon neutrinos etc. from all sources
           can be retrieved by the prefix ``conv_``, i.e. ``conv_numu``
+        - the prompt flux of muons, muon neutrinos etc. from all sources
+          can be retrieved by the prefix ``pr_``, i.e. ``pr_numu``
         - correspondigly, the flux of leptons which originated from the decay
           of a charged pion carries the prefix ``pi_`` and from a kaon ``k_``
-        - conventional leptons originating neither from pion nor from kaon
-          decay are collected in a category without any prefix, e.g. ``numu`` or
-          ``mu+``
 
         Args:
           particle_name (str): The name of the particle such, e.g.
@@ -262,9 +270,14 @@ class MCEqRun:
             not specified the flux at the surface is returned
           integrate (bool, optional): return averge particle number instead of
           flux (multiply by bin width)
+          return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
+            or ``total momentum`` flux. This defaults to ``kinetic energy`` and is in general taken from
+            ``MCEq.config.return_as``
+          dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helicities,
+            e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helicity for mu+.
 
         Returns:
-          (numpy.array): flux of particles on energy grid :attr:`e_grid`
+          (:func: numpy.array): flux of particles on energy grid :attr:`e_grid`
         """
 
         res = np.zeros(self._energy_grid.d)
@@ -361,7 +374,8 @@ class MCEqRun:
             except KeyError:
                 if config.excpt_on_missing_particle:
                     raise Exception(f"Requested particle {particle_name} not found.")
-                info(1, f"Requested particle {particle_name} not found.")
+                else:
+                    info(1, f"Requested particle {particle_name} not found.")
 
         # When returning in Etot, interpolate on different grid
         if return_as == "total energy":
@@ -608,10 +622,7 @@ class MCEqRun:
         if corsika_id and pdg_id:
             raise Exception("Provide either corsika or PDG ID")
 
-        info(
-            2,
-            f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV",
-        )
+        info(2, f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV")
 
         if append is False:
             self._restore_initial_condition = [
@@ -639,9 +650,9 @@ class MCEqRun:
         info(
             3,
             (
-                "superposition: n_protons={0}, n_neutrons={1}, "
-                + "energy per nucleon={2:5.3g} GeV"
-            ).format(n_protons, n_neutrons, En),
+                f"superposition: n_protons={n_protons}, n_neutrons={n_neutrons}, "
+                + f"energy per nucleon={En:5.3g} GeV"
+            ),
         )
 
         cenbin = np.argwhere(En < ebins)[0][0] - 1
@@ -684,7 +695,7 @@ class MCEqRun:
                     emat, b_neutrons
                 )
 
-    def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
+    def set_initial_spectrum(self, spectrum, pdg_id, append=False):
         """Set a user-defined spectrum for an arbitrary species as initial condition.
 
         This function is an equivalent to :func:`set_single_primary_particle`. It
@@ -706,12 +717,12 @@ class MCEqRun:
 
         if not append:
             self._restore_initial_condition = [
-                (self.set_initial_spectrum, pdg_id, append)
+                (self.set_initial_spectrum, spectrum, pdg_id, append)
             ]
             self._phi0 *= 0
         else:
             self._restore_initial_condition.append(
-                (self.set_initial_spectrum, pdg_id, append)
+                (self.set_initial_spectrum, spectrum, pdg_id, append)
             )
         if len(spectrum) != self.dim:
             raise Exception("Lengths of spectrum and energy grid do not match.")
@@ -724,7 +735,7 @@ class MCEqRun:
         To choose, for example, a CORSIKA parametrization for the Southpole in January,
         do the following::
 
-            mceq_instance.set_density_model(('CORSIKA', ('PL_SouthPole', 'January')))
+            mceq_instance.set_density_model(("CORSIKA", ("PL_SouthPole", "January")))
 
         More details about the choices can be found in
         :mod:`MCEq.geometry.density_profiles`.Calling this method will
@@ -779,8 +790,6 @@ class MCEqRun:
                 self.density_model = dprof.IsothermalAtmosphere(*model_config)
             elif base_model == "GeneralizedTarget":
                 self.density_model = dprof.GeneralizedTarget()
-            else:
-                raise ValueError("Unknown atmospheric base model.")
         else:
             self.density_model = density_model_or_config
 
@@ -837,11 +846,11 @@ class MCEqRun:
             info(5, f"Injecting DDM {prim} --> {sec}")
             iso_part = isospin_partners[prim]
 
-            self.pman[prim].hadr_yields[self.pman[sec]] = asarray(mati)
+            self.pman[prim].hadr_yields[self.pman[sec]] = np.asarray(mati)
             info(5, "Injecting isopart", iso_part, isospin_symmetries[iso_part][sec])
             self.pman[iso_part].hadr_yields[
                 self.pman[isospin_symmetries[iso_part][sec]]
-            ] = asarray(mati)
+            ] = np.asarray(mati)
             injected.append(
                 ((prim, sec), (iso_part, isospin_symmetries[iso_part][sec]))
             )
@@ -906,6 +915,7 @@ class MCEqRun:
         # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix
         # on demand
         self.pman.set_interaction_model(self._int_cs, self._interactions, force=True)
+        self._resize_vectors_and_restore()
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=skip_decay_matrix
         )
@@ -995,6 +1005,9 @@ class MCEqRun:
 
         self._solution, self.grid_sol = kernel(*args)
 
+        if isinstance(self.grid_sol, list):
+            self.grid_sol = np.asarray(self.grid_sol)
+
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
     def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):
@@ -1034,7 +1047,36 @@ class MCEqRun:
 
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+            import MCEq.spacc as spacc
+
+            try:
+                if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
+                    self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
+                if not np.array_equal(self._spacc_int_m.data, self.int_m.data):
+                    self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
+            except AttributeError:
+                info(10, "Matrices not yet in Accelerate format")
+                self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
+                self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
+
+            args = (
+                nsteps,
+                dX,
+                rho_inv,
+                self._spacc_int_m,
+                self._spacc_dec_m,
+                phi0,
+                grid_idcs,
+            )
+            args = (
+                nsteps,
+                dX,
+                rho_inv,
+                self._spacc_int_m,
+                self._spacc_dec_m,
+                phi0,
+                grid_idcs,
+            )
 
         elif config.kernel_config.lower() == "cuda":
             kernel = MCEq.solvers.solv_CUDA_sparse
@@ -1172,13 +1214,16 @@ class MCEqRun:
         ie_min = np.argmin(
             np.abs(self.e_bins - self.e_bins[self.e_bins >= min_energy_cutoff][0])
         )
+        _e = self.e_bins[ie_min]
+        _e_n = self.e_bins[ie_min + 1]
+        _e_m = self.e_grid[ie_min]
         info(
             10,
-            f"Energy cutoff for particle number calculation {self.e_bins[ie_min]:4.3e} GeV",
+            f"Energy cutoff for particle number calculation {_e:4.3e} GeV",
         )
         info(
             15,
-            f"First bin is between {self.e_bins[ie_min]:3.2e} and {self.e_bins[ie_min + 1]:3.2e} with midpoint {self.e_grid[ie_min]:3.2e}",
+            f"First bin is between {_e:3.2e} and {_e_n:3.2e} with midpoint {_e_m:3.2e}",
         )
         return np.sum(
             self.get_solution(label, mag=0, integrate=True, grid_idx=grid_idx)[ie_min:]
@@ -1228,10 +1273,7 @@ class MCEqRun:
 
         if not proj.is_projectile:
             raise Exception(f"{proj.name} is not a projectile particle.")
-        info(
-            10,
-            f"Computing e-dependent Zfactor for {proj.name} -> {sec.name}",
-        )
+        info(10, f"Computing e-dependent Zfactor for {proj.name} -> {sec.name}")
         if not proj.is_secondary(sec):
             raise Exception(f"{sec.name} is not a secondary particle of {proj.name}.")
 
@@ -1246,7 +1288,7 @@ class MCEqRun:
         zfac = np.zeros_like(self.e_grid)
 
         if config.has_cuda:
-            import cupy  # type: ignore
+            import cupy
 
             smat = cupy.asnumpy(smat)
             proj_cs = cupy.asnumpy(proj_cs)
@@ -1266,22 +1308,25 @@ class MCEqRun:
                     smat[min_idx : p_eidx + 1, p_eidx] * nuc_fac * cs_fac
                 )
             return zfac
-        # Like in Thunman et al. 1996
-        for p_eidx, e in enumerate(self.e_grid):
-            if e < min_energy:
+        else:
+            # Like in Thunman et al. 1996
+            for p_eidx, e in enumerate(self.e_grid):
+                if e < min_energy:
+                    continue
                 min_idx = p_eidx
-                continue
-            nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-            if use_cs_scaling:
-                cs_fac = np.zeros(p_eidx - min_idx + 1)
-                old_settings = np.seterr(all="ignore")
-                res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
-                np.seterr(**old_settings)
-                cs_fac[(res > 0) & np.isfinite(res)] = res[(res > 0) & np.isfinite(res)]
-            else:
-                cs_fac = 1.0
-            zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
-        return zfac
+                nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
+                if use_cs_scaling:
+                    cs_fac = np.zeros(p_eidx - min_idx + 1)
+                    old_settings = np.seterr(all="ignore")
+                    res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
+                    np.seterr(**old_settings)
+                    cs_fac[(res > 0) & np.isfinite(res)] = res[
+                        (res > 0) & np.isfinite(res)
+                    ]
+                else:
+                    cs_fac = 1.0
+                zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
+            return zfac
 
     def decay_z_factor(self, parent_pdg, child_pdg):
         """Energy dependent Z-factor according to Lipari (1993)."""
@@ -1307,7 +1352,7 @@ class MCEqRun:
             #     min_idx = p_eidx + 1
             #     continue
             xlab, xdist = proj.dNdec_dxlab(e, sec)
-            zfac[p_eidx] = np.trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
+            zfac[p_eidx] = trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
         return zfac
 
 
@@ -1376,7 +1421,7 @@ class MatrixBuilder:
                 self.max_lint = np.max(
                     [self.max_lint, np.max(parent.inverse_interaction_length())]
                 )
-                self.C_blocks[idx] *= asarray(
+                self.C_blocks[idx] *= np.asarray(
                     parent.inverse_interaction_length(), dtype=config.floatlen
                 )
 
@@ -1414,7 +1459,7 @@ class MatrixBuilder:
                     [self.max_ldec, np.max(parent.inverse_decay_length())]
                 )
 
-                self.D_blocks[idx] *= asarray(
+                self.D_blocks[idx] *= np.asarray(
                     parent.inverse_decay_length(), dtype=config.floatlen
                 )
 
@@ -1442,15 +1487,15 @@ class MatrixBuilder:
             f"Averaging continuous loss using {n_steps} intermediate steps.",
         )
 
-        op_step = eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
-        return linalg.matrix_power(op_step, n_steps) - eye(self._energy_grid.d)
+        op_step = np.eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
+        return np.linalg.matrix_power(op_step, n_steps) - np.eye(self._energy_grid.d)
 
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
         try:
-            op_mat = -diag(1 / self._energy_grid.c).dot(
-                self.op_matrix.dot(diag(self._pman[pdg_id].dEdX))
+            op_mat = -np.diag(1 / self._energy_grid.c).dot(
+                self.op_matrix.dot(np.diag(self._pman[pdg_id].dEdX))
             )
         except ValueError as e:
             msg = f"Error in continuous loss operator for {pdg_id}."
@@ -1473,7 +1518,7 @@ class MatrixBuilder:
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid."""
-        return zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
+        return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -1483,16 +1528,25 @@ class MatrixBuilder:
             It's super pain the a** to construct a properly indexed sparse matrix
             directly from the blocks, since bmat totally messes up the order.
         """
-        new_mat = zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+        from scipy.sparse import csr_matrix
+
+        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
 
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
+                _d = self.dim_states
+                _n = rp.name
+                _l = rp.lidx
+                _u = rp.uidx
+                _nc = rc.name
+                _lc = rc.lidx
+                _uc = rc.uidx
                 raise Exception(
                     "Dimension mismatch: matrix "
-                    + f"{self.dim_states}x{self.dim_states}, p={rp.name}:({rp.lidx},{rp.uidx}), c={rc.name}:({rc.lidx},{rc.uidx})"
+                    + f"{_d}x{_d}, p={_n}:({_l},{_u}), c={_nc}:({_lc},{_uc})"
                 )
         return csr_matrix(new_mat)
 
@@ -1545,7 +1599,7 @@ class MatrixBuilder:
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     self._follow_chains(
                         p,
-                        diag(ones(self.dim)).astype(config.floatlen),
+                        np.diag(np.ones(self.dim)).astype(config.floatlen),
                         p,
                         p.hadridx,
                         self.D_blocks,
@@ -1620,26 +1674,28 @@ class MatrixBuilder:
         dim_e = int(self._energy_grid.d)
         last = dim_e - 1
 
-        op_matrix = zeros((dim_e, dim_e), dtype=config.floatlen)
-        op_matrix[0, asarray(diags_leftmost)] = asarray(coeffs_leftmost) / (
+        op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
+        op_matrix[0, np.asarray(diags_leftmost)] = np.asarray(coeffs_leftmost) / (
             denom_leftmost * h[0]
         )
-        op_matrix[1, 1 + asarray(diags_left_1)] = asarray(coeffs_left_1) / (
+        op_matrix[1, 1 + np.asarray(diags_left_1)] = np.asarray(coeffs_left_1) / (
             denom_left_1 * h[1]
         )
-        op_matrix[2, 2 + asarray(diags_left_2)] = asarray(coeffs_left_2) / (
+        op_matrix[2, 2 + np.asarray(diags_left_2)] = np.asarray(coeffs_left_2) / (
             denom_left_2 * h[2]
         )
-        op_matrix[last, last + asarray(diags_rightmost)] = asarray(coeffs_rightmost) / (
-            denom_rightmost * h[last]
-        )
-        op_matrix[last - 1, last - 1 + asarray(diags_right_1)] = asarray(
+        op_matrix[last, last + np.asarray(diags_rightmost)] = np.asarray(
+            coeffs_rightmost
+        ) / (denom_rightmost * h[last])
+        op_matrix[last - 1, last - 1 + np.asarray(diags_right_1)] = np.asarray(
             coeffs_right_1
         ) / (denom_right_1 * h[last - 1])
-        op_matrix[last - 2, last - 2 + asarray(diags_right_2)] = asarray(
+        op_matrix[last - 2, last - 2 + np.asarray(diags_right_2)] = np.asarray(
             coeffs_right_2
         ) / (denom_right_2 * h[last - 2])
         for row in range(3, dim_e - 3):
-            op_matrix[row, row + asarray(diags)] = asarray(coeffs) / (denom * h[row])
+            op_matrix[row, row + np.asarray(diags)] = np.asarray(coeffs) / (
+                denom * h[row]
+            )
 
         self.op_matrix = op_matrix

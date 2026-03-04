@@ -9,17 +9,13 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes
-        :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values
-        :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix`
-        in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense
-        or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
     grid_sol = []
@@ -29,7 +25,7 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     dmc = dec_m
     dxc = dX
     ric = rho_inv
-    phc = phi
+    phc = phi.copy()  # Fix: create a copy to avoid modifying the input
 
     dXaccum = 0.0
 
@@ -55,12 +51,18 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 class CUDASparseContext:
-    """This class handles the transfer between CPU and GPU memory,
-    and the calling of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun`
-    and used by :func:`solv_CUDA_sparse`.
+    """This class handles the transfer between CPU and GPU memory, and the calling
+    of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
+    :func:`solv_CUDA_sparse`.
     """
 
     def __init__(self, int_m, dec_m, device_id=config.cuda_gpu_id):
+        if config.cuda_fp_precision == 32:
+            self.fl_pr = np.float32
+        elif config.cuda_fp_precision == 64:
+            self.fl_pr = np.float64
+        else:
+            raise Exception("CUDASparseContext(): Unknown precision specified.")
         # Setup GPU stuff and upload data to it
         try:
             import cupy as cp
@@ -70,8 +72,9 @@ class CUDASparseContext:
             self.cpx = cpx
         except ImportError:
             raise Exception(
-                "solv_CUDA_sparse(): Numbapro CUDA libaries not "
-                + "installed.\nCan not use GPU."
+                "solv_CUDA_sparse(): CuPy not installed or not available.\n"
+                + "Install with: pip install cupy-cuda12x>=12.0.0\n"
+                + "CuPy 12.0+ is required for modern sparse matrix interface compatibility."
             )
 
         cp.cuda.Device(device_id).use()
@@ -79,14 +82,8 @@ class CUDASparseContext:
 
     def set_matrices(self, int_m, dec_m):
         """Upload sparce matrices to GPU memory"""
-        if self.cpx.sparse.isspmatrix_csr(int_m):
-            self.cu_int_m = int_m
-        else:
-            self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=config.floatlen)
-        if self.cpx.sparse.isspmatrix_csr(dec_m):
-            self.cu_dec_m = dec_m
-        else:
-            self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=config.floatlen)
+        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
+        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
 
     def alloc_grid_sol(self, dim, nsols):
         """Allocates memory for intermediate if grid solution requested."""
@@ -105,7 +102,7 @@ class CUDASparseContext:
 
     def set_phi(self, phi):
         """Uploads initial condition to GPU memory."""
-        self.cu_curr_phi = self.cp.asarray(phi, dtype=config.floatlen)
+        self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
 
     def get_phi(self):
         """Downloads current solution from GPU memory."""
@@ -114,9 +111,16 @@ class CUDASparseContext:
     def solve_step(self, rho_inv, dX):
         """Makes one solver step on GPU using cuSparse (BLAS)"""
 
-        cu_delta_phi = self.cu_int_m @ self.cu_curr_phi
-        cu_delta_phi += self.cu_dec_m @ (self.cu_curr_phi * rho_inv)
-        self.cu_curr_phi += dX * cu_delta_phi
+        # Mimic the exact NumPy implementation:
+        # phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
+
+        # Calculate: int_m @ curr_phi + dec_m @ (rho_inv * curr_phi)
+        int_result = self.cu_int_m @ self.cu_curr_phi
+        dec_result = self.cu_dec_m @ (rho_inv * self.cu_curr_phi)
+        delta = int_result + dec_result
+
+        # Apply: curr_phi += delta * dX
+        self.cu_curr_phi += delta * dX
 
 
 def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
@@ -127,18 +131,14 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes
-        :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values
-        :math:`\\frac{1}{\\rho(X_i)}`
-      context (object): Instance of :class:`CUDASparseContext`
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (numpy.array): indices, when to save the state vector
-
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
+      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after final
-        step
-      numpy.array: state vector copies at `grid_idcs` or empty list
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
     c = context
@@ -179,38 +179,30 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Args:
       nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes
-        :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values
-        :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix`
-        in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense
-        or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (list): indices, when to save the state vector
+      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
+      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
+      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
+      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
+      grid_idcs (list): indices at which longitudinal solutions have to be saved.
 
     Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
-      numpy.array: state vector copies at `grid_idcs` or empty list
+      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
 
-    from ctypes import POINTER, byref, c_char, c_int
+    from ctypes import POINTER, Structure, byref, c_int, c_void_p
+    from ctypes import c_double as fl_pr
 
     from MCEq.config import mkl
 
+    # sparse CSR-matrix x dense vector
+    create_csr = mkl.mkl_sparse_d_create_csr
+    gemv = mkl.mkl_sparse_d_mv
+    gemv_hint = mkl.mkl_sparse_set_mv_hint
+    optimize = mkl.mkl_sparse_optimize
+    # dense vector + dense vector
+    axpy = mkl.cblas_daxpy
     np_fl = config.floatlen
-
-    if config.floatlen == np.float64:
-        from ctypes import c_double as fl_pr
-
-        # sparse CSR-matrix x dense vector
-        gemv = mkl.mkl_dcsrmv
-    else:
-        from ctypes import c_float as fl_pr
-
-        # sparse CSR-matrix x dense vector
-        gemv = mkl.mkl_scsrmv
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -228,17 +220,78 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     npdelta_phi = np.zeros_like(npphi)
     delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
 
-    trans = byref(c_char(b"n"))
-    npmatd = np.chararray(6)
-    npmatd[0] = b"G"
-    npmatd[3] = b"C"
-    matdsc = npmatd.ctypes.data_as(POINTER(c_char))
-    m = byref(c_int(int_m.shape[0]))
-    cdzero = byref(fl_pr(0.0))
-    cdone = byref(fl_pr(1.0))
+    m = c_int(int_m.shape[0])
+    cdzero = fl_pr(0.0)
+    cdone = fl_pr(1.0)
+    cizero = c_int(0)
+    cione = c_int(1)
 
     grid_step = 0
     grid_sol = []
+
+    int_m_handle = c_void_p()
+    mst = create_csr(
+        byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
+    )
+
+    assert mst == 0, f"MKL create_csr failed with status {mst} on interaction matrix"
+
+    dec_m_handle = c_void_p()
+    mst = create_csr(
+        byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
+    )
+
+    assert mst == 0, f"MKL create_csr failed with status {mst} on decay matrix"
+
+    # hints
+    operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
+
+    class MatrixDescr(Structure):
+        _fields_ = [
+            ("type", c_int),
+            ("mode", c_int),
+            ("diag", c_int),
+        ]
+
+    descr = MatrixDescr()
+    descr.type = int(20)  # General matrix
+    descr.mode = int(121)  # set but dont care since general matrix
+    descr.diag = int(131)  # set but dont care since general matrix
+
+    hint_status = gemv_hint(
+        int_m_handle,
+        operation,
+        descr,
+        nsteps,
+    )
+
+    assert hint_status == 0, (
+        f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
+    )
+
+    hint_status = gemv_hint(
+        dec_m_handle,
+        operation,
+        descr,
+        nsteps,
+    )
+
+    assert hint_status == 0, (
+        f"MKL gemv_hint failed with status {hint_status} on decay matrix"
+    )
+
+    # add mkl_sparse_set_memory_hint???
+    #
+
+    o = optimize(int_m_handle)
+
+    assert o == 0, (
+        f"MKL mkl_sparse_optimize failed with status {o} on interaction matrix"
+    )
+
+    o = optimize(dec_m_handle)
+
+    assert o == 0, f"MKL mkl_sparse_optimize failed with status {o} on decay matrix"
 
     from time import time
 
@@ -247,38 +300,26 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     for step in range(nsteps):
         # delta_phi = int_m.dot(phi)
         gemv(
-            trans,
-            m,
-            m,
+            operation,
             cdone,
-            matdsc,
-            int_m_data,
-            int_m_ci,
-            int_m_pb,
-            int_m_pe,
+            int_m_handle,
+            descr,
             phi,
             cdzero,
             delta_phi,
         )
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
         gemv(
-            trans,
-            m,
-            m,
-            byref(fl_pr(rho_inv[step])),
-            matdsc,
-            dec_m_data,
-            dec_m_ci,
-            dec_m_pb,
-            dec_m_pe,
+            operation,
+            fl_pr(rho_inv[step]),
+            dec_m_handle,
+            descr,
             phi,
             cdone,
             delta_phi,
         )
-        npphi += npdelta_phi * dX[step]
         # phi = delta_phi * dX + phi
-        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
-        # print(np.sum(npphi))
+        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
         if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
             grid_sol.append(np.copy(npphi))
@@ -316,7 +357,7 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 
     from ctypes import POINTER, c_double
 
-    from MCEq import spacc
+    import MCEq.spacc as spacc
 
     dim_phi = int(phi.shape[0])
     npphi = np.copy(phi)
@@ -350,7 +391,9 @@ def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_i
 
     info(
         2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+        "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)
+        ),
     )
 
     return npphi, np.asarray(grid_sol)

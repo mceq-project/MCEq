@@ -1,43 +1,37 @@
 ![PyPI](https://img.shields.io/pypi/v/MCEq)
 [![Documentation](https://readthedocs.org/projects/mceq/badge/?version=latest)](https://mceq.readthedocs.io/en/latest/?badge=latest)
 [![Build Status](https://dev.azure.com/afedynitch/MCEq/_apis/build/status/afedynitch.MCEq?branchName=master)](https://dev.azure.com/afedynitch/MCEq/_build/latest?definitionId=1&branchName=master)
-![Azure DevOps releases](https://img.shields.io/azure-devops/release/afedynitch/e02bcbf5-db8e-4417-ad07-cc2547ea47e0/6/6)
 
 # MCEq - Matrix cascade equations
 
-MCEq is a tool to numerically solve cascade equations that describe the evolution
-of particle densities as they propagate through a gaseous or dense medium.
-The main application are particle cascades in the Earth's atmosphere.
-Particles are represented by average densities on discrete energy bins.
-The results are differential energy spectra or total particle numbers.
-Various models/parameterizations for particle interactions and atmospheric
-density profiles are packaged with the code.  
+MCEq is a numerical tool for solving cascade equations that model the evolution of particle densities as they traverse gaseous or dense media. Its primary application is simulating particle cascades in the Earth's atmosphere, where particles are tracked as average densities across discrete energy bins. MCEq outputs differential energy spectra and total particle counts, supporting a range of models and parameterizations for particle interactions and atmospheric density profiles.
 
-This is a new version of the code and may break compatibility with the previous versions. 
-The old versions known as 'master' and 'development' branch are deprecated and located in the 
-[MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
+Very early releases, previously maintained under the 'master' and 'development' branches, are archived and available in the [MCEq_classic repository](https://github.com/afedynitch/MCEq_classic).
 
 ## [Documentation](http://mceq.readthedocs.org/en/latest/)
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
-### Version 1.2
-This is a significant update and some of the results. Please consult the
-[CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+### Version 1.4
+With this version we update the database to contain new hadronic interaction models alongside some bug fixes and new 
+features, such as DDM.
+
+Please consult the [CHANGELOG](CHANGELOG.md) and the dedicated [doc page](https://mceq.readthedocs.io/en/latest/v14v13_diff.html).
 
 ## Please cite our work
 
 If you are using this code in your scientific work, please cite the code **AND** the
-physical models. A complete list of references can be found in the 
-[Citations section of the docs](http://mceq.readthedocs.org/en/latest/citations.html).
+physical models!
+We provide citation resources in our [Docs](https://mceq.readthedocs.io/en/latest/citeus.html)!
 
 ### Authors:
 
 *Anatoli Fedynitch*
+*Stefan Fröse*
 
 ### Contributers
 
-*[Hans Dembinski](https://github.com/HDembinski)*
+See [here](https://github.com/mceq-project/MCEq/graphs/contributors) and [here](https://github.com/afedynitch/MCEq_classic/graphs/contributors) for MCEq_classic.
 
 ## Copyright and license
 

@@ -256,13 +256,13 @@ def _eval_spline(
     else:
         factor = x ** (gamma_zfac) if not x17 else x ** (gamma_zfac - 1.7)
 
-    def func(tck_1: npt.NDArray) -> npt.NDArray:  # type: ignore
+    def func(tck_1: npt.NDArray) -> npt.NDArray:
         return factor * np.exp(splev(x, (tck[0], tck_1, tck[2])))
 
     func_params = tck[1]
 
     if return_error:
-        y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)  # type: ignore
+        y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)
         sig_y = np.squeeze(np.sqrt(np.diag(np.atleast_1d(C))))
         return y, sig_y
     res = np.atleast_1d(func(func_params))
@@ -314,7 +314,7 @@ def _eval_spline_and_correction(
         )
 
     if return_error:
-        y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)  # type: ignore
+        y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)
         sig_y = np.squeeze(np.sqrt(np.diag(np.atleast_1d(C))))
         return y, sig_y
     res = np.atleast_1d(func(func_params))
@@ -359,7 +359,7 @@ def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
     x = np.sqrt(xbins[1:] * xbins[:-1])
 
     res = _eval_spline(x, entry.tck, entry.x17, entry.cov, return_error=False)
-    res[x < entry.x_min] = 0  # type: ignore
+    res[x < entry.x_min] = 0
     return entry.tv * res
 
 

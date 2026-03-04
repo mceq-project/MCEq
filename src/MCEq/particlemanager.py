@@ -300,9 +300,11 @@ class MCEqParticle:
         for c in self.children:
             children_d[c.pdg_id] = c
         if tracking_particle.pdg_id not in list(children_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not decay into {tracking_particle.name}",
+                f"Parent particle {_n} does not decay into {_tn}",
             )
             return False
         # Copy the decay distribution from original PDG
@@ -317,9 +319,11 @@ class MCEqParticle:
         for s in self.hadr_secondaries:
             secondaries_d[s.pdg_id] = s
         if tracking_particle.pdg_id not in list(secondaries_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not produce {tracking_particle.name} at the vertex",
+                f"Parent particle {_n} does not produce {_tn} at the vertex",
             )
             return False
         # Copy the interaction matrix from original PDG
@@ -441,7 +445,7 @@ class MCEqParticle:
                              to the projectile's energy grid
           dtridx (int,int): tuple containing index range relative
                             to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          cmat (:func:`numpy.array`): array reference to the interaction matrix
         """
         cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
             chidx[0] : chidx[1], projidx[0] : projidx[1]
@@ -457,7 +461,7 @@ class MCEqParticle:
                              to the projectile's energy grid
           dtridx (int,int): tuple containing index range relative
                             to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          cmat (:func:`numpy.array`): array reference to the interaction matrix
         """
         cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
             chidx[0] : chidx[1], projidx[0] : projidx[1]
@@ -475,7 +479,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest enerkin_energygy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -484,11 +488,8 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -496,6 +497,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -512,7 +517,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -522,11 +527,7 @@ class MCEqParticle:
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -534,6 +535,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -550,7 +555,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -559,12 +564,12 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        try:
-            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
+        else:
+            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
     def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
@@ -580,11 +585,10 @@ class MCEqParticle:
             verbose (bool): print out the closest energy
 
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
         if not hasattr(self, "_ptav_sib23c"):
-            # Load spline of average pt distribution as a funtion of log(E_lab) from
-            # sib23c
+            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
             import pickle
             from os.path import join
 
@@ -653,8 +657,6 @@ class MCEqParticle:
 
         Approximate value in Air.
         """
-        # TODO: This shall become aware of the densities
-
         if self.is_stable or self.ctau <= 0.0:
             self.E_crit = np.inf
         else:
@@ -670,7 +672,9 @@ class MCEqParticle:
             self.int_idx = (self.cs != 0).argmax()
             info(
                 10,
-                f"Interaction threshold for {self.name} is {self._energy_grid.c[self.int_idx]:5.3f} GeV",
+                "Interaction threshold for {0} is {1:5.3f} GeV".format(
+                    self.name, self._energy_grid.c[self.int_idx]
+                ),
             )
         else:
             self.int_idx = 0
@@ -685,7 +689,7 @@ class MCEqParticle:
         or hadron behavior.
 
         Args:
-          e_grid (numpy.array): energy grid of size :attr:`d`
+          e_grid (:func:`numpy.array`): energy grid of size :attr:`d`
           max_density (float): maximum density on the integration path (largest
                                decay length)
         """
@@ -704,16 +708,20 @@ class MCEqParticle:
             or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
             or config.adv_set["no_mixing"]
             or self.pdg_id[0] in config.adv_set["disable_decays"]
-        ):
-            self.mix_idx = max(self.int_idx, 0)
+        ) and self.is_mixed is not True:
+            self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
             return
 
-        # If particle is forced to be a "resonance"
-        if np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]:
-            self.mix_idx = d - 1
-            self.E_mix = self._energy_grid.c[self.mix_idx]
+        # If particle is forced to be a "resonance" or is not in standard_particles
+        pid = np.abs(self.pdg_id[0])
+        if (
+            pid in config.adv_set["force_resonance"]
+            and pid not in config.standard_particles
+        ):
+            self.mix_idx = d
+            self.E_mix = self._energy_grid.c[self.mix_idx - 1]
             self.is_mixed = False
             self.is_resonance = True
         # Particle can interact and decay
@@ -722,24 +730,22 @@ class MCEqParticle:
             threshold = np.zeros_like(inv_intlen)
             mask = inv_declen != 0.0
             threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
-            mask = np.where(threshold > cross_over)
-            if len(mask[0]) > 0:
-                self.mix_idx = np.where(threshold > cross_over)[0][0]
+            del mask
+            mix_idx_check = np.where(threshold >= cross_over)[0]
+            if len(mix_idx_check) != 0:
+                self.mix_idx = mix_idx_check[0]
                 self.E_mix = self._energy_grid.c[self.mix_idx]
-                self.is_mixed = True
-                self.is_resonance = False
             else:
-                self.mix_idx = d - 1
-                self.E_mix = self._energy_grid.c[self.mix_idx]
-                self.is_mixed = False
-                self.is_resonance = True
-        # These particles don't interact but can decay (e.g. muons or taus)
+                self.mix_idx = np.where(threshold < cross_over)[0][-1] + 1
+                self.E_mix = self._energy_grid.c[self.mix_idx - 1]
+            if self.mix_idx != 0:
+                self.is_mixed = True
+            self.is_resonance = False
+        # These particles don't interact but can decay (e.g. tau leptons)
         elif not self.can_interact and not self.is_stable:
             mask = inv_declen != 0.0
-            mix_idx = np.where(max_density / inv_declen[mask] > config.dXmax)[0][0]
-            self.E_mix = self._energy_grid.c[mask][mix_idx]
-            self.mix_idx = np.argmin(np.abs(self.E_mix - self._energy_grid.c))
-            assert self.E_mix == self._energy_grid.c[self.mix_idx]
+            self.mix_idx = np.where(max_density / inv_declen > config.dXmax)[0][0]
+            self.E_mix = self._energy_grid.c[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
         # Particle is stable but that should be handled above
@@ -749,10 +755,6 @@ class MCEqParticle:
             self.mix_idx = 0
             self.is_mixed = False
             self.is_resonance = False
-
-        self.mix_idx = max(self.int_idx, self.mix_idx)
-
-        assert self.E_mix == self._energy_grid.c[self.mix_idx]
 
     def __eq__(self, other):
         """Checks name for equality"""
@@ -972,6 +974,7 @@ class ParticleManager:
             )
             return
         else:
+            info(10, "Creating new tracking particle")
             # Copy all preferences of the original particle
             tracking_particle = copy(self.pdg2pref[child_pdg])
             tracking_particle.is_tracking = True
@@ -986,9 +989,11 @@ class ParticleManager:
             for i in range(100):
                 if unique_child_pdg not in list(self.pdg2pref):
                     break
+                _tn = tracking_particle.name
+                _u = unique_child_pdg
                 info(
                     20,
-                    f"{i}: trying to find unique_pdg ({tracking_particle.name}) for {unique_child_pdg}",
+                    f"{i}: trying to find unique_pdg ({_tn}) for {_u}",
                 )
                 unique_child_pdg = (
                     unique_child_pdg[0] + int(copysign(10000, child_pdg[0])),
@@ -997,7 +1002,9 @@ class ParticleManager:
             tracking_particle.unique_pdg_id = unique_child_pdg
             info(
                 10,
-                f"Creating new tracking particle {tracking_particle.name} with unique ID {unique_child_pdg}",
+                "Creating new tracking particle {0} with unique ID {1}".format(
+                    tracking_particle.name, unique_child_pdg
+                ),
             )
 
         # Track if attempt to add the tracking particle succeeded at least once
@@ -1018,17 +1025,19 @@ class ParticleManager:
                 alias_name,
                 from_interactions,
             ) in self.tracking_relations:
+                _tn = tracking_particle.name
+                _n = self.pdg2pref[parent_pdg].name
                 info(
                     20,
-                    f"Tracking of {tracking_particle.name} from {self.pdg2pref[parent_pdg].name} already activated.",
+                    f"Tracking of {_tn} from {_n} already activated.",
                 )
                 continue
 
             if not from_interactions:
-                info(15, f"Child {parent_pdg} tracks decays")
+                info(15, "Child {0} tracks decays".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_decays
             else:
-                info(15, f"Child {parent_pdg} tracks interactions")
+                info(15, "Child {0} tracks interactions".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_interactions
 
             # Check if the tracking is successful. If not the particle is not
@@ -1158,23 +1167,29 @@ class ParticleManager:
 
     def add_new_particle(self, new_mceq_particle):
         if new_mceq_particle in self.all_particles:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 0,
-                f"Particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} has already been added. Use it.",
+                f"Particle {_n}/{_p} has already been added. Use it.",
             )
             return
 
         if not new_mceq_particle.is_resonance:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is not a resonance.",
+                f"New particle {_n}/{_p} is not a resonance.",
             )
             new_mceq_particle.mceqidx = len(self.cascade_particles)
             self.cascade_particles.append(new_mceq_particle)
         else:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is a resonance.",
+                f"New particle {_n}/{_p} is a resonance.",
             )
             self.resonances.append(new_mceq_particle)
 
@@ -1291,10 +1306,11 @@ class ParticleManager:
             return self.pdg2pref[pdg_id_or_name]
         if isinstance(pdg_id_or_name, six.integer_types):
             return self.pdg2pref[(pdg_id_or_name, 0)]
-        try:
-            return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
-        except KeyError:
-            return self.pname2pref[pdg_id_or_name]
+        else:
+            try:
+                return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
+            except KeyError:
+                return self.pname2pref[pdg_id_or_name]
 
     def keys(self):
         """Returns pdg_ids of all particles"""

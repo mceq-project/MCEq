@@ -16,16 +16,6 @@ else()
   set(INSTALL_DIR ${SKBUILD_PROJECT_NAME}) # Specify the installation directory
 endif()
 
-# Detect macOS
-if(APPLE)
-  # Write out message and version of mac
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -arch arm64 -arch x86_64")
-  set(CMAKE_SHARED_LINKER_FLAGS
-      "${CMAKE_SHARED_LINKER_FLAGS} -framework Accelerate -arch arm64 -arch x86_64"
-  )
-  python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
-  install(TARGETS _libspacc DESTINATION ${INSTALL_DIR}/spacc)
-endif()
 
 python_add_library(
   _libnrlmsise00 MODULE src/MCEq/geometry/nrlmsise00/nrlmsise-00_data.c
@@ -35,3 +25,12 @@ install(TARGETS _libnrlmsise00 DESTINATION ${INSTALL_DIR}/geometry/nrlmsise00)
 python_add_library(_libcorsikaatm MODULE
                    src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
 install(TARGETS _libcorsikaatm DESTINATION ${INSTALL_DIR}/geometry/corsikaatm)
+
+if(APPLE)
+  # –– declare and name the extension with the correct SOABI suffix
+  python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
+
+  # –– install into <INSTALL_DIR>/spacc (so in editable→gemm/spacc)
+  install(TARGETS _libspacc LIBRARY # on macOS, MODULE behaves like LIBRARY
+                                    DESTINATION ${INSTALL_DIR}/spacc)
+endif()

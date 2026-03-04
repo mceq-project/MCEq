@@ -1,6 +1,7 @@
 """
 Ctypes interface for struct-based interface to the C-version of NRLMSISE-00.
-This C version of NRLMSISE-00 is written by Dominik Brodowski"""
+This C version of NRLMSISE-00 is written by Dominik Brodowski
+"""
 
 import os
 import sysconfig
