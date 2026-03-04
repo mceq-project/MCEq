@@ -211,6 +211,7 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
     assert generated_matrix == pytest.approx(expected_matrix)
 
 
+@pytest.mark.xdist_group("isolated")
 def test_ddm_utils_eval_spline():
     from MCEq import ddm_utils
 
