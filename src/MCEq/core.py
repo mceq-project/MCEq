@@ -703,7 +703,7 @@ class MCEqRun:
                     emat, b_neutrons
                 )
 
-    def set_initial_spectrum(self, spectrum, pdg_id=None, append=False):
+    def set_initial_spectrum(self, spectrum, pdg_id, append=False):
         """Set a user-defined spectrum for an arbitrary species as initial condition.
 
         This function is an equivalent to :func:`set_single_primary_particle`. It
@@ -725,12 +725,12 @@ class MCEqRun:
 
         if not append:
             self._restore_initial_condition = [
-                (self.set_initial_spectrum, pdg_id, append)
+                (self.set_initial_spectrum, spectrum, pdg_id, append)
             ]
             self._phi0 *= 0
         else:
             self._restore_initial_condition.append(
-                (self.set_initial_spectrum, pdg_id, append)
+                (self.set_initial_spectrum, spectrum, pdg_id, append)
             )
         if len(spectrum) != self.dim:
             raise Exception("Lengths of spectrum and energy grid do not match.")
