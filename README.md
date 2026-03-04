@@ -1,7 +1,6 @@
 ![PyPI](https://img.shields.io/pypi/v/MCEq)
 [![Documentation](https://readthedocs.org/projects/mceq/badge/?version=latest)](https://mceq.readthedocs.io/en/latest/?badge=latest)
 [![Build Status](https://dev.azure.com/afedynitch/MCEq/_apis/build/status/afedynitch.MCEq?branchName=master)](https://dev.azure.com/afedynitch/MCEq/_build/latest?definitionId=1&branchName=master)
-![Azure DevOps releases](https://img.shields.io/azure-devops/release/afedynitch/e02bcbf5-db8e-4417-ad07-cc2547ea47e0/6/6)
 
 # MCEq - Matrix cascade equations
 
@@ -13,24 +12,26 @@ Very early releases, previously maintained under the 'master' and 'development' 
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
-### Version 1.3
-This version is physically identical to the 1.2.X release, but features a modernized build system and now provides wheels up to Python 3.13. While this is primarily a technical update, core development has resumed and new features will be merged more frequently.
+### Version 1.4
+With this version we update the database to contain new hadronic interaction models alongside some bug fixes and new 
+features, such as DDM.
 
-Please consult the [CHANGELOG](CHANGELOG) and the dedicated [doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+Please consult the [CHANGELOG](CHANGELOG.md) and the dedicated [doc page](https://mceq.readthedocs.io/en/latest/v14v13_diff.html).
 
 ## Please cite our work
 
 If you are using this code in your scientific work, please cite the code **AND** the
-physical models. A complete list of references can be found in the 
-[Citations section of the docs](http://mceq.readthedocs.org/en/latest/citations.html).
+physical models!
+We provide citation resources in our [Docs](https://mceq.readthedocs.io/en/latest/citeus.html)!
 
 ### Authors:
 
 *Anatoli Fedynitch*
+*Stefan Fröse*
 
 ### Contributers
 
-*[Hans Dembinski](https://github.com/HDembinski)*
+See [here](https://github.com/mceq-project/MCEq/graphs/contributors) and [here](https://github.com/afedynitch/MCEq_classic/graphs/contributors) for MCEq_classic.
 
 ## Copyright and license
 
