@@ -1,4 +1,66 @@
+
+
 <!-- towncrier release notes start -->
+
+# MCEq 1.4.0 (2026-03-04)
+
+## Bug Fixes
+
+- Fixes `numpy.trapz` import for numpy>=2.4.
+  Fixes `tests/test_core.py::test_solve_skip_integration_path`.
+  Updates pre-commit to use ruff. ([#127](https://github.com/mceq-project/MCEq/pull/127))
+- Adding or removing particles in MCEq after initialisation of a `MCEqRun` instance required a call of the 
+  `regenerate_matrices` method in order to propagate these changes to the calculation of the flux.
+  This method did not automatically resized the flux vector, which lead to a shape mismatch when calling `solve()`.
+  We fix this by adding `_resize_vectors_and_restore` internally to the call to `regenerate_matrices`. ([#132](https://github.com/mceq-project/MCEq/pull/132))
+- Changes optional argument `pdg_id` in `set_initial_spectrum` to be a required argument. ([#135](https://github.com/mceq-project/MCEq/pull/135))
+- Fixed a bug where MCEq failed to load when running mkl with Python < 3.12 on windows. ([#138](https://github.com/mceq-project/MCEq/pull/138))
+- Auto detection of leading eigenvalues setting.
+  Changing `config.leading_process` is now effective.
+- Deprecation warning forced for config access via dictionary (instead of module)
+- Running MCEq with reduced energy did not account for correct mixing if the mixing energy lies outside the MCEq maximum energy.
+  This is fixed now by checking for threshold < hybrid_crossover.
+
+## Maintencance
+
+- Updated the Docstring of `MCEqRun.get_solution`. ([#133](https://github.com/mceq-project/MCEq/pull/133))
+- Removed an unnecessary `else` in `set_density_model` that was already catched. ([#136](https://github.com/mceq-project/MCEq/pull/136))
+- Update the README ([#137](https://github.com/mceq-project/MCEq/pull/137))
+- Updated the CI to run on macos-latest and macos-26.
+  Updated the CI to run on all python versions from 3.9 to 3.14 ([#138](https://github.com/mceq-project/MCEq/pull/138))
+- Geometry/atmosphere interfaces moved to package level from redundant python source files.
+
+## Documentation Updates
+
+- Updated the citation list to the new hadronic interaction models.
+  Merged both citation pages in the docs to one page. ([#134](https://github.com/mceq-project/MCEq/pull/134))
+
+## New Features
+
+- This is large PR merging changes towards v1.4 over the years.
+
+  Most significant we update MCEq to provide a new Database with updated models.
+  With this database cross-sections, hadronic yields, and decay yields get updated.
+
+  For a more in detail description of v1.4 read the updated [Documentation](https://mceq.readthedocs.io/en/latest/) of MCEq. ([#128](https://github.com/mceq-project/MCEq/pull/128))
+- Additional functions to help returning total momentum or energy spectra (instead of kinetic).
+- Choice for different media with option `interaction_medium = 'air | water | rock | ice | co2 | hydrogen | iron`.
+  Not all are yet available in this release.
+
+  `A_target = 'auto'` will pic correct mass number for the selected medium.
+
+  Medium can be selected by passing a keyword argument to `MCEqRun(...,medium='water',...)`.
+- Config defaults "auto" setting for `kernel_config` and respects other custom settings.
+  Accelerated backends are preferred over numpy.
+- Continuous losses taken into account for all charged particles, muons (PDG), electrons (ESTAR) and protons (PSTAR) have accurate tables. Generic "rescaled proton dEdX" for other charged particles if option `generic_losses_all_charged = True`.
+  Default is `False`.
+- Fall back option `fallback_to_air_cs` in case hadronic interaction matrices for selected medium not available
+- Some advanced options to mix and match yields and inelastic cross sections from different models
+- The Data Driven Model (DDM) is now available.
+- The config flag `enable_cont_rad_loss = True` controls if radiative losses (bremsstrahlung) are included in the continuous loss terms or handled by an EM model. This is the new default!
+- `Accelerate` backend is now available on macOS.
+- `MCEqRun.density_model.set_h_obs` can be used to change observation level altitude
+
 
 # MCEq 1.3.1 (2025-11-05)
 
