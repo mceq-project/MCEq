@@ -211,7 +211,20 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
     assert generated_matrix == pytest.approx(expected_matrix)
 
 
-@pytest.mark.xdist_group("isolated")
+def test_ddm_utils_splev_sanity():
+    from scipy.interpolate import splev
+
+    tck = (
+        np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0]),
+        np.array([0.5, 0.4, 0.3, 0.2, 0.1, 0.0]),
+        3,
+    )
+    x = np.linspace(0.1, 0.99, 10)
+    res = splev(x, tck)
+    print(res)
+    assert np.all(np.isfinite(res))
+
+
 def test_ddm_utils_eval_spline():
     from MCEq import ddm_utils
 
