@@ -1,6 +1,9 @@
 name: Test
 
 on:
+  schedule:
+    - cron: '0 22 * * 0'  # Monday 6am Taiwan time
+  workflow_dispatch:
   pull_request:
     paths:
       - src/**
@@ -22,7 +25,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-26, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-latest, macos-15-intel, macos-26-intel, windows-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
       fail-fast: false
     steps:
