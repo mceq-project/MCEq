@@ -47,7 +47,7 @@ jobs:
     - name: Install requirements
       run: uv pip install --system . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }}
     - name: Check MKL version
-      if: runner.os != 'macOS'
+      if: runner.os != 'macOS' && runner.arch != 'ARM64'
       run: pip show mkl
     - name: Set DB path
       shell: bash
