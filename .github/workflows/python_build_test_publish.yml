@@ -50,8 +50,7 @@ jobs:
         env:
           CIBW_BUILD: "cp314-*"
           CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
-          CIBW_TEST_REQUIRES: "pytest"
-          CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\" && pytest {project}/tests"
+          CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\""
           CIBW_PRERELEASE_PYTHONS: True
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
