@@ -36,57 +36,50 @@ jobs:
           fi
 
   test_pr:
-    name: Test (PR - Linux, Python 3.13)
+    name: Test Building Wheels on PR with Python 3.14
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest, windows-11-arm]
     steps:
       - uses: actions/checkout@v6
       - name: Build and test wheels
-        uses: pypa/cibuildwheel@v3.3
+        uses: pypa/cibuildwheel@v3.4
         env:
-          CIBW_BUILD: "cp313-*"
-          CIBW_ARCHS: "auto"
-          CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\""
-          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_BUILD: "cp314-*"
           CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
+          CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\""
           CIBW_PRERELEASE_PYTHONS: True
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
 
   wheels:
+    name: Building Wheels
     needs: release_check
     if: needs.release_check.outputs.should_release == 'true'
-    name: ${{ matrix.py }} ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
-        arch: [auto, aarch64]
-        py: [cp39, cp310, cp311, cp312, cp313]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest, windows-11-arm]
+        py: [cp39, cp310, cp311, cp312, cp313, cp314]
         exclude:
-          - os: windows-latest
-            arch: aarch64
-          - os: macos-13
-            arch: aarch64
-          - os: macos-14
-            arch: aarch64
-
+          - os: windows-11-arm
+            py: cp39
+          - os: windows-11-arm
+            py: cp310
     steps:
       - uses: actions/checkout@v6
 
-      - if: ${{ matrix.arch == 'aarch64' }}
-        uses: docker/setup-qemu-action@v3
-
-      - uses: pypa/cibuildwheel@v3.3
+      - uses: pypa/cibuildwheel@v3.4
         env:
           CIBW_BUILD: ${{ matrix.py }}-*
-          CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
           CIBW_TEST_REQUIRES: "pytest"
           # Windows-compatible test command using double quotes
           CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\""
-          CIBW_TEST_COMMAND_LINUX_AARCH64: "python -c \"import MCEq; print('MCEq imported successfully')\""
           CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
           CIBW_PRERELEASE_PYTHONS: True
           CIBW_DEPENDENCY_VERSIONS: "pinned"
@@ -94,7 +87,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wheel-${{ matrix.py }}-${{ matrix.os }}-${{ matrix.arch }}
+          name: wheel-${{ matrix.py }}-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
   sdist:

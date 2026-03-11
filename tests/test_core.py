@@ -427,25 +427,30 @@ def test_solve_from_integration_path(mceq_sib21):
 @pytest.mark.parametrize(
     "pdg_id",
     [
-        pytest.param(None, marks=pytest.mark.skip(reason="Fix issue #69")),
-        pytest.param(2212, marks=pytest.mark.skip(reason="Fix issue #69")),
+        2212,
+        2112,
     ],
 )
 @pytest.mark.parametrize("append", [False, True])
 def test_set_initial_spectrum(mceq_sib21, pdg_id, append):
-    spectrum = np.ones(42)
-    with pytest.raises(Exception):
-        mceq_sib21.set_initial_spectrum(spectrum, pdg_id, append)
-
-    spectrum = np.ones(mceq_sib21.dim)
-    mceq_sib21.set_initial_spectrum(spectrum, pdg_id, append)
+    cond = mceq_sib21._restore_initial_condition
+    phi0_backup = mceq_sib21._phi0.copy()
 
     particle = mceq_sib21.pman[pdg_id]
+    phi0 = mceq_sib21._phi0[particle.lidx : particle.uidx].copy()
 
-    phi0 = mceq_sib21._phi0[particle.lidx : particle.uidx]
-    mceq_sib21._resize_vectors_and_restore()
+    spectrum = np.ones_like(phi0) * 10
+    mceq_sib21.set_initial_spectrum(spectrum, pdg_id, append)
 
-    assert np.allclose(phi0, spectrum)
+    phi1 = mceq_sib21._phi0[particle.lidx : particle.uidx]
+
+    if append:
+        assert np.allclose(phi0, phi1 - spectrum)
+    if not append:
+        assert np.allclose(spectrum, phi1)
+
+    mceq_sib21._phi0 = phi0_backup
+    mceq_sib21._restore_initial_condition = cond
 
 
 msis_atmospheres = [
