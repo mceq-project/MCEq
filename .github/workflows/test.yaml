@@ -19,7 +19,8 @@ concurrency:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-
+    env:
+      UV_SYSTEM_PYTHON: "true"
     strategy:
       matrix:
         include:
@@ -49,27 +50,21 @@ jobs:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
     - name: Install requirements
-      run: uv pip install --system . --group test ${{ matrix.installs }}
+      run: uv pip install -e . --group test ${{ matrix.installs }}
     - name: Check MKL version
       if: runner.os != 'macOS'
       run: pip show mkl
-    - name: Set DB path
-      shell: bash
-      run: |
-        DB_DIR=$(python -c "import importlib.util; import MCEq.config as c; print(c.data_dir)" | tail -1 | tr -d '\n\r')
-        echo "MCEQ_CI_DB=${DB_DIR}/mceq_db_v140reduced_compact.h5" >> $GITHUB_ENV
-
     - name: Cache test database
       uses: actions/cache@v5
       with:
-        path: ${{ env.MCEQ_CI_DB }}
+        path: src/MCEq/data/mceq_db_v140reduced_compact.h5
         key: mceq-test-db-v1-${{ runner.os }}
 
     - name: Download test database if not cached
       shell: bash
       run: |
-        if [ ! -f "$MCEQ_CI_DB" ]; then
-          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o "$MCEQ_CI_DB"
+        if [ ! -f "src/MCEq/data/mceq_db_v140reduced_compact.h5" ]; then
+          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
         fi
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
