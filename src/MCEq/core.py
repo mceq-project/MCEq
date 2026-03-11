@@ -818,27 +818,77 @@ class MCEqRun:
         # indices as well
         # self.pmod._gen_list_of_particles()
 
-    def set_theta_deg(self, theta_deg):
-        """Sets zenith angle :math:`\\theta` as seen from a detector.
+    def set_zenith_azimuth(self, zenith_deg, azimuth_deg=None):
+        """Set the zenith and (optionally) azimuth angles for the shower.
 
-        Currently only 'down-going' angles (0-90 degrees) are supported.
+        This is the primary API for configuring the shower direction.
+        :meth:`set_theta_deg` is a deprecated alias for this method.
+
+        **Azimuth convention**: 0° = geographic North, 90° = East
+        (clockwise from North, meteorological convention).
+
+        **Zenith convention**: 0° = directly above the detector (vertical
+        downgoing shower), 90° = horizontal, > 90° = upgoing shower whose
+        source is below the horizon.  Upgoing angles require a density
+        model with ``max_theta = 180`` (e.g.
+        :class:`~MCEq.geometry.density_profiles.MSIS00LocationCentered`
+        subclasses).
+
+        When *azimuth_deg* is ``None`` and the active density model is an
+        instance of
+        :class:`~MCEq.geometry.density_profiles.MSIS00LocationCentered`,
+        the atmospheric density profile is averaged over all azimuth
+        directions for the given zenith angle.  For models without azimuth
+        awareness the argument is silently ignored.
 
         Args:
-          theta_deg (float): zenith angle in the range 0-90 degrees
+            zenith_deg (float): Zenith angle at the detector in degrees.
+            azimuth_deg (float, optional): Azimuth angle in degrees.
+                ``None`` (default) triggers azimuth-averaging for capable
+                models.
         """
         import MCEq.geometry.density_profiles as dprof
 
-        info(2, f"Zenith angle {theta_deg:6.2f}")
+        info(
+            2,
+            f"Zenith angle {zenith_deg:6.2f}"
+            + (f", azimuth {azimuth_deg:6.2f}" if azimuth_deg is not None else ""),
+        )
 
         if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
 
-        if self.density_model.theta_deg == theta_deg:
-            info(2, "Theta selection correponds to cached value, skipping calc.")
+        # Cache check: skip if nothing has changed
+        cached_theta = self.density_model.theta_deg
+        cached_azi = getattr(self.density_model, "_current_azimuth_deg", None)
+        if cached_theta == zenith_deg and cached_azi == azimuth_deg:
+            info(2, "Angle selection corresponds to cached value, skipping calc.")
             return
 
-        self.density_model.set_theta(theta_deg)
+        if isinstance(self.density_model, dprof.MSIS00LocationCentered):
+            self.density_model.set_theta(zenith_deg, azimuth_deg=azimuth_deg)
+        else:
+            self.density_model.set_theta(zenith_deg)
         self.integration_path = None
+
+    def set_theta_deg(self, theta_deg):
+        """Sets zenith angle :math:`\\theta` as seen from a detector.
+
+        .. deprecated::
+            Use :meth:`set_zenith_azimuth` instead.  This method will be
+            removed in a future release.
+
+        Args:
+          theta_deg (float): zenith angle in degrees
+        """
+        import warnings
+
+        warnings.warn(
+            "set_theta_deg() is deprecated; use set_zenith_azimuth() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.set_zenith_azimuth(theta_deg)
 
     def inject_ddm(self, ddm):
         """Set a DDM object as interaction model.
