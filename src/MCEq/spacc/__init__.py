@@ -1,4 +1,3 @@
-import atexit
 import os
 import sysconfig
 from ctypes import (
@@ -61,8 +60,6 @@ daxpy = spacc.daxpy
 
 # Initialize
 spacc.free_mstore()
-# On module unload or reload, free the pointers
-atexit.register(spacc.free_mstore)
 
 
 class SpaccMatrix(object):
@@ -77,7 +74,8 @@ class SpaccMatrix(object):
         self._create_matrix()
 
     def __del__(self):
-        spacc.free_mstore_at(self.store_id)
+        if self.store_id is not None and spacc is not None:
+            spacc.free_mstore_at(self.store_id)
 
     def _create_matrix(self):
         self.store_id = spacc.create_sparse_matrix(
