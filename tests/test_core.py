@@ -784,6 +784,9 @@ def test_get_set_state_vector_checkpoint_restore(mceq_sib21):
 
 def test_set_zenith_azimuth(mceq_sib21):
     """set_zenith_azimuth should set zenith and keep integration_path invalidated."""
+    # Ensure an EarthsAtmosphere model is active; a previous test may have left
+    # a GeneralizedTarget which does not support angle settings.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
     mceq_sib21.set_zenith_azimuth(30.0)
     assert mceq_sib21.density_model.theta_deg == 30.0
 
@@ -799,6 +802,10 @@ def test_set_zenith_azimuth(mceq_sib21):
 def test_set_theta_deg_deprecation(mceq_sib21):
     """set_theta_deg must emit a DeprecationWarning."""
     import warnings
+
+    # Ensure an EarthsAtmosphere model is active; a previous test may have left
+    # a GeneralizedTarget which does not support angle settings.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -823,3 +830,7 @@ def test_set_zenith_azimuth_with_km3net(mceq_sib21):
     mceq_sib21.set_zenith_azimuth(60.0)
     assert mceq_sib21.density_model.theta_deg == 60.0
     assert mceq_sib21.density_model.current_impact_latitude is None
+
+    # Restore the session fixture to a neutral atmosphere so other tests are
+    # not affected by the KM3NeT density model we set above.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
