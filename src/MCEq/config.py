@@ -447,7 +447,7 @@ def _download_file(url, outfile):
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
-# sha256 checksum of the file
+# sha256 checksum of the default database file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
 file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
@@ -458,13 +458,20 @@ def ensure_db_available():
     Called by MCEqRun.__init__ so that the download is deferred until the
     database is actually needed.  This allows tests (and other callers) to
     override ``config.mceq_db_fname`` before a download is attempted.
+
+    The integrity check only applies to the default database; non-default
+    files are accepted as-is if they exist.
     """
     import os
 
     _url = base_url + release_tag + mceq_db_fname
     filepath = data_dir / mceq_db_fname
     if filepath.exists():
-        is_complete = FileIntegrityCheck(filepath, file_checksum).succeeded()
+        is_complete = (
+            FileIntegrityCheck(filepath, file_checksum).succeeded()
+            if mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
+            else True
+        )
     else:
         is_complete = False
 
