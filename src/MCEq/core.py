@@ -51,6 +51,7 @@ class MCEqRun:
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
+        config.ensure_db_available()
         self.medium = kwargs.pop("medium", config.interaction_medium)
         self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 

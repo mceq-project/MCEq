@@ -447,30 +447,34 @@ def _download_file(url, outfile):
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
-url = base_url + release_tag + mceq_db_fname
 # sha256 checksum of the file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
 file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
-filepath_to_database = data_dir / mceq_db_fname
-if filepath_to_database.exists():
-    is_file_complete = FileIntegrityCheck(
-        filepath_to_database, file_checksum
-    ).succeeded()
-else:
-    is_file_complete = False
 
-if not is_file_complete:
-    print(f"Downloading for mceq database file {mceq_db_fname}.")
-    if debug_level >= 2:
-        print(url)
-    _download_file(url, filepath_to_database)
+def ensure_db_available():
+    """Download the MCEq database if not already present.
 
-old_database = "mceq_db_lext_dpm191.h5"
-filepath_to_old_database = data_dir / old_database
-
-if filepath_to_old_database.exists():
+    Called by MCEqRun.__init__ so that the download is deferred until the
+    database is actually needed.  This allows tests (and other callers) to
+    override ``config.mceq_db_fname`` before a download is attempted.
+    """
     import os
 
-    print(f"Removing previous database {old_database}.")
-    os.unlink(filepath_to_old_database)
+    _url = base_url + release_tag + mceq_db_fname
+    filepath = data_dir / mceq_db_fname
+    if filepath.exists():
+        is_complete = FileIntegrityCheck(filepath, file_checksum).succeeded()
+    else:
+        is_complete = False
+
+    if not is_complete:
+        print(f"Downloading MCEq database file {mceq_db_fname}.")
+        if debug_level >= 2:
+            print(_url)
+        _download_file(_url, filepath)
+
+    old_db = data_dir / "mceq_db_lext_dpm191.h5"
+    if old_db.exists():
+        print(f"Removing previous database {old_db.name}.")
+        os.unlink(old_db)

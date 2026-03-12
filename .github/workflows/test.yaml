@@ -53,17 +53,17 @@ jobs:
       if: runner.os != 'macOS' && runner.arch != 'ARM64'
       run: pip show mkl
     - name: Cache test database
+      id: cache-db
       uses: actions/cache@v5
       with:
         path: src/MCEq/data/mceq_db_v140reduced_compact.h5
         key: mceq-test-db-v1-${{ runner.os }}
 
     - name: Download test database if not cached
+      if: steps.cache-db.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        if [ ! -f "src/MCEq/data/mceq_db_v140reduced_compact.h5" ]; then
-          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
-        fi
+        curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
     - name: Upload coverage reports to Codecov
