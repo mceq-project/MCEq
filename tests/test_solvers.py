@@ -80,6 +80,7 @@ def test_solv_numpy_does_not_modify_input_phi(toy_solver_setup):
     )
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_matrix_creation(toy_solver_problem):
     """SpaccMatrix should be created from a scipy sparse matrix without error."""
@@ -94,6 +95,7 @@ def test_spacc_matrix_creation(toy_solver_problem):
     assert sm.nnz == int_m.nnz
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_gemv_matches_scipy(toy_solver_problem):
     """gemv_npargs should produce the same result as scipy sparse dot."""
@@ -115,6 +117,7 @@ def test_spacc_gemv_matches_scipy(toy_solver_problem):
     )
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_double_del_is_safe(toy_solver_problem):
     """Calling __del__ twice on a SpaccMatrix must not crash (double-free guard)."""
@@ -129,6 +132,7 @@ def test_spacc_double_del_is_safe(toy_solver_problem):
     sm.__del__()
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_del_with_none_store_id():
     """SpaccMatrix.__del__ with store_id=None must not crash (failed-init guard)."""
@@ -141,6 +145,7 @@ def test_spacc_del_with_none_store_id():
     sm.__del__()  # Must not raise or crash
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_solver_matches_numpy(toy_solver_problem):
     """solv_spacc_sparse should produce the same result as solv_numpy."""
@@ -166,6 +171,7 @@ def test_spacc_solver_matches_numpy(toy_solver_problem):
     )
 
 
+@pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_matrix_store_full():
     """Creating more matrices than SIZE_MSTORE (10) should raise an exception."""
