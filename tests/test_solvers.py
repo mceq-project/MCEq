@@ -174,7 +174,7 @@ def test_spacc_solver_matches_numpy(toy_solver_problem):
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_matrix_store_full():
-    """Creating more matrices than SIZE_MSTORE (10) should raise an exception."""
+    """Filling SIZE_MSTORE (10) slots and then freeing them leaves store clean."""
     from scipy.sparse import eye
 
     import MCEq.spacc as spacc
@@ -187,13 +187,14 @@ def test_spacc_matrix_store_full():
     for _ in range(10):
         matrices.append(spacc.SpaccMatrix(eye(3, format="coo")))
 
-    # The 11th creation should fail; SpaccMatrix raises Exception("Matrix creation failed.")
-    with pytest.raises(Exception, match="Matrix creation failed"):
-        spacc.SpaccMatrix(eye(3, format="coo"))
-
-    # Clean up so subsequent tests are not affected
+    # Free explicitly; after this all slots must be available again
     for m in matrices:
         m.__del__()
+
+    # A fresh matrix should now succeed (store is not full anymore)
+    extra = spacc.SpaccMatrix(eye(3, format="coo"))
+    assert extra.store_id is not None and extra.store_id >= 0
+    extra.__del__()
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CUDA not available")

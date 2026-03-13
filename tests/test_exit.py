@@ -87,6 +87,29 @@ del m2
 """
 
 
+# Tests that filling all SIZE_MSTORE slots and then trying one more raises.
+# Must run in a subprocess so the matrix store starts completely empty.
+_SCRIPT_SPACC_STORE_FULL = """
+import sys
+from scipy.sparse import eye
+import MCEq.spacc as spacc
+
+matrices = []
+for _ in range(10):
+    matrices.append(spacc.SpaccMatrix(eye(3, format="coo")))
+
+try:
+    extra = spacc.SpaccMatrix(eye(3, format="coo"))
+    print("ERROR: expected exception not raised", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    if "Matrix creation failed" not in str(e):
+        print(f"ERROR: unexpected exception message: {e}", file=sys.stderr)
+        sys.exit(1)
+# Expected exception raised; exit 0.
+"""
+
+
 def _run(script):
     """Run *script* in a fresh interpreter and return the CompletedProcess."""
     return subprocess.run(
@@ -125,3 +148,9 @@ def test_accelerate_multi_solve_exit():
 def test_spacc_matrix_explicit_del_exit():
     """Explicit deletion of SpaccMatrix objects must not cause a double-free crash."""
     _assert_clean(_run(_SCRIPT_SPACC_MATRIX_DEL))
+
+
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_matrix_store_full():
+    """Overflowing SIZE_MSTORE (10) must raise; subprocess ensures a clean store."""
+    _assert_clean(_run(_SCRIPT_SPACC_STORE_FULL))
