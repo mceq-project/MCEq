@@ -51,6 +51,7 @@ class MCEqRun:
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
+        config.ensure_db_available()
         self.medium = kwargs.pop("medium", config.interaction_medium)
         self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 
@@ -632,6 +633,16 @@ class MCEqRun:
 
         info(2, f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV")
 
+        if corsika_id:
+            n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
+        elif pdg_id:
+            n_nucleons, n_protons, n_neutrons = getAZN(pdg_id)
+
+        En = E / float(n_nucleons) if n_nucleons > 0 else E
+
+        if En < np.min(self._energy_grid.c):
+            raise Exception("energy per nucleon too low for primary " + str(corsika_id))
+
         if append is False:
             self._restore_initial_condition = [
                 (self.set_single_primary_particle, E, corsika_id, pdg_id)
@@ -644,16 +655,6 @@ class MCEqRun:
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
         ewidths = self._energy_grid.w
-
-        if corsika_id:
-            n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
-        elif pdg_id:
-            n_nucleons, n_protons, n_neutrons = getAZN(pdg_id)
-
-        En = E / float(n_nucleons) if n_nucleons > 0 else E
-
-        if En < np.min(self._energy_grid.c):
-            raise Exception("energy per nucleon too low for primary " + str(corsika_id))
 
         info(
             3,
