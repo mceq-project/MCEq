@@ -80,6 +80,123 @@ def test_solv_numpy_does_not_modify_input_phi(toy_solver_setup):
     )
 
 
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_matrix_creation(toy_solver_problem):
+    """SpaccMatrix should be created from a scipy sparse matrix without error."""
+    import MCEq.spacc as spacc
+
+    int_m = toy_solver_problem[3]
+    sm = spacc.SpaccMatrix(int_m)
+    assert sm.store_id is not None
+    assert sm.store_id >= 0
+    assert sm.dim_rows == int_m.shape[0]
+    assert sm.dim_cols == int_m.shape[1]
+    assert sm.nnz == int_m.nnz
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_gemv_matches_scipy(toy_solver_problem):
+    """gemv_npargs should produce the same result as scipy sparse dot."""
+    import MCEq.spacc as spacc
+
+    int_m = toy_solver_problem[3]
+    sm = spacc.SpaccMatrix(int_m)
+
+    size = int_m.shape[0]
+    x = np.ones(size)
+    y = np.zeros(size)
+    alpha = 2.0
+
+    sm.gemv_npargs(alpha, x, y)
+
+    expected = alpha * int_m.dot(x)
+    assert np.allclose(y, expected, rtol=1e-12), (
+        f"gemv result {y} does not match scipy result {expected}"
+    )
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_double_del_is_safe(toy_solver_problem):
+    """Calling __del__ twice on a SpaccMatrix must not crash (double-free guard)."""
+    import MCEq.spacc as spacc
+
+    int_m = toy_solver_problem[3]
+    sm = spacc.SpaccMatrix(int_m)
+    sm.__del__()
+    # After __del__, store_id should be set to None to prevent double-free
+    assert sm.store_id is None, "store_id should be None after __del__"
+    # Second call must not crash
+    sm.__del__()
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_del_with_none_store_id():
+    """SpaccMatrix.__del__ with store_id=None must not crash (failed-init guard)."""
+    from scipy.sparse import eye
+
+    import MCEq.spacc as spacc
+
+    sm = spacc.SpaccMatrix(eye(3, format="coo"))
+    sm.store_id = None  # Simulate a failed __init__
+    sm.__del__()  # Must not raise or crash
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_solver_matches_numpy(toy_solver_problem):
+    """solv_spacc_sparse should produce the same result as solv_numpy."""
+    import MCEq.spacc as spacc
+    from MCEq.solvers import solv_spacc_sparse
+
+    nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
+
+    solution_numpy, grid_numpy = solv_numpy(*toy_solver_problem)
+
+    spacc_int_m = spacc.SpaccMatrix(int_m)
+    spacc_dec_m = spacc.SpaccMatrix(dec_m)
+
+    solution_spacc, grid_spacc = solv_spacc_sparse(
+        nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi.copy(), grid_idcs
+    )
+
+    assert solution_spacc == pytest.approx(solution_numpy, rel=1e-12, abs=1e-15), (
+        "spacc solver result does not match numpy solver"
+    )
+    assert np.allclose(grid_spacc, grid_numpy, rtol=1e-12), (
+        "spacc solver grid solutions do not match numpy solver"
+    )
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_spacc_matrix_store_full():
+    """Filling SIZE_MSTORE (10) slots and then freeing them leaves store clean."""
+    from scipy.sparse import eye
+
+    import MCEq.spacc as spacc
+
+    # Clear any leftover matrices from previous tests
+    spacc.spacc.free_mstore()
+
+    matrices = []
+    # SIZE_MSTORE is 10; fill all slots
+    for _ in range(10):
+        matrices.append(spacc.SpaccMatrix(eye(3, format="coo")))
+
+    # Free explicitly; after this all slots must be available again
+    for m in matrices:
+        m.__del__()
+
+    # A fresh matrix should now succeed (store is not full anymore)
+    extra = spacc.SpaccMatrix(eye(3, format="coo"))
+    assert extra.store_id is not None and extra.store_id >= 0
+    extra.__del__()
+
+
 @pytest.mark.skipif(not config.has_cuda, reason="CUDA not available")
 def test_cuda_numpy_solver_consistency(toy_solver_setup):
     """
