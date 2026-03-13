@@ -132,8 +132,9 @@ def test_spacc_double_del_is_safe(toy_solver_problem):
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_del_with_none_store_id():
     """SpaccMatrix.__del__ with store_id=None must not crash (failed-init guard)."""
-    import MCEq.spacc as spacc
     from scipy.sparse import eye
+
+    import MCEq.spacc as spacc
 
     sm = spacc.SpaccMatrix(eye(3, format="coo"))
     sm.store_id = None  # Simulate a failed __init__
@@ -168,8 +169,12 @@ def test_spacc_solver_matches_numpy(toy_solver_problem):
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_matrix_store_full():
     """Creating more matrices than SIZE_MSTORE (10) should raise an exception."""
-    import MCEq.spacc as spacc
     from scipy.sparse import eye
+
+    import MCEq.spacc as spacc
+
+    # Clear any leftover matrices from previous tests
+    spacc.spacc.free_mstore()
 
     matrices = []
     # SIZE_MSTORE is 10; fill all slots
