@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "MCEq"
-version = "1.4.0"
+version = "1.4.1"
 description = "Numerical cascade equation solver"
 readme = "README.md"
 authors = [

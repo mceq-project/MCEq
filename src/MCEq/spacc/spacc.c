@@ -16,10 +16,13 @@ static void *mstore[SIZE_MSTORE];
 
 void free_mstore_at(int idx)
 {
-    sparse_matrix_destroy(mstore[idx]);
-    mstore[idx] = NULL;
-    if (DEBUG)
-        printf("Matrix destroyed at %i\n", idx);
+    if (mstore[idx])
+    {
+        sparse_matrix_destroy(mstore[idx]);
+        mstore[idx] = NULL;
+        if (DEBUG)
+            printf("Matrix destroyed at %i\n", idx);
+    }
 }
 
 void free_mstore()
