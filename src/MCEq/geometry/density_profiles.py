@@ -96,8 +96,11 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         now = time()
 
+        # Compute density at every step once to avoid calling vec_rho_l twice
+        rho_vec = vec_rho_l(dl_vec)
+
         # Calculate integral for each depth point
-        X_int = cumulative_trapezoid(vec_rho_l(dl_vec), dl_vec)
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)
         dl_vec = dl_vec[1:]
 
         info(5, f".. took {time() - now:1.2f}s")
@@ -106,13 +109,21 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self._max_X = X_int[-1]
         self._max_den = self.get_density(self.geom.h(0, thrad))
 
+        # Store minimum valid slant depth for the integration path.  The
+        # spline below is only fitted for X >= X_int[0]; starting the
+        # numerical integration from X_int[0] avoids evaluating r_X2rho
+        # outside the fitted domain, which can return non-physical (zero or
+        # negative) values due to quadratic spline extrapolation and cause an
+        # infinite loop in _calculate_integration_path.
+        self._min_X = X_int[0]
+
         # Interpolate with bi-splines without smoothing
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
         # This is an incomplete workaround for non-monothonic elevations for
         # upgoing trajectories.
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
+        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
 
     @property
