@@ -76,6 +76,7 @@ class SpaccMatrix(object):
     def __del__(self):
         if self.store_id is not None and spacc is not None:
             spacc.free_mstore_at(self.store_id)
+            self.store_id = None
 
     def _create_matrix(self):
         self.store_id = spacc.create_sparse_matrix(
