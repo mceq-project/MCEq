@@ -109,6 +109,7 @@ class MCEqRun:
 
         # Set atmosphere and geometry
         self.integration_path, self.int_grid, self.grid_var = None, None, None
+        self._cached_leading_process = None
         self.set_density_model(self.density_model)
 
         # Set initial flux condition
@@ -1114,11 +1115,13 @@ class MCEqRun:
             self.integration_path
             and np.all(int_grid == self.int_grid)
             and np.all(self.grid_var == grid_var)
+            and self._cached_leading_process == config.leading_process
             and not force
         ):
             info(5, "skipping calculation.")
             return
 
+        self._cached_leading_process = config.leading_process
         self.int_grid, self.grid_var = int_grid, grid_var
         if grid_var != "X":
             raise NotImplementedError(
