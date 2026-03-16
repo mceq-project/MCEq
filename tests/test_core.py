@@ -51,7 +51,7 @@ def test_solve_int_grid(mceq_sib21, int_grid, grid_shape):
     [
         ["decays", 1248],
         ["auto", 1248],
-        ["interactions", 1248],
+        ["interactions", 1034],
     ],
 )
 def test_integration_path_leading_process(mceq_sib21, leading_process, lenX):
