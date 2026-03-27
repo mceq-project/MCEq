@@ -102,6 +102,15 @@ class EarthGeometry:
         self.r_E = config.r_E * 1e2  # cm
         self.r_top = self.r_E + self.h_atm
         self.r_obs = self.r_E + self.h_obs
+        self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_E / self.r_obs))
+        self.theta_max_deg = np.rad2deg(self.theta_max_rad)
+
+    def set_h_obs(self, h_obs):
+        """Set the elevation of the observation (detector) level in cm."""
+        self.h_obs = h_obs
+        self.r_obs = self.r_E + self.h_obs
+        self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_E / self.r_obs))
+        self.theta_max_deg = np.rad2deg(self.theta_max_rad)
 
     def _A_1(self, theta):
         r"""Segment length :math:`A1(\theta)` in cm."""
