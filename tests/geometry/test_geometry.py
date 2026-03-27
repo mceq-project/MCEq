@@ -91,6 +91,22 @@ def test_earth_geometry():
     assert h_ret == pytest.approx(h, rel=1e-6, abs=1e-4)
 
 
+def test_earth_geometry_set_h_obs():
+    from MCEq.geometry.geometry import EarthGeometry
+
+    geom = EarthGeometry()
+    h_new = 2834.0 * 1e2  # IceCube depth in cm
+    geom.set_h_obs(h_new)
+
+    assert geom.h_obs == h_new
+    assert geom.r_obs == pytest.approx(geom.r_E + h_new)
+    expected_theta_max = np.rad2deg(
+        max(np.pi / 2.0, np.pi - np.arcsin(geom.r_E / geom.r_obs))
+    )
+    assert geom.theta_max_deg == pytest.approx(expected_theta_max)
+    assert geom.theta_max_rad == pytest.approx(np.deg2rad(expected_theta_max))
+
+
 def test_chirkin_cos_theta_star():
     from MCEq.geometry.geometry import chirkin_cos_theta_star
 
