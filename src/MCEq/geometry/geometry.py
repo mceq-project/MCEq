@@ -99,6 +99,14 @@ class EarthGeometry:
     def __init__(self):
         self.h_obs = config.h_obs * 1e2  # cm
         self.h_atm = config.h_atm * 1e2  # cm
+        if self.h_obs < 0 or self.h_obs > self.h_atm:
+            raise ValueError(
+                f"Observation height must be between 0 and {self.h_atm:.2e} cm."
+            )
+        if self.h_atm <= self.h_obs:
+            raise ValueError(
+                f"Top of atmosphere must be above observation height ({self.h_atm:.2e} cm > {self.h_obs:.2e} cm)."
+            )
         self.r_E = config.r_E * 1e2  # cm
         self.r_top = self.r_E + self.h_atm
         self.r_obs = self.r_E + self.h_obs
@@ -107,6 +115,15 @@ class EarthGeometry:
 
     def set_h_obs(self, h_obs):
         """Set the elevation of the observation (detector) level in cm."""
+        if h_obs < 0 or h_obs > self.h_atm:
+            raise ValueError(
+                f"Observation height must be between 0 and {self.h_atm:.2e} cm."
+            )
+        if self.h_atm <= h_obs:
+            raise ValueError(
+                f"Top of atmosphere must be above observation height ({self.h_atm:.2e} cm > {h_obs:.2e} cm)."
+            )
+
         self.h_obs = h_obs
         self.r_obs = self.r_E + self.h_obs
         self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_E / self.r_obs))
