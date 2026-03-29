@@ -11,7 +11,7 @@ if suffix is None and "SO" in sysconfig.get_config_vars():
 assert suffix is not None, "Shared lib suffix was not identified."
 
 for fn in os.listdir(base):
-    if "libcorsikaatm" in fn and fn.endswith(suffix):
+    if fn.startswith("_libcorsikaatm") and fn.endswith(suffix):
         corsika_acc = cdll.LoadLibrary(os.path.join(base, fn))
         break
 

@@ -16,7 +16,7 @@ if suffix is None and "SO" in sysconfig.get_config_vars():
 assert suffix is not None, "Shared lib suffix was not identified."
 
 for fn in os.listdir(base):
-    if "libnrlmsis" in fn and fn.endswith(suffix):
+    if fn.startswith("_libnrlmsis") and fn.endswith(suffix):
         msis = cdll.LoadLibrary(os.path.join(base, fn))
         break
 

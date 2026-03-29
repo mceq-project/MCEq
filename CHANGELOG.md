@@ -2,6 +2,24 @@
 
 <!-- towncrier release notes start -->
 
+# MCEq 1.4.1 (2026-03-16)
+
+## Bug Fixes
+
+- Fixed segfault at interpreter exit on macOS when the Accelerate (spacc) solver is used. The `atexit` handler and `SpaccMatrix.__del__` both tried to free the same sparse matrix handles, causing a double-free via `sparse_matrix_destroy(NULL)`. Removed the redundant `atexit` handler (cleanup is handled solely by `__del__`) and added a NULL guard in the C-level `free_mstore_at` as defence-in-depth.
+
+  Bump version to 1.4.1 for a new bugfix release. ([#150](https://github.com/mceq-project/MCEq/pull/150))
+- Fixed an ordering bug in tests that could result in uncontrolled model settings in integration_path tests when executed with `pytest-xdist`. ([#151](https://github.com/mceq-project/MCEq/pull/151))
+
+## Maintencance
+
+- Defer the MCEq database download from import time to the first ``MCEqRun``
+  instantiation via ``config.ensure_db_available()``. This prevents the large
+  default database from being downloaded when ``MCEq.config`` is merely imported
+  (e.g. during test collection). CI workflow now uses the ``cache-hit`` output of
+  ``actions/cache`` to reliably skip redundant downloads. ([#147](https://github.com/mceq-project/MCEq/pull/147))
+
+
 # MCEq 1.4.0 (2026-03-04)
 
 ## Bug Fixes
