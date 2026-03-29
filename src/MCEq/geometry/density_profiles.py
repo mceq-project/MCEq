@@ -745,8 +745,9 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         self._azimuth_averaging = False
         self._effective_theta_deg = 0.0
         self._current_azimuth_deg = None
-        self.__current_impact_latitude = None
-        self.__current_impact_longitude = None
+        self._azimuth_avg_coords = []
+        self._current_impact_latitude = None
+        self._current_impact_longitude = None
 
         # Initialise the base class (sets geom, thrad, theta_deg, …)
         EarthsAtmosphere.__init__(self)
@@ -794,26 +795,40 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         lon0 = np.deg2rad(self._detector_longitude)
 
         # Detector position in ECEF (metres)
-        P_det = np.array([
-            r_det * np.cos(lat0) * np.cos(lon0),
-            r_det * np.cos(lat0) * np.sin(lon0),
-            r_det * np.sin(lat0),
-        ])
+        P_det = np.array(
+            [
+                r_det * np.cos(lat0) * np.cos(lon0),
+                r_det * np.cos(lat0) * np.sin(lon0),
+                r_det * np.sin(lat0),
+            ]
+        )
 
         # Shower direction in ENU frame (pointing toward incoming source)
         # azimuth 0° → North, 90° → East
-        d_ENU = np.array([
-            np.sin(theta) * np.sin(alpha),  # East component
-            np.sin(theta) * np.cos(alpha),  # North component
-            np.cos(theta),                   # Up component
-        ])
+        d_ENU = np.array(
+            [
+                np.sin(theta) * np.sin(alpha),  # East component
+                np.sin(theta) * np.cos(alpha),  # North component
+                np.cos(theta),  # Up component
+            ]
+        )
 
         # ENU → ECEF rotation matrix (columns: East, North, Up basis vectors)
-        T = np.array([
-            [-np.sin(lon0), -np.sin(lat0) * np.cos(lon0), np.cos(lat0) * np.cos(lon0)],
-            [ np.cos(lon0), -np.sin(lat0) * np.sin(lon0), np.cos(lat0) * np.sin(lon0)],
-            [0.0,            np.cos(lat0),                 np.sin(lat0)              ],
-        ])
+        T = np.array(
+            [
+                [
+                    -np.sin(lon0),
+                    -np.sin(lat0) * np.cos(lon0),
+                    np.cos(lat0) * np.cos(lon0),
+                ],
+                [
+                    np.cos(lon0),
+                    -np.sin(lat0) * np.sin(lon0),
+                    np.cos(lat0) * np.sin(lon0),
+                ],
+                [0.0, np.cos(lat0), np.sin(lat0)],
+            ]
+        )
         d_ECEF = T @ d_ENU
 
         # Intersection with Earth sphere |P_det + x * d_ECEF|² = r²
@@ -838,18 +853,81 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         set to the impact point.
 
         In azimuth-averaging mode (no azimuth passed) computes the mean
-        density over :attr:`_n_azimuth` equally-spaced azimuth directions
-        by querying MSIS at each impact-point latitude/longitude.
+        density over the pre-computed :attr:`_azimuth_avg_coords` impact
+        points.  The impact points are fixed for a given zenith angle and
+        are cached by :meth:`set_theta`, so this method only iterates over
+        the cached coordinates without recomputing them.
         """
         if self._azimuth_averaging:
-            azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
-            densities = []
-            for azi in azi_grid:
-                lat, lon = self._impact_point(self._effective_theta_deg, azi)
+            total = 0.0
+            for lat, lon in self._azimuth_avg_coords:
                 self._msis.set_location_coord(lon, lat)
-                densities.append(self._msis.get_density(h_cm))
-            return float(np.mean(densities))
+                total += self._msis.get_density(h_cm)
+            return total / len(self._azimuth_avg_coords)
         return self._msis.get_density(h_cm)
+
+    # ------------------------------------------------------------------
+    # Density spline (azimuth-averaging optimisation)
+    # ------------------------------------------------------------------
+
+    def calculate_density_spline(self, n_steps=2000):
+        """Calculate and store a spline of :math:`\\rho(X)`.
+
+        In single-azimuth mode delegates to the base-class implementation.
+
+        In azimuth-averaging mode uses an azimuth-major loop for efficiency:
+        for each of the :attr:`_n_azimuth` pre-computed impact points the
+        MSIS location is set **once** and the full height profile is sampled
+        in a single vectorised call, so the C library benefits from staying
+        at the same latitude/longitude across all height steps.  The 36
+        per-azimuth profiles are averaged before spline fitting.
+        """
+        if not self._azimuth_averaging:
+            super().calculate_density_spline(n_steps)
+            return
+
+        from time import time
+
+        from scipy.integrate import cumulative_trapezoid
+        from scipy.interpolate import UnivariateSpline
+
+        thrad = self.thrad
+        path_length = self.geom.path_len(thrad)
+        dl_vec = np.linspace(0, path_length, n_steps)
+        h_vec = np.array([self.geom.h(dl, thrad) for dl in dl_vec])
+
+        info(
+            5,
+            f"Calculating azimuth-averaged spline for zenith {self.theta_deg:4.1f}\u00b0"
+            f" ({len(self._azimuth_avg_coords)} directions).",
+        )
+        now = time()
+
+        # Azimuth-major loop: set MSIS location once per direction, then
+        # vectorise over all heights.  This is far more efficient than the
+        # height-major order because the C library stays at the same
+        # lat/lon across all altitude queries.
+        rho_sum = np.zeros(n_steps)
+        msis_vec = np.vectorize(self._msis.get_density)
+        for lat, lon in self._azimuth_avg_coords:
+            self._msis.set_location_coord(lon, lat)
+            rho_sum += msis_vec(h_vec)
+        rho_vec = rho_sum / len(self._azimuth_avg_coords)
+
+        info(5, f".. took {time() - now:1.2f}s")
+
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)
+        dl_vec = dl_vec[1:]
+
+        self._max_X = X_int[-1]
+        self._min_X = X_int[0]
+        self._max_den = float(rho_vec[0])
+
+        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
+        X_intp = [X for X in reversed(X_int[1:])]
+        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
+        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
 
     # ------------------------------------------------------------------
     # Angle setting
@@ -870,28 +948,39 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
                 density profile is averaged over all azimuth directions.
         """
         if theta_deg < 0.0 or theta_deg > self.max_theta:
-            raise Exception("Zenith angle not in allowed range.")
+            raise ValueError(
+                f"Zenith angle {theta_deg} not in allowed range [0, {self.max_theta}]."
+            )
 
         # For upgoing showers use the mirror downgoing angle
         effective_theta = theta_deg if theta_deg <= 90.0 else 180.0 - theta_deg
 
         if azimuth_deg is not None:
             # For upgoing, flip azimuth to point to the atmospheric entry side
-            eff_azi = azimuth_deg if theta_deg <= 90.0 else (azimuth_deg + 180.0) % 360.0
+            eff_azi = (
+                azimuth_deg if theta_deg <= 90.0 else (azimuth_deg + 180.0) % 360.0
+            )
             lat, lon = self._impact_point(effective_theta, eff_azi)
             self._msis.set_location_coord(lon, lat)
-            self.__current_impact_latitude = lat
-            self.__current_impact_longitude = lon
+            self._current_impact_latitude = lat
+            self._current_impact_longitude = lon
             self._azimuth_averaging = False
+            self._azimuth_avg_coords = []
             info(
                 1,
                 f"zenith={theta_deg:.1f}\u00b0, azimuth={azimuth_deg:.1f}\u00b0"
                 f" \u2192 impact lat={lat:.2f}\u00b0, lon={lon:.2f}\u00b0",
             )
         else:
+            # Pre-compute all impact points once; they depend only on zenith,
+            # not on height, so they are constant for this set_theta call.
+            azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
+            self._azimuth_avg_coords = [
+                self._impact_point(effective_theta, azi) for azi in azi_grid
+            ]
             self._azimuth_averaging = True
-            self.__current_impact_latitude = None
-            self.__current_impact_longitude = None
+            self._current_impact_latitude = None
+            self._current_impact_longitude = None
 
         self._effective_theta_deg = effective_theta
         self._current_azimuth_deg = azimuth_deg
@@ -911,7 +1000,7 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         point is defined in that case) or before :meth:`set_theta` has
         been called.
         """
-        return self.__current_impact_latitude
+        return self._current_impact_latitude
 
     @property
     def current_impact_longitude(self):
@@ -920,7 +1009,7 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         ``None`` when azimuth-averaging mode is active or before
         :meth:`set_theta` has been called.
         """
-        return self.__current_impact_longitude
+        return self._current_impact_longitude
 
 
 class MSIS00IceCubeCentered(MSIS00LocationCentered):

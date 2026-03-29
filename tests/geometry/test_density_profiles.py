@@ -417,3 +417,25 @@ def test_base_class_impact_properties_return_none():
     atm = dp.CorsikaAtmosphere("USStd")
     assert atm.current_impact_latitude is None
     assert atm.current_impact_longitude is None
+
+
+def test_icecube_latitude_wrapper():
+    """MSIS00IceCubeCentered._latitude backward-compat wrapper returns correct values."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    r = atm.geom.r_E / 1e2
+    d = 1948.0
+    for theta_deg in [0.0, 30.0, 60.0, 90.0]:
+        lat_wrapper = atm._latitude(theta_deg)
+        theta_rad = np.deg2rad(theta_deg)
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
+            r - d
+        ) * np.cos(theta_rad)
+        lat_ref = (
+            -90.0
+            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            / np.pi
+            * 180.0
+        )
+        assert np.isclose(lat_wrapper, lat_ref, atol=1e-6), (
+            f"theta={theta_deg}: _latitude={lat_wrapper:.6f}, ref={lat_ref:.6f}"
+        )
