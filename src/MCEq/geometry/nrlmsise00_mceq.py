@@ -78,6 +78,11 @@ class cNRLMSISE00(NRLMSISE00Base):
             self.flags.switches[i] = c_int(1)
 
     def set_location(self, tag):
+        if tag == "SanGrasso":
+            raise ValueError(
+                "Location 'SanGrasso' does not exist — did you mean 'GranSasso'? "
+                "(Gran Sasso d'Italia is in Abruzzo, not San Grasso, wherever that is.)"
+            )
         if tag not in list(self.locations):
             raise Exception(
                 f"NRLMSISE00::set_location(): Unknown location tag '{tag}'."
