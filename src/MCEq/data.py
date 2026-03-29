@@ -157,7 +157,7 @@ class HDF5Backend:
             )
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
-        if config.enable_em and not isfile(self.had_fname):
+        if config.enable_em and not isfile(self.em_fname):
             _n = config.em_db_fname
             raise Exception(
                 f'Electromagnetic DB file {_n} not found in "data" directory.'
