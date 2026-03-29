@@ -91,6 +91,63 @@ def test_earth_geometry():
     assert h_ret == pytest.approx(h, rel=1e-6, abs=1e-4)
 
 
+def test_earth_geometry_set_h_obs():
+    from MCEq.geometry.geometry import EarthGeometry
+
+    geom = EarthGeometry()
+    h_new = 2834.0 * 1e2  # IceCube depth in cm
+    geom.set_h_obs(h_new)
+
+    assert geom.h_obs == h_new
+    assert geom.r_obs == pytest.approx(geom.r_E + h_new)
+    expected_theta_max = np.rad2deg(
+        max(np.pi / 2.0, np.pi - np.arcsin(geom.r_E / geom.r_obs))
+    )
+    assert geom.theta_max_deg == pytest.approx(expected_theta_max)
+    assert geom.theta_max_rad == pytest.approx(np.deg2rad(expected_theta_max))
+
+
+def test_earth_geometry_init_invalid_h_obs(monkeypatch):
+    import MCEq.config as config
+    from MCEq.geometry.geometry import EarthGeometry
+
+    # h_obs below zero
+    monkeypatch.setattr(config, "h_obs", -100.0)
+    with pytest.raises(ValueError, match="Observation height"):
+        EarthGeometry()
+
+    # h_obs above h_atm
+    monkeypatch.setattr(config, "h_obs", config.h_atm + 1.0)
+    with pytest.raises(ValueError, match="Observation height"):
+        EarthGeometry()
+
+
+def test_earth_geometry_init_invalid_h_atm(monkeypatch):
+    import MCEq.config as config
+    from MCEq.geometry.geometry import EarthGeometry
+
+    # h_atm equal to h_obs triggers the second guard (h_atm <= h_obs)
+    monkeypatch.setattr(config, "h_obs", config.h_atm)
+    with pytest.raises(ValueError, match="Top of atmosphere"):
+        EarthGeometry()
+
+
+def test_earth_geometry_set_h_obs_invalid():
+    from MCEq.geometry.geometry import EarthGeometry
+
+    geom = EarthGeometry()
+
+    with pytest.raises(ValueError, match="Observation height"):
+        geom.set_h_obs(-1.0)
+
+    with pytest.raises(ValueError, match="Observation height"):
+        geom.set_h_obs(geom.h_atm + 1.0)
+
+    # equal to h_atm hits the second guard
+    with pytest.raises(ValueError, match="Top of atmosphere"):
+        geom.set_h_obs(geom.h_atm)
+
+
 def test_chirkin_cos_theta_star():
     from MCEq.geometry.geometry import chirkin_cos_theta_star
 

@@ -458,7 +458,7 @@ msis_atmospheres = [
     "Karlsruhe",
     "Geneva",
     "Tokyo",
-    "SanGrasso",
+    "GranSasso",
     "TelAviv",
     "KSC",
     "SoudanMine",
