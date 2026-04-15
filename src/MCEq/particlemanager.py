@@ -371,13 +371,13 @@ class MCEqParticle:
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.d) * np.inf
 
-    def inel_cross_section(self, mbarn=False):
-        """Returns inelastic cross section.
+    def prod_cross_section(self, mbarn=False):
+        """Returns production cross section.
 
         Args:
           mbarn (bool) : if True cross section in mb otherwise in cm**2
         Returns:
-          (float): :math:`\\sigma_{\\rm inel}` in mb or cm**2
+          (float): :math:`\\sigma_{\\rm prod}` in mb or cm**2
         """
         #: unit - :math:`\text{GeV} \cdot \text{fm}`
         GeVfm = 0.19732696312541853
@@ -733,7 +733,7 @@ class ParticleManager:
         self.print_particle_tables(10)
 
     def set_cross_sections_db(self, cs_db):
-        """Sets the inelastic cross section to each interacting particle.
+        """Sets the production cross section to each interacting particle.
 
         This applies to most of the hadrons and does not imply that the
         particle becomes a projectile. parents need in addition defined
