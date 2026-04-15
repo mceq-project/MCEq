@@ -1296,7 +1296,7 @@ class MCEqRun:
         zfac = np.zeros(self.dim)
 
         smat = proj.hadr_yields[sec]
-        proj_cs = proj.inel_cross_section()
+        proj_cs = proj.prod_cross_section()
         zfac = np.zeros_like(self.e_grid)
 
         if config.has_cuda:
