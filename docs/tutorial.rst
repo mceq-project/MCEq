@@ -9,19 +9,19 @@ from `the crflux package <http://crfluxmodels.readthedocs.org/en/latest/index.ht
 can be selected::
 
     from MCEq.core import MCEqRun
-    import crflux.models as crf
+    import crflux.models as pm
 
     # Initalize MCEq by creating the user interface object MCEqRun
     mceq = MCEqRun(
 
         # High-energy hadronic interaction model
-        interaction_model='SIBYLL23C',
+        interaction_model='SIBYLL23E',
 
         # cosmic ray flux at the top of the atmosphere
-        primary_model = (crf.HillasGaisser2012, 'H3a'), 
+        primary_model = (pm.HillasGaisser2012, 'H3a'), 
         
         # zenith angle
-        theta_deg = 0. 
+        theta_deg = 0,
     )
 
 The code will raise an exception of a non-existent hadronic interaction
@@ -131,16 +131,15 @@ To change the hadronic interaction model ::
 
 Currently available models are:
 
-- SIBYLL-2.3c
-- SIBYLL-2.3
+- SIBYLL-2.3d
+- SIBYLL-2.3e
 - SIBYLL-2.1
+- EPOS-LHC-R
 - EPOS-LHC
+- QGSJet-III
 - QGSJet-II-04
-- QGSJet-II-03
-- QGSJet-01c
-- DPMJET-III-3.0.6
-- DPMJET-III-19.1
-- SIBYLL-2.3c_pp (for proton-proton collisions)
+- DPMJET-III-19.3
+- SIBYLL-2.3e star models
 
 More models planned. Note that internally the model name string is
 transformed to upper case, and dashes and points are removed.
