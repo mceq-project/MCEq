@@ -1016,8 +1016,8 @@ class InteractionCrossSections:
         self.index_d = index["index_d"]
 
     def get_cs(self, parent, mbarn=False):
-        """Returns inelastic ``parent``-air cross-section
-        :math:`\\sigma_{inel}^{proj-Air}(E)` as vector spanned over
+        """Returns production ``parent``-air cross-section
+        :math:`\\sigma_{prod}^{proj-Air}(E)` as vector spanned over
         the energy grid.
 
         Args:
