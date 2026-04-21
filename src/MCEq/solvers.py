@@ -204,6 +204,9 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     axpy = mkl.cblas_daxpy
     np_fl = config.floatlen
 
+    # garbage collector
+    gc = mkl.mkl_sparse_destroy
+
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
     int_m_ci = int_m.indices.ctypes.data_as(POINTER(c_int))
@@ -329,6 +332,15 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         2,
         f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
+
+    s = gc(int_m_handle)
+
+    assert s == 0, (
+        f"MKL mkl_sparse_destroy failed with status {s} on interaction matrix"
+    )
+
+    s = gc(dec_m_handle)
+    assert s == 0, f"MKL mkl_sparse_destroy failed with status {s} on decay matrix"
 
     return npphi, np.asarray(grid_sol)
 
