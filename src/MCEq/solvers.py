@@ -204,8 +204,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     axpy = mkl.cblas_daxpy
     np_fl = config.floatlen
 
-    # garbage collector
-    gc = mkl.mkl_sparse_destroy
+    destroy_sparse_handle = mkl.mkl_sparse_destroy
 
     # Prepare CTYPES pointers for MKL sparse CSR BLAS
     int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
@@ -246,101 +245,96 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     assert mst == 0, f"MKL create_csr failed with status {mst} on decay matrix"
 
-    # hints
-    operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
+    try:
+        # hints
+        operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
 
-    class MatrixDescr(Structure):
-        _fields_ = [
-            ("type", c_int),
-            ("mode", c_int),
-            ("diag", c_int),
-        ]
+        class MatrixDescr(Structure):
+            _fields_ = [
+                ("type", c_int),
+                ("mode", c_int),
+                ("diag", c_int),
+            ]
 
-    descr = MatrixDescr()
-    descr.type = int(20)  # General matrix
-    descr.mode = int(121)  # set but dont care since general matrix
-    descr.diag = int(131)  # set but dont care since general matrix
+        descr = MatrixDescr()
+        descr.type = int(20)  # General matrix
+        descr.mode = int(121)  # set but dont care since general matrix
+        descr.diag = int(131)  # set but dont care since general matrix
 
-    hint_status = gemv_hint(
-        int_m_handle,
-        operation,
-        descr,
-        nsteps,
-    )
-
-    assert hint_status == 0, (
-        f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
-    )
-
-    hint_status = gemv_hint(
-        dec_m_handle,
-        operation,
-        descr,
-        nsteps,
-    )
-
-    assert hint_status == 0, (
-        f"MKL gemv_hint failed with status {hint_status} on decay matrix"
-    )
-
-    # add mkl_sparse_set_memory_hint???
-    #
-
-    o = optimize(int_m_handle)
-
-    assert o == 0, (
-        f"MKL mkl_sparse_optimize failed with status {o} on interaction matrix"
-    )
-
-    o = optimize(dec_m_handle)
-
-    assert o == 0, f"MKL mkl_sparse_optimize failed with status {o} on decay matrix"
-
-    from time import time
-
-    start = time()
-
-    for step in range(nsteps):
-        # delta_phi = int_m.dot(phi)
-        gemv(
-            operation,
-            cdone,
+        hint_status = gemv_hint(
             int_m_handle,
-            descr,
-            phi,
-            cdzero,
-            delta_phi,
-        )
-        # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(
             operation,
-            fl_pr(rho_inv[step]),
-            dec_m_handle,
             descr,
-            phi,
-            cdone,
-            delta_phi,
+            nsteps,
         )
-        # phi = delta_phi * dX + phi
-        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(npphi))
-            grid_step += 1
+        assert hint_status == 0, (
+            f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
+        )
 
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
-    )
+        hint_status = gemv_hint(
+            dec_m_handle,
+            operation,
+            descr,
+            nsteps,
+        )
 
-    s = gc(int_m_handle)
+        assert hint_status == 0, (
+            f"MKL gemv_hint failed with status {hint_status} on decay matrix"
+        )
 
-    assert s == 0, (
-        f"MKL mkl_sparse_destroy failed with status {s} on interaction matrix"
-    )
+        # add mkl_sparse_set_memory_hint???
+        #
 
-    s = gc(dec_m_handle)
-    assert s == 0, f"MKL mkl_sparse_destroy failed with status {s} on decay matrix"
+        o = optimize(int_m_handle)
+
+        assert o == 0, (
+            f"MKL mkl_sparse_optimize failed with status {o} on interaction matrix"
+        )
+
+        o = optimize(dec_m_handle)
+
+        assert o == 0, f"MKL mkl_sparse_optimize failed with status {o} on decay matrix"
+
+        from time import time
+
+        start = time()
+
+        for step in range(nsteps):
+            # delta_phi = int_m.dot(phi)
+            gemv(
+                operation,
+                cdone,
+                int_m_handle,
+                descr,
+                phi,
+                cdzero,
+                delta_phi,
+            )
+            # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
+            gemv(
+                operation,
+                fl_pr(rho_inv[step]),
+                dec_m_handle,
+                descr,
+                phi,
+                cdone,
+                delta_phi,
+            )
+            # phi = delta_phi * dX + phi
+            axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
+                grid_sol.append(np.copy(npphi))
+                grid_step += 1
+
+        info(
+            2,
+            f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+        )
+    finally:
+        destroy_sparse_handle(int_m_handle)
+        destroy_sparse_handle(dec_m_handle)
 
     return npphi, np.asarray(grid_sol)
 
