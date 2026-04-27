@@ -646,12 +646,12 @@ class MCEqRun:
 
         if append is False:
             self._restore_initial_condition = [
-                ("set_single_primary_particle", E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, False)
             ]
             self._phi0 *= 0.0
         else:
             self._restore_initial_condition.append(
-                ("set_single_primary_particle", E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, True)
             )
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
