@@ -511,7 +511,7 @@ class MCEqRun:
         # Restore insital condition if present
         if len(self._restore_initial_condition) > 0:
             for con in self._restore_initial_condition:
-                con[0](*con[1:])
+                getattr(self, con[0])(*con[1:])
 
     def set_primary_model(self, model_class_or_object, tag=None):
         """Sets primary flux model.
@@ -547,7 +547,7 @@ class MCEqRun:
         info(1, f"Primary model set to {self.pmodel.name}")
 
         # Save primary flux model for restauration after interaction model changes
-        self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
+        self._restore_initial_condition = [("set_primary_model", self.pmodel)]
         # TODO: Maybe needs to catch the removal of the np.vectorize
         # self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
         self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
@@ -646,12 +646,12 @@ class MCEqRun:
 
         if append is False:
             self._restore_initial_condition = [
-                (self.set_single_primary_particle, E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, False)
             ]
             self._phi0 *= 0.0
         else:
             self._restore_initial_condition.append(
-                (self.set_single_primary_particle, E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, True)
             )
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
@@ -727,12 +727,12 @@ class MCEqRun:
 
         if not append:
             self._restore_initial_condition = [
-                (self.set_initial_spectrum, spectrum, pdg_id, append)
+                ("set_initial_spectrum", spectrum, pdg_id, append)
             ]
             self._phi0 *= 0
         else:
             self._restore_initial_condition.append(
-                (self.set_initial_spectrum, spectrum, pdg_id, append)
+                ("set_initial_spectrum", spectrum, pdg_id, append)
             )
         if len(spectrum) != self.dim:
             raise Exception("Lengths of spectrum and energy grid do not match.")
