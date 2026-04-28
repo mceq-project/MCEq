@@ -1017,6 +1017,10 @@ class MCEqRun:
             kernel = MCEq.solvers.solv_numpy
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
+        elif config.kernel_config.lower() == "numpy_etd2":
+            kernel = MCEq.solvers.solv_numpy_etd2
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+
         elif config.kernel_config.lower() == "accelerate":
             kernel = MCEq.solvers.solv_spacc_sparse
             import MCEq.spacc as spacc
@@ -1100,6 +1104,10 @@ class MCEqRun:
 
         if config.kernel_config.lower() == "numpy":
             kernel = MCEq.solvers.solv_numpy
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
+
+        elif config.kernel_config.lower() == "numpy_etd2":
+            kernel = MCEq.solvers.solv_numpy_etd2
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
 
         elif config.kernel_config.lower() == "accelerate":

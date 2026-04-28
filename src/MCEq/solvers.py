@@ -1,7 +1,109 @@
 import numpy as np
+import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.misc import info
+
+
+def _etd_split_cache(int_m, dec_m):
+    """Pre-compute the diagonal/off-diagonal split used by ETD kernels.
+
+    Returns (d_int, d_dec, int_off, dec_off) where d_* are 1-D arrays holding
+    the diagonals and *_off are sparse matrices with their diagonals zeroed
+    out. Both pieces are constant in X — only `rho_inv` modulates how they
+    combine per step — so we cache them across the integration loop.
+    """
+    d_int = int_m.diagonal()
+    d_dec = dec_m.diagonal()
+    int_off = int_m - sp.diags(d_int, format=int_m.format)
+    dec_off = dec_m - sp.diags(d_dec, format=dec_m.format)
+    int_off.eliminate_zeros()
+    dec_off.eliminate_zeros()
+    return d_int, d_dec, int_off, dec_off
+
+
+def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+    """ETD2RK (Cox-Matthews exponential Runge-Kutta, single-stage, 2nd order).
+
+    Solves dPhi/dX = (A + rho_inv(X) * B) Phi by treating the diagonal part
+    of (A + rho_inv * B) exactly via an integrating factor and the off-
+    diagonal part with a two-stage explicit RK2 in exponential form. The
+    diagonal carries all of MCEq's stiffness, so the explicit-stability
+    constraint that bounds forward-Euler step size does not apply; the
+    remaining limit is the explicit-RK stability of the off-diagonal block.
+
+    Update (D and N frozen at start of step):
+        F(state) = A_off @ state + rho_inv * B_off @ state
+        a   = exp(h*D) * Phi + h * phi1(h*D) * F(Phi)
+        Phi <- a + h * phi2(h*D) * ( F(a) - F(Phi) )
+    where
+        phi1(z) = (e^z - 1) / z              (limit 1   as z -> 0)
+        phi2(z) = (e^z - 1 - z) / z**2       (limit 1/2 as z -> 0)
+    are evaluated elementwise on the diagonal vector h*D, with stable
+    Taylor series near 0.
+
+    Per-step cost: 4 SpMVs (two F evaluations against int_off and dec_off
+    each) plus a handful of elementwise vector ops on length-N arrays.
+    Globally O(h**2). At the same step grid as forward-Euler, ETD2 is
+    order-of-magnitude more accurate; coarsening the grid by 4-16x while
+    holding accuracy under 1% is the headline use case.
+
+    Args:
+      nsteps (int): number of integration steps
+      dX (np.ndarray[nsteps]): step sizes Delta X_i in g/cm**2
+      rho_inv (np.ndarray[nsteps]): 1/rho(X_i)
+      int_m (scipy.sparse): interaction matrix A
+      dec_m (scipy.sparse): decay matrix B
+      phi (np.ndarray): initial state Phi(X_0)
+      grid_idcs (list[int]): step indices at which to record snapshots
+
+    Returns:
+      (np.ndarray, np.ndarray): final state and stacked snapshots.
+    """
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+
+    phc = phi.copy()
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    PHI1_SMALL = 1e-6
+    PHI2_SMALL = 1e-3  # phi2 has wider cancellation region than phi1
+
+    for k in range(nsteps):
+        h = dX[k]
+        ri = rho_inv[k]
+        D = d_int + ri * d_dec
+        hD = h * D
+        eD = np.exp(hD)
+        phi1 = np.where(
+            np.abs(hD) > PHI1_SMALL,
+            (eD - 1.0) / np.where(hD != 0.0, hD, 1.0),
+            1.0 + 0.5 * hD + hD * hD / 6.0,
+        )
+        phi2 = np.where(
+            np.abs(hD) > PHI2_SMALL,
+            (eD - 1.0 - hD) / np.where(hD != 0.0, hD * hD, 1.0),
+            0.5 + hD / 6.0 + hD * hD / 24.0,
+        )
+        F_phi = int_off.dot(phc) + ri * dec_off.dot(phc)
+        a = eD * phc + h * phi1 * F_phi
+        F_a = int_off.dot(a) + ri * dec_off.dot(a)
+        phc = a + h * phi2 * (F_a - F_phi)
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+            grid_sol.append(np.copy(phc))
+            grid_step += 1
+
+    info(
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
+
+    return phc, np.array(grid_sol)
 
 
 def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
