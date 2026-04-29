@@ -109,7 +109,6 @@ class MCEqRun:
 
         # Set atmosphere and geometry
         self.integration_path, self.int_grid, self.grid_var = None, None, None
-        self._cached_leading_process = None
         self.set_density_model(self.density_model)
 
         # Set initial flux condition
@@ -977,20 +976,47 @@ class MCEqRun:
             skip_decay_matrix=skip_decay_matrix
         )
 
-    def solve(self, int_grid=None, grid_var="X", **kwargs):
+    def solve(
+        self,
+        int_grid=None,
+        grid_var="X",
+        *,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+        **kwargs,
+    ):
         """Launches the solver.
 
-        The setting `integrator` in the config file decides which solver
+        The setting `kernel_config` in the config file decides which solver
         to launch.
 
         Args:
           int_grid (list): list of depths at which results are recorded
           grid_var (str): Can be depth `X` or something else (currently
             only `X` supported)
-          kwargs (dict): Arguments are passed directly to the solver methods.
+          X_start (float | None): starting depth in g/cm^2 used for
+            ETD2 path construction. ``None`` → ``config.X_start`` (= 0).
+          eps (float | None): within-step ``rho_inv`` variation tolerance
+            for the ETD2 non-uniform schedule. ``None`` →
+            ``config.etd2_path["eps"]``.
+          dX_max (float | None): cap on step size (off-diagonal stability
+            cliff) for ETD2. ``None`` → ``config.etd2_path["dX_max"]``.
+          dX_min (float | None): floor on step size for ETD2. ``None`` →
+            ``config.etd2_path["dX_min"]``.
+          fd_span (float | None): forward-FD probe span for the ETD2
+            schedule's local rate estimate. ``None`` →
+            ``config.etd2_path["fd_span"]``.
+          kwargs (dict): Arguments are passed directly to the solver
+            methods. ``X_start`` is honoured by all kernels (defaults to
+            ``config.X_start = 0``). ``eps`` / ``dX_max`` / ``dX_min`` /
+            ``fd_span`` control the ETD2 non-uniform schedule; pass them
+            here to override the defaults in ``config.etd2_path``.
 
         """
-        info(2, f"Launching {config.integrator} solver")
+        info(2, f"Launching {config.kernel_config} solver")
 
         if not kwargs.pop("skip_integration_path", False):
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
@@ -1000,7 +1026,15 @@ class MCEqRun:
                 )
 
             # Calculate integration path if not yet happened
-            self._calculate_integration_path(int_grid, grid_var)
+            self._calculate_integration_path(
+                int_grid,
+                grid_var,
+                X_start=X_start,
+                eps=eps,
+                dX_max=dX_max,
+                dX_min=dX_min,
+                fd_span=fd_span,
+            )
         else:
             info(2, "Warning: integration path calculation skipped.")
 
@@ -1009,60 +1043,9 @@ class MCEqRun:
 
         info(2, f"for {nsteps} integration steps.")
 
-        import MCEq.solvers
-
         start = time()
 
-        if config.kernel_config.lower() == "numpy":
-            kernel = MCEq.solvers.solv_numpy
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "numpy_etd2":
-            kernel = MCEq.solvers.solv_numpy_etd2
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "accelerate":
-            kernel = MCEq.solvers.solv_spacc_sparse
-            import MCEq.spacc as spacc
-
-            try:
-                if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
-                    self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
-                if not np.array_equal(self._spacc_int_m.data, self.int_m.data):
-                    self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
-            except AttributeError:
-                info(10, "Matrices not yet in Accelerate format")
-                self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
-                self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
-
-            args = (
-                nsteps,
-                dX,
-                rho_inv,
-                self._spacc_int_m,
-                self._spacc_dec_m,
-                phi0,
-                grid_idcs,
-            )
-
-        elif config.kernel_config.lower() == "cuda":
-            kernel = MCEq.solvers.solv_CUDA_sparse
-            try:
-                self.cuda_context.set_matrices(self.int_m, self.dec_m)
-            except AttributeError:
-                from MCEq.solvers import CUDASparseContext
-
-                self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self._cuda_device
-                )
-            args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "mkl":
-            kernel = MCEq.solvers.solv_MKL_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        else:
-            raise Exception(f"Unsupported integrator setting '{config.kernel_config}'.")
+        kernel, args = self._build_kernel_dispatch(nsteps, dX, rho_inv, phi0, grid_idcs)
 
         self._solution, self.grid_sol = kernel(*args)
 
@@ -1093,184 +1076,164 @@ class MCEqRun:
           is dumped into `grid_sol`
         """
 
-        info(2, "Launching {0} solver".format(config.integrator))
-        info(2, "for {0} integration steps.".format(nsteps))
-
-        import MCEq.solvers
+        info(2, f"Launching {config.kernel_config} solver")
+        info(2, f"for {nsteps} integration steps.")
 
         start = time()
 
         phi0 = np.copy(self._phi0)
 
-        if config.kernel_config.lower() == "numpy":
-            kernel = MCEq.solvers.solv_numpy
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "numpy_etd2":
-            kernel = MCEq.solvers.solv_numpy_etd2
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "accelerate":
-            kernel = MCEq.solvers.solv_spacc_sparse
-            import MCEq.spacc as spacc
-
-            try:
-                if not np.array_equal(self._spacc_dec_m.data, self.dec_m.data):
-                    self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
-                if not np.array_equal(self._spacc_int_m.data, self.int_m.data):
-                    self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
-            except AttributeError:
-                info(10, "Matrices not yet in Accelerate format")
-                self._spacc_int_m = spacc.SpaccMatrix(self.int_m)
-                self._spacc_dec_m = spacc.SpaccMatrix(self.dec_m)
-
-            args = (
-                nsteps,
-                dX,
-                rho_inv,
-                self._spacc_int_m,
-                self._spacc_dec_m,
-                phi0,
-                grid_idcs,
-            )
-            args = (
-                nsteps,
-                dX,
-                rho_inv,
-                self._spacc_int_m,
-                self._spacc_dec_m,
-                phi0,
-                grid_idcs,
-            )
-
-        elif config.kernel_config.lower() == "cuda":
-            kernel = MCEq.solvers.solv_CUDA_sparse
-            try:
-                self.cuda_context.set_matrices(self.int_m, self.dec_m)
-            except AttributeError:
-                from MCEq.solvers import CUDASparseContext
-
-                self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self._cuda_device
-                )
-            args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs)
-
-        elif config.kernel_config.lower() == "mkl":
-            kernel = MCEq.solvers.solv_MKL_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs)
-
-        else:
-            raise Exception(
-                "Unsupported integrator setting '{0}'.".format(config.kernel_config)
-            )
+        kernel, args = self._build_kernel_dispatch(nsteps, dX, rho_inv, phi0, grid_idcs)
 
         self._solution, self.grid_sol = kernel(*args)
 
-        info(2, "time elapsed during integration: {0:5.2f}sec".format(time() - start))
+        info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
-    def _calculate_integration_path(self, int_grid, grid_var, force=False):
+    def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
+        """Resolve ``config.kernel_config`` to ``(kernel, args)``.
+
+        Only ETD2RK kernels are wired up. ``mkl_etd2`` and ``cuda_etd2`` are
+        reserved for future ports — they raise ``NotImplementedError`` so a
+        future implementer has a clear plug-in point. Any other selection
+        (including the legacy ``numpy``/``mkl``/``cuda``/``accelerate``
+        forward-Euler names) is rejected.
+        """
+        import MCEq.solvers
+
+        kc = config.kernel_config.lower()
+
+        if kc == "numpy_etd2":
+            return MCEq.solvers.solv_numpy_etd2, (
+                nsteps,
+                dX,
+                rho_inv,
+                self.int_m,
+                self.dec_m,
+                phi0,
+                grid_idcs,
+            )
+
+        if kc == "accelerate_etd2":
+            import MCEq.spacc as spacc
+            from MCEq.solvers import _etd_split_cache
+
+            # Cache the diagonal/off-diagonal split AND its SpaccMatrix
+            # wrappers, keyed against ``int_m`` / ``dec_m`` identity. When
+            # either matrix is rebuilt (e.g. ``set_density_model`` →
+            # ``construct_matrices``) we tear down the old SpaccMatrix slots
+            # so the global Accelerate matrix store does not fill up.
+            cached = getattr(self, "_spacc_etd2_cache", None)
+            if (
+                cached is None
+                or cached["int_m"] is not self.int_m
+                or cached["dec_m"] is not self.dec_m
+            ):
+                if cached is not None:
+                    for key in ("spacc_int_off", "spacc_dec_off"):
+                        old = cached.get(key)
+                        if old is not None:
+                            old.__del__()
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz else None
+                spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz else None
+                self._spacc_etd2_cache = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "spacc_int_off": spacc_int_off,
+                    "spacc_dec_off": spacc_dec_off,
+                    "d_int": d_int,
+                    "d_dec": d_dec,
+                }
+            c = self._spacc_etd2_cache
+            return MCEq.solvers.solv_spacc_etd2, (
+                nsteps,
+                dX,
+                rho_inv,
+                c["spacc_int_off"],
+                c["spacc_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                phi0,
+                grid_idcs,
+            )
+
+        if kc in ("mkl", "mkl_etd2"):
+            raise NotImplementedError(
+                "ETD2 MKL kernel pending — see solvers.solv_numpy_etd2 / "
+                "solv_spacc_etd2 as references."
+            )
+
+        if kc in ("cuda", "cuda_etd2"):
+            raise NotImplementedError(
+                "ETD2 CUDA kernel pending — see solvers.solv_numpy_etd2 / "
+                "solv_spacc_etd2 as references."
+            )
+
+        raise Exception(
+            f"Unsupported integrator setting '{config.kernel_config}'. "
+            "Choose one of: numpy_etd2, accelerate_etd2 "
+            "(mkl_etd2 / cuda_etd2 are stubs)."
+        )
+
+    def _calculate_integration_path(
+        self,
+        int_grid,
+        grid_var,
+        force=False,
+        *,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+    ):
+        # ETD2 is the only path builder. Step sizes follow the
+        # atmosphere-aware non-uniform schedule keyed off the local
+        # |d ln rho_inv / dX|; see ``MCEq.solvers.etd2_nonuniform_path``.
+        etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
+        cached_etd2_params = getattr(self, "_cached_etd2_path_params", None)
+
         if (
             self.integration_path
             and np.all(int_grid == self.int_grid)
             and np.all(self.grid_var == grid_var)
-            and self._cached_leading_process == config.leading_process
+            and cached_etd2_params == etd2_params
             and not force
         ):
             info(5, "skipping calculation.")
             return
 
-        self._cached_leading_process = config.leading_process
+        self._cached_etd2_path_params = etd2_params
         self.int_grid, self.grid_var = int_grid, grid_var
         if grid_var != "X":
             raise NotImplementedError(
                 "Grid variables other than the depth X not supported."
             )
 
-        max_X = self.density_model.max_X
-        ri = self.density_model.r_X2rho
-        max_lint = self.matrix_builder.max_lint
-        max_ldec = self.matrix_builder.max_ldec
-        dXmax = config.dXmax
+        from MCEq.solvers import etd2_nonuniform_path
 
-        info(2, "X_surface = {0:7.2f}g/cm2".format(max_X))
-
-        dX_vec = []
-        rho_inv_vec = []
-
-        X = config.X_start
-        if int_grid is not None and min(int_grid) < X:
-            raise ValueError(
-                "Steps in int_grid must be larger than mceq_config.X_start."
-            )
-        step = 0
-        grid_step = 0
-        grid_idcs = []
-        assert config.leading_process in [
-            "auto",
-            "decays",
-            "interactions",
-        ], "Set leading process to auto, decays or interactions"
-        if config.leading_process == "decays":
-            info(3, "using decays as leading eigenvalues")
-
-            def delta_X(X, inv_rho):
-                return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
-
-        elif config.leading_process == "interactions":
-            info(2, "using interactions as leading eigenvalues")
-
-            def delta_X(X, inv_rho):
-                return min(config.stability_margin / max_lint, dXmax)
-
-        else:
-            # This is the case for auto setting.
-            # If no particles in eqn system force decays
-            # as leading eigenvalues
-
-            if np.allclose(max_lint, 0.0):
-
-                def delta_X(X, inv_rho):
-                    return min(config.stability_margin / (max_ldec * inv_rho), dXmax)
-
-            else:
-
-                def delta_X(X, inv_rho):
-                    dX = min(
-                        config.stability_margin / (max_ldec * inv_rho),
-                        config.stability_margin / max_lint,
-                        dXmax,
-                    )
-                    # if dX / self.density_model.max_X < 1e-7:
-                    #     raise Exception(
-                    #         "Stiffness warning: dX <= 1e-7. Check configuration or"
-                    #         + "manually call MCEqRun._calculate_integration_path("
-                    #         + 'int_grid, "X", force=True).'
-                    #     )
-                    return dX
-
-        enable_int_grid = np.any(int_grid)
-        len_int_grid = len(int_grid) if enable_int_grid else 0
-        while X < max_X:
-            inv_rho = ri(X)
-            dX = delta_X(X, inv_rho)
-            if (
-                enable_int_grid
-                and (grid_step < len_int_grid)
-                and (X + dX >= int_grid[grid_step])
-            ):
-                dX = int_grid[grid_step] - X
-                grid_idcs.append(step)
-                grid_step += 1
-            dX_vec.append(dX)
-            rho_inv_vec.append(inv_rho)
-            X += dX
-            step += 1
-
-        # Integrate
-        dX_vec = np.array(dX_vec, dtype=config.floatlen)
-        rho_inv_vec = np.array(rho_inv_vec, dtype=config.floatlen)
-
-        self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
+        info(
+            2,
+            "ETD2 non-uniform path (eps={}, dX_max={}, dX_min={}, "
+            "fd_span={}, X_start={})".format(
+                eps if eps is not None else config.etd2_path["eps"],
+                dX_max if dX_max is not None else config.etd2_path["dX_max"],
+                dX_min if dX_min is not None else config.etd2_path["dX_min"],
+                fd_span if fd_span is not None else config.etd2_path["fd_span"],
+                X_start if X_start is not None else config.X_start,
+            ),
+        )
+        self.integration_path = etd2_nonuniform_path(
+            self.density_model,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+            int_grid=int_grid,
+        )
 
     def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):
         """Returns number of particles of type `label` at a grid step above
@@ -1617,41 +1580,32 @@ class MatrixBuilder:
                 )
         return csr_matrix(new_mat)
 
-    def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
-        """Some recursive magic."""
+    def _follow_chains(self, p, pprod_mat, p_orig, propmat, reclev=0):
+        """Recursively project ``p_orig``'s production through resonance
+        children of ``p`` into ``propmat``.
+
+        For each child ``d`` of ``p``:
+
+        * If ``d`` is *not* a resonance, ``d`` has its own state-vector slot,
+          so we add a direct contribution ``propmat[d, p_orig] += d's
+          production matrix · pprod_mat`` and stop.
+        * If ``d`` *is* a resonance (set via ``adv_set["force_resonance"]``),
+          ``d`` has no slot of its own, so we fold its production into
+          ``p_orig``'s row by multiplying through and recursing into ``d``'s
+          own children.
+        """
         info(40, reclev * "\t", "entering with", p.name)
-        # print 'orig, p', p_orig.pdg_id, p.pdg_id
         for d in p.children:
             info(40, reclev * "\t", "following to", d.name)
             if not d.is_resonance:
-                # print 'adding stuff', p_orig.pdg_id, p.pdg_id, d.pdg_id
                 dprop = self._zero_mat()
-                p._assign_decay_idx(d, idcs, d.hadridx, dprop)
+                p._assign_decay_dist(d, dprop)
                 propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
-
-            if config.debug_level >= 20:
-                pstr = "res"
-                dstr = "Mchain"
-                if idcs == p.hadridx:
-                    pstr = "prop"
-                    dstr = "Mprop"
-                info(
-                    40,
-                    reclev * "\t",
-                    "setting {0}[({1},{3})->({2},{4})]".format(
-                        dstr, p_orig.name, d.name, pstr, "prop"
-                    ),
-                )
-
-            if d.is_mixed or d.is_resonance:
-                dres = self._zero_mat()
-                p._assign_decay_idx(d, idcs, d.residx, dres)
-                reclev += 1
-                self._follow_chains(
-                    d, dres.dot(pprod_mat), p_orig, d.residx, propmat, reclev
-                )
-            else:
                 info(20, reclev * "\t", "\t terminating at", d.name)
+            else:
+                dres = self._zero_mat()
+                p._assign_decay_dist(d, dres)
+                self._follow_chains(d, dres.dot(pprod_mat), p_orig, propmat, reclev + 1)
 
     def _fill_matrices(self, skip_decay_matrix=False):
         """Generates the interaction and decay matrices from scratch."""
@@ -1668,7 +1622,6 @@ class MatrixBuilder:
                         p,
                         np.diag(np.ones(self.dim)).astype(config.floatlen),
                         p,
-                        p.hadridx,
                         self.D_blocks,
                         reclev=0,
                     )
@@ -1684,27 +1637,31 @@ class MatrixBuilder:
                     info(1, f"No interactions by {p.name} ({p.pdg_id}).")
                 continue
             for s in p.hadr_secondaries:
-                # if s not in self.pman.cascade_particles:
-                #     print 'Doing nothing with', p.pdg_id, s.pdg_id
-                #     continue
-
-                if not s.is_resonance:
-                    cmat = self._zero_mat()
-                    p._assign_hadr_dist_idx(s, p.hadridx, s.hadridx, cmat)
-                    self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
-
                 cmat = self._zero_mat()
-                p._assign_hadr_dist_idx(s, p.hadridx, s.residx, cmat)
-                self._follow_chains(s, cmat, p, s.residx, self.C_blocks, reclev=1)
+                p._assign_hadr_dist(s, cmat)
+                if not s.is_resonance:
+                    # s has its own state-vector slot — direct entry.
+                    self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
+                else:
+                    # s is folded — recurse into its children.
+                    self._follow_chains(s, cmat, p, self.C_blocks, reclev=1)
 
     def _construct_differential_operator(self):
-        """Constructs a derivative operator for the contiuous losses.
+        """Constructs a derivative operator for the continuous losses.
 
-        This implmentation uses a 6th-order finite differences operator,
-        only depends on the energy grid. This is an operator for a sub-matrix
-        of dimension (energy grid, energy grid) for a single particle. It
-        can be likewise applied to all particle species. The dEdX values are
-        applied later in ...
+        Builds a (dim_e x dim_e) banded matrix that approximates d/du with
+        u = ln E on the (log-uniform) energy grid. The interior 7-point
+        stencil is selected by :data:`MCEq.config.loss_stencil_method`:
+
+        - ``"expfit"`` (default): exponentially-fitted 7-point stencil anchored
+          at :data:`MCEq.config.loss_stencil_alpha0`. Near-exact for power-law
+          spectra E^{-alpha} with alpha ~ alpha0 on a coarse log grid.
+        - ``"centered"``: symmetric 6th-order centered FD.
+        - ``"biased"``: legacy 7-point biased "6th-order" stencil.
+
+        All three options share the same one-sided polynomial-fit stencils
+        on the boundary rows (0, 1, 2 and last-2, last-1, last); see
+        ``docs/etd1_solver.md`` for the boundary-cliff caveat.
         """
         # First rows of operator matrix (values are truncated at the edges
         # of a matrix.)
@@ -1717,14 +1674,6 @@ class MatrixBuilder:
         diags_left_2 = [-2, -1, 0, 1, 2, 3]
         coeffs_left_2 = [3, -30, -20, 60, -15, 2]
         denom_left_2 = 60
-
-        # Centered diagonals
-        # diags = [-3, -2, -1, 1, 2, 3]
-        # coeffs = [-1, 9, -45, 45, -9, 1]
-        # denom = 60.
-        diags = diags_left_2
-        coeffs = coeffs_left_2
-        denom = 60.0
 
         # Last rows at the right of operator matrix
         diags_right_2 = [-d for d in diags_left_2[::-1]]
@@ -1740,6 +1689,31 @@ class MatrixBuilder:
         h = np.log(self._energy_grid.b[1:] / self._energy_grid.b[:-1])
         dim_e = int(self._energy_grid.d)
         last = dim_e - 1
+
+        # Interior stencil selection. All options are 7-point and span at
+        # most [-3, +3], so the row range range(3, dim_e - 3) is uniform.
+        method = getattr(config, "loss_stencil_method", "expfit")
+        if method == "biased":
+            diags_int = np.asarray(diags_left_2)
+            coeffs_int = np.asarray(coeffs_left_2, dtype=np.float64) / 60.0
+        elif method == "centered":
+            diags_int = np.asarray([-3, -2, -1, 1, 2, 3])
+            coeffs_int = np.asarray([-1, 9, -45, 45, -9, 1], dtype=np.float64) / 60.0
+        elif method == "expfit":
+            alpha0 = float(getattr(config, "loss_stencil_alpha0", 3.0))
+            diags_int = np.arange(-3, 4)
+            # Use the mean log-spacing for a single fit (grid is log-uniform).
+            h_avg = float(np.mean(h))
+            deltas = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
+            a = -alpha0 + deltas
+            Aexp = np.exp(np.outer(a, diags_int) * h_avg)
+            rhs = a * h_avg
+            coeffs_int = np.linalg.solve(Aexp, rhs)
+        else:
+            raise ValueError(
+                f"Unknown loss_stencil_method: {method!r}. "
+                "Expected 'expfit', 'centered', or 'biased'."
+            )
 
         op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
         op_matrix[0, np.asarray(diags_leftmost)] = np.asarray(coeffs_leftmost) / (
@@ -1761,8 +1735,6 @@ class MatrixBuilder:
             coeffs_right_2
         ) / (denom_right_2 * h[last - 2])
         for row in range(3, dim_e - 3):
-            op_matrix[row, row + np.asarray(diags)] = np.asarray(coeffs) / (
-                denom * h[row]
-            )
+            op_matrix[row, row + diags_int] = coeffs_int / h[row]
 
         self.op_matrix = op_matrix

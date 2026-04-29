@@ -50,8 +50,8 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 # cm (everything shorter-lived than K0s will be considered prompt)
 prompt_ctau = 2.6842
 
-#: Approximate value for the maximum density expected. Needed for the
-#: resonance approximation. Default value: air at the surface
+#: Approximate value for the maximum density expected. Used by the
+#: atmosphere model. Default value: air at the surface.
 max_density = 0.001225
 #: Material for interaction lengths, ionization and radiation (=continuous) loss terms
 #: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen', 'iron'
@@ -75,8 +75,8 @@ len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-#: Approximate value for the maximum density expected. Needed for the
-#: resonance approximation. Default value: air at the surface
+#: Approximate value for the maximum density expected. Used by the
+#: atmosphere model. Default value: air at the surface.
 max_density = (0.001225,)
 # =================================================================
 # Parameters of numerical integration
@@ -98,12 +98,14 @@ e_max = 1e11
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
 
-#: Selection of integrator (euler/odepack)
-integrator = "euler"
-
-#: euler kernel implementation (numpy/MKL/CUDA/accelerate).
-#: With serious nVidia GPUs CUDA a few times faster than MKL
-#: autodetection of fastest kernel below
+#: ETD2RK kernel implementation. Choices:
+#:   "auto"            — pick the best available ETD2 kernel (see below).
+#:   "numpy_etd2"      — pure-numpy ETD2RK (always available).
+#:   "accelerate_etd2" — Apple Accelerate-backed ETD2RK (macOS only).
+#:   "mkl_etd2"        — Intel MKL-backed ETD2RK (stub; raises
+#:                       NotImplementedError until ported).
+#:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (stub; raises
+#:                       NotImplementedError until ported).
 kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
@@ -121,43 +123,35 @@ floatlen = None
 #: numpy is linked to MKL.
 mkl_threads = 8
 
-#: parameters for the odepack integrator. More details at
-#: http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
-ode_params = {
-    "name": "lsoda",
-    "method": "bdf",
-    "nsteps": 1000,
-    # 'max_step': 10.0,
-    "rtol": 0.01,
-}
-
 # =========================================================================
 # Advanced settings
 # =========================================================================
 
-#: The leading process is can be either "decays" or "interactions". This depends
-#: on the target density and it is usually chosen automatically. For
-#: advanced applications one can force "interactions" to be the dominant
-#: process. Essentially this affects how the adaptive step size is computed.
-#: There is also the choice of "auto" that takes both processes into account
-leading_process = "auto"
-
-#: Stability margin for the integrator. The default 0.95 means that step
-#: sizes are chosen 5% away from the stability circle. Usually no need to
-#: change, except you know what it does.
-stability_margin = 0.95
-
-#: Ratio of decay_length/interaction_length where particle interactions
-#: are neglected and the resonance approximation is used
-#: 0.5 ~ precision loss <+3% speed gain ~ factor 10
-#: If smoothness and shape accuracy for prompt flux is crucial, use smaller
-#: values around 0.1 or 0.05
-hybrid_crossover = 0.5
-
-#: Maximal integration step dX in g/cm2. No limit necessary in most cases,
-#: use for debugging purposes when searching for stability issues, especially
-#: if e_min is < 1 GeV.
-dXmax = 1.0
+#: Default parameters for the non-uniform integration path used by
+#: ETD2 kernels (`numpy_etd2`, `accelerate_etd2`, ...). See
+#: docs/etd1_solver.md, `MCEq.solvers.etd2_nonuniform_path`, and the
+#: notebook `docs/examples/ETD2_solver_comparison.ipynb`. Each value can
+#: be overridden per-call via `MCEqRun.solve(..., eps=..., dX_max=...)`.
+etd2_path = {
+    #: Within-step | d ln rho_inv / dX | bound. Smaller -> finer steps in
+    #: the upper atmosphere. 0.3 gives sub-percent muon-flux agreement
+    #: across the spectrum at all zeniths; see the design doc for the
+    #: tolerance/step-count tradeoff.
+    "eps": 0.3,
+    #: Cap on the step size in g/cm^2 — the off-diagonal stability cliff
+    #: `h * spec(int_off) < 2`, with spec(int_off) ~ 0.094 for the
+    #: standard MCEq matrix.
+    "dX_max": 20.0,
+    #: Floor on the step size. Prevents the controller from picking 0
+    #: when |d ln rho_inv / dX| is very large (top of atmosphere).
+    "dX_min": 0.01,
+    #: Forward-FD probe span in g/cm^2 used to estimate
+    #: |d ln rho_inv / dX|. Must be large enough to cross the
+    #: `r_X2rho` spline saturation cap at the top of atmosphere
+    #: (~1e-4 g/cm^2 for CORSIKA atmospheres) and small enough to
+    #: resolve the local derivative in the bulk.
+    "fd_span": 0.01,
+}
 
 #: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
@@ -192,6 +186,26 @@ average_loss_operator = True
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
+
+#: Stencil for the continuous-loss differential operator on the
+#: log-uniform energy grid. Choices:
+#:   "expfit"   -- 7-point exponentially-fitted stencil anchored at
+#:                 ``loss_stencil_alpha0``. Designed to be near-exact for
+#:                 power-law spectra E^{-alpha} with alpha ~ alpha0 on the
+#:                 default 10 bins/decade grid; orders of magnitude smaller
+#:                 truncation error than plain FD on steep spectra.
+#:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
+#:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
+#: All three options share the same one-sided polynomial-fit stencils on
+#: the boundary rows (0,1,2 and last-2,last-1,last); see
+#: ``docs/etd1_solver.md`` for the boundary-cliff caveat.
+loss_stencil_method = "expfit"
+
+#: Anchor exponent for the "expfit" stencil. The stencil is constructed to
+#: be exact for f = exp(a u) at trial slopes a = -alpha0 + delta around
+#: -alpha0; alpha0 ~ 3 covers the typical CR power-law range. The stencil
+#: is robust to mis-specifications of order +/- 1.
+loss_stencil_alpha0 = 3.0
 
 #: Raise exception when requesting unknown particles from get_solution
 excpt_on_missing_particle = False
@@ -233,19 +247,19 @@ adv_set = {
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
     #: Disable particle (production)
-    "disabled_particles": [],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
+    "disabled_particles": [11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Difficult to explain parameter
     "disable_leading_mesons": False,
-    #: Do not apply mixing to these particles
-    "exclude_from_mixing": [13],
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
-    #: Force particles to be treated as resonance
+    #: Force particles (by absolute PDG id, excluding standard_particles) to
+    #: be treated as resonances — folded into other particles' matrices at
+    #: build time and not propagated as their own state vector entries.
+    #: Empty list = full propagation for everything (the default after the
+    #: ETD2RK migration). Retained as an opt-in escape hatch.
     "force_resonance": [],
-    #: Disable mixing between resonance approx. and full propagation
-    "no_mixing": False,
     #: Force the interaction cross sections to a specific model
     "forced_int_cs": None,
     #: Replace only the meson air cross sections with that from a different model
@@ -302,22 +316,22 @@ has_mkl = bool(pathlib.Path(mkl_path).is_file())
 # Look for cupy module
 has_cuda = importlib.util.find_spec("cupy") is not None
 
-# CUDA is usually fastest, then MKL. Fallback to numpy.
+# Pick the fastest available ETD2RK kernel. MKL/CUDA are stubs pending
+# port; they are never auto-selected, but explicit selection is preserved
+# (it raises NotImplementedError at solve time) so a future implementer
+# can wire them up without re-deriving the dispatch contract.
 if kernel_config == "auto":
-    if has_cuda:
-        kernel_config = "CUDA"
-    elif has_mkl:
-        kernel_config = "MKL"
-    elif has_accelerate:
-        kernel_config = "accelerate"
+    if has_accelerate:
+        kernel_config = "accelerate_etd2"
     else:
-        kernel_config = "numpy"
+        kernel_config = "numpy_etd2"
 else:
-    if kernel_config.lower() == "cuda" and not has_cuda:
+    kc = kernel_config.lower()
+    if kc in ("cuda", "cuda_etd2") and not has_cuda:
         raise Exception("CUDA unavailable. Make sure cupy is installed.")
-    elif kernel_config.lower() == "mkl" and not has_mkl:
+    elif kc in ("mkl", "mkl_etd2") and not has_mkl:
         raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
-    elif kernel_config.lower() == "accelerate" and not has_accelerate:
+    elif kc in ("accelerate", "accelerate_etd2") and not has_accelerate:
         raise Exception("Accelerate unavailable. Only on MacOS.")
 
 if debug_level >= 2:

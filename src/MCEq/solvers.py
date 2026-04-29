@@ -5,6 +5,110 @@ from MCEq import config
 from MCEq.misc import info
 
 
+def etd2_nonuniform_path(
+    density_model,
+    *,
+    X_start=None,
+    eps=None,
+    dX_max=None,
+    dX_min=None,
+    fd_span=None,
+    int_grid=None,
+):
+    """Build a non-uniform integration path for ETD2 kernels.
+
+    Step sizes follow ``h_k = min(dX_max, eps / |d ln rho_inv / dX|(X_k))``
+    with a ``max(.., dX_min)`` floor. ``rho_inv`` for the kernel is the
+    integral mean of ``density_model.r_X2rho`` over each step (via
+    ``scipy.integrate.quad``), not a point sample — this is essential at
+    the very first step which crosses the spline-saturation cap.
+
+    See ``docs/etd1_solver.md`` ("Step-size control and the resonance
+    approximation") for the design.
+
+    Args:
+      density_model: object with ``r_X2rho(X)`` and ``max_X``.
+      X_start (float | None): starting depth in g/cm^2; ``None`` →
+        ``config.X_start``.
+      eps (float | None): within-step ``rho_inv`` variation tolerance;
+        ``None`` → ``config.etd2_path["eps"]``.
+      dX_max (float | None): cap on step size (off-diagonal stability
+        cliff); ``None`` → ``config.etd2_path["dX_max"]``.
+      dX_min (float | None): floor on step size; ``None`` →
+        ``config.etd2_path["dX_min"]``.
+      fd_span (float | None): forward-FD probe span; ``None`` →
+        ``config.etd2_path["fd_span"]``.
+      int_grid (np.ndarray | None): X values at which to record snapshots.
+        Steps are truncated to land exactly on each ``int_grid`` entry.
+
+    Returns:
+      (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
+      kernel-dispatch contract used by ``MCEqRun.integration_path``.
+    """
+    from scipy.integrate import quad
+
+    if X_start is None:
+        X_start = config.X_start
+    p = config.etd2_path
+    if eps is None:
+        eps = p["eps"]
+    if dX_max is None:
+        dX_max = p["dX_max"]
+    if dX_min is None:
+        dX_min = p["dX_min"]
+    if fd_span is None:
+        fd_span = p["fd_span"]
+
+    ri = density_model.r_X2rho
+    max_X = density_model.max_X
+    n_int = int(np.size(int_grid)) if int_grid is not None else 0
+
+    if n_int and float(np.min(int_grid)) < float(X_start):
+        raise ValueError(
+            "Steps in int_grid must be larger than or equal to X_start "
+            f"(got min(int_grid)={float(np.min(int_grid)):.6g}, "
+            f"X_start={float(X_start):.6g})."
+        )
+
+    Xs, dXs, grid_idcs = [], [], []
+    grid_step = 0
+    X = float(X_start)
+    step = 0
+    while X < max_X:
+        rate = abs(np.log(float(ri(X + fd_span))) - np.log(float(ri(X)))) / fd_span
+        h = min(dX_max, eps / rate) if rate > 0 else dX_max
+        h = max(h, dX_min)
+        h = min(h, max_X - X)
+        # Truncate the step to land exactly on the next user-requested
+        # snapshot point. The truncation can drive h below dX_min — that's
+        # the user's intent, not a stability issue (smaller h is always
+        # more stable for ETD2). It can chain across many short steps if
+        # the user's grid is finer than the natural schedule.
+        if n_int and grid_step < n_int and X + h >= int_grid[grid_step]:
+            h = float(int_grid[grid_step]) - X
+            grid_idcs.append(step)
+            grid_step += 1
+        Xs.append(X)
+        dXs.append(h)
+        X += h
+        step += 1
+
+    Xs = np.asarray(Xs, dtype=np.float64)
+    dXs = np.asarray(dXs, dtype=np.float64)
+    rho_inv = np.empty(len(dXs), dtype=np.float64)
+    for i in range(len(dXs)):
+        # A zero-length step occurs when ``int_grid`` requests a snapshot
+        # at X_start: the truncation drives the first dX to 0 and the kernel
+        # records the initial state. Point-sample ri there to avoid quad/0.
+        if dXs[i] == 0.0:
+            rho_inv[i] = float(ri(Xs[i]))
+        else:
+            rho_inv[i] = (
+                quad(ri, Xs[i], Xs[i] + dXs[i], limit=50, epsrel=1e-6)[0] / dXs[i]
+            )
+    return len(dXs), dXs, rho_inv, grid_idcs
+
+
 def _etd_split_cache(int_m, dec_m):
     """Pre-compute the diagonal/off-diagonal split used by ETD kernels.
 
@@ -20,6 +124,93 @@ def _etd_split_cache(int_m, dec_m):
     int_off.eliminate_zeros()
     dec_off.eliminate_zeros()
     return d_int, d_dec, int_off, dec_off
+
+
+# phi1(z) = (e^z - 1) / z              (limit 1   as z -> 0)
+# phi2(z) = (e^z - 1 - z) / z**2       (limit 1/2 as z -> 0)
+# Below the analytic-formula cutoffs we patch with the order-2 Taylor
+# expansion via Horner. phi2 cancels at a wider radius than phi1 because
+# its numerator has a leading z² term.
+_PHI1_SMALL = 1e-6
+_PHI2_SMALL = 1e-3
+_INV_6 = 1.0 / 6.0
+_INV_24 = 1.0 / 24.0
+
+
+def _etd_step_buffers(dim):
+    """Allocate the per-step scratch arrays the ETD kernels need.
+
+    Centralized here so both the numpy and the spacc kernels share an
+    identical layout — they're hot loops, and any allocation inside them
+    dominates the SpMVs once those are running on Accelerate / a tuned BLAS.
+    """
+    return {
+        "D": np.empty(dim, dtype=np.float64),
+        "hD": np.empty(dim, dtype=np.float64),
+        "eD": np.empty(dim, dtype=np.float64),
+        "phi1": np.empty(dim, dtype=np.float64),
+        "phi2": np.empty(dim, dtype=np.float64),
+        "scratch": np.empty(dim, dtype=np.float64),
+        "abs_hD": np.empty(dim, dtype=np.float64),
+        "mask1": np.empty(dim, dtype=bool),
+        "mask2": np.empty(dim, dtype=bool),
+    }
+
+
+def _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs):
+    """Fill ``bufs['eD']`` / ``bufs['phi1']`` / ``bufs['phi2']`` in place.
+
+    Computes the per-step diagonal of ``A + ri * B``, exponentiates it, and
+    evaluates the two phi-functions of ``h*D``. All work is done in
+    preallocated buffers — no temporaries — and the small-|hD| Taylor
+    branch is patched in only on the rows that need it (instead of being
+    evaluated eagerly across the whole array as ``np.where`` would).
+    """
+    D = bufs["D"]
+    hD = bufs["hD"]
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
+    abs_hD = bufs["abs_hD"]
+    mask1 = bufs["mask1"]
+    mask2 = bufs["mask2"]
+
+    # D = d_int + ri * d_dec
+    np.multiply(d_dec, ri, out=D)
+    np.add(D, d_int, out=D)
+    # hD = h * D ; eD = exp(hD)
+    np.multiply(D, h, out=hD)
+    np.exp(hD, out=eD)
+
+    # Branch masks: True ⇒ analytic form is safe.
+    np.abs(hD, out=abs_hD)
+    np.greater(abs_hD, _PHI1_SMALL, out=mask1)
+    np.greater(abs_hD, _PHI2_SMALL, out=mask2)
+
+    # phi1: analytic (eD - 1) / hD where mask1, Taylor 1 + hD/2 + hD²/6 elsewhere.
+    np.subtract(eD, 1.0, out=phi1)
+    np.divide(phi1, hD, out=phi1, where=mask1)
+    # Horner Taylor for phi1: ((hD/6) + 1/2)*hD + 1
+    np.multiply(hD, _INV_6, out=scratch)
+    np.add(scratch, 0.5, out=scratch)
+    np.multiply(scratch, hD, out=scratch)
+    np.add(scratch, 1.0, out=scratch)
+    np.invert(mask1, out=mask1)  # mask1 now: small |hD| rows
+    np.copyto(phi1, scratch, where=mask1)
+
+    # phi2: analytic (eD - 1 - hD) / hD² where mask2, Taylor 1/2 + hD/6 + hD²/24 elsewhere.
+    np.subtract(eD, 1.0, out=phi2)
+    np.subtract(phi2, hD, out=phi2)
+    np.multiply(hD, hD, out=scratch)  # hD² in scratch
+    np.divide(phi2, scratch, out=phi2, where=mask2)
+    # Horner Taylor for phi2: ((hD/24) + 1/6)*hD + 1/2
+    np.multiply(hD, _INV_24, out=scratch)
+    np.add(scratch, _INV_6, out=scratch)
+    np.multiply(scratch, hD, out=scratch)
+    np.add(scratch, 0.5, out=scratch)
+    np.invert(mask2, out=mask2)  # mask2 now: small |hD| rows
+    np.copyto(phi2, scratch, where=mask2)
 
 
 def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
@@ -44,9 +235,7 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     Per-step cost: 4 SpMVs (two F evaluations against int_off and dec_off
     each) plus a handful of elementwise vector ops on length-N arrays.
-    Globally O(h**2). At the same step grid as forward-Euler, ETD2 is
-    order-of-magnitude more accurate; coarsening the grid by 4-16x while
-    holding accuracy under 1% is the headline use case.
+    Globally O(h**2).
 
     Args:
       nsteps (int): number of integration steps
@@ -62,7 +251,17 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     """
     d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
 
-    phc = phi.copy()
+    dim = phi.shape[0]
+    phc = phi.astype(np.float64, copy=True)
+    F_phi = np.empty(dim, dtype=np.float64)
+    F_a = np.empty(dim, dtype=np.float64)
+    a = np.empty(dim, dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
+
     grid_sol = []
     grid_step = 0
 
@@ -70,33 +269,47 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     start = time()
 
-    PHI1_SMALL = 1e-6
-    PHI2_SMALL = 1e-3  # phi2 has wider cancellation region than phi1
+    # Suppress overflow / NaN warnings from the linear-combination ufuncs.
+    # At extreme zenith the e± semi-Lagrangian L/R rows produce inf in
+    # F_phi/F_a (no diagonal damping — see docs/etd1_solver.md "EM cascade
+    # caveat"). The blowup is contained to those rows: e±/γ do not feed
+    # back into hadrons via int_m/dec_m, so muons and neutrinos are
+    # unaffected. Disable e± explicitly with
+    # ``config.adv_set["disabled_particles"] = [11, -11]`` if the EM block
+    # matters for your application.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
 
-    for k in range(nsteps):
-        h = dX[k]
-        ri = rho_inv[k]
-        D = d_int + ri * d_dec
-        hD = h * D
-        eD = np.exp(hD)
-        phi1 = np.where(
-            np.abs(hD) > PHI1_SMALL,
-            (eD - 1.0) / np.where(hD != 0.0, hD, 1.0),
-            1.0 + 0.5 * hD + hD * hD / 6.0,
-        )
-        phi2 = np.where(
-            np.abs(hD) > PHI2_SMALL,
-            (eD - 1.0 - hD) / np.where(hD != 0.0, hD * hD, 1.0),
-            0.5 + hD / 6.0 + hD * hD / 24.0,
-        )
-        F_phi = int_off.dot(phc) + ri * dec_off.dot(phc)
-        a = eD * phc + h * phi1 * F_phi
-        F_a = int_off.dot(a) + ri * dec_off.dot(a)
-        phc = a + h * phi2 * (F_a - F_phi)
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
 
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-            grid_sol.append(np.copy(phc))
-            grid_step += 1
+            # F_phi = int_off @ phc + ri * dec_off @ phc
+            # scipy SpMV allocates the result internally; copy into preallocated F_phi.
+            np.copyto(F_phi, int_off.dot(phc))
+            np.multiply(dec_off.dot(phc), ri, out=scratch)
+            np.add(F_phi, scratch, out=F_phi)
+
+            # a = eD * phc + h * phi1 * F_phi
+            np.multiply(eD, phc, out=a)
+            np.multiply(phi1, F_phi, out=scratch)
+            scratch *= h
+            np.add(a, scratch, out=a)
+
+            # F_a = int_off @ a + ri * dec_off @ a
+            np.copyto(F_a, int_off.dot(a))
+            np.multiply(dec_off.dot(a), ri, out=scratch)
+            np.add(F_a, scratch, out=F_a)
+
+            # phc = a + h * phi2 * (F_a - F_phi)
+            np.subtract(F_a, F_phi, out=scratch)
+            scratch *= h
+            np.multiply(scratch, phi2, out=scratch)
+            np.add(a, scratch, out=phc)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
 
     info(
         2,
@@ -106,496 +319,124 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     return phc, np.array(grid_sol)
 
 
-def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
-    """:mod:`numpy` implementation of forward-euler integration.
+def solv_spacc_etd2(
+    nsteps,
+    dX,
+    rho_inv,
+    spacc_int_off,
+    spacc_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on Apple Accelerate via the spacc bindings.
+
+    Pre-split kernel: takes the off-diagonal matrices already wrapped as
+    :class:`MCEq.spacc.SpaccMatrix` instances and the diagonal vectors as
+    plain numpy arrays. The diagonal/off-diagonal split is constant in X
+    so the caller (``MCEqRun.solve``) builds it once per ``solve()`` call.
+
+    Per step (mirrors ``solv_numpy_etd2``):
+
+      F_phi = int_off @ phc + ri * dec_off @ phc           (2 SpMVs)
+      a     = exp(h*D) * phc + h * phi1(h*D) * F_phi
+      F_a   = int_off @ a   + ri * dec_off @ a             (2 SpMVs)
+      phc   = a + h * phi2(h*D) * (F_a - F_phi)
+
+    Implementation note: ``SpaccMatrix.gemv_ctargs`` performs ``y = α·M·x + y``
+    via raw ctypes pointers. The buffers backing those pointers must stay
+    at the same address across the whole loop, so we pre-allocate ``phc``,
+    ``F_phi``, ``F_a``, ``a`` once and use ``np.copyto`` / ``ndarray.fill``
+    to update them in place. Rebinding any of those names (e.g. ``a = ...``)
+    would silently break — the ctypes pointer would still point at the old
+    buffer.
 
     Args:
       nsteps (int): number of integration steps
-      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
-    Returns:
-      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
-    """
-
-    grid_sol = []
-    grid_step = 0
-
-    imc = int_m
-    dmc = dec_m
-    dxc = dX
-    ric = rho_inv
-    phc = phi.copy()  # Fix: create a copy to avoid modifying the input
-
-    dXaccum = 0.0
-
-    from time import time
-
-    start = time()
-
-    for step in range(nsteps):
-        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
-
-        dXaccum += dxc[step]
-
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(phc))
-            grid_step += 1
-
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
-    )
-
-    return phc, np.array(grid_sol)
-
-
-class CUDASparseContext:
-    """This class handles the transfer between CPU and GPU memory, and the calling
-    of GPU kernels. Initialized by :class:`MCEq.core.MCEqRun` and used by
-    :func:`solv_CUDA_sparse`.
-    """
-
-    def __init__(self, int_m, dec_m, device_id=config.cuda_gpu_id):
-        if config.cuda_fp_precision == 32:
-            self.fl_pr = np.float32
-        elif config.cuda_fp_precision == 64:
-            self.fl_pr = np.float64
-        else:
-            raise Exception("CUDASparseContext(): Unknown precision specified.")
-        # Setup GPU stuff and upload data to it
-        try:
-            import cupy as cp
-            import cupyx.scipy as cpx
-
-            self.cp = cp
-            self.cpx = cpx
-        except ImportError:
-            raise Exception(
-                "solv_CUDA_sparse(): CuPy not installed or not available.\n"
-                + "Install with: pip install cupy-cuda12x>=12.0.0\n"
-                + "CuPy 12.0+ is required for modern sparse matrix interface compatibility."
-            )
-
-        cp.cuda.Device(device_id).use()
-        self.set_matrices(int_m, dec_m)
-
-    def set_matrices(self, int_m, dec_m):
-        """Upload sparce matrices to GPU memory"""
-        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m, dtype=self.fl_pr)
-        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m, dtype=self.fl_pr)
-
-    def alloc_grid_sol(self, dim, nsols):
-        """Allocates memory for intermediate if grid solution requested."""
-        self.curr_sol_idx = 0
-        self.grid_sol = self.cp.zeros((nsols, dim))
-
-    def dump_sol(self):
-        """Saves current solution to a new index in grid solution memory."""
-        self.cp.copyto(self.grid_sol[self.curr_sol_idx, :], self.cu_curr_phi)
-        self.curr_sol_idx += 1
-        # self.grid_sol[self.curr_sol, :] = self.cu_curr_phi
-
-    def get_gridsol(self):
-        """Downloads grid solution to main memory."""
-        return self.cp.asnumpy(self.grid_sol)
-
-    def set_phi(self, phi):
-        """Uploads initial condition to GPU memory."""
-        self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
-
-    def get_phi(self):
-        """Downloads current solution from GPU memory."""
-        return self.cp.asnumpy(self.cu_curr_phi)
-
-    def solve_step(self, rho_inv, dX):
-        """Makes one solver step on GPU using cuSparse (BLAS)"""
-
-        # Mimic the exact NumPy implementation:
-        # phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
-
-        # Calculate: int_m @ curr_phi + dec_m @ (rho_inv * curr_phi)
-        int_result = self.cu_int_m @ self.cu_curr_phi
-        dec_result = self.cu_dec_m @ (rho_inv * self.cu_curr_phi)
-        delta = int_result + dec_result
-
-        # Apply: curr_phi += delta * dX
-        self.cu_curr_phi += delta * dX
-
-
-def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
-    """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation
-    of forward-euler integration.
-
-    Function requires a working :mod:`accelerate` installation.
-
-    Args:
-      nsteps (int): number of integration steps
-      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
-      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
-    Returns:
-      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
-    """
-
-    c = context
-    c.set_phi(phi)
-
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-    if len(grid_idcs) > 0:
-        c.alloc_grid_sol(phi.shape[0], len(grid_idcs))
-
-    for step in range(nsteps):
-        c.solve_step(rho_inv[step], dX[step])
-
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            c.dump_sol()
-            grid_step += 1
-
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
-    )
-
-    return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
-
-
-def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
-    # mu_loss_handler):
-    """`Intel MKL sparse BLAS
-    <https://software.intel.com/en-us/articles/
-    intel-mkl-sparse-blas-overview?language=en>`_
-    implementation of forward-euler integration.
-
-    Function requires that the path to the MKL runtime library ``libmkl_rt.[so/dylib]``
-    defined in the config file.
-
-    Args:
-      nsteps (int): number of integration steps
-      dX (:func:`numpy.array` [nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (:func:`numpy.array` [nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (:func:`numpy.array`): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (:func:`numpy.array`): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (:func:`numpy.array`): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (list): indices at which longitudinal solutions have to be saved.
+      dX (np.ndarray[nsteps]): step sizes :math:`\\Delta X_i` in g/cm**2
+      rho_inv (np.ndarray[nsteps]): :math:`\\rho^{-1}(X_i)` per step
+      spacc_int_off (SpaccMatrix): off-diagonal of A = int_m
+      spacc_dec_off (SpaccMatrix): off-diagonal of B = dec_m
+      d_int (np.ndarray): diagonal of A
+      d_dec (np.ndarray): diagonal of B
+      phi (np.ndarray): initial state :math:`\\Phi(X_0)`
+      grid_idcs (list[int]): step indices at which to record snapshots
 
     Returns:
-      :func:`numpy.array`: state vector :math:`\\Phi(X_{nsteps})` after integration
+      (np.ndarray, np.ndarray): final state and stacked snapshots.
     """
-
-    from ctypes import POINTER, Structure, byref, c_int, c_void_p
-    from ctypes import c_double as fl_pr
-
-    from MCEq.config import mkl
-
-    # sparse CSR-matrix x dense vector
-    create_csr = mkl.mkl_sparse_d_create_csr
-    gemv = mkl.mkl_sparse_d_mv
-    gemv_hint = mkl.mkl_sparse_set_mv_hint
-    optimize = mkl.mkl_sparse_optimize
-    # dense vector + dense vector
-    axpy = mkl.cblas_daxpy
-    np_fl = config.floatlen
-
-    # Prepare CTYPES pointers for MKL sparse CSR BLAS
-    int_m_data = int_m.data.ctypes.data_as(POINTER(fl_pr))
-    int_m_ci = int_m.indices.ctypes.data_as(POINTER(c_int))
-    int_m_pb = int_m.indptr[:-1].ctypes.data_as(POINTER(c_int))
-    int_m_pe = int_m.indptr[1:].ctypes.data_as(POINTER(c_int))
-
-    dec_m_data = dec_m.data.ctypes.data_as(POINTER(fl_pr))
-    dec_m_ci = dec_m.indices.ctypes.data_as(POINTER(c_int))
-    dec_m_pb = dec_m.indptr[:-1].ctypes.data_as(POINTER(c_int))
-    dec_m_pe = dec_m.indptr[1:].ctypes.data_as(POINTER(c_int))
-
-    npphi = np.copy(phi).astype(np_fl)
-    phi = npphi.ctypes.data_as(POINTER(fl_pr))
-    npdelta_phi = np.zeros_like(npphi)
-    delta_phi = npdelta_phi.ctypes.data_as(POINTER(fl_pr))
-
-    m = c_int(int_m.shape[0])
-    cdzero = fl_pr(0.0)
-    cdone = fl_pr(1.0)
-    cizero = c_int(0)
-    cione = c_int(1)
-
-    grid_step = 0
-    grid_sol = []
-
-    int_m_handle = c_void_p()
-    mst = create_csr(
-        byref(int_m_handle), cizero, m, m, int_m_pb, int_m_pe, int_m_ci, int_m_data
-    )
-
-    assert mst == 0, f"MKL create_csr failed with status {mst} on interaction matrix"
-
-    dec_m_handle = c_void_p()
-    mst = create_csr(
-        byref(dec_m_handle), cizero, m, m, dec_m_pb, dec_m_pe, dec_m_ci, dec_m_data
-    )
-
-    assert mst == 0, f"MKL create_csr failed with status {mst} on decay matrix"
-
-    # hints
-    operation = int(10)  # SPARSE_OPERATION_NON_TRANSPOSE
-
-    class MatrixDescr(Structure):
-        _fields_ = [
-            ("type", c_int),
-            ("mode", c_int),
-            ("diag", c_int),
-        ]
-
-    descr = MatrixDescr()
-    descr.type = int(20)  # General matrix
-    descr.mode = int(121)  # set but dont care since general matrix
-    descr.diag = int(131)  # set but dont care since general matrix
-
-    hint_status = gemv_hint(
-        int_m_handle,
-        operation,
-        descr,
-        nsteps,
-    )
-
-    assert hint_status == 0, (
-        f"MKL gemv_hint failed with status {hint_status} on interaction matrix"
-    )
-
-    hint_status = gemv_hint(
-        dec_m_handle,
-        operation,
-        descr,
-        nsteps,
-    )
-
-    assert hint_status == 0, (
-        f"MKL gemv_hint failed with status {hint_status} on decay matrix"
-    )
-
-    # add mkl_sparse_set_memory_hint???
-    #
-
-    o = optimize(int_m_handle)
-
-    assert o == 0, (
-        f"MKL mkl_sparse_optimize failed with status {o} on interaction matrix"
-    )
-
-    o = optimize(dec_m_handle)
-
-    assert o == 0, f"MKL mkl_sparse_optimize failed with status {o} on decay matrix"
-
-    from time import time
-
-    start = time()
-
-    for step in range(nsteps):
-        # delta_phi = int_m.dot(phi)
-        gemv(
-            operation,
-            cdone,
-            int_m_handle,
-            descr,
-            phi,
-            cdzero,
-            delta_phi,
-        )
-        # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        gemv(
-            operation,
-            fl_pr(rho_inv[step]),
-            dec_m_handle,
-            descr,
-            phi,
-            cdone,
-            delta_phi,
-        )
-        # phi = delta_phi * dX + phi
-        axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
-
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(npphi))
-            grid_step += 1
-
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
-    )
-
-    return npphi, np.asarray(grid_sol)
-
-
-def solv_spacc_sparse(nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi, grid_idcs):
-    # mu_loss_handler):
-    """Apple Accelerate (vecLib) implementation.
-
-    Args:
-      nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes
-        :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values
-        :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix`
-        in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in
-        dense or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      grid_idcs (list): indices at which longitudinal solutions
-        have to be saved.
-
-    Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
-    """
-
     from ctypes import POINTER, c_double
 
-    import MCEq.spacc as spacc
+    dim = phi.shape[0]
+    # Persistent buffers — ctypes pointers must remain valid across the loop,
+    # so every per-step update writes into these in place (never rebinds).
+    phc = np.copy(phi).astype(np.float64, copy=False)
+    F_phi = np.zeros(dim, dtype=np.float64)
+    F_a = np.zeros(dim, dtype=np.float64)
+    a = np.empty(dim, dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
 
-    dim_phi = int(phi.shape[0])
-    npphi = np.copy(phi)
-    phi = npphi.ctypes.data_as(POINTER(c_double))
-    npdelta_phi = np.zeros_like(npphi)
-    delta_phi = npdelta_phi.ctypes.data_as(POINTER(c_double))
+    phc_p = phc.ctypes.data_as(POINTER(c_double))
+    F_phi_p = F_phi.ctypes.data_as(POINTER(c_double))
+    F_a_p = F_a.ctypes.data_as(POINTER(c_double))
+    a_p = a.ctypes.data_as(POINTER(c_double))
 
-    grid_step = 0
+    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
+    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
+
     grid_sol = []
+    grid_step = 0
 
     from time import time
 
     start = time()
 
-    for step in range(nsteps):
-        # delta_phi = int_m.dot(phi)
-        npdelta_phi *= 0
-        spacc_int_m.gemv_ctargs(1.0, phi, delta_phi)
+    # See note in solv_numpy_etd2 — same EM-row blowup at extreme zenith.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
 
-        # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
-        spacc_dec_m.gemv_ctargs(rho_inv[step], phi, delta_phi)
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
 
-        # phi = delta_phi * dX + phi
-        spacc.daxpy(dim_phi, dX[step], delta_phi, phi)
+            # F_phi = int_off @ phc + ri * dec_off @ phc
+            F_phi.fill(0.0)
+            if not int_off_empty:
+                spacc_int_off.gemv_ctargs(1.0, phc_p, F_phi_p)
+            if not dec_off_empty:
+                spacc_dec_off.gemv_ctargs(ri, phc_p, F_phi_p)
 
-        # axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
+            # a = eD * phc + h * phi1 * F_phi
+            np.multiply(eD, phc, out=a)
+            np.multiply(phi1, F_phi, out=scratch)
+            scratch *= h
+            np.add(a, scratch, out=a)
 
-        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
-            grid_sol.append(np.copy(npphi))
-            grid_step += 1
+            # F_a = int_off @ a + ri * dec_off @ a
+            F_a.fill(0.0)
+            if not int_off_empty:
+                spacc_int_off.gemv_ctargs(1.0, a_p, F_a_p)
+            if not dec_off_empty:
+                spacc_dec_off.gemv_ctargs(ri, a_p, F_a_p)
+
+            # phc = a + h * phi2 * (F_a - F_phi)  (in-place into phc)
+            np.subtract(F_a, F_phi, out=scratch)
+            scratch *= h
+            np.multiply(scratch, phi2, out=scratch)
+            np.add(a, scratch, out=phc)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
 
     info(
         2,
-        "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps)
-        ),
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
     )
 
-    return npphi, np.asarray(grid_sol)
-
-
-# # TODO: Debug this and transition to BDF
-# def _odepack(dXstep=.1,
-#                 initial_depth=0.0,
-#                 int_grid=None,
-#                 grid_var='X',
-#                 *args,
-#                 **kwargs):
-#     """Solves the transport equations with solvers from ODEPACK.
-
-#     Args:
-#         dXstep (float): external step size (adaptive sovlers make more
-#           steps internally)
-#         initial_depth (float): starting depth in g/cm**2
-#         int_grid (list): list of depths at which results are recorded
-# grid_var (str): Can be depth `X` or something else (currently only `X`
-# supported)
-
-#     """
-#     from scipy.integrate import ode
-#     ri = self.density_model.r_X2rho
-
-#     if config.enable_muon_energy_loss:
-#         raise NotImplementedError(
-#             'Energy loss not imlemented for this solver.')
-
-#     # Functional to solve
-#     def dPhi_dX(X, phi, *args):
-#         return self.int_m.dot(phi) + self.dec_m.dot(ri(X) * phi)
-
-#     # Jacobian doesn't work with sparse matrices, and any precision
-#     # or speed advantage disappear if used with dense algebra
-#     def jac(X, phi, *args):
-#         # print 'jac', X, phi
-#         return (self.int_m + self.dec_m * ri(X)).todense()
-
-#     # Initial condition
-#     phi0 = np.copy(self.phi0)
-
-#     # Initialize variables
-#     grid_sol = []
-
-#     # Setup solver
-#     r = ode(dPhi_dX).set_integrator(
-#         with_jacobian=False, **config.ode_params)
-
-#     if int_grid is not None:
-#         initial_depth = int_grid[0]
-#         int_grid = int_grid[1:]
-#         max_X = int_grid[-1]
-#         grid_sol.append(phi0)
-
-#     else:
-#         max_X = self.density_model.max_X
-
-#     info(
-#         1,
-#         'your X-grid is shorter then the material',
-#         condition=max_X < self.density_model.max_X)
-#     info(
-#         1,
-#         'your X-grid exceeds the dimentsions of the material',
-#         condition=max_X > self.density_model.max_X)
-
-#     # Initial value
-#     r.set_initial_value(phi0, initial_depth)
-
-#     info(
-#         2, 'initial depth: {0:3.2e}, maximal depth {1:}'.format(
-#             initial_depth, max_X))
-
-#     start = time()
-#     if int_grid is None:
-#         i = 0
-#         while r.successful() and (r.t + dXstep) < max_X - 1:
-#             info(5, "Solving at depth X =", r.t, condition=(i % 5000) == 0)
-#             r.integrate(r.t + dXstep)
-#             i += 1
-#         if r.t < max_X:
-#             r.integrate(max_X)
-#         # Do last step to make sure the rational number max_X is reached
-#         r.integrate(max_X)
-#     else:
-#         for i, Xi in enumerate(int_grid):
-#             info(5, 'integrating at X =', Xi, condition=i % 10 == 0)
-
-#             while r.successful() and (r.t + dXstep) < Xi:
-#                 r.integrate(r.t + dXstep)
-
-#             # Make sure the integrator arrives at requested step
-#             r.integrate(Xi)
-#             # Store the solution on grid
-#             grid_sol.append(r.y)
-
-#     info(2,
-#             'time elapsed during integration: {1} sec'.format(time() - start))
-
-#     self.solution = r.y
-#     self.grid_sol = grid_sol
+    return phc, np.array(grid_sol)

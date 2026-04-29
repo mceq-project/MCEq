@@ -46,26 +46,6 @@ def test_solve_int_grid(mceq_sib21, int_grid, grid_shape):
     assert mceq_sib21.grid_sol.shape == grid_shape
 
 
-@pytest.mark.parametrize(
-    ["leading_process", "lenX"],
-    [
-        ["decays", 1248],
-        ["auto", 1248],
-        ["interactions", 1034],
-    ],
-)
-def test_integration_path_leading_process(mceq_sib21, leading_process, lenX):
-    """Fix this test by resolving issue #66"""
-    from MCEq import config
-
-    config.leading_process = leading_process
-    int_grid = None
-    grid_var = "X"
-    mceq_sib21._calculate_integration_path(int_grid, grid_var)
-    integration_path = mceq_sib21.integration_path
-    assert integration_path[0] == lenX
-
-
 def test_integration_path_grid_idcs(mceq_sib21):
     int_grid = [0, 1]
 
@@ -79,9 +59,9 @@ def test_integration_path_grid_idcs(mceq_sib21):
 
 
 testdata_theta = [
-    [0.0, 8.832749837571275e-08],
-    [30.0, 9.907914648457978e-08],
-    [60.0, 1.5032860734447641e-07],
+    [0.0, 8.8312635576492481e-08],
+    [30.0, 9.9070776732966113e-08],
+    [60.0, 1.5039581700049055e-07],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
@@ -151,9 +131,9 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 
 
 testdata_primary = [
-    [1e3, 1.188606352544364e-05, 2.3833836497715642e-07, -4.389720437130184e-08],
-    [1e4, 0.09924074296757761, 0.024548469717221015, 0.001458070555523793],
-    [1e5, 0.9113452102164941, 0.2824779229726991, 0.020207277840290347],
+    [1e3, 1.1904680953281074e-05, 2.4098237699529783e-07, -4.401425991268454e-08],
+    [1e4, 0.09917221096682655, 0.024609349696095902, 0.001461068061597137],
+    [1e5, 0.9113822218370885, 0.2833603479604529, 0.02028732056926894],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
