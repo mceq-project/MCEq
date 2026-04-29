@@ -173,7 +173,7 @@ def test_solv_numpy_etd2_stable_at_high_zenith():
 
     e+/e- are disabled because their semi-Lagrangian L/R-variant rows have
     no diagonal damping and require a block-ETD generalization (see
-    docs/etd1_solver.md). This is a known limitation, not a regression.
+    docs/mceq_v1.x_v2_diff.md). This is a known limitation, not a regression.
     """
     import crflux.models as pm
 

@@ -578,8 +578,12 @@ Validated muon-flux agreement vs Euler@native, sub-percent across
 Speedup is roughly zenith-independent (Euler steps grow with `sec θ`,
 ETD2 steps grow with the path length over a roughly constant local
 scale-height-derived `h`). Step counts scale with the **path's total
-log-density variation** rather than its stiffness. Demonstrated in
-`docs/examples/ETD2_solver_comparison.ipynb` (cells 15–17).
+log-density variation** rather than its stiffness. Numbers above were
+captured during the MCEq 1.4.1 → MCEq 2 transition while both schemes
+still coexisted on the development branch; a side-by-side comparison
+notebook lived at `docs/examples/ETD2_solver_comparison.ipynb` and was
+retired together with the forward-Euler kernels (recoverable from git
+history before commit `cf563d9` if the head-to-head plots are needed).
 
 ### 6.4 Cross-backend equivalence
 

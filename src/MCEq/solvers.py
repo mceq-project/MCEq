@@ -23,7 +23,7 @@ def etd2_nonuniform_path(
     ``scipy.integrate.quad``), not a point sample — this is essential at
     the very first step which crosses the spline-saturation cap.
 
-    See ``docs/etd1_solver.md`` ("Step-size control and the resonance
+    See ``docs/mceq_v1.x_v2_diff.md`` ("Step-size control and the resonance
     approximation") for the design.
 
     Args:
@@ -271,7 +271,7 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     # Suppress overflow / NaN warnings from the linear-combination ufuncs.
     # At extreme zenith the e± semi-Lagrangian L/R rows produce inf in
-    # F_phi/F_a (no diagonal damping — see docs/etd1_solver.md "EM cascade
+    # F_phi/F_a (no diagonal damping — see docs/mceq_v1.x_v2_diff.md "EM cascade
     # caveat"). The blowup is contained to those rows: e±/γ do not feed
     # back into hadrons via int_m/dec_m, so muons and neutrinos are
     # unaffected. Disable e± explicitly with

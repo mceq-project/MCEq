@@ -1661,7 +1661,7 @@ class MatrixBuilder:
 
         All three options share the same one-sided polynomial-fit stencils
         on the boundary rows (0, 1, 2 and last-2, last-1, last); see
-        ``docs/etd1_solver.md`` for the boundary-cliff caveat.
+        ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
         """
         # First rows of operator matrix (values are truncated at the edges
         # of a matrix.)

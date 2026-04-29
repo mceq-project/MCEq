@@ -129,9 +129,9 @@ mkl_threads = 8
 
 #: Default parameters for the non-uniform integration path used by
 #: ETD2 kernels (`numpy_etd2`, `accelerate_etd2`, ...). See
-#: docs/etd1_solver.md, `MCEq.solvers.etd2_nonuniform_path`, and the
-#: notebook `docs/examples/ETD2_solver_comparison.ipynb`. Each value can
-#: be overridden per-call via `MCEqRun.solve(..., eps=..., dX_max=...)`.
+#: docs/mceq_v1.x_v2_diff.md and `MCEq.solvers.etd2_nonuniform_path`.
+#: Each value can be overridden per-call via
+#: `MCEqRun.solve(..., eps=..., dX_max=...)`.
 etd2_path = {
     #: Within-step | d ln rho_inv / dX | bound. Smaller -> finer steps in
     #: the upper atmosphere. 0.3 gives sub-percent muon-flux agreement
@@ -198,7 +198,7 @@ loss_step_for_average = 1e-1
 #:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
 #: All three options share the same one-sided polynomial-fit stencils on
 #: the boundary rows (0,1,2 and last-2,last-1,last); see
-#: ``docs/etd1_solver.md`` for the boundary-cliff caveat.
+#: ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
 loss_stencil_method = "expfit"
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to
