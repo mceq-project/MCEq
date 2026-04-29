@@ -22,7 +22,7 @@ it.
 | Continuous-loss FD stencil   | 7-point banded; interior centred / one-sided biased polynomial                                  | 7-point banded; interior **exponentially fitted** (exact for `f = exp(α₀·u)`); boundaries unchanged    |
 | Implementation (numpy)       | `solv_numpy` (Euler, in-place)                                                                  | `solv_numpy_etd2` (ETD2RK, preallocated scratch, in-place ufunc chain)                                 |
 | Implementation (Accelerate)  | `solv_spacc_sparse` (Euler via Apple Accelerate)                                                | `solv_spacc_etd2` (ETD2RK; pre-split int_off / dec_off for SpMV reuse)                                 |
-| Implementation (MKL / CUDA)  | `solv_MKL_sparse`, `solv_CUDA_sparse`                                                           | Stubs raising `NotImplementedError`; ETD2RK port pending                                               |
+| Implementation (MKL / CUDA)  | `solv_MKL_sparse`, `solv_CUDA_sparse`                                                           | `solv_mkl_etd2` (Intel MKL sparse BLAS), `solv_cuda_etd2` (cuSPARSE via cupy)                          |
 | Reduced state-vector default | full (all species)                                                                              | `disabled_particles = [11]` (drop e±) — see EM-cascade caveat in §7                                    |
 | Headline wall-time speedup   | 1×                                                                                              | ≈ 9–11× across zenith range, sub-percent muon-flux agreement                                          |
 
@@ -690,28 +690,73 @@ step 4):
 Same machinery handles the 3×3 EM L/R blocks (§8.2): only the
 `_extract_blocks` predicate differs.
 
-### 8.4 MKL and CUDA ports
+### 8.4 MKL and CUDA kernels
 
-`mkl_etd2` and `cuda_etd2` are dispatch slots that raise
-`NotImplementedError`. Reference implementations are
-`solv_numpy_etd2` (clearest math) and `solv_spacc_etd2` (worked
-ctypes/native-BLAS example). The ports require:
+`solv_mkl_etd2` and `solv_cuda_etd2` mirror `solv_spacc_etd2` (the
+worked ctypes/native-BLAS example) and `solv_numpy_etd2` (the
+mathematically clearest reference). Both:
 
-* CSR upload of `int_off`, `dec_off` (matrix marshalling pattern as
-  in the retired Euler MKL/CUDA kernels)
-* Persistent device-side scratch buffers (`D`, `hD`, `eD`, `φ₁`,
-  `φ₂`, `F_phi`, `F_a`, `a` — eight length-N vectors)
-* Fused elementwise kernel for `(eD, φ₁, φ₂)` from `hD`
-* 4 SpMV per step instead of 2 (`mv_hint = nsteps · 2`)
+* take pre-built backend handles for `int_off` and `dec_off` (the
+  caller, `MCEqRun._build_kernel_dispatch`, materialises and caches
+  them once per matrix rebuild),
+* perform 4 SpMVs per step against those handles, sharing the
+  diagonal-factor compute (`_etd_compute_diag_factors`) with the
+  numpy kernel on host or the GPU equivalent
+  (`_cuda_compute_diag_factors`) on device,
+* maintain ctypes / cupy-array buffers in place across the loop —
+  rebinding `phc` / `F_phi` / `F_a` / `a` would silently break the
+  pointer/handle contract.
 
-Sanity checks for any port:
+All three CPU kernels (numpy, MKL, spacc) store the off-diagonals as
+**BSR rather than CSR** by default, with backend-specific block sizes
+tuned empirically:
 
-1. Single-step equivalence to numpy within ~1e-13 relative error on
-   `Φ` after one step from `Φ₀` at the first native step.
-2. Full-trajectory equivalence at θ = 0°, native grid: full-state
-   rel-L2 vs `solv_numpy_etd2` to ~10⁻¹² (fp64) or ~10⁻⁶ (fp32).
-3. Coarsened-grid validation at C = 8, θ = 0° and C = 16, θ = 60°
-   should reproduce the μ-flux rel-diff numbers in §6.2 to ~10⁻³.
+* **numpy** uses `blocksize=11` (`config.numpy_bsr_blocksize`). scipy's
+  BSR matvec is a generic C++ template; it benefits from larger blocks
+  than MKL's because the per-block overhead amortises better, and
+  `b=11` happens to tile the 121-energy-bin macro-blocks neatly
+  (`121 = 11²`). Real-world wall-clock improvement on SIBYLL21:
+  **~2.0× over scipy CSR**.
+* **MKL** uses `blocksize=6` (`config.mkl_bsr_blocksize`). MKL appears
+  to specialise its BSR microkernel for `b ∈ [2, 7]`; `b ≥ 8` falls
+  into a generic path that's slower than CSR for these matrices.
+  Real-world improvement: ~1.5× over MKL CSR for the kernel itself.
+
+The numpy kernel memoises its BSR conversion as a private attribute on
+`int_m` (auto-clears when the matrix is GC'd, invalidates when
+`dec_m` identity or blocksize changes); the MKL dispatch caches the
+optimised handle in `MCEqRun._mkl_etd2_cache`, keyed by matrix
+identity. Set the corresponding `*_bsr_blocksize` config to `None` to
+fall back to CSR (useful for debugging or if a future scipy / MKL
+regresses BSR perf). The matrix dimension is auto-padded with zero
+rows / cols up to a multiple of `blocksize`, and the kernel allocates
+working buffers at the padded length — the trailing slots stay zero
+throughout because the matrix has zero rows / cols there.
+
+MKL per-step SpMVs go through `mkl_sparse_d_mv` with
+`y = α·A·x + β·y` (β=0 to zero `F_*`, β=1 to accumulate the
+`ρ⁻¹·dec_off` term).
+
+The CUDA kernel uploads CSR matrices and diagonals to device memory
+once and keeps the per-step state on the GPU; only the boundary
+state and final snapshots cross the host/GPU boundary. cuPy 13 does
+not auto-discover the `nvidia-*` pip packages, so `CudaEtd2Context`
+dlopens them defensively before the first kernel JIT. cuSPARSE BSR
+SpMV is *not* exposed via cupy 13's sparse module, so the GPU
+backend stays on CSR — cuSPARSE CSR is already near-bandwidth-optimal
+on the A30, so the format is well-matched to the hardware.
+
+Sanity-checked invariants (`tests/test_solvers.py`):
+
+1. **MKL vs numpy** on real SIBYLL21 matrices at θ = 60°, uniform
+   path: full-state rel-L2 ≤ 10⁻¹² (fp64). The 4 SpMVs/step are the
+   same arithmetic on both backends, so equality is essentially
+   round-off.
+2. **CUDA vs numpy** on the same problem: rel-L2 ≤ 10⁻⁹ — cuSPARSE
+   reorders partial sums vs scipy CSR, so we tolerate one extra
+   order of magnitude beyond round-off.
+3. **High-zenith stability** (θ = 89°, e±/γ disabled per §7): both
+   kernels stay finite end-to-end.
 
 ## 9. Implementation reference
 

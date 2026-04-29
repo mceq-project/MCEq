@@ -102,10 +102,11 @@ enable_em = False
 #:   "auto"            — pick the best available ETD2 kernel (see below).
 #:   "numpy_etd2"      — pure-numpy ETD2RK (always available).
 #:   "accelerate_etd2" — Apple Accelerate-backed ETD2RK (macOS only).
-#:   "mkl_etd2"        — Intel MKL-backed ETD2RK (stub; raises
-#:                       NotImplementedError until ported).
-#:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (stub; raises
-#:                       NotImplementedError until ported).
+#:   "mkl_etd2"        — Intel MKL-backed ETD2RK (Linux/Windows; faster
+#:                       sparse SpMV than numpy on multi-core CPUs).
+#:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (requires cupy and
+#:                       a CUDA-capable GPU; recommended for large state
+#:                       vectors and many solve() calls).
 kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
@@ -122,6 +123,23 @@ floatlen = None
 #: Irrelevant for GPU integrators, but can affect initialization speed if
 #: numpy is linked to MKL.
 mkl_threads = 8
+
+#: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
+#: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
+#: with MKL >= 2024 (see ``docs/mceq_v1.x_v2_diff.md`` §8.4). MKL appears
+#: to specialise its BSR microkernel for ``b in [2, 7]``; ``b >= 8`` falls
+#: into a generic path that's slower than CSR for these matrices. Set
+#: ``None`` to fall back to CSR (useful for debugging or if a future MKL
+#: regresses BSR perf).
+mkl_bsr_blocksize = 6
+
+#: Block size for the numpy ETD2 BSR off-diagonal storage. ``11`` is the
+#: empirically-tuned default — ~2x faster than CSR on SIBYLL21 matrices
+#: via scipy's BSR matvec. scipy's BSR kernel benefits from larger blocks
+#: than MKL's (the C++ template's per-block overhead is amortised better),
+#: and ``b = 11`` happens to tile the 121-energy-bin macro-blocks neatly
+#: (121 = 11**2). Set ``None`` to fall back to CSR.
+numpy_bsr_blocksize = 11
 
 # =========================================================================
 # Advanced settings
@@ -316,13 +334,16 @@ has_mkl = bool(pathlib.Path(mkl_path).is_file())
 # Look for cupy module
 has_cuda = importlib.util.find_spec("cupy") is not None
 
-# Pick the fastest available ETD2RK kernel. MKL/CUDA are stubs pending
-# port; they are never auto-selected, but explicit selection is preserved
-# (it raises NotImplementedError at solve time) so a future implementer
-# can wire them up without re-deriving the dispatch contract.
+# Pick the fastest available ETD2RK kernel. CUDA is intentionally not
+# auto-selected: spinning up a GPU context has nontrivial cost and a
+# matching cupy install is not always present on machines that have a
+# GPU. Apple Accelerate wins on macOS, Intel MKL wins on x86 Linux /
+# Windows when present, otherwise we fall back to plain numpy.
 if kernel_config == "auto":
     if has_accelerate:
         kernel_config = "accelerate_etd2"
+    elif has_mkl:
+        kernel_config = "mkl_etd2"
     else:
         kernel_config = "numpy_etd2"
 else:

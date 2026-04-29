@@ -1,6 +1,7 @@
 from time import time
 
 import numpy as np
+import scipy.sparse as sp
 import six
 
 import MCEq.data
@@ -1160,15 +1161,104 @@ class MCEqRun:
             )
 
         if kc in ("mkl", "mkl_etd2"):
-            raise NotImplementedError(
-                "ETD2 MKL kernel pending — see solvers.solv_numpy_etd2 / "
-                "solv_spacc_etd2 as references."
+            from MCEq.solvers import MklSparseMatrix, _etd_split_cache
+
+            # Cache the diagonal/off-diagonal split AND its MKL handle
+            # wrappers, keyed against ``int_m`` / ``dec_m`` identity. When
+            # either matrix is rebuilt (e.g. ``set_density_model`` →
+            # ``construct_matrices``) we tear down the old MKL handles so
+            # they don't leak.
+            cached = getattr(self, "_mkl_etd2_cache", None)
+            if (
+                cached is None
+                or cached["int_m"] is not self.int_m
+                or cached["dec_m"] is not self.dec_m
+            ):
+                if cached is not None:
+                    for key in ("mkl_int_off", "mkl_dec_off"):
+                        old = cached.get(key)
+                        if old is not None:
+                            old.__del__()
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                # MKL requires CSR; the split inherits the input format.
+                if not sp.isspmatrix_csr(int_off):
+                    int_off = int_off.tocsr()
+                if not sp.isspmatrix_csr(dec_off):
+                    dec_off = dec_off.tocsr()
+                bs = config.mkl_bsr_blocksize
+                mkl_int_off = (
+                    MklSparseMatrix(int_off, blocksize=bs) if int_off.nnz else None
+                )
+                mkl_dec_off = (
+                    MklSparseMatrix(dec_off, blocksize=bs) if dec_off.nnz else None
+                )
+                self._mkl_etd2_cache = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "mkl_int_off": mkl_int_off,
+                    "mkl_dec_off": mkl_dec_off,
+                    "d_int": d_int,
+                    "d_dec": d_dec,
+                }
+            c = self._mkl_etd2_cache
+            return MCEq.solvers.solv_mkl_etd2, (
+                nsteps,
+                dX,
+                rho_inv,
+                c["mkl_int_off"],
+                c["mkl_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                phi0,
+                grid_idcs,
             )
 
         if kc in ("cuda", "cuda_etd2"):
-            raise NotImplementedError(
-                "ETD2 CUDA kernel pending — see solvers.solv_numpy_etd2 / "
-                "solv_spacc_etd2 as references."
+            from MCEq.solvers import CudaEtd2Context, _etd_split_cache
+
+            cached = getattr(self, "_cuda_etd2_cache", None)
+            if (
+                cached is None
+                or cached["int_m"] is not self.int_m
+                or cached["dec_m"] is not self.dec_m
+                or cached["device_id"] != self._cuda_device
+                or cached["fp_precision"] != config.cuda_fp_precision
+            ):
+                # The previous context's GPU buffers / cusparse handles drop
+                # automatically when the dict is replaced (cupy frees them
+                # on garbage collection).
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                if not sp.isspmatrix_csr(int_off):
+                    int_off = int_off.tocsr()
+                if not sp.isspmatrix_csr(dec_off):
+                    dec_off = dec_off.tocsr()
+                ctx = CudaEtd2Context(
+                    int_off,
+                    dec_off,
+                    d_int,
+                    d_dec,
+                    device_id=self._cuda_device,
+                    fp_precision=config.cuda_fp_precision,
+                )
+                self._cuda_etd2_cache = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "device_id": self._cuda_device,
+                    "fp_precision": config.cuda_fp_precision,
+                    "ctx": ctx,
+                }
+            ctx = self._cuda_etd2_cache["ctx"]
+            return MCEq.solvers.solv_cuda_etd2, (
+                nsteps,
+                dX,
+                rho_inv,
+                ctx,
+                phi0,
+                grid_idcs,
             )
 
         raise Exception(
