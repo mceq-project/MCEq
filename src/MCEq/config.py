@@ -265,7 +265,12 @@ adv_set = {
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
     #: Disable particle (production)
-    "disabled_particles": [11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
+    #: Default disables both e- (PDG 11) and e+ (PDG -11). Until a
+    #: validated EM database is shipped, the ETD2 EM cascade can blow up
+    #: at extreme zenith — see the "EM cascade caveat" in
+    #: docs/mceq_v1.x_v2_diff.md. Both signs must be listed: the
+    #: disable list is matched literally, not by absolute PDG id.
+    "disabled_particles": [11, -11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Difficult to explain parameter
