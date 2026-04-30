@@ -121,8 +121,12 @@ floatlen = None
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
 #: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL.
-mkl_threads = 8
+#: numpy is linked to MKL. Default is ``min(16, os.cpu_count())``: MKL's
+#: sparse SpMV scales near-linearly to ~16 threads on the SIBYLL21
+#: matrices, then plateaus / regresses on most servers due to memory
+#: bandwidth and NUMA effects. Override after import for full control:
+#: ``MCEq.config.set_mkl_threads(n)``.
+mkl_threads = min(16, os.cpu_count() or 1)
 
 #: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
 #: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
@@ -364,16 +368,43 @@ if debug_level >= 2:
     print(f"Auto-detected {kernel_config} solver.")
 
 
-def set_mkl_threads(nthreads):
-    global mkl_threads, mkl
-    from ctypes import byref, c_int, cdll
+def _load_mkl():
+    """Lazily load ``libmkl_rt`` exactly once and cache it on ``mkl``.
+
+    Splitting the load from :func:`set_mkl_threads` is important:
+    ``MklSparseMatrix`` instances pin their own reference to the cdll
+    handle, so re-loading the library on every thread-count change
+    (the previous behaviour) would leave already-built wrappers tied
+    to a stale ``cdll`` while the global ``mkl`` pointed at a fresh
+    one — a subtle source of cross-handle bugs. By keeping the global
+    pinned to a single cdll for the lifetime of the process we ensure
+    every wrapper sees the same symbol table.
+    """
+    global mkl
+    if mkl is not None or not has_mkl:
+        return
+    from ctypes import cdll
 
     mkl = cdll.LoadLibrary(mkl_path)
-    # Set number of threads
+
+
+def set_mkl_threads(nthreads):
+    """Set the MKL thread count (loads ``libmkl_rt`` on the first call).
+
+    Idempotent on the library side: only ``mkl_set_num_threads`` is
+    called on subsequent invocations. The cached cdll handle is
+    preserved, so handles in ``MclSparseMatrix`` wrappers stay valid
+    across thread-count changes.
+    """
+    global mkl_threads
+    from ctypes import byref, c_int
+
+    _load_mkl()
     mkl_threads = nthreads
-    mkl.mkl_set_num_threads(byref(c_int(nthreads)))
-    if debug_level >= 5:
-        print(f"MKL threads limited to {nthreads}")
+    if mkl is not None:
+        mkl.mkl_set_num_threads(byref(c_int(nthreads)))
+        if debug_level >= 5:
+            print(f"MKL threads limited to {nthreads}")
 
 
 if has_mkl:

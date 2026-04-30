@@ -508,10 +508,16 @@ class MCEqRun:
         self._phi0 = np.zeros(self.dim_states)
         self._solution = np.zeros(self.dim_states)
 
-        # Restore insital condition if present
+        # Restore initial condition if present.
+        # Entries are tuples of (method_name_str, *args). We store method
+        # *names* — not bound methods — so that this list does not pin
+        # ``self`` via a Python-level reference cycle. See PR #163: bound
+        # methods kept old MCEqRun instances alive, which on the macOS
+        # Accelerate backend overflowed the fixed-size sparse-matrix store
+        # (SIZE_MSTORE=10) after ~5 instances.
         if len(self._restore_initial_condition) > 0:
             for con in self._restore_initial_condition:
-                con[0](*con[1:])
+                getattr(self, con[0])(*con[1:])
 
     def set_primary_model(self, model_class_or_object, tag=None):
         """Sets primary flux model.
@@ -546,8 +552,10 @@ class MCEqRun:
 
         info(1, f"Primary model set to {self.pmodel.name}")
 
-        # Save primary flux model for restauration after interaction model changes
-        self._restore_initial_condition = [(self.set_primary_model, self.pmodel)]
+        # Save primary flux model for restoration after interaction model
+        # changes. Store the method *name*, not a bound method — see the
+        # comment in ``_resize_vectors_and_restore`` (PR #163).
+        self._restore_initial_condition = [("set_primary_model", self.pmodel)]
         # TODO: Maybe needs to catch the removal of the np.vectorize
         # self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
         self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
@@ -645,13 +653,15 @@ class MCEqRun:
             raise Exception("energy per nucleon too low for primary " + str(corsika_id))
 
         if append is False:
+            # Store ``False`` explicitly so the replay does not silently
+            # default to overwriting on the first call of an append chain.
             self._restore_initial_condition = [
-                (self.set_single_primary_particle, E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, False)
             ]
             self._phi0 *= 0.0
         else:
             self._restore_initial_condition.append(
-                (self.set_single_primary_particle, E, corsika_id, pdg_id)
+                ("set_single_primary_particle", E, corsika_id, pdg_id, True)
             )
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
@@ -727,12 +737,12 @@ class MCEqRun:
 
         if not append:
             self._restore_initial_condition = [
-                (self.set_initial_spectrum, spectrum, pdg_id, append)
+                ("set_initial_spectrum", spectrum, pdg_id, append)
             ]
             self._phi0 *= 0
         else:
             self._restore_initial_condition.append(
-                (self.set_initial_spectrum, spectrum, pdg_id, append)
+                ("set_initial_spectrum", spectrum, pdg_id, append)
             )
         if len(spectrum) != self.dim:
             raise Exception("Lengths of spectrum and energy grid do not match.")
@@ -808,9 +818,9 @@ class MCEqRun:
         ):
             if self.theta_deg is None:
                 info(1, "Using default zenith angle theta=0.")
-                self.set_theta_deg(0)
+                self.set_zenith_azimuth(0)
             else:
-                self.set_theta_deg(self.theta_deg)
+                self.set_zenith_azimuth(self.theta_deg)
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
         else:
@@ -1093,11 +1103,12 @@ class MCEqRun:
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.
 
-        Only ETD2RK kernels are wired up. ``mkl_etd2`` and ``cuda_etd2`` are
-        reserved for future ports — they raise ``NotImplementedError`` so a
-        future implementer has a clear plug-in point. Any other selection
-        (including the legacy ``numpy``/``mkl``/``cuda``/``accelerate``
-        forward-Euler names) is rejected.
+        Recognised kernels: ``numpy_etd2`` (always available),
+        ``accelerate_etd2`` (macOS), ``mkl_etd2`` (Linux/Windows when
+        ``libmkl_rt`` is present), and ``cuda_etd2`` (cuSPARSE via cupy).
+        The legacy short names (``numpy``/``mkl``/``cuda``/``accelerate``)
+        are no longer accepted — the corresponding forward-Euler kernels
+        were retired in v2 (see ``changes/+remove-euler-resonance.api.md``).
         """
         import MCEq.solvers
 
@@ -1121,25 +1132,25 @@ class MCEqRun:
             # Cache the diagonal/off-diagonal split AND its SpaccMatrix
             # wrappers, keyed against ``int_m`` / ``dec_m`` identity. When
             # either matrix is rebuilt (e.g. ``set_density_model`` →
-            # ``construct_matrices``) we tear down the old SpaccMatrix slots
-            # so the global Accelerate matrix store does not fill up.
+            # ``construct_matrices``) we deterministically free the old
+            # SpaccMatrix slots so the global Accelerate matrix store
+            # (fixed ``SIZE_MSTORE``) does not fill up.
             cached = getattr(self, "_spacc_etd2_cache", None)
             if (
                 cached is None
                 or cached["int_m"] is not self.int_m
                 or cached["dec_m"] is not self.dec_m
             ):
-                if cached is not None:
-                    for key in ("spacc_int_off", "spacc_dec_off"):
-                        old = cached.get(key)
-                        if old is not None:
-                            old.__del__()
+                # Build the new cache fully *before* freeing the old one.
+                # If construction fails partway (e.g. memory pressure), the
+                # previous cache stays valid and the next solve() call will
+                # retry the rebuild without leaking either side.
                 d_int, d_dec, int_off, dec_off = _etd_split_cache(
                     self.int_m, self.dec_m
                 )
                 spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz else None
                 spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz else None
-                self._spacc_etd2_cache = {
+                new_cached = {
                     "int_m": self.int_m,
                     "dec_m": self.dec_m,
                     "spacc_int_off": spacc_int_off,
@@ -1147,6 +1158,13 @@ class MCEqRun:
                     "d_int": d_int,
                     "d_dec": d_dec,
                 }
+                old_cached = cached
+                self._spacc_etd2_cache = new_cached
+                if old_cached is not None:
+                    for key in ("spacc_int_off", "spacc_dec_off"):
+                        old = old_cached.get(key)
+                        if old is not None:
+                            old.close()  # idempotent
             c = self._spacc_etd2_cache
             return MCEq.solvers.solv_spacc_etd2, (
                 nsteps,
@@ -1165,20 +1183,17 @@ class MCEqRun:
 
             # Cache the diagonal/off-diagonal split AND its MKL handle
             # wrappers, keyed against ``int_m`` / ``dec_m`` identity. When
-            # either matrix is rebuilt (e.g. ``set_density_model`` →
-            # ``construct_matrices``) we tear down the old MKL handles so
-            # they don't leak.
+            # either matrix is rebuilt we deterministically free the old
+            # MKL handles so they don't accumulate (each handle owns
+            # MKL-internal optimised-layout memory beyond the Python ref).
             cached = getattr(self, "_mkl_etd2_cache", None)
             if (
                 cached is None
                 or cached["int_m"] is not self.int_m
                 or cached["dec_m"] is not self.dec_m
             ):
-                if cached is not None:
-                    for key in ("mkl_int_off", "mkl_dec_off"):
-                        old = cached.get(key)
-                        if old is not None:
-                            old.__del__()
+                # Build new before freeing old — see the spacc branch above
+                # for the rationale.
                 d_int, d_dec, int_off, dec_off = _etd_split_cache(
                     self.int_m, self.dec_m
                 )
@@ -1194,7 +1209,7 @@ class MCEqRun:
                 mkl_dec_off = (
                     MklSparseMatrix(dec_off, blocksize=bs) if dec_off.nnz else None
                 )
-                self._mkl_etd2_cache = {
+                new_cached = {
                     "int_m": self.int_m,
                     "dec_m": self.dec_m,
                     "mkl_int_off": mkl_int_off,
@@ -1202,6 +1217,13 @@ class MCEqRun:
                     "d_int": d_int,
                     "d_dec": d_dec,
                 }
+                old_cached = cached
+                self._mkl_etd2_cache = new_cached
+                if old_cached is not None:
+                    for key in ("mkl_int_off", "mkl_dec_off"):
+                        old = old_cached.get(key)
+                        if old is not None:
+                            old.close()  # idempotent
             c = self._mkl_etd2_cache
             return MCEq.solvers.solv_mkl_etd2, (
                 nsteps,
@@ -1263,9 +1285,58 @@ class MCEqRun:
 
         raise Exception(
             f"Unsupported integrator setting '{config.kernel_config}'. "
-            "Choose one of: numpy_etd2, accelerate_etd2 "
-            "(mkl_etd2 / cuda_etd2 are stubs)."
+            "Choose one of: numpy_etd2, accelerate_etd2, mkl_etd2, cuda_etd2."
         )
+
+    def close(self):
+        """Release all backend solver resources held by this MCEqRun.
+
+        Frees Accelerate slots, MKL sparse handles, and the cuSPARSE
+        context (cupy GPU buffers). Idempotent — safe to call repeatedly
+        and safe to call before falling out of scope. Calling the
+        instance again after ``close()`` will lazily rebuild the caches
+        on the next ``solve()``, so this is also a "drop and reset"
+        knob during long-running scripts.
+        """
+        # spacc and MKL wrappers expose explicit close(); cupy GPU memory
+        # is reclaimed by cupy's allocator when the cache dict drops.
+        for cache_attr, wrapper_keys in (
+            ("_spacc_etd2_cache", ("spacc_int_off", "spacc_dec_off")),
+            ("_mkl_etd2_cache", ("mkl_int_off", "mkl_dec_off")),
+        ):
+            cached = getattr(self, cache_attr, None)
+            if cached is None:
+                continue
+            for k in wrapper_keys:
+                w = cached.get(k)
+                if w is not None:
+                    try:
+                        w.close()
+                    except Exception:
+                        pass
+            try:
+                delattr(self, cache_attr)
+            except AttributeError:
+                pass
+        # CUDA context: drop the dict; cupy's GC reclaims GPU memory.
+        try:
+            delattr(self, "_cuda_etd2_cache")
+        except AttributeError:
+            pass
+
+    def __del__(self):
+        # Best-effort cleanup; never raise from __del__.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def _calculate_integration_path(
         self,

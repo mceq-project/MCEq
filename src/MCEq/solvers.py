@@ -4,6 +4,21 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.misc import info
 
+#: Documented contract for the EM-row blowup at extreme zenith. Referenced
+#: from each ETD2 kernel; see ``docs/mceq_v1.x_v2_diff.md`` "EM cascade
+#: caveat" for the full derivation. Until a validated EM database ships,
+#: ``config.adv_set["disabled_particles"]`` defaults to ``[11, -11]`` so
+#: this branch is never entered for production runs.
+_EM_BLOWUP_CAVEAT = """\
+At extreme zenith the e± semi-Lagrangian L/R rows produce ``inf`` in
+``F_phi`` / ``F_a`` (no diagonal damping). The blowup is contained to
+those rows: e±/γ do not feed back into hadrons via ``int_m`` / ``dec_m``,
+so muons and neutrinos are unaffected. Each ETD2 kernel wraps its loop
+with ``np.errstate(over='ignore', invalid='ignore')`` to suppress the
+resulting overflow / NaN warnings. To exclude the EM block entirely, set
+``config.adv_set['disabled_particles'] = [11, -11]`` (the default).
+"""
+
 
 def etd2_nonuniform_path(
     density_model,
@@ -45,8 +60,6 @@ def etd2_nonuniform_path(
       (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
       kernel-dispatch contract used by ``MCEqRun.integration_path``.
     """
-    from scipy.integrate import quad
-
     if X_start is None:
         X_start = config.X_start
     p = config.etd2_path
@@ -96,12 +109,78 @@ def etd2_nonuniform_path(
     Xs = np.asarray(Xs, dtype=np.float64)
     dXs = np.asarray(dXs, dtype=np.float64)
     rho_inv = np.empty(len(dXs), dtype=np.float64)
+
+    # Compute per-step integral means of ``r_X2rho`` via differences on
+    # a cumulative-trapezoid antiderivative built once on a hybrid
+    # log+linear sample.
+    #
+    # Why a hybrid sample (and not a uniform one): ``r_X2rho`` is
+    # ``1/rho``, and atmosphere density splines deliberately saturate at
+    # the top of atmosphere so that the path-builder's FD probe stays
+    # well-defined. The saturation produces a step-function-like spike
+    # near ``X = 0``: ``ri(0) ~ 1e9 cm^3/g`` falls to ``~1e7`` by
+    # ``X = 0.01``. A uniform-grid quadrature smears that spike across
+    # samples and over-estimates the mean by ~2-20x for the first few
+    # steps. Sampling logarithmically near ``X = 0`` (concentrated where
+    # ``ri`` varies fast) and linearly in the bulk recovers
+    # ``quad(epsrel=1e-6)``-class accuracy at ``O(1)`` per step.
+    #
+    # Why a spline of the *cumulative* and not of ``r_X2rho`` directly:
+    # the cumulative is smooth and strictly monotone, so a cubic spline
+    # through it is well-behaved even though ``r_X2rho`` spans 5+ decades.
+    # A direct fit overshoots and yields non-physical (negative) means
+    # near the top of atmosphere.
+    #
+    # Falls back to ``quad`` only if ``ri`` rejects array input.
+    use_cum = False
+    cum_spline = None
+    if len(dXs) > 0:
+        try:
+            from scipy.integrate import cumulative_trapezoid
+            from scipy.interpolate import UnivariateSpline
+
+            X_min = float(Xs[0])
+            X_max = float(Xs[-1] + dXs[-1])
+            # Cap at the model's max depth (numerical drift on the last step).
+            X_max = min(X_max, float(max_X))
+            if X_max > X_min:
+                # Concentrated log-sample for the saturated top, dense
+                # linear sample for the bulk. ~8e3 total points is enough
+                # to hit ~1e-6 rel error against quad on SIBYLL21 paths.
+                X_log_lo = max(1e-7, X_min if X_min > 0 else 1e-7)
+                X_log_hi = min(1.0, X_max)
+                if X_log_hi > X_log_lo:
+                    X_top = np.geomspace(X_log_lo, X_log_hi, 4001)
+                else:
+                    X_top = np.empty(0)
+                X_bulk = np.linspace(max(X_log_hi, X_min), X_max, 4001)
+                sample_X = np.unique(np.r_[X_min, X_top, X_bulk])
+                sample_X.sort()
+                sample_ri = np.asarray(ri(sample_X), dtype=np.float64)
+                if (
+                    sample_ri.shape == sample_X.shape
+                    and np.all(np.isfinite(sample_ri))
+                    and np.all(sample_ri > 0.0)
+                ):
+                    cum = cumulative_trapezoid(sample_ri, sample_X, initial=0.0)
+                    cum_spline = UnivariateSpline(sample_X, cum, k=3, s=0.0)
+                    use_cum = True
+        except Exception:
+            use_cum = False
+
+    if not use_cum:
+        from scipy.integrate import quad
+
     for i in range(len(dXs)):
         # A zero-length step occurs when ``int_grid`` requests a snapshot
         # at X_start: the truncation drives the first dX to 0 and the kernel
-        # records the initial state. Point-sample ri there to avoid quad/0.
+        # records the initial state. Point-sample ri there to avoid /0.
         if dXs[i] == 0.0:
             rho_inv[i] = float(ri(Xs[i]))
+        elif use_cum:
+            a = Xs[i]
+            b = a + dXs[i]
+            rho_inv[i] = float(cum_spline(b) - cum_spline(a)) / dXs[i]
         else:
             rho_inv[i] = (
                 quad(ri, Xs[i], Xs[i] + dXs[i], limit=50, epsrel=1e-6)[0] / dXs[i]
@@ -362,14 +441,10 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     start = time()
 
-    # Suppress overflow / NaN warnings from the linear-combination ufuncs.
-    # At extreme zenith the e± semi-Lagrangian L/R rows produce inf in
-    # F_phi/F_a (no diagonal damping — see docs/mceq_v1.x_v2_diff.md "EM cascade
-    # caveat"). The blowup is contained to those rows: e±/γ do not feed
-    # back into hadrons via int_m/dec_m, so muons and neutrinos are
-    # unaffected. Disable e± explicitly with
-    # ``config.adv_set["disabled_particles"] = [11, -11]`` if the EM block
-    # matters for your application.
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`: e± semi-Lagrangian rows
+    # can blow up at extreme zenith, and the kernel suppresses the
+    # downstream overflow/NaN warnings. The MKL/spacc/CUDA kernels share
+    # this contract.
     with np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             h = dX[k]
@@ -585,9 +660,15 @@ class MklSparseMatrix:
         if st != 0:
             raise RuntimeError(f"mkl_sparse_d_mv failed with status {st}")
 
-    def __del__(self):
-        # Guard against partially-initialised instances (constructor raised
-        # before we got a handle) and double-free.
+    def close(self):
+        """Free the underlying MKL sparse handle.
+
+        Idempotent — safe to call repeatedly. Prefer this over
+        ``del`` or relying on refcount-driven ``__del__`` when caches
+        in ``MCEqRun._build_kernel_dispatch`` are rotated; the call
+        below the C boundary returns the MKL-internal optimised layout
+        memory, not just the Python wrapper.
+        """
         handle = getattr(self, "_handle", None)
         mkl = getattr(self, "_mkl", None)
         if handle is None or mkl is None:
@@ -597,6 +678,15 @@ class MklSparseMatrix:
         except Exception:
             pass
         self._handle = None
+
+    def __del__(self):
+        # Defer to ``close()``; both are idempotent. Guards in ``close()``
+        # cover partially-initialised instances (constructor raised before
+        # the handle was created).
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def solv_mkl_etd2(
@@ -704,7 +794,7 @@ def solv_mkl_etd2(
 
     start = time()
 
-    # See note in solv_numpy_etd2 — same EM-row blowup at extreme zenith.
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
     with np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             h = dX[k]
@@ -1097,7 +1187,7 @@ def solv_spacc_etd2(
 
     start = time()
 
-    # See note in solv_numpy_etd2 — same EM-row blowup at extreme zenith.
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
     with np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             h = dX[k]
