@@ -1,83 +1,7 @@
-import copy
-
 import numpy as np
 import pytest
 
 from MCEq import config
-from MCEq.solvers import solv_numpy
-
-
-def test_solv_numpy_runs(toy_solver_problem):
-    phi0 = toy_solver_problem[-2].copy()
-    grid_idcs = toy_solver_problem[-1]
-
-    solution, grid_sol = solv_numpy(*toy_solver_problem)
-    assert solution.shape == phi0.shape
-    assert grid_sol.shape == (len(grid_idcs), phi0.shape[0])
-    assert not np.isnan(solution).any()
-
-    for i in range(1, grid_sol.shape[0]):
-        assert np.all(grid_sol[i] <= grid_sol[i - 1])
-
-
-@pytest.mark.skipif(not config.has_cuda, reason="CUDA not available")
-def test_solv_CUDA_sparse_matches_numpy(toy_solver_problem):
-    from MCEq.solvers import CUDASparseContext, solv_CUDA_sparse
-
-    solution_numpy, _ = solv_numpy(*toy_solver_problem)
-
-    int_m = toy_solver_problem[3]
-    dec_m = toy_solver_problem[4]
-
-    ctx = CUDASparseContext(int_m, dec_m, device_id=config.cuda_gpu_id)
-
-    solution_cuda, _ = solv_CUDA_sparse(
-        toy_solver_problem[0],  # nsteps
-        toy_solver_problem[1],  # dX
-        toy_solver_problem[2],  # rho_inv
-        ctx,  # CUDASparseContext
-        toy_solver_problem[5],  # phi
-        toy_solver_problem[6],  # grid_idcs
-    )
-    assert solution_cuda == pytest.approx(solution_numpy, rel=1e-5, abs=1e-10)
-
-
-@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_solv_MKL_sparse_matches_numpy(toy_solver_problem):
-    from MCEq.solvers import solv_MKL_sparse
-
-    toy_solver_problem_mkl = tuple(copy.deepcopy(x) for x in toy_solver_problem)
-
-    solution_numpy, _ = solv_numpy(*toy_solver_problem)
-
-    solution_mkl, _ = solv_MKL_sparse(*toy_solver_problem_mkl)
-
-    assert solution_mkl == pytest.approx(solution_numpy, rel=1e-5, abs=1e-10)
-
-
-def test_solv_numpy_does_not_modify_input_phi(toy_solver_setup):
-    """
-    Regression test: ensure solv_numpy doesn't modify the input phi array.
-
-    This was a bug where the NumPy solver modified the input array in place,
-    causing subsequent solver calls to start with wrong initial conditions.
-    """
-    from MCEq.solvers import solv_numpy
-
-    phi_original = toy_solver_setup[-2]
-    phi_copy = phi_original.copy()
-    # Run solver
-    solution, _ = solv_numpy(*toy_solver_setup)
-
-    # The input array should not be modified
-    assert np.array_equal(phi_original, phi_copy), (
-        "solv_numpy modified the input phi array - this breaks subsequent solver calls"
-    )
-
-    # The solution should be different from the input
-    assert not np.array_equal(solution, phi_copy), (
-        "Solver should produce a different result"
-    )
 
 
 @pytest.mark.xdist_group("spacc")
@@ -147,32 +71,6 @@ def test_spacc_del_with_none_store_id():
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_spacc_solver_matches_numpy(toy_solver_problem):
-    """solv_spacc_sparse should produce the same result as solv_numpy."""
-    import MCEq.spacc as spacc
-    from MCEq.solvers import solv_spacc_sparse
-
-    nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
-
-    solution_numpy, grid_numpy = solv_numpy(*toy_solver_problem)
-
-    spacc_int_m = spacc.SpaccMatrix(int_m)
-    spacc_dec_m = spacc.SpaccMatrix(dec_m)
-
-    solution_spacc, grid_spacc = solv_spacc_sparse(
-        nsteps, dX, rho_inv, spacc_int_m, spacc_dec_m, phi.copy(), grid_idcs
-    )
-
-    assert solution_spacc == pytest.approx(solution_numpy, rel=1e-12, abs=1e-15), (
-        "spacc solver result does not match numpy solver"
-    )
-    assert np.allclose(grid_spacc, grid_numpy, rtol=1e-12), (
-        "spacc solver grid solutions do not match numpy solver"
-    )
-
-
-@pytest.mark.xdist_group("spacc")
-@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_matrix_store_full():
     """Filling SIZE_MSTORE (10) slots and then freeing them leaves store clean."""
     from scipy.sparse import eye
@@ -197,32 +95,838 @@ def test_spacc_matrix_store_full():
     extra.__del__()
 
 
-@pytest.mark.skipif(not config.has_cuda, reason="CUDA not available")
-def test_cuda_numpy_solver_consistency(toy_solver_setup):
+# ---------------------------------------------------------------------------
+# ETD2 (numpy_etd2) tests
+# ---------------------------------------------------------------------------
+def test_solv_numpy_etd2_runs(toy_solver_problem):
+    """ETD2 returns the right shape, no NaN, monotonic decay on the grid.
+
+    The toy fixture has only diagonal int_m / dec_m, so ETD2 collapses to
+    phi <- exp(h*D) * phi (no off-diagonal stages). We don't compare against
+    a reference here — full-fixture equivalence is covered by the spacc-vs-
+    numpy tests below.
     """
-    Regression test: ensure CUDA and NumPy solvers produce consistent results.
+    from MCEq.solvers import solv_numpy_etd2
 
-    This validates that both solvers implement the same algorithm correctly.
+    phi0 = toy_solver_problem[-2].copy()
+    grid_idcs = toy_solver_problem[-1]
 
-    Note: Requires CuPy >= 12.0.0 for modern sparse matrix interface compatibility.
+    solution, grid_sol = solv_numpy_etd2(*toy_solver_problem)
+    assert solution.shape == phi0.shape
+    assert grid_sol.shape == (len(grid_idcs), phi0.shape[0])
+    assert not np.isnan(solution).any()
+    assert np.all(np.isfinite(solution))
+
+    for i in range(1, grid_sol.shape[0]):
+        assert np.all(grid_sol[i] <= grid_sol[i - 1])
+
+
+def test_solv_numpy_etd2_does_not_modify_input_phi(toy_solver_setup):
+    """Regression: ETD2 must not mutate the input phi array in place."""
+    from MCEq.solvers import solv_numpy_etd2
+
+    phi_original = toy_solver_setup[-2]
+    phi_copy = phi_original.copy()
+
+    solution, _ = solv_numpy_etd2(*toy_solver_setup)
+
+    assert np.array_equal(phi_original, phi_copy), (
+        "solv_numpy_etd2 modified the input phi array - this breaks subsequent "
+        "solver calls"
+    )
+    assert not np.array_equal(solution, phi_copy), (
+        "Solver should produce a different result"
+    )
+
+
+def _muon_flux(mceq, phi):
+    """E^3 * (mu+ + mu-) flux on mceq.e_grid, in arbitrary units."""
+    e = mceq.e_grid
+    flux = np.zeros_like(e)
+    for name in ("mu+", "mu-"):
+        sl = mceq.pman[name].lidx, mceq.pman[name].uidx
+        flux += phi[sl[0] : sl[1]]
+    return e, e**3 * flux
+
+
+def _solve_with_kernel(mceq, kernel_name):
+    """Run mceq.solve() with the given kernel_config; restore on the way out."""
+    saved = config.kernel_config
+    config.kernel_config = kernel_name
+    try:
+        # Force re-derivation of the integration path so the chosen kernel
+        # actually runs end-to-end.
+        mceq.integration_path = None
+        mceq.solve()
+        return mceq._solution.copy()
+    finally:
+        config.kernel_config = saved
+
+
+def test_solv_numpy_etd2_stable_at_high_zenith():
+    """Regression: ETD2 must stay finite at theta=89 deg.
+
+    At extreme zenith, rho_inv blows up and forward-Euler-style schemes
+    explode on rows with weak diagonal damping. The ETD2 design treats the
+    diagonal exactly via an integrating factor; this test locks in that
+    property — the integrator must not return non-finite values.
+
+    e+/e- are disabled because their semi-Lagrangian L/R-variant rows have
+    no diagonal damping and require a block-ETD generalization (see
+    docs/mceq_v1.x_v2_diff.md). This is a known limitation, not a regression.
     """
-    from MCEq import config
-    from MCEq.solvers import CUDASparseContext, solv_CUDA_sparse
+    import crflux.models as pm
 
-    # Run NumPy solver
-    solution_numpy, _ = solv_numpy(*toy_solver_setup)
+    from MCEq.core import MCEqRun
 
-    # Run CUDA solver
-    nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_setup
+    saved = list(config.adv_set.get("disabled_particles", []))
+    saved_kernel = config.kernel_config
+    saved_db = config.mceq_db_fname
+    config.adv_set["disabled_particles"] = [11, -11]
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=89.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        phi_etd = _solve_with_kernel(mceq, "numpy_etd2")
 
-    ctx = CUDASparseContext(int_m, dec_m, device_id=config.cuda_gpu_id)
-    solution_cuda, _ = solv_CUDA_sparse(nsteps, dX, rho_inv, ctx, phi, grid_idcs)
+        assert np.all(np.isfinite(phi_etd)), "ETD2 blew up at theta=89 deg"
 
-    # Results should match within floating-point precision
-    # (CUDA uses float32, NumPy uses float64, so we expect small differences)
-    assert np.allclose(
-        solution_cuda,
-        solution_numpy,
-        rtol=1e-5,
-        atol=1e-8,
-    ), "CUDA and NumPy solvers produce different results"
+        e, mu_etd = _muon_flux(mceq, phi_etd)
+        band = (e > 1.0) & (mu_etd > 1e-30)
+        assert band.any(), "no nonzero muon-flux band found"
+    finally:
+        config.adv_set["disabled_particles"] = saved
+        config.kernel_config = saved_kernel
+        config.mceq_db_fname = saved_db
+
+
+def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
+    """ETD2RK with `oversample` substeps per native step. Mirrors the
+    production kernel's update rule so the convergence test exercises the
+    same math."""
+    from MCEq.solvers import _etd_split_cache
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    phi = phi0.astype(np.float64).copy()
+
+    PHI1_SMALL = 1e-6
+    PHI2_SMALL = 1e-3
+
+    for k in range(len(dX)):
+        h_full = dX[k]
+        ri = rho_inv[k]
+        D = d_int + ri * d_dec
+        for _ in range(oversample):
+            h = h_full / oversample
+            hD = h * D
+            eD = np.exp(hD)
+            phi1 = np.where(
+                np.abs(hD) > PHI1_SMALL,
+                (eD - 1.0) / np.where(hD != 0.0, hD, 1.0),
+                1.0 + 0.5 * hD + hD * hD / 6.0,
+            )
+            phi2 = np.where(
+                np.abs(hD) > PHI2_SMALL,
+                (eD - 1.0 - hD) / np.where(hD != 0.0, hD * hD, 1.0),
+                0.5 + hD / 6.0 + hD * hD / 24.0,
+            )
+            F_phi = int_off.dot(phi) + ri * dec_off.dot(phi)
+            a = eD * phi + h * phi1 * F_phi
+            F_a = int_off.dot(a) + ri * dec_off.dot(a)
+            phi = a + h * phi2 * (F_a - F_phi)
+    return phi
+
+
+def test_solv_numpy_etd2_second_order_convergence(mceq_sib21):
+    """ETD2 should exhibit observed convergence order ~2 under h-refinement.
+
+    Build the reference via ETD2 at high oversample (rather than oversampled
+    Euler). Using the same scheme for truth keeps the truth's residual
+    error a factor of ~16 below the test points (since ETD2 is second-order
+    and we refine by 8x), so the measured ratio reflects ETD2's own
+    asymptotic constant rather than the truth's first-order leftover.
+
+    A floor of 1.8 catches regressions while tolerating constant noise in
+    the asymptotic regime.
+    """
+    mceq_sib21.set_theta_deg(0.0)
+
+    saved_kernel = config.kernel_config
+    config.kernel_config = "numpy_etd2"
+    try:
+        mceq_sib21.integration_path = None
+        mceq_sib21._calculate_integration_path(int_grid=None, grid_var="X")
+        _, dX_full, rho_inv_full, _ = mceq_sib21.integration_path
+    finally:
+        config.kernel_config = saved_kernel
+
+    # Use the full ETD2 path. It is much coarser than the old Euler native
+    # grid, but the convergence ratio measurement only depends on whether
+    # the cumulative dynamics are large enough to lift `phi_h` above the
+    # round-off floor — which the assertion below guards.
+    dX = dX_full
+    rho_inv = rho_inv_full
+
+    int_m = mceq_sib21.int_m.tocsr()
+    dec_m = mceq_sib21.dec_m.tocsr()
+    phi0 = mceq_sib21._phi0.copy()
+
+    # ETD2 truth at oversample=16. Using ETD2 (rather than Euler) for the
+    # reference means the truth's own residual is O((h/16)^2) — far below
+    # ETD2 at os=1 or os=2, so it doesn't pollute the order estimate.
+    phi_truth = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=16)
+    norm_truth = np.linalg.norm(phi_truth)
+    assert norm_truth > 0
+
+    phi_h = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=1)
+    phi_h2 = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=2)
+
+    err_h = np.linalg.norm(phi_h - phi_truth) / norm_truth
+    err_h2 = np.linalg.norm(phi_h2 - phi_truth) / norm_truth
+
+    assert err_h > 1e-10, (
+        f"ETD2 native-grid error {err_h:.3e} too small to measure order — "
+        "test is in floating-point-noise regime"
+    )
+    assert err_h2 < err_h, (
+        f"ETD2 error did not decrease under h-refinement: "
+        f"err(h)={err_h:.3e} err(h/2)={err_h2:.3e}"
+    )
+
+    order = np.log2(err_h / err_h2)
+    assert order >= 1.8, (
+        f"ETD2 observed order {order:.2f} below 1.8 "
+        f"(err(h)={err_h:.3e}, err(h/2)={err_h2:.3e})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETD2 (spacc / Apple Accelerate) tests
+# ---------------------------------------------------------------------------
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_solv_spacc_etd2_matches_numpy_etd2_toy(toy_solver_problem):
+    """Trivial-matrix smoke test.
+
+    The toy fixture has purely diagonal int_m/dec_m, so both off-diagonals
+    are empty (nnz=0). The kernel should detect that and skip the SpMV
+    calls; the result is just the integrating-factor `exp(h*D) * phi` per
+    step. This catches the empty-matrix code path without requiring a
+    full MCEqRun.
+    """
+    import MCEq.spacc as spacc
+    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+
+    nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
+
+    sol_numpy, _ = solv_numpy_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs
+    )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    # int_off / dec_off may be empty here; the kernel should handle that.
+    spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz > 0 else None
+    spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz > 0 else None
+    sol_spacc, _ = solv_spacc_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        spacc_int_off,
+        spacc_dec_off,
+        d_int,
+        d_dec,
+        phi.copy(),
+        grid_idcs,
+    )
+    assert sol_spacc == pytest.approx(sol_numpy, rel=1e-12, abs=1e-15), (
+        "spacc_etd2 differs from numpy_etd2 on toy diagonal-only problem"
+    )
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
+    """Equivalence test on real MCEq matrices with non-trivial off-diagonals.
+
+    Builds a uniform mid-point sampled path at theta=60 with the default
+    (no-mixing) particle treatment, runs both kernels on that fixed path,
+    asserts agreement to ~1e-12 — the 4 SpMVs/step are the same operation
+    in both backends, so equality is essentially arithmetic round-off.
+    """
+    import MCEq.spacc as spacc
+    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+
+    mceq_sib21.set_theta_deg(60.0)
+
+    h = 5.0
+    max_X = mceq_sib21.density_model.max_X
+    n_full = int((max_X - config.X_start) // h)
+    tail = (max_X - config.X_start) - n_full * h
+    if tail > 1e-9:
+        dX = np.full(n_full + 1, h, dtype=np.float64)
+        dX[-1] = tail
+    else:
+        dX = np.full(n_full, h, dtype=np.float64)
+    Xs = config.X_start + np.concatenate([[0.0], np.cumsum(dX)[:-1]])
+    ri = mceq_sib21.density_model.r_X2rho
+    rho_inv = np.array([ri(Xs[i] + 0.5 * dX[i]) for i in range(len(dX))])
+    grid_idcs = []
+    nsteps = len(dX)
+    phi0 = mceq_sib21._phi0.copy()
+
+    sol_numpy, _ = solv_numpy_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        mceq_sib21.int_m,
+        mceq_sib21.dec_m,
+        phi0.copy(),
+        grid_idcs,
+    )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(
+        mceq_sib21.int_m, mceq_sib21.dec_m
+    )
+    assert int_off.nnz > 0 and dec_off.nnz > 0, (
+        "real matrices should have non-empty off-diagonals"
+    )
+    spacc_int_off = spacc.SpaccMatrix(int_off)
+    spacc_dec_off = spacc.SpaccMatrix(dec_off)
+    sol_spacc, _ = solv_spacc_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        spacc_int_off,
+        spacc_dec_off,
+        d_int,
+        d_dec,
+        phi0.copy(),
+        grid_idcs,
+    )
+
+    assert np.all(np.isfinite(sol_spacc)), "spacc_etd2 produced non-finite values"
+    rel_l2 = np.linalg.norm(sol_spacc - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    assert rel_l2 < 1e-12, (
+        f"spacc_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < 1e-12)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETD2 (Intel MKL / NVIDIA CUDA) tests
+# ---------------------------------------------------------------------------
+# These backend tests build their own MCEqRun rather than reusing the shared
+# ``mceq_sib21`` fixture (which is calibrated against the reduced compact DB
+# used by the calibration tests in test_core.py). They only need a working
+# matrix system; the full DB is the more portable choice and keeps these
+# tests independent of the compact-DB calibration regime.
+@pytest.fixture(scope="module")
+def mceq_sib21_full_db():
+    """Module-scoped MCEqRun against the full DB for backend equivalence tests."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    saved_db = config.mceq_db_fname
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    config.adv_set["disabled_particles"] = []
+    try:
+        if config.has_mkl:
+            config.set_mkl_threads(2)
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=0.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        yield mceq
+    finally:
+        config.mceq_db_fname = saved_db
+        config.adv_set["disabled_particles"] = saved_disabled
+
+
+def _uniform_path_theta60(mceq, h=5.0):
+    """Build a uniform mid-point-sampled path at theta=60 deg.
+
+    Used by the MKL and CUDA equivalence tests so both run on identical
+    inputs and produce comparable rel-L2 numbers.
+    """
+    mceq.set_theta_deg(60.0)
+    max_X = mceq.density_model.max_X
+    n_full = int((max_X - config.X_start) // h)
+    tail = (max_X - config.X_start) - n_full * h
+    if tail > 1e-9:
+        dX = np.full(n_full + 1, h, dtype=np.float64)
+        dX[-1] = tail
+    else:
+        dX = np.full(n_full, h, dtype=np.float64)
+    Xs = config.X_start + np.concatenate([[0.0], np.cumsum(dX)[:-1]])
+    ri = mceq.density_model.r_X2rho
+    rho_inv = np.array([ri(Xs[i] + 0.5 * dX[i]) for i in range(len(dX))])
+    return len(dX), dX, rho_inv
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+@pytest.mark.parametrize("blocksize", [None, 6], ids=["csr", "bsr6"])
+def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
+    """Equivalence test on real MCEq matrices, both CSR and BSR(6) paths.
+
+    CSR is bit-exact vs numpy (~1e-12); BSR reorders the SpMV partial
+    sums per-block and lands at ~1e-10 on these matrices — still
+    essentially round-off, just looser.
+    """
+    from MCEq.solvers import (
+        MklSparseMatrix,
+        _etd_split_cache,
+        solv_mkl_etd2,
+        solv_numpy_etd2,
+    )
+
+    mceq = mceq_sib21_full_db
+    nsteps, dX, rho_inv = _uniform_path_theta60(mceq)
+    grid_idcs = []
+    phi0 = mceq._phi0.copy()
+
+    sol_numpy, _ = solv_numpy_etd2(
+        nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
+    )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
+    assert int_off.nnz > 0 and dec_off.nnz > 0, (
+        "real matrices should have non-empty off-diagonals"
+    )
+    mkl_int_off = MklSparseMatrix(int_off.tocsr(), blocksize=blocksize)
+    mkl_dec_off = MklSparseMatrix(dec_off.tocsr(), blocksize=blocksize)
+    sol_mkl, _ = solv_mkl_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        mkl_int_off,
+        mkl_dec_off,
+        d_int,
+        d_dec,
+        phi0.copy(),
+        grid_idcs,
+    )
+
+    assert np.all(np.isfinite(sol_mkl)), "mkl_etd2 produced non-finite values"
+    rel_l2 = np.linalg.norm(sol_mkl - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    # CSR is the same arithmetic as numpy → bit-exact bound. BSR groups
+    # the SpMV per block, which reorders partial sums and loosens to ~1e-10.
+    tol = 1e-12 if blocksize is None else 1e-9
+    assert rel_l2 < tol, (
+        f"mkl_etd2(blocksize={blocksize}) vs numpy_etd2 rel-L2 = {rel_l2:.3e} "
+        f"(expected < {tol})"
+    )
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+def test_mkl_bsr_handles_padding():
+    """BSR with a dimension that's not a multiple of blocksize must round-trip.
+
+    SIBYLL21 happens to give dim=8712 (divisible by 6). This test uses a
+    synthetic 7x7 matrix with blocksize=3 to exercise the padding code path
+    end-to-end via the kernel. Padding rows/cols stay zero through SpMV, so
+    the result should match a CSR run to round-off.
+    """
+    from MCEq.solvers import MklSparseMatrix, solv_mkl_etd2
+
+    import scipy.sparse as sp
+
+    rng = np.random.default_rng(0)
+    dim = 7  # not a multiple of any common blocksize
+    int_off = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.1)
+    dec_off = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.05)
+    # zero the diagonals — that's the off-diagonal contract
+    int_off.setdiag(0)
+    dec_off.setdiag(0)
+    int_off.eliminate_zeros()
+    dec_off.eliminate_zeros()
+    d_int = -0.2 * np.ones(dim)
+    d_dec = -0.05 * np.ones(dim)
+    phi0 = np.ones(dim)
+    nsteps = 5
+    dX = np.full(nsteps, 0.5)
+    rho_inv = np.linspace(1.0, 0.5, nsteps)
+
+    sol_csr, _ = solv_mkl_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        MklSparseMatrix(int_off, blocksize=None),
+        MklSparseMatrix(dec_off, blocksize=None),
+        d_int,
+        d_dec,
+        phi0.copy(),
+        [],
+    )
+    sol_bsr, _ = solv_mkl_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        MklSparseMatrix(int_off, blocksize=3),  # forces padding 7 -> 9
+        MklSparseMatrix(dec_off, blocksize=3),
+        d_int,
+        d_dec,
+        phi0.copy(),
+        [],
+    )
+    assert sol_csr.shape == (dim,)
+    assert sol_bsr.shape == (dim,)
+    assert np.allclose(sol_csr, sol_bsr, rtol=1e-10, atol=1e-12), (
+        f"BSR padded path differs from CSR: csr={sol_csr}, bsr={sol_bsr}"
+    )
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+def test_solv_mkl_etd2_stable_at_high_zenith():
+    """Regression: MKL ETD2 must stay finite at theta=89 deg.
+
+    Mirrors the numpy_etd2 stability test — at extreme zenith the
+    diagonal-exact treatment is the only thing keeping the integrator
+    stable. e±/γ disabled per the EM-cascade caveat.
+    """
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    saved = list(config.adv_set.get("disabled_particles", []))
+    saved_kernel = config.kernel_config
+    saved_db = config.mceq_db_fname
+    config.adv_set["disabled_particles"] = [11, -11]
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=89.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        config.kernel_config = "mkl_etd2"
+        mceq.integration_path = None
+        mceq.solve()
+        phi = mceq._solution
+        assert np.all(np.isfinite(phi)), "MKL ETD2 blew up at theta=89 deg"
+    finally:
+        config.adv_set["disabled_particles"] = saved
+        config.kernel_config = saved_kernel
+        config.mceq_db_fname = saved_db
+
+
+# ---------------------------------------------------------------------------
+# ETD2 (NVIDIA CUDA) tests
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
+    """Equivalence test on real MCEq matrices.
+
+    cuSPARSE may reorder partial sums vs scipy CSR, so we tolerate a
+    rel-L2 of 1e-9 instead of round-off — but anything looser would mask
+    a real bug. Path matches the MKL test for parity.
+    """
+    from MCEq.solvers import (
+        CudaEtd2Context,
+        _etd_split_cache,
+        solv_cuda_etd2,
+        solv_numpy_etd2,
+    )
+
+    mceq = mceq_sib21_full_db
+    nsteps, dX, rho_inv = _uniform_path_theta60(mceq)
+    grid_idcs = []
+    phi0 = mceq._phi0.copy()
+
+    sol_numpy, _ = solv_numpy_etd2(
+        nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
+    )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
+    ctx = CudaEtd2Context(
+        int_off.tocsr(),
+        dec_off.tocsr(),
+        d_int,
+        d_dec,
+        device_id=config.cuda_gpu_id,
+        fp_precision=64,
+    )
+    sol_cuda, _ = solv_cuda_etd2(
+        nsteps, dX, rho_inv, ctx, phi0.copy(), grid_idcs
+    )
+
+    assert np.all(np.isfinite(sol_cuda)), "cuda_etd2 produced non-finite values"
+    rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    # cuSPARSE reorders partial sums vs scipy — round-off-bounded but not
+    # bit-exact. 1e-9 catches systematic bugs while tolerating reorder.
+    assert rel_l2 < 1e-9, (
+        f"cuda_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < 1e-9)"
+    )
+
+
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_solv_cuda_etd2_stable_at_high_zenith():
+    """Regression: CUDA ETD2 must stay finite at theta=89 deg."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    saved = list(config.adv_set.get("disabled_particles", []))
+    saved_kernel = config.kernel_config
+    saved_db = config.mceq_db_fname
+    config.adv_set["disabled_particles"] = [11, -11]
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=89.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        config.kernel_config = "cuda_etd2"
+        mceq.integration_path = None
+        mceq.solve()
+        phi = mceq._solution
+        assert np.all(np.isfinite(phi)), "CUDA ETD2 blew up at theta=89 deg"
+    finally:
+        config.adv_set["disabled_particles"] = saved
+        config.kernel_config = saved_kernel
+        config.mceq_db_fname = saved_db
+
+
+# ---------------------------------------------------------------------------
+# ETD2 on GeneralizedTarget (uniform-density profile)
+# ---------------------------------------------------------------------------
+def test_solv_numpy_etd2_generalized_target_convergence():
+    """ETD2 must converge with order ~2 on a uniform-density target.
+
+    For a constant-density profile, the non-uniform `ρ`-aware path
+    degenerates to uniform `h_max` because `|d ln ρ⁻¹/dX| = 0`. We
+    therefore test against literal uniform stepping at decreasing `h` and
+    require that the rel-L2 error vs the finest reference is consistent
+    with second-order convergence.
+
+    This is a regression test against future kernel changes silently
+    breaking on non-atmospheric targets.
+    """
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+    from MCEq.geometry.density_profiles import GeneralizedTarget
+    from MCEq.solvers import solv_numpy_etd2
+
+    saved_kernel = config.kernel_config
+    saved_db = config.mceq_db_fname
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.adv_set["disabled_particles"] = [11, -11]
+    try:
+        target = GeneralizedTarget(len_target=1000.0, env_density=1.0, env_name="water")
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=0.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        mceq.set_density_model(target)
+        max_X = mceq.density_model.max_X
+
+        sols = {}
+        for h in (4.0, 2.0, 1.0, 0.5):
+            n = int(np.ceil(max_X / h))
+            dX = np.full(n, h, dtype=np.float64)
+            dX[-1] = max_X - (n - 1) * h
+            rho_inv = np.full(n, 1.0 / target.env_density, dtype=np.float64)
+            sol, _ = solv_numpy_etd2(
+                n,
+                dX,
+                rho_inv,
+                mceq.int_m,
+                mceq.dec_m,
+                mceq._phi0.copy(),
+                [],
+            )
+            assert np.all(np.isfinite(sol)), (
+                f"ETD2 on water at h={h} produced non-finite values"
+            )
+            sols[h] = sol
+
+        ref = sols[0.5]
+        norm_ref = np.linalg.norm(ref)
+        assert norm_ref > 0
+        err = {h: np.linalg.norm(sols[h] - ref) / norm_ref for h in sols}
+
+        # Each halving of h should drop error by ~4× (order 2). Allow some
+        # slack in the asymptotic-constant regime.
+        for h_coarse, h_fine in ((4.0, 2.0), (2.0, 1.0)):
+            ratio = err[h_coarse] / err[h_fine] if err[h_fine] > 0 else float("inf")
+            assert ratio > 3.0, (
+                f"ETD2 on water: error ratio h={h_coarse}->{h_fine} is "
+                f"{ratio:.2f}, below the 3.0 floor expected for O(h²) "
+                f"convergence (err({h_coarse})={err[h_coarse]:.2e}, "
+                f"err({h_fine})={err[h_fine]:.2e})"
+            )
+
+        # And the absolute error at h=4 should already be small.
+        assert err[4.0] < 5e-2, (
+            f"ETD2 on water at h=4 has rel-L2={err[4.0]:.2e} vs h=0.5 "
+            f"reference; expected < 5e-2"
+        )
+    finally:
+        config.kernel_config = saved_kernel
+        config.mceq_db_fname = saved_db
+        config.adv_set["disabled_particles"] = saved_disabled
+
+
+# ---------------------------------------------------------------------------
+# ETD2 path-parameter wiring through MCEqRun.solve()
+# ---------------------------------------------------------------------------
+def test_etd2_solve_default_path(mceq_sib21):
+    """``mceq.solve()`` with ``kernel_config="numpy_etd2"`` must build a
+    non-uniform path automatically (no ``solve_from_integration_path``
+    needed) and produce a finite muon spectrum.
+
+    Locks in the wiring: the ETD2 branch in ``_calculate_integration_path``
+    is reached, the public ``etd2_nonuniform_path`` builder is invoked,
+    and the resulting path populates ``mceq.integration_path`` with a
+    step count well below the per-decade-of-X cap.
+    """
+    mceq_sib21.set_theta_deg(60.0)
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        mceq_sib21.integration_path = None
+        mceq_sib21.solve()  # no explicit path injection — should auto-build
+        n_etd = mceq_sib21.integration_path[0]
+        mu_etd = mceq_sib21.get_solution("total_mu+", 0) + mceq_sib21.get_solution(
+            "total_mu-", 0
+        )
+    finally:
+        config.kernel_config = saved_kernel
+
+    # The ETD2 nonuniform path on the standard atmosphere at 60 deg is
+    # ~150-300 steps depending on the dX_max cap; both ends should be well
+    # under 1000 (an Euler native grid would have ~10000).
+    assert n_etd < 1000, f"ETD2 path is suspiciously dense: n_etd={n_etd}"
+    assert n_etd > 10, f"ETD2 path is suspiciously sparse: n_etd={n_etd}"
+    assert np.all(np.isfinite(mu_etd)), "ETD2 default solve produced non-finite mu"
+
+    e = mceq_sib21.e_grid
+    band = (e > 1.0) & (mu_etd > 1e-30)
+    assert band.any(), "no nonzero muon-flux band found"
+
+
+def test_etd2_solve_eps_override_shifts_step_count(mceq_sib21):
+    """Passing ``eps`` to ``solve()`` must propagate through the cache and
+    actually rebuild the path. Smaller eps → more steps."""
+    mceq_sib21.set_theta_deg(60.0)
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        mceq_sib21.integration_path = None
+        mceq_sib21.solve(eps=0.3)
+        n_default = mceq_sib21.integration_path[0]
+        mceq_sib21.solve(eps=0.1)
+        n_finer = mceq_sib21.integration_path[0]
+        mceq_sib21.solve(eps=1.0)
+        n_coarser = mceq_sib21.integration_path[0]
+    finally:
+        config.kernel_config = saved_kernel
+
+    assert n_finer > n_default > n_coarser, (
+        f"eps override did not change the path: "
+        f"n(eps=0.1)={n_finer}, n(eps=0.3)={n_default}, n(eps=1.0)={n_coarser}"
+    )
+
+
+def test_etd2_solve_path_cache_invalidates_on_param_change(mceq_sib21):
+    """The path cache must invalidate when an ETD2 parameter changes
+    between calls; otherwise param overrides would be silently ignored."""
+    mceq_sib21.set_theta_deg(60.0)
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        mceq_sib21.integration_path = None
+        mceq_sib21.solve()
+        path_a = mceq_sib21.integration_path
+        mceq_sib21.solve(dX_max=10.0)
+        path_b = mceq_sib21.integration_path
+    finally:
+        config.kernel_config = saved_kernel
+
+    # dX_max=10 must produce more steps than the default dX_max=20
+    assert path_b[0] > path_a[0], (
+        f"dX_max change did not invalidate cache: "
+        f"n(default)={path_a[0]}, n(dX_max=10)={path_b[0]}"
+    )
+
+
+def test_etd2_solve_int_grid_dense(mceq_sib21):
+    """A user-supplied int_grid must produce at least len(int_grid) steps
+    and a snapshot grid_idcs of matching length, regardless of how dense
+    the grid is relative to the natural ETD2 schedule.
+
+    Tests two cases:
+      - sparse grid (50 evenly spaced points): natural path dominates,
+        but the requested points still land on step boundaries.
+      - dense grid (5000 evenly spaced points): grid is much finer than
+        the natural ~20 g/cm² bulk step, forcing every bulk step to
+        truncate and land on a snapshot.
+    """
+    mceq_sib21.set_theta_deg(60.0)
+    saved_kernel = config.kernel_config
+    max_X = mceq_sib21.density_model.max_X
+    try:
+        config.kernel_config = "numpy_etd2"
+
+        for n_grid in (50, 5000):
+            int_grid = np.linspace(max_X / n_grid, max_X, n_grid, dtype=np.float64)
+            mceq_sib21.integration_path = None
+            mceq_sib21.solve(int_grid=int_grid)
+            nsteps, dX, rho_inv, grid_idcs = mceq_sib21.integration_path
+
+            # Step count must be >= len(int_grid) (each grid point lands
+            # on a step boundary)
+            assert nsteps >= n_grid, f"n_grid={n_grid}: nsteps={nsteps} < len(int_grid)"
+            # Every requested snapshot must be recorded
+            assert len(grid_idcs) == n_grid, (
+                f"n_grid={n_grid}: got {len(grid_idcs)} snapshots, expected {n_grid}"
+            )
+            # And the cumulative step boundaries must hit each int_grid value
+            X_boundaries = np.cumsum(dX)
+            recorded_X = X_boundaries[np.asarray(grid_idcs)]
+            assert np.allclose(recorded_X, int_grid, rtol=0, atol=1e-9), (
+                f"n_grid={n_grid}: snapshot positions don't match int_grid "
+                f"(max diff = {np.max(np.abs(recorded_X - int_grid)):.3e})"
+            )
+            # Grid solutions must have the right shape
+            assert mceq_sib21.grid_sol.shape[0] == n_grid, (
+                f"n_grid={n_grid}: grid_sol has {mceq_sib21.grid_sol.shape[0]} "
+                f"snapshots, expected {n_grid}"
+            )
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_etd2_solve_int_grid_below_X_start_raises(mceq_sib21):
+    """An int_grid value strictly below X_start must raise immediately.
+
+    A snapshot exactly at X_start is allowed (records the initial state);
+    only points below it are rejected.
+    """
+    mceq_sib21.set_theta_deg(60.0)
+    saved_kernel = config.kernel_config
+    saved_X_start = config.X_start
+    try:
+        config.kernel_config = "numpy_etd2"
+        config.X_start = 50.0
+        mceq_sib21.integration_path = None
+        with pytest.raises(ValueError, match="larger than or equal to X_start"):
+            mceq_sib21.solve(int_grid=np.array([10.0, 100.0, 500.0]))
+    finally:
+        config.kernel_config = saved_kernel
+        config.X_start = saved_X_start

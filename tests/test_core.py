@@ -46,26 +46,6 @@ def test_solve_int_grid(mceq_sib21, int_grid, grid_shape):
     assert mceq_sib21.grid_sol.shape == grid_shape
 
 
-@pytest.mark.parametrize(
-    ["leading_process", "lenX"],
-    [
-        ["decays", 1248],
-        ["auto", 1248],
-        ["interactions", 1034],
-    ],
-)
-def test_integration_path_leading_process(mceq_sib21, leading_process, lenX):
-    """Fix this test by resolving issue #66"""
-    from MCEq import config
-
-    config.leading_process = leading_process
-    int_grid = None
-    grid_var = "X"
-    mceq_sib21._calculate_integration_path(int_grid, grid_var)
-    integration_path = mceq_sib21.integration_path
-    assert integration_path[0] == lenX
-
-
 def test_integration_path_grid_idcs(mceq_sib21):
     int_grid = [0, 1]
 
@@ -79,9 +59,9 @@ def test_integration_path_grid_idcs(mceq_sib21):
 
 
 testdata_theta = [
-    [0.0, 8.832749837571275e-08],
-    [30.0, 9.907914648457978e-08],
-    [60.0, 1.5032860734447641e-07],
+    [0.0, 8.8312635576492481e-08],
+    [30.0, 9.9070776732966113e-08],
+    [60.0, 1.5039581700049055e-07],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
@@ -151,9 +131,9 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 
 
 testdata_primary = [
-    [1e3, 1.188606352544364e-05, 2.3833836497715642e-07, -4.389720437130184e-08],
-    [1e4, 0.09924074296757761, 0.024548469717221015, 0.001458070555523793],
-    [1e5, 0.9113452102164941, 0.2824779229726991, 0.020207277840290347],
+    [1e3, 1.1904680953281074e-05, 2.4098237699529783e-07, -4.401425991268454e-08],
+    [1e4, 0.09917221096682655, 0.024609349696095902, 0.001461068061597137],
+    [1e5, 0.9113822218370885, 0.2833603479604529, 0.02028732056926894],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
@@ -674,6 +654,148 @@ def test_interaction_model_forwarding():
     assert mceq_sib21._interactions.iam == "QGSJETII04"
 
 
+def test_mceqrun_no_refcycle_or_handle_leak_across_instances():
+    """Successive MCEqRun constructions must release backend handles.
+
+    Regression for the bound-method reference cycle (PR #163) and the
+    explicit-close path in :meth:`MCEqRun._build_kernel_dispatch`. On
+    macOS Accelerate this used to overflow ``SIZE_MSTORE=10`` after ~5
+    instances; on MKL it used to leak per-instance MKL handles. Run
+    enough iterations to exceed both budgets if anything regresses.
+    """
+    import gc
+
+    import crflux.models as pm
+
+    from MCEq import config
+    from MCEq.core import MCEqRun
+
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    config.adv_set["disabled_particles"] = []
+    try:
+        for _ in range(15):
+            mceq = MCEqRun(
+                interaction_model="SIBYLL21",
+                theta_deg=0.0,
+                primary_model=(pm.HillasGaisser2012, "H3a"),
+            )
+            mceq.solve()
+            mceq.close()
+            del mceq
+            gc.collect()
+    finally:
+        config.adv_set["disabled_particles"] = saved_disabled
+
+
+def test_mceqrun_close_is_idempotent_and_context_manager(mceq_sib21):
+    """``MCEqRun.close()`` must be idempotent and usable via ``with``."""
+    mceq_sib21.solve()
+    mceq_sib21.close()
+    mceq_sib21.close()  # second call must not raise
+    # Still usable: caches lazily rebuild on the next solve().
+    mceq_sib21.solve()
+    sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
+    assert sol is not None and np.any(sol > 0)
+
+
+def test_force_resonance_carve_out_for_standard_particles():
+    """``force_resonance`` for a standard-particles entry must be a no-op.
+
+    Documented behaviour: ``adv_set['force_resonance']`` is matched
+    against the absolute PDG id, and entries that are also in
+    ``config.standard_particles`` are silently ignored (the carve-out).
+    Forcing Lambda (3122, a standard particle present in the reduced
+    DB) into the list should leave ``is_resonance = False``.
+    """
+    import crflux.models as pm
+
+    from MCEq import config
+    from MCEq.core import MCEqRun
+
+    saved_force = list(config.adv_set.get("force_resonance", []))
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    config.adv_set["force_resonance"] = [3122]
+    config.adv_set["disabled_particles"] = []
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=0.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        lam = mceq.pman[3122]
+        assert not lam.is_resonance, (
+            "3122 is in standard_particles, force_resonance should be a no-op"
+        )
+        assert lam in mceq.pman.cascade_particles
+        assert lam not in mceq.pman.resonances
+    finally:
+        config.adv_set["force_resonance"] = saved_force
+        config.adv_set["disabled_particles"] = saved_disabled
+
+
+def test_force_resonance_folds_non_standard_particle():
+    """``force_resonance`` for a non-standard PDG must flip ``is_resonance``.
+
+    The reduced test DB only ships standard-particles entries, so we
+    temporarily remove Lambda (3122) from ``config.standard_particles``
+    to drive the positive branch of ``_apply_force_resonance``. With
+    the carve-out gone, putting 3122 in ``force_resonance`` should:
+      - flip ``is_resonance`` to True for Λ and Λ̄,
+      - drop them from ``cascade_particles`` and add them to
+        ``resonances``,
+      - leave ``solve()`` working (the Λ production is folded into
+        downstream rows by ``MatrixBuilder._follow_chains``).
+    """
+    import crflux.models as pm
+
+    from MCEq import config
+    from MCEq.core import MCEqRun
+
+    saved_force = list(config.adv_set.get("force_resonance", []))
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    saved_std = list(config.standard_particles)
+    config.adv_set["force_resonance"] = [3122]
+    config.adv_set["disabled_particles"] = []
+    config.standard_particles = [pid for pid in config.standard_particles
+                                 if abs(pid) != 3122]
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=0.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        lam = mceq.pman[3122]
+        lam_bar = mceq.pman[-3122]
+        assert lam.is_resonance, "Lambda should be folded as resonance"
+        assert lam_bar.is_resonance, "Lambda-bar should be folded as resonance"
+        assert lam in mceq.pman.resonances
+        assert lam not in mceq.pman.cascade_particles
+        # Solver must still run end-to-end with a folded charm meson.
+        mceq.solve()
+        sol = mceq.get_solution("mu+", mag=0, integrate=True)
+        assert sol is not None and np.any(sol > 0)
+    finally:
+        config.adv_set["force_resonance"] = saved_force
+        config.adv_set["disabled_particles"] = saved_disabled
+        config.standard_particles = saved_std
+
+
+def test_restore_initial_condition_uses_method_names(mceq_sib21):
+    """``_restore_initial_condition`` entries must hold method *names*.
+
+    Storing bound methods would close a refcycle through ``self`` and
+    keep MCEqRun instances alive across constructions (PR #163).
+    """
+    for entry in mceq_sib21._restore_initial_condition:
+        assert isinstance(entry[0], str), (
+            f"first slot must be method name string, got {type(entry[0]).__name__}"
+        )
+        # The named method must exist on the run object.
+        assert callable(getattr(mceq_sib21, entry[0], None)), (
+            f"entry references unknown method {entry[0]!r}"
+        )
+
+
 def test_ptot_grid(mceq_sib21):
     # Test without bins
     ptot_centers = mceq_sib21.ptot_grid("mu+", return_bins=False)
@@ -775,3 +897,62 @@ def test_get_set_state_vector_checkpoint_restore(mceq_sib21):
 
     # Should match original solution
     assert np.allclose(solution1, solution1_prime, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# set_zenith_azimuth / set_theta_deg deprecation tests
+# ---------------------------------------------------------------------------
+
+
+def test_set_zenith_azimuth(mceq_sib21):
+    """set_zenith_azimuth should set zenith and keep integration_path invalidated."""
+    # Ensure an EarthsAtmosphere model is active; a previous test may have left
+    # a GeneralizedTarget which does not support angle settings.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
+    mceq_sib21.set_zenith_azimuth(30.0)
+    assert mceq_sib21.density_model.theta_deg == 30.0
+
+    # Calling again with same angle should skip recalculation (cached)
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mceq_sib21.set_zenith_azimuth(30.0)  # should be no-op
+    assert mceq_sib21.density_model.theta_deg == 30.0
+
+
+def test_set_theta_deg_deprecation(mceq_sib21):
+    """set_theta_deg must emit a DeprecationWarning."""
+    import warnings
+
+    # Ensure an EarthsAtmosphere model is active; a previous test may have left
+    # a GeneralizedTarget which does not support angle settings.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        mceq_sib21.set_theta_deg(45.0)
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "set_zenith_azimuth" in str(w[0].message)
+    assert mceq_sib21.density_model.theta_deg == 45.0
+
+
+def test_set_zenith_azimuth_with_km3net(mceq_sib21):
+    """set_zenith_azimuth passes azimuth to location-coupled MSIS models."""
+    km3net_atm = dprof.MSIS00KM3NeTCentered("ORCA", season="January")
+    mceq_sib21.set_density_model(km3net_atm)
+
+    mceq_sib21.set_zenith_azimuth(60.0, azimuth_deg=0.0)
+    assert mceq_sib21.density_model.theta_deg == 60.0
+    assert mceq_sib21.density_model.current_impact_latitude is not None
+    assert mceq_sib21.density_model.current_impact_longitude is not None
+
+    # Without azimuth → azimuth-averaging
+    mceq_sib21.set_zenith_azimuth(60.0)
+    assert mceq_sib21.density_model.theta_deg == 60.0
+    assert mceq_sib21.density_model.current_impact_latitude is None
+
+    # Restore the session fixture to a neutral atmosphere so other tests are
+    # not affected by the KM3NeT density model we set above.
+    mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
