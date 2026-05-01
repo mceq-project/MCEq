@@ -97,22 +97,12 @@ e_min = 0.1
 #: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
 
-#: TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices
-#: on the respective new grid are produced! (PR #48 / 2D path; phased-out in
-#: Task 1.x — kept here for compatibility with the 2D database loader.)
-k_grid = np.append(0, np.unique(np.geomspace(1, 2000, 25, dtype="int64")))
-
 #: TK: energy grid defaults for the cross sections and continuous _cont_losses
 #: ported over from the 1D database to the 2D database. Used to "cut" the
 #: cross-section arrays defined on the entire 1D MCEq grid down to the
 #: smaller 2D grid.
 default_ebins = np.logspace(-2, 12, 14 * 10 + 1)
 default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
-
-#: TK: Enable 2D shower development. Default ``False`` — the flag is kept
-#: for the merge from PR #48 and will be removed in Task 1.1 once the 2D
-#: database is auto-detected via the ``k_dim`` HDF attribute.
-enable_2D = False
 
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False

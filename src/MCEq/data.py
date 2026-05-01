@@ -189,11 +189,22 @@ class HDF5Backend:
                 ca["widths"][self._cuts],
                 int(self.max_idx - self.min_idx),
             )
-            # TK: Changing the full dim of the csr blocks to
-            # the number of Hankel modes * the length of the energy grid
-            if config.enable_2D:
-                self.dim_full = int(ca["e_dim"]) * len(config.k_grid)
 
+            # 2D-database auto-detection. The presence of a ``k_dim``
+            # attribute on the ``common`` group is the source of truth;
+            # there is no longer a config flag (PR #48's
+            # ``config.enable_2D`` was removed in Task 1.1).
+            self.is_2d = "k_dim" in ca
+            if self.is_2d:
+                self.n_k = int(ca["k_dim"])
+                self.k_grid = np.asarray(ca["k_grid"])
+            else:
+                self.n_k = 1
+                self.k_grid = np.asarray([0])
+
+            # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
+            if self.is_2d:
+                self.dim_full = int(ca["e_dim"]) * self.n_k
             else:
                 self.dim_full = int(ca["e_dim"])
 
@@ -240,8 +251,8 @@ class HDF5Backend:
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
             # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices
             # (in the 2D case) or to leave them the same as in the 1D case
-            if config.enable_2D:
-                expand_len = len(config.k_grid)
+            if self.is_2d:
+                expand_len = self.n_k
             else:
                 expand_len = 1
             # Helicity information handling
@@ -264,7 +275,7 @@ class HDF5Backend:
             # Need to do this for every k mode separately. Phased out in
             # Task 1.2 (stitched-matrix assembly) — kept here so the 2D
             # database loader continues to work during the merge.
-            if config.enable_2D:
+            if self.is_2d:
                 index_d[(parent_pdg, child_pdg)] = np.asarray(
                     (
                         csr_matrix(
@@ -296,7 +307,7 @@ class HDF5Backend:
                         for i in range(
                             0,
                             len(index_d[(parent_pdg, child_pdg)]),
-                            self.dim_full // len(config.k_grid),
+                            self.dim_full // self.n_k,
                         )
                     ]
                 )

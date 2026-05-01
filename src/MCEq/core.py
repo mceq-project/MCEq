@@ -115,7 +115,7 @@ class MCEqRun:
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
-        if config.enable_2D:
+        if self._mceq_db.is_2d:
             self.phi0_2D = None
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
@@ -486,7 +486,7 @@ class MCEqRun:
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
-            self.matrix_builder = MatrixBuilder(self.pman)
+            self.matrix_builder = MatrixBuilder(self.pman, self._mceq_db)
 
         elif update_particle_list and particle_list != self._particle_list:
             info(10, "Updating particle list.")
@@ -518,16 +518,16 @@ class MCEqRun:
         )
         # TK: Forming lists of sparse matrices corresponding to secondary particle yields for each
         # mode k of the Hankel grid in 2D MCEq (if enabled)
-        if config.enable_2D:
+        if self._mceq_db.is_2d:
             int_m_dense = self.int_m.todense()
             self.int_m_hankel = [
                 scipy.sparse.csr_matrix(int_m_dense[k, :, :])
-                for k in range(len(config.k_grid))
+                for k in range(self._mceq_db.n_k)
             ]
             dec_m_dense = self.dec_m.todense()
             self.dec_m_hankel = [
                 scipy.sparse.csr_matrix(dec_m_dense[k, :, :])
-                for k in range(len(config.k_grid))
+                for k in range(self._mceq_db.n_k)
             ]
 
     def _resize_vectors_and_restore(self):
@@ -1085,9 +1085,9 @@ class MCEqRun:
         # (e.g. a single cosmic ray shower incident at some angle theta),
         # all Hankel modes k are populated with the same amplitude
         # (equal to that of the 1D initial condition).
-        if config.enable_2D:
+        if self._mceq_db.is_2d:
             nonzero_phi_idcs = np.flatnonzero(phi0)
-            phi0_2D = np.zeros((len(config.k_grid), np.shape(phi0)[0]))
+            phi0_2D = np.zeros((self._mceq_db.n_k, np.shape(phi0)[0]))
             for i in nonzero_phi_idcs:
                 phi0_2D[:, i] = phi0[i]
             self.phi0_2D = np.copy(phi0_2D)
@@ -1141,10 +1141,9 @@ class MCEqRun:
             theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
         else:
             theta_range = np.linspace(0, np.pi / 2, theta_res)
-        oversample_pts = np.max(config.k_grid) * oversample_res
-        oversampled_k_arr = np.linspace(
-            np.min(config.k_grid), np.max(config.k_grid), oversample_pts
-        )
+        k_grid = self._mceq_db.k_grid
+        oversample_pts = np.max(k_grid) * oversample_res
+        oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
         j0_ktheta_k = (
             scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
             * oversampled_k_arr[:, None]
@@ -1161,7 +1160,7 @@ class MCEqRun:
             for eidx in range(len(self.e_grid)):
                 mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
                 oversampled_hankel_amps = interp1d(
-                    config.k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
+                    k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
                 )(oversampled_k_arr)
                 inverse_hankel_transf = trapz(
                     j0_ktheta_k * oversampled_hankel_amps[:, None],
@@ -1675,12 +1674,11 @@ class MCEqRun:
 
         # delta_lambda is the slant depth traversed by the muon
         # (equivalent to dX in the integrator).
+        k_grid = self._mceq_db.k_grid
+
         def exp(delta_lambda):
             return np.exp(
-                -((config.k_grid[:, None]) ** 2)
-                * delta_lambda
-                * theta_s_sq[None, :]
-                / 4
+                -((k_grid[:, None]) ** 2) * delta_lambda * theta_s_sq[None, :] / 4
             )
 
         return exp
@@ -1689,12 +1687,16 @@ class MCEqRun:
 class MatrixBuilder:
     """This class constructs the interaction and decay matrices."""
 
-    def __init__(self, particle_manager):
+    def __init__(self, particle_manager, backend):
         self._pman = particle_manager
+        self._backend = backend
+        self.is_2d = backend.is_2d
+        self.n_k = backend.n_k
+        self.k_grid = backend.k_grid
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-        if config.enable_2D:
+        if self.is_2d:
             self.int_m_hankel = None
             self.dec_m_hankel = None
         self._construct_differential_operator()
@@ -1743,7 +1745,7 @@ class MatrixBuilder:
             if child.mceqidx == parent.mceqidx and parent.can_interact:
                 # Subtract unity from the main diagonals
                 info(10, "subtracting main C diagonal from", child.name, parent.name)
-                if config.enable_2D:
+                if self.is_2d:
                     self.C_blocks[idx][
                         :, np.diag_indices(self.dim)[0], np.diag_indices(self.dim)[1]
                     ] -= 1.0
@@ -1770,7 +1772,7 @@ class MatrixBuilder:
                     ):
                         info(5, "Cont. loss for", parent.name)
                         if config.enable_cont_rad_loss:
-                            if config.enable_2D:
+                            if self.is_2d:
                                 self.C_blocks[idx] += self.cont_loss_operator(
                                     parent.pdg_id
                                 )[None, :, :]
@@ -1792,7 +1794,7 @@ class MatrixBuilder:
                     info(
                         10, "subtracting main D diagonal from", child.name, parent.name
                     )
-                    if config.enable_2D:
+                    if self.is_2d:
                         self.D_blocks[idx][
                             :,
                             np.diag_indices(self.dim)[0],
@@ -1881,7 +1883,7 @@ class MatrixBuilder:
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
-                if config.enable_2D:
+                if self.is_2d:
                     new_mat[:, rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
                 else:
                     new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
@@ -1897,7 +1899,7 @@ class MatrixBuilder:
                     "Dimension mismatch: matrix "
                     + f"{_d}x{_d}, p={_n}:({_l},{_u}), c={_nc}:({_lc},{_uc})"
                 )
-        if config.enable_2D:
+        if self.is_2d:
             return GCXS.from_numpy(new_mat)
         else:
             return csr_matrix(new_mat)
@@ -1941,11 +1943,9 @@ class MatrixBuilder:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     ones_matrix = diag(ones(self.dim)).astype(config.floatlen)
-                    if config.enable_2D:
+                    if self.is_2d:
                         ones_matrix = ones_matrix[None, :, :]
-                        ones_matrix = np.repeat(
-                            ones_matrix, repeats=len(config.k_grid), axis=0
-                        )
+                        ones_matrix = np.repeat(ones_matrix, repeats=self.n_k, axis=0)
                     self._follow_chains(
                         p,
                         np.diag(np.ones(self.dim)).astype(config.floatlen),
