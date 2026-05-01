@@ -219,8 +219,10 @@ def _etd_off_to_bsr(off_csr, blocksize):
     pad = (-n_orig) % blocksize
     if pad:
         indptr = np.concatenate(
-            [off_csr.indptr,
-             np.full(pad, off_csr.indptr[-1], dtype=off_csr.indptr.dtype)]
+            [
+                off_csr.indptr,
+                np.full(pad, off_csr.indptr[-1], dtype=off_csr.indptr.dtype),
+            ]
         )
         off_csr = sp.csr_matrix(
             (off_csr.data, off_csr.indices, indptr),
@@ -536,9 +538,7 @@ class MklSparseMatrix:
                 f"MklSparseMatrix expects a CSR matrix, got {type(csr).__name__}"
             )
         if csr.dtype != np.float64:
-            raise TypeError(
-                f"MklSparseMatrix expects float64 data, got {csr.dtype}"
-            )
+            raise TypeError(f"MklSparseMatrix expects float64 data, got {csr.dtype}")
 
         n_orig = csr.shape[0]
         self.n_orig = n_orig
@@ -565,8 +565,14 @@ class MklSparseMatrix:
             pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
 
             st = mkl.mkl_sparse_d_create_csr(
-                byref(handle), c_int(0), c_int(n_orig), c_int(n_orig),
-                pb_p, pe_p, ci_p, data_p,
+                byref(handle),
+                c_int(0),
+                c_int(n_orig),
+                c_int(n_orig),
+                pb_p,
+                pe_p,
+                ci_p,
+                data_p,
             )
             if st != 0:
                 raise RuntimeError(f"mkl_sparse_d_create_csr failed with status {st}")
@@ -579,8 +585,7 @@ class MklSparseMatrix:
                 # Append `pad` zero rows / cols at the end. CSR-pad: extend
                 # indptr with copies of the last value (no new entries).
                 indptr_padded = np.concatenate(
-                    [csr.indptr,
-                     np.full(pad, csr.indptr[-1], dtype=csr.indptr.dtype)]
+                    [csr.indptr, np.full(pad, csr.indptr[-1], dtype=csr.indptr.dtype)]
                 )
                 csr = sp.csr_matrix(
                     (csr.data, csr.indices, indptr_padded),
@@ -609,9 +614,16 @@ class MklSparseMatrix:
             # SPARSE_LAYOUT_ROW_MAJOR = 101 — scipy stores BSR blocks
             # row-major within each block.
             st = mkl.mkl_sparse_d_create_bsr(
-                byref(handle), c_int(0), c_int(101),
-                n_blocks, n_blocks, c_int(blocksize),
-                pb_p, pe_p, ci_p, data_p,
+                byref(handle),
+                c_int(0),
+                c_int(101),
+                n_blocks,
+                n_blocks,
+                c_int(blocksize),
+                pb_p,
+                pe_p,
+                ci_p,
+                data_p,
             )
             if st != 0:
                 raise RuntimeError(f"mkl_sparse_d_create_bsr failed with status {st}")
@@ -950,12 +962,8 @@ class CudaEtd2Context:
         # cuSPARSE CSR copies. None when the off-diagonal is empty — the
         # kernel skips those SpMVs (an empty CSR can be ill-defined for
         # cuSPARSE handles on some versions).
-        self.cu_int_off = (
-            cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
-        )
-        self.cu_dec_off = (
-            cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
-        )
+        self.cu_int_off = cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
+        self.cu_dec_off = cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
         self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
         self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
 

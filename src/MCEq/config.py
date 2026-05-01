@@ -5,6 +5,8 @@ import platform
 import sys
 import warnings
 
+import numpy as np
+
 from MCEq import base_path
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
@@ -94,6 +96,13 @@ e_min = 0.1
 #: magnitude. For single primaries the maximal energy is directly limited by
 #: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
+
+#: TK: energy grid defaults for the cross sections and continuous _cont_losses
+#: ported over from the 1D database to the 2D database. Used to "cut" the
+#: cross-section arrays defined on the entire 1D MCEq grid down to the
+#: smaller 2D grid.
+default_ebins = np.logspace(-2, 12, 14 * 10 + 1)
+default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
 
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
@@ -239,6 +248,10 @@ use_isospin_sym = True
 
 #: Helicity dependent muons decays from analytical expressions
 muon_helicity_dependence = True
+
+#: Muon multiple scattering from the CORSIKA-like Gauss approximation
+#: (PR #48 / 2D path; folded into the 2D D matrix in Task 1.3).
+muon_multiple_scattering = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
