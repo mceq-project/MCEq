@@ -1,8 +1,6 @@
 from collections import namedtuple
 
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 
 from MCEq import config
 
@@ -104,24 +102,19 @@ def average_A_target(mat="auto"):
     )
 
 
-def gen_xmat(kinetic_energy_grid):
-    """Generates the x_lab (kinetic) matrix for a given energy grid.
+def theta_deg(cos_theta):
+    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
+    return np.rad2deg(np.arccos(cos_theta))
 
-    Args:
-        energy_grid: namedtuple
-            Kinetic energy grid containing the grid centers, bin widths, and dimension.
 
-    Returns:
-        numpy.ndarray
-            The x_lab matrix.
-
-    """
+def gen_xmat(energy_grid):
+    """Generates x_lab matrix for a given energy grid"""
     global _xmat
-    dims = (kinetic_energy_grid.d, kinetic_energy_grid.d)
+    dims = (energy_grid.d, energy_grid.d)
     if _xmat is None or _xmat.shape != dims:
         _xmat = np.zeros(dims)
-        for eidx in range(kinetic_energy_grid.d):
-            xvec = kinetic_energy_grid.c[: eidx + 1] / kinetic_energy_grid.c[eidx]
+        for eidx in range(energy_grid.d):
+            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
             _xmat[: eidx + 1, eidx] = xvec
     return _xmat
 
@@ -305,11 +298,7 @@ def info(min_dbg_level, *message, **kwargs):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-    condition = kwargs.pop("condition", min_dbg_level <= config.debug_level)
-    # Dont' process the if the function if nothing will happen
-    if not (condition or config.override_debug_fcn):
-        return
-
+    condition = kwargs.pop("condition", True)
     blank_caller = kwargs.pop("blank_caller", False)
     no_caller = kwargs.pop("no_caller", False)
     if config.override_debug_fcn and min_dbg_level < config.override_max_level:
@@ -326,6 +315,9 @@ def info(min_dbg_level, *message, **kwargs):
 
 
 def reset_plt(ticksize, fontsize):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib.pyplot as plt
+
     plt.rcParams["xtick.labelsize"] = ticksize
     plt.rcParams["ytick.labelsize"] = ticksize
     plt.rcParams["font.size"] = fontsize
@@ -337,6 +329,9 @@ def reset_plt(ticksize, fontsize):
 
 
 def put_ticks(this_fig, this_ax):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib
+
     this_ax.xaxis.set_tick_params(
         which="major", direction="in", width=2.5, length=12, zorder=1, top=True
     )

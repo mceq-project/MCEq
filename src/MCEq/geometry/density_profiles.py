@@ -5,6 +5,12 @@ import numpy as np
 from six import with_metaclass
 
 from MCEq import config
+
+# Import the new atmosphere data module
+from MCEq.geometry.atmosphere_parameters import (
+    get_atmosphere_parameters,
+    list_available_corsika_atmospheres,
+)
 from MCEq.misc import info
 
 
@@ -26,6 +32,13 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
     """
 
+    #: If True, subclasses manage their own :attr:`max_theta` and
+    #: :meth:`set_h_obs` must not overwrite it when the observation level
+    #: changes.  Set this on any detector-centred model that allows
+    #: upgoing angles (> 90°) so that updating the observation level does
+    #: not silently reset the allowed zenith-angle range.
+    _preserve_max_theta: bool = False
+
     def __init__(self, *args, **kwargs):
         from MCEq.geometry.geometry import EarthGeometry
 
@@ -33,7 +46,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self.thrad = None
         self.theta_deg = None
         self._max_den = config.max_density
-        self.max_theta = self.geom.theta_max_deg
+        self.max_theta = 90.0
         self.location = None
         self.season = None
 
@@ -64,7 +77,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid as cumtrapz
+        from scipy.integrate import cumulative_trapezoid
         from scipy.interpolate import UnivariateSpline
 
         if self.theta_deg is None:
@@ -75,7 +88,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         )
 
         thrad = self.thrad
-        path_length = self.geom.pl(thrad)
+        path_length = self.geom.path_len(thrad)
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
         )
@@ -83,8 +96,11 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         now = time()
 
+        # Compute density at every step once to avoid calling vec_rho_l twice
+        rho_vec = vec_rho_l(dl_vec)
+
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)
         dl_vec = dl_vec[1:]
 
         info(5, f".. took {time() - now:1.2f}s")
@@ -93,16 +109,21 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         self._max_X = X_int[-1]
         self._max_den = self.get_density(self.geom.h(0, thrad))
 
+        # Store minimum valid slant depth for the integration path.  The
+        # spline below is only fitted for X >= X_int[0]; starting the
+        # numerical integration from X_int[0] avoids evaluating r_X2rho
+        # outside the fitted domain, which can return non-physical (zero or
+        # negative) values due to quadratic spline extrapolation and cause an
+        # infinite loop in _calculate_integration_path.
+        self._min_X = X_int[0]
+
         # Interpolate with bi-splines without smoothing
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
         X_intp = [X for X in reversed(X_int[1:])]
         # This is an incomplete workaround for non-monothonic elevations for
         # upgoing trajectories.
-        if not self.theta_deg > 90.0:
-            self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        else:
-            self._s_h2X = None
-        self._s_X2rho = UnivariateSpline(X_int, vec_rho_l(dl_vec), k=2, s=0.0)
+        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
 
     @property
@@ -157,7 +178,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise Exception("Zenith angle not in allowed range.")
 
-        self.thrad = np.radians(theta_deg)
+        self.thrad = np.deg2rad(theta_deg)
         self.theta_deg = theta_deg
         self.calculate_density_spline()
 
@@ -165,9 +186,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """Set the elevation of the observation (detector) level in cm."""
 
         self.geom.set_h_obs(h_obs)
-        if isinstance(self, MSIS00IceCubeCentered):
-            self.max_theta = 180.0
-        else:
+        if not self._preserve_max_theta:
             self.max_theta = self.geom.theta_max_deg
 
         if self.theta_deg:
@@ -186,7 +205,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: :math:`1/\\rho` in cm**3/g
 
         """
-        return 1.0 / self.s_X2rho(X)  # type: ignore
+        return 1.0 / self.s_X2rho(X)
 
     def h2X(self, h):
         """Returns the depth along path as function of height above
@@ -202,7 +221,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
            float: X  slant depth in g/cm**2
 
         """
-        return np.exp(self.s_h2X(h))  # type: ignore
+        return np.exp(self.s_h2X(h))
 
     def X2h(self, X):
         """Returns the height above surface as a function of slant depth
@@ -258,6 +277,28 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         return np.arccos(1.0 / (1.0 + self.nref_rel_air(h_cm))) * 180.0 / np.pi
 
+    @property
+    def current_impact_latitude(self):
+        """Geographic latitude of the shower impact point in degrees.
+
+        Returns ``None`` for models that do not couple the atmosphere to a
+        detector position.  Subclasses such as :class:`MSIS00LocationCentered`
+        override this to return the actual impact latitude for the currently
+        configured zenith/azimuth angle (or ``None`` when azimuth-averaging
+        is active).  Downstream code (e.g. geomagnetic cutoff calculations)
+        can query this on any atmosphere object without knowing its type.
+        """
+        return None
+
+    @property
+    def current_impact_longitude(self):
+        """Geographic longitude of the shower impact point in degrees.
+
+        Returns ``None`` for models that do not couple the atmosphere to a
+        detector position.  See :attr:`current_impact_latitude` for details.
+        """
+        return None
+
 
 class CorsikaAtmosphere(EarthsAtmosphere):
     """Class, holding the parameters of a Linsley type parameterization
@@ -269,7 +310,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     the array _thickl can be calculated using :func:`calc_thickl` .
 
     Attributes:
-      _atm_param (numpy.array): (5x5) Stores 5 atmospheric parameters
+      _atm_param (:func:`numpy.array`): (5x5) Stores 5 atmospheric parameters
                                 _aatm, _batm, _catm, _thickl, _hlay
                                 for each of the 5 layers
 
@@ -278,209 +319,38 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    _atm_param = np.zeros(5, dtype="float64")
-
     def __init__(self, location, season=None):
-        cka_atmospheres = [
-            ("USStd", None),
-            ("BK_USStd", None),
-            ("Karlsruhe", None),
-            ("ANTARES/KM3NeT-ORCA", "Summer"),
-            ("ANTARES/KM3NeT-ORCA", "Winter"),
-            ("KM3NeT-ARCA", "Summer"),
-            ("KM3NeT-ARCA", "Winter"),
-            ("KM3NeT", None),
-            ("SouthPole", "December"),
-            ("SouthPole", "June"),
-            ("PL_SouthPole", "January"),
-            ("PL_SouthPole", "August"),
-        ]
-        assert (
-            location,
-            season,
-        ) in cka_atmospheres, f"{location}/{season} not available for CorsikaAtmsophere"
+        # Check if the atmosphere is available
+        # Use the renamed list_available_atmospheres function
+        available_atmospheres = list_available_corsika_atmospheres()
+        if (location, season) not in available_atmospheres:
+            raise ValueError(
+                f"Atmosphere '{location}/{season}' not available. "
+                f"Available atmospheres: {available_atmospheres}"
+            )
+
         self.init_parameters(location, season)
         import MCEq.geometry.corsikaatm as corsika_acc
 
+        # Assuming corsika_acc is defined elsewhere or needs to be imported
         self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
-        """Initializes :attr:`_atm_param`. Parameters from ANTARES/KM3NET
-        are based on the work of T. Heid
-        (`see this issue <https://github.com/afedynitch/MCEq/issues/12>`_)
-
-        +---------------------+-------------------+------------------------------+
-        | location            | CORSIKA Table     | Description/season           |
-        +=====================+===================+==============================+
-        | "USStd"             |         23        |  US Standard atmosphere      |
-        +---------------------+-------------------+------------------------------+
-        | "BK_USStd"          |         37        |  Bianca Keilhauer's USStd    |
-        +---------------------+-------------------+------------------------------+
-        | "Karlsruhe"         |         24        |  AT115 / Karlsruhe           |
-        +---------------------+-------------------+------------------------------+
-        | "SouthPole"         |      26 and 28    |  MSIS-90-E for Dec and June  |
-        +---------------------+-------------------+------------------------------+
-        |"PL_SouthPole"       |      29 and 30    |  P. Lipari's  Jan and Aug    |
-        +---------------------+-------------------+------------------------------+
-        |"ANTARES/KM3NeT-ORCA"|    NA             |  PhD T. Heid                 |
-        +---------------------+-------------------+------------------------------+
-        | "KM3NeT-ARCA"       |    NA             |  PhD T. Heid                 |
-        +---------------------+-------------------+------------------------------+
-
+        """Initializes :attr:`_atm_param` by fetching them from the
+        `atmosphere_parameters` module.
 
         Args:
-          location (str): see table
-          season (str, optional): choice of season for supported locations
+          location (str): The location identifier.
+          season (str, optional): The season identifier.
 
         Raises:
-          Exception: if parameter set not available
+          Exception: if parameter set not available (via get_atmosphere_parameters)
         """
-        _aatm, _batm, _catm, _thickl, _hlay = None, None, None, None, None
-        if location == "USStd":
-            _aatm = np.array([-186.5562, -94.919, 0.61289, 0.0, 0.01128292])
-            _batm = np.array([1222.6562, 1144.9069, 1305.5948, 540.1778, 1.0])
-            _catm = np.array([994186.38, 878153.55, 636143.04, 772170.0, 1.0e9])
-            _thickl = np.array(
-                [1036.102549, 631.100309, 271.700230, 3.039494, 0.001280]
-            )
-            _hlay = np.array([0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-        elif location == "BK_USStd":
-            _aatm = np.array(
-                [-149.801663, -57.932486, 0.63631894, 4.3545369e-4, 0.01128292]
-            )
-            _batm = np.array([1183.6071, 1143.0425, 1322.9748, 655.69307, 1.0])
-            _catm = np.array([954248.34, 800005.34, 629568.93, 737521.77, 1.0e9])
-            _thickl = np.array(
-                [1033.804941, 418.557770, 216.981635, 4.344861, 0.001280]
-            )
-            _hlay = np.array([0.0, 7.0e5, 1.14e6, 3.7e6, 1.0e7])
-        elif location == "Karlsruhe":
-            _aatm = np.array([-118.1277, -154.258, 0.4191499, 5.4094056e-4, 0.01128292])
-            _batm = np.array([1173.9861, 1205.7625, 1386.7807, 555.8935, 1.0])
-            _catm = np.array([919546.0, 963267.92, 614315.0, 739059.6, 1.0e9])
-            _thickl = np.array(
-                [1055.858707, 641.755364, 272.720974, 2.480633, 0.001280]
-            )
-            _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-        elif location == "KM3NeT":  # averaged over detector and season
-            _aatm = np.array(
-                [
-                    -141.31449999999998,
-                    -8.256029999999999,
-                    0.6132505,
-                    -0.025998975,
-                    0.4024275,
-                ]
-            )
-            _batm = np.array(
-                [
-                    1153.0349999999999,
-                    1263.3325,
-                    1257.0724999999998,
-                    404.85974999999996,
-                    1.0,
-                ]
-            )
-            _catm = np.array([967990.75, 668591.75, 636790.0, 814070.75, 21426175.0])
-            _thickl = np.array(
-                [
-                    1011.8521512499999,
-                    275.84507575000003,
-                    51.0230705,
-                    2.983134,
-                    0.21927724999999998,
-                ]
-            )
-            _hlay = np.array([0.0, 993750.0, 2081250.0, 4150000.0, 6877500.0])
-        elif location == "ANTARES/KM3NeT-ORCA":
-            if season == "Summer":
-                _aatm = np.array([-158.85, -5.38682, 0.889893, -0.0286665, 0.50035])
-                _batm = np.array([1145.62, 1176.79, 1248.92, 415.543, 1.0])
-                _catm = np.array([998469.0, 677398.0, 636790.0, 823489.0, 16090500.0])
-                _thickl = np.array(
-                    [986.951713, 306.4668, 40.546793, 4.288721, 0.277182]
-                )
-                _hlay = np.array([0, 9.0e5, 22.0e5, 38.0e5, 68.2e5])
-            elif season == "Winter":
-                _aatm = np.array([-132.16, -2.4787, 0.298031, -0.0220264, 0.348021])
-                _batm = np.array([1120.45, 1203.97, 1163.28, 360.027, 1.0])
-                _catm = np.array([933697.0, 643957.0, 636790.0, 804486.0, 23109000.0])
-                _thickl = np.array(
-                    [988.431172, 273.033464, 37.185105, 1.162987, 0.192998]
-                )
-                _hlay = np.array([0, 9.5e5, 22.0e5, 47.0e5, 68.2e5])
-        elif location == "KM3NeT-ARCA":
-            if season == "Summer":
-                _aatm = np.array([-157.857, -28.7524, 0.790275, -0.0286999, 0.481114])
-                _batm = np.array([1190.44, 1171.0, 1344.78, 445.357, 1.0])
-                _catm = np.array([1006100.0, 758614.0, 636790.0, 817384.0, 16886800.0])
-                _thickl = np.array(
-                    [1032.679434, 328.978681, 80.601135, 4.420745, 0.264112]
-                )
-                _hlay = np.array([0, 9.0e5, 18.0e5, 38.0e5, 68.2e5])
-            elif season == "Winter":
-                _aatm = np.array([-116.391, 3.5938, 0.474803, -0.0246031, 0.280225])
-                _batm = np.array([1155.63, 1501.57, 1271.31, 398.512, 1.0])
-                _catm = np.array([933697.0, 594398.0, 636790.0, 810924.0, 29618400.0])
-                _thickl = np.array(
-                    [1039.346286, 194.901358, 45.759249, 2.060083, 0.142817]
-                )
-                _hlay = np.array([0, 12.25e5, 21.25e5, 43.0e5, 70.5e5])
-        elif location == "SouthPole":
-            if season == "December":
-                _aatm = np.array([-128.601, -39.5548, 1.13088, -0.00264960, 0.00192534])
-                _batm = np.array([1139.99, 1073.82, 1052.96, 492.503, 1.0])
-                _catm = np.array([861913.0, 744955.0, 675928.0, 829627.0, 5.8587010e9])
-                _thickl = np.array(
-                    [1011.398804, 588.128367, 240.955360, 3.964546, 0.000218]
-                )
-                _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-            elif season == "June":
-                _aatm = np.array(
-                    [-163.331, -65.3713, 0.402903, -0.000479198, 0.00188667]
-                )
-                _batm = np.array([1183.70, 1108.06, 1424.02, 207.595, 1.0])
-                _catm = np.array([875221.0, 753213.0, 545846.0, 793043.0, 5.9787908e9])
-                _thickl = np.array(
-                    [1020.370363, 586.143464, 228.374393, 1.338258, 0.000214]
-                )
-                _hlay = np.array([0.0, 4.0e5, 1.0e6, 4.0e6, 1.0e7])
-            else:
-                raise Exception(
-                    'CorsikaAtmosphere(): Season "'
-                    + season
-                    + '" not parameterized for location SouthPole.'
-                )
-        elif location == "PL_SouthPole":
-            if season == "January":
-                _aatm = np.array([-113.139, -7930635, -54.3888, -0.0, 0.00421033])
-                _batm = np.array([1133.10, 1101.20, 1085.00, 1098.00, 1.0])
-                _catm = np.array([861730.0, 826340.0, 790950.0, 682800.0, 2.6798156e9])
-                _thickl = np.array(
-                    [1019.966898, 718.071682, 498.659703, 340.222344, 0.000478]
-                )
-                _hlay = np.array([0.0, 2.67e5, 5.33e5, 8.0e5, 1.0e7])
-            elif season == "August":
-                _aatm = np.array([-59.0293, -21.5794, -7.14839, 0.0, 0.000190175])
-                _batm = np.array([1079.0, 1071.90, 1182.0, 1647.1, 1.0])
-                _catm = np.array([764170.0, 699910.0, 635650.0, 551010.0, 59.329575e9])
-                _thickl = np.array(
-                    [1019.946057, 391.739652, 138.023515, 43.687992, 0.000022]
-                )
-                _hlay = np.array([0.0, 6.67e5, 13.33e5, 2.0e6, 1.0e7])
-            else:
-                raise Exception(
-                    'CorsikaAtmosphere(): Season "'
-                    + season
-                    + '" not parameterized for location SouthPole.'
-                )
-        else:
-            raise Exception(
-                "CorsikaAtmosphere:init_parameters(): Location "
-                + str(location)
-                + " not parameterized."
-            )
+        # Use the renamed get_atmosphere_parameters function
+        _aatm, _batm, _catm, _thickl, _hlay = get_atmosphere_parameters(
+            location, season
+        )
 
         self._atm_param = np.array([_aatm, _batm, _catm, _thickl, _hlay])
 
@@ -651,13 +521,26 @@ class MSIS00Atmosphere(EarthsAtmosphere):
     def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
         from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
+        msis_atmospheres = [
+            "SouthPole",
+            "Karlsruhe",
+            "Geneva",
+            "Tokyo",
+            "GranSasso",
+            "TelAviv",
+            "KSC",
+            "SoudanMine",
+            "Tsukuba",
+            "LynnLake",
+            "PeaceRiver",
+            "FtSumner",
+        ]
+        assert location in msis_atmospheres, (
+            f"{location} not available for MSIS00Atmosphere"
+        )
+
         self._msis = cNRLMSISE00()
 
-        assert (
-            location in self._msis.locations
-        ), f"{location} not available for MSIS00Atmosphere"
-
-        assert bool(season) ^ bool(doy), "Define either season or doy"
         self.init_parameters(location, season, doy, use_loc_altitudes)
 
         EarthsAtmosphere.__init__(self)
@@ -786,63 +669,382 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """
         return self._msis.get_temperature(h_cm)
 
-    def set_location(self, location):
-        """Changes MSIS location by strings defined in _msis_wrapper.
 
-        Args:
-          location (str): location as defined in :class:`NRLMSISE-00.`
+class MSIS00LocationCentered(MSIS00Atmosphere):
+    """MSIS atmosphere model coupled to an arbitrary detector location.
 
-        """
-        self._msis.set_location(location)
-        self.theta_deg = None
+    This is the general base class for detector-centred atmosphere models.
+    It computes the geographic coordinates (latitude, longitude) of the
+    shower impact point on Earth's surface for a given zenith and azimuth
+    angle using a spherical-Earth ECEF (Earth-Centred, Earth-Fixed) geometry,
+    then feeds those coordinates to the NRLMSISE-00 empirical atmosphere model
+    so that the density profile reflects the actual atmosphere above the
+    shower column.
 
-    def set_season(self, month):
-        """Changes MSIS location by month strings defined in _msis_wrapper.
+    Azimuth convention: 0° = geographic North, 90° = East (meteorological /
+    clockwise from North).  Zenith: 0° = directly above detector, 90° =
+    horizontal, > 90° = upgoing (shower source below horizon) provided
+    *max_theta* is set to 180.
 
-        Args:
-          location (str): month as defined in :class:`NRLMSISE-00.`
+    When *set_theta* is called **without** an azimuth angle the model
+    computes an azimuth-averaged density profile by sampling *n_azimuth*
+    equally-spaced directions around the compass and averaging the MSIS
+    density at every height step.  This provides a single representative
+    profile that accounts for the latitudinal variation around the detector.
 
-        """
-        self._msis.set_season(month)
-        self.theta_deg = None
-
-    def set_doy(self, day_of_year):
-        """Changes MSIS season by day of year.
-
-        Args:
-          day_of_year (int): 1. Jan.=0, 1.Feb=32
-
-        """
-        self._msis.set_doy(day_of_year)
-        self.theta_deg = None
-
-
-class MSIS00IceCubeCentered(MSIS00Atmosphere):
-    """Extension of :class:`MSIS00Atmosphere` which couples the latitude
-    setting with the zenith angle of the detector.
+    Subclasses (e.g. :class:`MSIS00IceCubeCentered`,
+    :class:`MSIS00KM3NeTCentered`) specialise this for concrete detector
+    sites.
 
     Args:
-      location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
+        detector_coord (tuple): ``(longitude, latitude)`` of the detector
+            in degrees.  Longitude in (−180, 180], latitude in [−90, 90].
+        depth_m (float): Depth of the detector below the surface in metres
+            (positive value = below surface).
+        season (str, optional): Month name (e.g. ``"January"``).  If both
+            *season* and *doy* are ``None`` the MSIS default day is used.
+        doy (int, optional): Day of year (1–365).  Takes precedence over
+            *season* when both are supplied.
+        n_azimuth (int): Number of azimuth samples used for azimuth-
+            averaging (default 36, i.e. every 10°).
+        max_theta (float): Maximum allowed zenith angle in degrees.
+            Use 90.0 (default) for downgoing-only models, 180.0 to also
+            accept upgoing angles.
+    """
+
+    #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
+    _preserve_max_theta: bool = True
+
+    def __init__(
+        self,
+        detector_coord,
+        depth_m,
+        season=None,
+        doy=None,
+        n_azimuth=36,
+        max_theta=90.0,
+    ):
+        from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
+
+        longitude, latitude = detector_coord
+
+        # Bypass MSIS00Atmosphere.__init__ (which requires a named location
+        # string) and set up the C library object directly via coordinates.
+        self._msis = cNRLMSISE00()
+        self._msis.set_location_coord(longitude, latitude)
+        if season is not None:
+            self._msis.set_season(season)
+        elif doy is not None:
+            self._msis.set_doy(doy)
+
+        # Detector geometry
+        self._detector_longitude = longitude
+        self._detector_latitude = latitude
+        self._detector_depth_m = depth_m
+        self._n_azimuth = n_azimuth
+        self._azimuth_averaging = False
+        self._effective_theta_deg = 0.0
+        self._current_azimuth_deg = None
+        self._azimuth_avg_coords = []
+        self._current_impact_latitude = None
+        self._current_impact_longitude = None
+
+        # Initialise the base class (sets geom, thrad, theta_deg, …)
+        EarthsAtmosphere.__init__(self)
+        self.max_theta = max_theta
+        self.location = f"({longitude:.3f}\u00b0E, {latitude:.3f}\u00b0N)"
+        self.season = season
+
+    # ------------------------------------------------------------------
+    # Geometry helpers
+    # ------------------------------------------------------------------
+
+    def _impact_point(self, zenith_deg, azimuth_deg):
+        """Return the geographic coordinates of the shower impact point.
+
+        Finds the intersection of the shower trajectory (a straight line
+        starting at the detector and pointing toward the incoming shower
+        source) with the Earth's surface sphere of radius *r_E* using
+        full 3-D ECEF (Earth-Centred, Earth-Fixed) Cartesian geometry.
+
+        Azimuth convention: 0° = North, 90° = East (clockwise from North).
+        For downgoing showers (zenith < 90°) the impact point is on the
+        surface directly in the direction the shower came from.  For
+        upgoing showers pass the effective downgoing angle (180° − zenith)
+        with the azimuth rotated by 180°; see :meth:`set_theta`.
+
+        At South Pole this formula is algebraically equivalent to the
+        original 2-D formula in the legacy :class:`MSIS00IceCubeCentered`.
+
+        Args:
+            zenith_deg (float): Zenith angle in degrees (must be ≤ 90°;
+                pass the effective downgoing angle for upgoing showers).
+            azimuth_deg (float): Azimuth angle in degrees (0° = North,
+                90° = East).
+
+        Returns:
+            tuple: ``(latitude_deg, longitude_deg)`` of the impact point.
+        """
+        r = self.geom.r_E / 1e2  # cm → m
+        d = self._detector_depth_m
+        r_det = r - d
+
+        theta = np.deg2rad(zenith_deg)
+        alpha = np.deg2rad(azimuth_deg)
+        lat0 = np.deg2rad(self._detector_latitude)
+        lon0 = np.deg2rad(self._detector_longitude)
+
+        # Detector position in ECEF (metres)
+        P_det = np.array(
+            [
+                r_det * np.cos(lat0) * np.cos(lon0),
+                r_det * np.cos(lat0) * np.sin(lon0),
+                r_det * np.sin(lat0),
+            ]
+        )
+
+        # Shower direction in ENU frame (pointing toward incoming source)
+        # azimuth 0° → North, 90° → East
+        d_ENU = np.array(
+            [
+                np.sin(theta) * np.sin(alpha),  # East component
+                np.sin(theta) * np.cos(alpha),  # North component
+                np.cos(theta),  # Up component
+            ]
+        )
+
+        # ENU → ECEF rotation matrix (columns: East, North, Up basis vectors)
+        T = np.array(
+            [
+                [
+                    -np.sin(lon0),
+                    -np.sin(lat0) * np.cos(lon0),
+                    np.cos(lat0) * np.cos(lon0),
+                ],
+                [
+                    np.cos(lon0),
+                    -np.sin(lat0) * np.sin(lon0),
+                    np.cos(lat0) * np.sin(lon0),
+                ],
+                [0.0, np.cos(lat0), np.sin(lat0)],
+            ]
+        )
+        d_ECEF = T @ d_ENU
+
+        # Intersection with Earth sphere |P_det + x * d_ECEF|² = r²
+        # Expanding: x² + 2Ax − d(2r − d) = 0  where A = P_det · d_ECEF
+        A = np.dot(d_ECEF, P_det)
+        x = -A + np.sqrt(A**2 + d * (2.0 * r - d))  # positive root
+
+        P_impact = P_det + x * d_ECEF
+        lat_imp = np.rad2deg(np.arcsin(np.clip(P_impact[2] / r, -1.0, 1.0)))
+        lon_imp = np.rad2deg(np.arctan2(P_impact[1], P_impact[0]))
+        return lat_imp, lon_imp
+
+    # ------------------------------------------------------------------
+    # Density
+    # ------------------------------------------------------------------
+
+    def get_density(self, h_cm):
+        """Return air density in g/cm³ at height *h_cm*.
+
+        In single-azimuth mode (azimuth was passed to :meth:`set_theta`)
+        delegates directly to the MSIS C library whose location is already
+        set to the impact point.
+
+        In azimuth-averaging mode (no azimuth passed) computes the mean
+        density over the pre-computed :attr:`_azimuth_avg_coords` impact
+        points.  The impact points are fixed for a given zenith angle and
+        are cached by :meth:`set_theta`, so this method only iterates over
+        the cached coordinates without recomputing them.
+        """
+        if self._azimuth_averaging:
+            total = 0.0
+            for lat, lon in self._azimuth_avg_coords:
+                self._msis.set_location_coord(lon, lat)
+                total += self._msis.get_density(h_cm)
+            return total / len(self._azimuth_avg_coords)
+        return self._msis.get_density(h_cm)
+
+    # ------------------------------------------------------------------
+    # Density spline (azimuth-averaging optimisation)
+    # ------------------------------------------------------------------
+
+    def calculate_density_spline(self, n_steps=2000):
+        """Calculate and store a spline of :math:`\\rho(X)`.
+
+        In single-azimuth mode delegates to the base-class implementation.
+
+        In azimuth-averaging mode uses an azimuth-major loop for efficiency:
+        for each of the :attr:`_n_azimuth` pre-computed impact points the
+        MSIS location is set **once** and the full height profile is sampled
+        in a single vectorised call, so the C library benefits from staying
+        at the same latitude/longitude across all height steps.  The 36
+        per-azimuth profiles are averaged before spline fitting.
+        """
+        if not self._azimuth_averaging:
+            super().calculate_density_spline(n_steps)
+            return
+
+        from time import time
+
+        from scipy.integrate import cumulative_trapezoid
+        from scipy.interpolate import UnivariateSpline
+
+        thrad = self.thrad
+        path_length = self.geom.path_len(thrad)
+        dl_vec = np.linspace(0, path_length, n_steps)
+        h_vec = np.array([self.geom.h(dl, thrad) for dl in dl_vec])
+
+        info(
+            5,
+            f"Calculating azimuth-averaged spline for zenith {self.theta_deg:4.1f}\u00b0"
+            f" ({len(self._azimuth_avg_coords)} directions).",
+        )
+        now = time()
+
+        # Azimuth-major loop: set MSIS location once per direction, then
+        # vectorise over all heights.  This is far more efficient than the
+        # height-major order because the C library stays at the same
+        # lat/lon across all altitude queries.
+        rho_sum = np.zeros(n_steps)
+        msis_vec = np.vectorize(self._msis.get_density)
+        for lat, lon in self._azimuth_avg_coords:
+            self._msis.set_location_coord(lon, lat)
+            rho_sum += msis_vec(h_vec)
+        rho_vec = rho_sum / len(self._azimuth_avg_coords)
+
+        info(5, f".. took {time() - now:1.2f}s")
+
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)
+        dl_vec = dl_vec[1:]
+
+        self._max_X = X_int[-1]
+        self._min_X = X_int[0]
+        self._max_den = float(rho_vec[0])
+
+        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
+        X_intp = [X for X in reversed(X_int[1:])]
+        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
+        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+
+    # ------------------------------------------------------------------
+    # Angle setting
+    # ------------------------------------------------------------------
+
+    def set_theta(self, theta_deg, azimuth_deg=None):
+        """Configure the zenith (and optionally azimuth) angle.
+
+        For upgoing angles (theta_deg > 90°) the method automatically
+        uses the effective downgoing angle (180° − theta_deg) for the
+        atmosphere integral and flips the azimuth by 180° when computing
+        the impact point on the far side of Earth.
+
+        Args:
+            theta_deg (float): Zenith angle in degrees [0, max_theta].
+            azimuth_deg (float, optional): Azimuth angle in degrees
+                (0° = North, 90° = East).  When ``None`` (default) the
+                density profile is averaged over all azimuth directions.
+        """
+        if theta_deg < 0.0 or theta_deg > self.max_theta:
+            raise ValueError(
+                f"Zenith angle {theta_deg} not in allowed range [0, {self.max_theta}]."
+            )
+
+        # For upgoing showers use the mirror downgoing angle
+        effective_theta = theta_deg if theta_deg <= 90.0 else 180.0 - theta_deg
+
+        if azimuth_deg is not None:
+            # For upgoing, flip azimuth to point to the atmospheric entry side
+            eff_azi = (
+                azimuth_deg if theta_deg <= 90.0 else (azimuth_deg + 180.0) % 360.0
+            )
+            lat, lon = self._impact_point(effective_theta, eff_azi)
+            self._msis.set_location_coord(lon, lat)
+            self._current_impact_latitude = lat
+            self._current_impact_longitude = lon
+            self._azimuth_averaging = False
+            self._azimuth_avg_coords = []
+            info(
+                1,
+                f"zenith={theta_deg:.1f}\u00b0, azimuth={azimuth_deg:.1f}\u00b0"
+                f" \u2192 impact lat={lat:.2f}\u00b0, lon={lon:.2f}\u00b0",
+            )
+        else:
+            # Pre-compute all impact points once; they depend only on zenith,
+            # not on height, so they are constant for this set_theta call.
+            azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
+            self._azimuth_avg_coords = [
+                self._impact_point(effective_theta, azi) for azi in azi_grid
+            ]
+            self._azimuth_averaging = True
+            self._current_impact_latitude = None
+            self._current_impact_longitude = None
+
+        self._effective_theta_deg = effective_theta
+        self._current_azimuth_deg = azimuth_deg
+        self.thrad = np.deg2rad(effective_theta)
+        self.theta_deg = theta_deg  # keep original; may be > 90 for upgoing
+        self.calculate_density_spline()
+
+    # ------------------------------------------------------------------
+    # Impact coordinate properties
+    # ------------------------------------------------------------------
+
+    @property
+    def current_impact_latitude(self):
+        """Latitude of the shower impact point for the current angle (degrees).
+
+        ``None`` when azimuth-averaging mode is active (no single impact
+        point is defined in that case) or before :meth:`set_theta` has
+        been called.
+        """
+        return self._current_impact_latitude
+
+    @property
+    def current_impact_longitude(self):
+        """Longitude of the shower impact point for the current angle (degrees).
+
+        ``None`` when azimuth-averaging mode is active or before
+        :meth:`set_theta` has been called.
+        """
+        return self._current_impact_longitude
+
+
+class MSIS00IceCubeCentered(MSIS00LocationCentered):
+    """Atmosphere model centred on the IceCube detector at South Pole.
+
+    Specialisation of :class:`MSIS00LocationCentered` for IceCube
+    (detector depth 1948 m below the South Pole surface).  Upgoing
+    angles up to 180° are supported.
+
+    The public interface is identical to the original implementation so
+    that existing code continues to work unchanged.  The ``location``
+    argument is accepted for backward compatibility but is always
+    overridden to ``"SouthPole"``.
+
+    Args:
+      location (str): Ignored (kept for backward compatibility).
+      season (str): Month name, e.g. ``"January"``.
     """
 
     def __init__(self, location, season):
         if location != "SouthPole":
             info(2, "location forced to the South Pole")
-            location = "SouthPole"
-
-        super().__init__(location, season)
-
-        # Allow for upgoing zenith angles
-        self.max_theta = 180.0
+        super().__init__(
+            detector_coord=(0.0, -90.0),
+            depth_m=1948.0,
+            season=season,
+            max_theta=180.0,
+        )
 
     def _latitude(self, det_zenith_deg):
-        """Returns the geographic latitude of the shower impact point.
+        """Return the geographic latitude of the shower impact point.
 
-        Assumes a spherical earth. The detector is 1948m under the
-        surface.
-
-        Credits: geometry fomulae by Jakob van Santen, DESY Zeuthen.
+        Backward-compatible wrapper around :meth:`_impact_point`.
+        The azimuth is irrelevant at the South Pole (all directions are
+        equivalent), so 0° is passed.
 
         Args:
           det_zenith_deg (float): zenith angle at detector in degrees
@@ -850,37 +1052,64 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
         Returns:
           float: latitude of the impact point in degrees
         """
-        r = self.geom.r_E
-        d = 0.0  # 1948 m
+        lat, _lon = self._impact_point(det_zenith_deg, 0.0)
+        return lat
 
-        theta_rad = det_zenith_deg / 180.0 * np.pi
 
-        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
-            r - d
-        ) * np.cos(theta_rad)
+# ---------------------------------------------------------------------------
+# KM3NeT detector coordinates (approximate positions)
+# ---------------------------------------------------------------------------
+_KM3NET_DETECTORS = {
+    # ORCA: offshore Toulon (France), ~2450 m depth
+    "ORCA": {"longitude": 6.033, "latitude": 42.803, "depth_m": 2450.0},
+    # ARCA: offshore Capo Passero (Sicily, Italy), ~3500 m depth
+    "ARCA": {"longitude": 15.4, "latitude": 36.264, "depth_m": 3500.0},
+}
 
-        return (
-            -90.0
-            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
-            / np.pi
-            * 180.0
-        )
 
-    def set_theta(self, theta_deg):
-        self._msis.set_location_coord(longitude=0.0, latitude=self._latitude(theta_deg))
-        info(
-            1,
-            f"latitude = {self._latitude(theta_deg):5.2f} for zenith angle = {theta_deg:5.2f}",
-        )
-        downgoing_theta_deg = theta_deg
-        if theta_deg > 90.0:
-            downgoing_theta_deg = 180.0 - theta_deg
-            info(
-                1,
-                f"theta = {theta_deg:5.2f} below horizon. using theta = {downgoing_theta_deg:5.2f}",
+class MSIS00KM3NeTCentered(MSIS00LocationCentered):
+    """MSIS atmosphere model coupled to a KM3NeT detector location.
+
+    Convenience subclass of :class:`MSIS00LocationCentered` for the two
+    KM3NeT deep-sea neutrino telescope sites in the Mediterranean:
+
+    * **ORCA** (Oscillation Research with Cosmics in the Abyss) —
+      offshore Toulon, France (6.033°E, 42.803°N, ~2450 m depth).
+    * **ARCA** (Astroparticle Research with Cosmics in the Abyss) —
+      offshore Capo Passero, Sicily (15.4°E, 36.264°N, ~3500 m depth).
+
+    Both sites are at non-polar latitudes so the azimuth angle matters:
+    the same zenith angle can probe very different atmospheric columns
+    depending on direction.  Upgoing neutrino angles up to 180° are
+    supported (``max_theta=180``).
+
+    When *set_theta* is called without an azimuth, the density profile is
+    averaged over *n_azimuth* equally-spaced azimuth directions (default
+    36), providing an isotropically-averaged column for the given zenith.
+
+    Args:
+        detector (str): ``"ORCA"`` or ``"ARCA"``.
+        season (str, optional): Month name (e.g. ``"January"``).
+        doy (int, optional): Day of year (1–365).
+        n_azimuth (int): Azimuth steps for averaging (default 36).
+    """
+
+    def __init__(self, detector, season=None, doy=None, n_azimuth=36):
+        if detector not in _KM3NET_DETECTORS:
+            raise ValueError(
+                f"Unknown KM3NeT detector '{detector}'. "
+                f"Choose from {list(_KM3NET_DETECTORS.keys())}."
             )
-        super().set_theta(downgoing_theta_deg)
-        self.theta_deg = theta_deg
+        det = _KM3NET_DETECTORS[detector]
+        super().__init__(
+            detector_coord=(det["longitude"], det["latitude"]),
+            depth_m=det["depth_m"],
+            season=season,
+            doy=doy,
+            n_azimuth=n_azimuth,
+            max_theta=180.0,
+        )
+        self._detector_name = detector
 
 
 class AIRSAtmosphere(EarthsAtmosphere):
@@ -970,8 +1199,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
             # p_levels = [
             #     float(s.strip()) for s in comline.split(' ')[3:] if s != ''
             # ][min_press_idx:]
-            dates = num2date(tab[:, 0])  # type: ignore
-            for di, date in enumerate(dates):  # type: ignore
+            dates = num2date(tab[:, 0])
+            for di, date in enumerate(dates):
                 if date.month == 6 and date.day == 1:
                     if date.year == 2010:
                         IC79_idx_1 = di
@@ -1126,7 +1355,7 @@ class GeneralizedTarget:
 
     Note:
       If the target is not air or hydrogen, the result is approximate,
-      since seconray particle yields are provided for nucleon-air or
+      since seconday particle yields are provided for nucleon-air or
       proton-proton collisions. Depending on this choice one has to
       adjust the nuclear mass in :mod:`mceq_config`.
 
@@ -1171,7 +1400,11 @@ class GeneralizedTarget:
     def set_length(self, new_length_cm):
         """Updates the total length of the target."""
         if new_length_cm < self.mat_list[-1][0]:
-            raise Exception("can not set length below lower boundary of last material.")
+            raise Exception(
+                "GeneralizedTarget::set_length(): "
+                + "can not set length below lower boundary of last "
+                + "material."
+            )
         self.len_target = new_length_cm
         self.mat_list[-1][1] = new_length_cm
         self._update_variables()
@@ -1190,7 +1423,11 @@ class GeneralizedTarget:
         """
 
         if start_position_cm < 0.0 or start_position_cm > self.len_target:
-            raise Exception("distance exceeds target dimensions.")
+            raise Exception(
+                "GeneralizedTarget::set_length(): "
+                + "can not set length below lower boundary of last "
+                + "material."
+            )
         if (
             start_position_cm == self.mat_list[-1][0]
             and self.mat_list[-1][-1] == self.env_name
@@ -1198,7 +1435,10 @@ class GeneralizedTarget:
             self.mat_list[-1] = [start_position_cm, self.len_target, density, name]
 
         elif start_position_cm <= self.mat_list[-1][0]:
-            raise Exception("start_position_cm is ahead of previous material.")
+            raise Exception(
+                "GeneralizedTarget::add_material(): "
+                + "start_position_cm is ahead of previous material."
+            )
 
         else:
             self.mat_list[-1][1] = start_position_cm
@@ -1206,8 +1446,8 @@ class GeneralizedTarget:
 
         info(
             2,
-            (
-                f"Material '{name}' added between {self.mat_list[-1][0] / 1e2:4.1f} and {self.mat_list[-1][1] / 1e2:4.1f} m"
+            ("Material '{0}' added between {1:4.1f} and {2:4.1f} m").format(
+                name, self.mat_list[-1][0] / 1e2, self.mat_list[-1][1] / 1e2
             ),
         )
 
@@ -1221,7 +1461,10 @@ class GeneralizedTarget:
             NotImplementedError: always
         """
 
-        raise NotImplementedError("Method not defined for this target class.")
+        raise NotImplementedError(
+            "GeneralizedTarget::set_theta(): Method"
+            + "not defined for this target class."
+        )
 
     def _integrate(self):
         """Walks through material list and computes the depth along the
@@ -1277,15 +1520,21 @@ class GeneralizedTarget:
            float: density in g/cm**3
 
         Raises:
-            Exception: If requested depth exceeds target.
+            Exception: If requested position exceeds target.
         """
-
-        if config.except_out_of_bounds and (np.min(X) < 0.0 or np.max(X) > self.max_X):
-            raise Exception(
-                f"Depth {np.max(X):4.3f} exceeds target dimensions {self.max_X:4.3f}"
+        X = np.atleast_1d(X)
+        # allow for some small constant extrapolation for odepack solvers
+        if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
+            X[-1] = self.max_X
+        if np.min(X) < 0.0 or np.max(X) > self.max_X:
+            # return self.get_density(self.s_X2h(self.max_X))
+            info(
+                0,
+                f"Depth {np.max(X):4.3f} exceeds target dimensions {self.max_X:4.3f}",
             )
+            raise Exception("Invalid input")
 
-        return self.densities[np.digitize(X, self.X_int[1:])]
+        return self.get_density(self.s_X2h(X))
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
@@ -1311,15 +1560,23 @@ class GeneralizedTarget:
         Raises:
             Exception: If requested depth exceeds target.
         """
+        l_cm = np.atleast_1d(l_cm)
+        res = np.zeros_like(l_cm)
 
-        if config.except_out_of_bounds and (
-            np.min(l_cm) < 0.0 or np.max(l_cm) > self.len_target
-        ):
+        if np.min(l_cm) < 0 or np.max(l_cm) > self.len_target:
             raise Exception(
-                f"Position {np.max(l_cm):4.3f} exceeds target dimensions {self.len_target:4.3f}"
+                "GeneralizedTarget::get_density(): "
+                + "requested position exceeds target legth."
             )
+        for i, li in enumerate(l_cm):
+            bi = 0
+            while not (li >= self.start_bounds[bi] and li <= self.end_bounds[bi]):
+                bi += 1
+            res[i] = self.densities[bi]
 
-        return self.densities[np.digitize(l_cm, self.end_bounds)]
+        res = res.item() if res.size == 1 else res
+
+        return res
 
     def draw_materials(self, axes=None, logx=False):
         """Makes a plot of depth and density profile as a function
@@ -1403,6 +1660,7 @@ if __name__ == "__main__":
         ("SouthPole", "December"),
         ("PL_SouthPole", "January"),
         ("PL_SouthPole", "August"),
+        ("SDR_SouthPole", "April"),
     ]
     cka_surf_100 = []
     for loc, season in cka_atmospheres:
@@ -1428,7 +1686,7 @@ if __name__ == "__main__":
         ("Karlsruhe", "January"),
         ("Geneva", "January"),
         ("Tokyo", "January"),
-        ("SanGrasso", "January"),
+        ("GranSasso", "January"),
         ("TelAviv", "January"),
         ("KSC", "January"),
         ("SoudanMine", "January"),

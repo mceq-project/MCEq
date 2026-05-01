@@ -1,9 +1,0 @@
-sphinxcontrib-napoleon>=0.1.0
-matplotlib
-tqdm
-six
-h5py
-particletools
-crflux
-tqdm
-requests

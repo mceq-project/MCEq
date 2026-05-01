@@ -1,8 +1,18 @@
+from ctypes import byref, c_double, c_int, pointer
+
 import MCEq.geometry.nrlmsise00 as cmsis
+from MCEq.geometry.atmosphere_parameters import (
+    DAY_TIMES_SEC,
+    DEFAULT_AP,
+    DEFAULT_F107,
+    DEFAULT_F107A,
+    LOCATIONS,
+    MONTH_TO_DAY_OF_YEAR,
+)
 from MCEq.misc import info
 
 
-class cNRLMSISE00:
+class NRLMSISE00Base:
     def __init__(self):
         # Cache altitude value of last call
         self.last_alt = None
@@ -10,42 +20,11 @@ class cNRLMSISE00:
         self.inp = cmsis.nrlmsise_input()
         self.output = cmsis.nrlmsise_output()
         self.flags = cmsis.nrlmsise_flags()
-        self.month2doy = {
-            "January": 1,
-            "February": 32,
-            "March": 60,
-            "April": 91,
-            "May": 121,
-            "June": 152,
-            "July": 182,
-            "August": 213,
-            "September": 244,
-            "October": 274,
-            "November": 305,
-            "December": 335,
-        }
-        # Longitude, latitude, height
-        self.locations = {
-            "SouthPole": (0.0, -90.0, 2834.0 * 100.0),
-            "Karlsruhe": (8.4, 49.0, 110.0 * 100.0),
-            "Geneva": (6.1, 46.2, 370.0 * 100.0),
-            "Tokyo": (139.0, 35.0, 5.0 * 100.0),
-            "GranSasso": (13.5, 42.4, 5.0 * 100.0),
-            "TelAviv": (34.8, 32.1, 5.0 * 100.0),
-            "KSC": (-80.7, 32.1, 5.0 * 100.0),
-            "SoudanMine": (-92.2, 47.8, 5.0 * 100.0),
-            "Tsukuba": (140.1, 36.2, 30.0 * 100.0),
-            "LynnLake": (-101.1, 56.9, 360.0 * 100.0),
-            "PeaceRiver": (-117.2, 56.15, 36000.0 * 100.0),
-            "FtSumner": (-104.2, 34.5, 31000.0 * 100.0),
-            "LakeBaikal": (103.91, 51.6, 456 * 100.0),
-            "P-ONE": (-127.7, 47.9, 0 * 100.0),
-            "KM3NeT-ARCA": (15.1322, 36.6827, 0 * 100.0),
-            "KM3NeT-ORCA": (6.0, 42.8, 0 * 100.0),
-            "TRIDENT": (114.0, 17.3, 0 * 100.0),
-        }
+        # Use imported constants
+        self.month2doy = MONTH_TO_DAY_OF_YEAR
+        self.locations = LOCATIONS
+        self.daytimes = DAY_TIMES_SEC
 
-        self.daytimes = {"day": 43200.0, "night": 0.0}
         self.current_location = "SouthPole"
         self.init_default_values()
 
@@ -58,6 +37,10 @@ class cNRLMSISE00:
 
         return quad(self.get_density, altitude_cm, 112.8 * 1e5, epsrel=0.001)[0]
 
+    def _retrieve_result(self, *args, **kwargs):
+        """Calls NRLMSISE library's main function"""
+        raise Exception("Not implemented for the base class")
+
     def get_temperature(self, altitude_cm):
         """Returns temperature in K"""
         self._retrieve_result(altitude_cm)
@@ -68,36 +51,44 @@ class cNRLMSISE00:
         self._retrieve_result(altitude_cm)
         return self.output.d[5]
 
+
+class cNRLMSISE00(NRLMSISE00Base):
     def init_default_values(self):
         """Sets default to June at South Pole"""
 
-        self.inp.doy = cmsis.c_int(self.month2doy["June"])  # Day of year
-        self.inp.year = cmsis.c_int(0)  # No effect
-        self.inp.sec = cmsis.c_double(self.daytimes["day"])  # 12:00
-        self.inp.alt = cmsis.c_double(self.locations[self.current_location][2])
-        self.inp.g_lat = cmsis.c_double(self.locations[self.current_location][1])
-        self.inp.g_long = cmsis.c_double(self.locations[self.current_location][0])
-        self.inp.lst = cmsis.c_double(
+        self.inp.doy = c_int(self.month2doy["June"])  # Day of year
+        self.inp.year = c_int(0)  # No effect
+        self.inp.sec = c_double(self.daytimes["day"])  # 12:00
+        self.inp.alt = c_double(self.locations[self.current_location][2])
+        self.inp.g_lat = c_double(self.locations[self.current_location][1])
+        self.inp.g_long = c_double(self.locations[self.current_location][0])
+        self.inp.lst = c_double(
             self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0
         )
         # Do not touch this except you know what you are doing
-        self.inp.f107A = cmsis.c_double(150.0)
-        self.inp.f107 = cmsis.c_double(150.0)
-        self.inp.ap = cmsis.c_double(4.0)
-        self.inp.ap_a = cmsis.ap_array()
+        # Use imported constants
+        self.inp.f107A = c_double(DEFAULT_F107A)
+        self.inp.f107 = c_double(DEFAULT_F107)
+        self.inp.ap = c_double(DEFAULT_AP)
+        self.inp.ap_a = pointer(cmsis.ap_array())
         self.alt_surface = self.locations[self.current_location][2]
 
-        self.flags.switches[0] = cmsis.c_int(0)
+        self.flags.switches[0] = c_int(0)
         for i in range(1, 24):
-            self.flags.switches[i] = cmsis.c_int(1)
+            self.flags.switches[i] = c_int(1)
 
     def set_location(self, tag):
+        if tag == "SanGrasso":
+            raise ValueError(
+                "Location 'SanGrasso' does not exist — did you mean 'GranSasso'? "
+                "(Gran Sasso d'Italia is in Abruzzo, not San Grasso, wherever that is.)"
+            )
         if tag not in list(self.locations):
             raise Exception(
                 f"NRLMSISE00::set_location(): Unknown location tag '{tag}'."
             )
 
-        self.inp.alt = cmsis.c_double(self.locations[tag][2])
+        self.inp.alt = c_double(self.locations[tag][2])
         self.set_location_coord(*self.locations[tag][:2])
         self.current_location = tag
         self.alt_surface = self.locations[self.current_location][2]
@@ -106,8 +97,8 @@ class cNRLMSISE00:
         info(5, f"long={longitude:5.2f}, lat={latitude:5.2f}")
         if abs(latitude) > 90 or abs(longitude) > 180:
             raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
-        self.inp.g_lat = cmsis.c_double(latitude)
-        self.inp.g_long = cmsis.c_double(longitude)
+        self.inp.g_lat = c_double(latitude)
+        self.inp.g_long = c_double(longitude)
 
     def set_season(self, tag):
         if tag not in self.month2doy:
@@ -119,16 +110,14 @@ class cNRLMSISE00:
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
         info(5, "day of year", doy)
-        self.inp.doy = cmsis.c_int(doy)
+        self.inp.doy = c_int(doy)
 
     def _retrieve_result(self, altitude_cm):
-        from ctypes import byref
-
         if self.last_alt == altitude_cm:
             return
 
         inp = self.inp
-        inp.alt = cmsis.c_double(altitude_cm / 1e5)
+        inp.alt = c_double(altitude_cm / 1e5)
         cmsis.msis.gtd7_py(
             inp.year,
             inp.doy,
@@ -140,7 +129,7 @@ class cNRLMSISE00:
             inp.f107A,
             inp.f107,
             inp.ap,
-            byref(inp.ap_a),
+            inp.ap_a,
             byref(self.flags),
             byref(self.output),
         )
@@ -182,7 +171,7 @@ def test():
 
     plt.subplot(133)
     msis.set_location("SouthPole")
-    for i in range(360 // 30):
+    for i in range(360 / 30):
         msis.inp.doy = i * 30
         plt.plot(h_vec / 1e5, den(h_vec) / den_sp_jan, label=str(i + 1))
     plt.legend(ncol=2, loc=3)

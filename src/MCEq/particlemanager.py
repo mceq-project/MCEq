@@ -74,9 +74,10 @@ class MCEqParticle:
         self.name = None
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(pdg_id)
-        #: (bool) particle has both, hadron and resonance properties
-        self.is_mixed = False
-        #: (bool) if particle has just resonance behavior
+        #: (bool) if True, this particle is folded into other particles'
+        #: matrices at build time and does not get its own state-vector slot.
+        #: Set by ``adv_set["force_resonance"]``; default ``False`` (full
+        #: propagation for everything).
         self.is_resonance = False
         #: (bool) particle is interacting projectile
         self.is_projectile = False
@@ -99,12 +100,6 @@ class MCEqParticle:
         #: (int) MCEq ID
         self.mceqidx = -1
 
-        #: (float) mixing energy, transition between hadron and
-        # resonance behavior
-        self.E_mix = 0
-        #: (int) energy grid index, where transition between
-        # hadron and resonance occurs
-        self.mix_idx = 0
         #: (float) interaction threshold (idx where cs>0)
         self.int_idx = 0
         #: (float) critical energy in air at the surface
@@ -200,7 +195,7 @@ class MCEqParticle:
             self.can_interact = False
 
         self._critical_energy()
-        self._calculate_mixing_energy()
+        self._apply_force_resonance()
 
     def set_hadronic_channels(self, hadronic_db, pmanager):
         """Changes the hadronic interaction model.
@@ -300,9 +295,11 @@ class MCEqParticle:
         for c in self.children:
             children_d[c.pdg_id] = c
         if tracking_particle.pdg_id not in list(children_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not decay into {tracking_particle.name}",
+                f"Parent particle {_n} does not decay into {_tn}",
             )
             return False
         # Copy the decay distribution from original PDG
@@ -317,9 +314,11 @@ class MCEqParticle:
         for s in self.hadr_secondaries:
             secondaries_d[s.pdg_id] = s
         if tracking_particle.pdg_id not in list(secondaries_d):
+            _n = self.name
+            _tn = tracking_particle.name
             info(
                 17,
-                f"Parent particle {self.name} does not produce {tracking_particle.name} at the vertex",
+                f"Parent particle {_n} does not produce {_tn} at the vertex",
             )
             return False
         # Copy the interaction matrix from original PDG
@@ -342,24 +341,6 @@ class MCEqParticle:
         return particle_ref in self.children
 
     @property
-    def hadridx(self):
-        """Returns index range where particle behaves as hadron.
-
-        Returns:
-          :func:`tuple` (int,int): range on energy grid
-        """
-        return (self.mix_idx, self._energy_grid.d)
-
-    @property
-    def residx(self):
-        """Returns index range where particle behaves as resonance.
-
-        Returns:
-          :func:`tuple` (int,int): range on energy grid
-        """
-        return (0, self.mix_idx)
-
-    @property
     def lidx(self):
         """Returns lower index of particle range in state vector.
 
@@ -377,36 +358,26 @@ class MCEqParticle:
         """
         return (self.mceqidx + 1) * self._energy_grid.d
 
-    def inverse_decay_length(self, cut=True):
+    def inverse_decay_length(self):
         r"""Returns inverse decay length (or infinity (np.inf), if
         particle is stable), where the air density :math:`\rho` is
         factorized out.
 
-        Args:
-          E (float) : energy in laboratory system in GeV
-          cut (bool): set to zero in 'resonance' regime
         Returns:
           (float): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm
         """
         try:
-            dlen = self.mass / self.ctau / (self._energy_grid.c + self.mass)
-            if cut:
-                dlen[0 : self.mix_idx] = 0.0
-            # Correction for bin average, since dec. length is a steep falling
-            # function. This factor averages the value over bin length for
-            # 10 bins per decade.
-            # return 0.989 * dlen
-            return dlen
+            return self.mass / self.ctau / (self._energy_grid.c + self.mass)
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.d) * np.inf
 
-    def inel_cross_section(self, mbarn=False):
-        """Returns inelastic cross section.
+    def prod_cross_section(self, mbarn=False):
+        """Returns production cross section.
 
         Args:
           mbarn (bool) : if True cross section in mb otherwise in cm**2
         Returns:
-          (float): :math:`\\sigma_{\\rm inel}` in mb or cm**2
+          (float): :math:`\\sigma_{\\rm prod}` in mb or cm**2
         """
         #: unit - :math:`\text{GeV} \cdot \text{fm}`
         GeVfm = 0.19732696312541853
@@ -431,49 +402,23 @@ class MCEqParticle:
         m_target = self.A_target * 1.672621 * 1e-24  # <A> * m_proton [g]
         return self.cs / m_target
 
-    def _assign_hadr_dist_idx(self, child, projidx, chidx, cmat):
-        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
-        from the ``hadr_yields`` into ``cmat``
+    def _assign_hadr_dist(self, child, cmat):
+        """Copies the full ``hadr_yields[child]`` matrix into ``cmat``.
 
         Args:
-          child (int): PDG ID of final state child/secondary particle
-          projidx (int,int): tuple containing index range relative
-                             to the projectile's energy grid
-          dtridx (int,int): tuple containing index range relative
-                            to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          child (MCEqParticle): final-state secondary particle.
+          cmat (np.ndarray): destination interaction-matrix block.
         """
-        # TK: reshape the yield matrices for 2D
-        if config.enable_2D:
-            cmat[:, chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][:,
-            chidx[0] : chidx[1], projidx[0] : projidx[1]
-            ]
-        else:
-            cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
-                chidx[0] : chidx[1], projidx[0] : projidx[1]
-            ]
+        cmat[:, :] = self.hadr_yields[child][:, :]
 
-    def _assign_decay_idx(self, child, projidx, chidx, cmat):
-        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
-        from the ``hadr_yields`` into ``cmat``
+    def _assign_decay_dist(self, child, cmat):
+        """Copies the full ``decay_dists[child]`` matrix into ``cmat``.
 
         Args:
-          child (int): PDG ID of final state child/secondary particle
-          projidx (int,int): tuple containing index range relative
-                             to the projectile's energy grid
-          dtridx (int,int): tuple containing index range relative
-                            to the child's energy grid
-          cmat (numpy.array): array reference to the interaction matrix
+          child (MCEqParticle): decay product.
+          cmat (np.ndarray): destination decay-matrix block.
         """
-        # TK: reshape the yield matrices for 2D
-        if config.enable_2D:
-            cmat[:, chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][:,
-            chidx[0] : chidx[1], projidx[0] : projidx[1]
-            ]
-        else:
-            cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
-                chidx[0] : chidx[1], projidx[0] : projidx[1]
-            ]
+        cmat[:, :] = self.decay_dists[child][:, :]
 
     def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
@@ -487,7 +432,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest enerkin_energygy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -496,11 +441,8 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -508,6 +450,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -524,7 +470,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -534,11 +480,7 @@ class MCEqParticle:
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        try:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             xl_dist = (
@@ -546,6 +488,10 @@ class MCEqParticle:
                 * xl_grid
                 * cupy.asnumpy(m[: eidx + 1, eidx])
                 / self._energy_grid.w[: eidx + 1]
+            )
+        else:
+            xl_dist = (
+                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
             )
 
         return xl_grid, xl_dist
@@ -562,7 +508,7 @@ class MCEqParticle:
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -571,12 +517,12 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        try:
-            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
-        except TypeError:
+        if config.kernel_config == "CUDA":
             import cupy
 
             elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
+        else:
+            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
     def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
@@ -592,11 +538,10 @@ class MCEqParticle:
             verbose (bool): print out the closest energy
 
         Returns:
-            (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
+            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
         if not hasattr(self, "_ptav_sib23c"):
-            # Load spline of average pt distribution as a funtion of log(E_lab) from
-            # sib23c
+            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
             import pickle
             from os.path import join
 
@@ -665,8 +610,6 @@ class MCEqParticle:
 
         Approximate value in Air.
         """
-        # TODO: This shall become aware of the densities
-
         if self.is_stable or self.ctau <= 0.0:
             self.E_crit = np.inf
         else:
@@ -682,89 +625,28 @@ class MCEqParticle:
             self.int_idx = (self.cs != 0).argmax()
             info(
                 10,
-                f"Interaction threshold for {self.name} is {self._energy_grid.c[self.int_idx]:5.3f} GeV",
+                "Interaction threshold for {0} is {1:5.3f} GeV".format(
+                    self.name, self._energy_grid.c[self.int_idx]
+                ),
             )
         else:
             self.int_idx = 0
 
-    def _calculate_mixing_energy(self):
-        """Calculates interaction/decay length in Air and decides if
-        the particle has resonance and/or hadron behavior.
+    def _apply_force_resonance(self):
+        """Flag this particle as a resonance if it appears in
+        ``config.adv_set["force_resonance"]`` and is not in
+        ``config.standard_particles``.
 
-        Class attributes :attr:`is_mixed`, :attr:`E_mix`, :attr:`mix_idx`,
-        :attr:`is_resonance` are calculated here. If the option `no_mixing`
-        is set in config.adv_config particle is forced to be a resonance
-        or hadron behavior.
-
-        Args:
-          e_grid (numpy.array): energy grid of size :attr:`d`
-          max_density (float): maximum density on the integration path (largest
-                               decay length)
+        A resonance particle is folded into other particles' interaction /
+        decay matrices at build time (via ``MatrixBuilder._follow_chains``)
+        and never gets its own state-vector slot. Default
+        ``force_resonance = []`` means full propagation for everything.
         """
-
-        info(10, "Calculating mixing energy for", self.name)
-        cross_over = config.hybrid_crossover
-        max_density = config.max_density
-
-        d = self._energy_grid.d
-        inv_intlen = self.inverse_interaction_length()
-
-        inv_declen = self.inverse_decay_length()
-        # If particle is stable, no "mixing" necessary
-        if (
-            not np.any(np.nan_to_num(inv_declen) > 0.0)
-            or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
-            or config.adv_set["no_mixing"]
-            or self.pdg_id[0] in config.adv_set["disable_decays"]
-        ):
-            self.mix_idx = max(self.int_idx, 0)
-            self.is_mixed = False
-            self.is_resonance = False
-            return
-
-        # If particle is forced to be a "resonance"
-        if np.abs(self.pdg_id[0]) in config.adv_set["force_resonance"]:
-            self.mix_idx = d - 1
-            self.E_mix = self._energy_grid.c[self.mix_idx]
-            self.is_mixed = False
-            self.is_resonance = True
-        # Particle can interact and decay
-        elif self.can_interact and not self.is_stable:
-            # This is lambda_dec / lambda_int
-            threshold = np.zeros_like(inv_intlen)
-            mask = inv_declen != 0.0
-            threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
-            mask = np.where(threshold > cross_over)
-            if len(mask[0]) > 0:
-                self.mix_idx = np.where(threshold > cross_over)[0][0]
-                self.E_mix = self._energy_grid.c[self.mix_idx]
-                self.is_mixed = True
-                self.is_resonance = False
-            else:
-                self.mix_idx = d - 1
-                self.E_mix = self._energy_grid.c[self.mix_idx]
-                self.is_mixed = False
-                self.is_resonance = True
-        # These particles don't interact but can decay (e.g. muons or taus)
-        elif not self.can_interact and not self.is_stable:
-            mask = inv_declen != 0.0
-            mix_idx = np.where(max_density / inv_declen[mask] > config.dXmax)[0][0]
-            self.E_mix = self._energy_grid.c[mask][mix_idx]
-            self.mix_idx = np.argmin(np.abs(self.E_mix - self._energy_grid.c))
-            assert self.E_mix == self._energy_grid.c[self.mix_idx]
-            self.is_mixed = True
-            self.is_resonance = False
-        # Particle is stable but that should be handled above
-        else:
-            info(0, "This case shouldn't occur. Particle =", self.name)
-            threshold = np.inf
-            self.mix_idx = 0
-            self.is_mixed = False
-            self.is_resonance = False
-
-        self.mix_idx = max(self.int_idx, self.mix_idx)
-
-        assert self.E_mix == self._energy_grid.c[self.mix_idx]
+        pid = abs(self.pdg_id[0])
+        self.is_resonance = (
+            pid in config.adv_set["force_resonance"]
+            and pid not in config.standard_particles
+        )
 
     def __eq__(self, other):
         """Checks name for equality"""
@@ -789,12 +671,10 @@ class MCEqParticle:
         is_lepton     : {self.is_lepton}
         is_nucleus    : {self.is_nucleus}
         is_stable     : {self.is_stable}
-        is_mixed      : {self.is_mixed}
         is_resonance  : {self.is_resonance}
         is_tracking   : {self.is_tracking}
         is_projectile : {self.is_projectile}
-        mceqidx       : {self.mceqidx}
-        E_mix         : {self.E_mix:2.1e} GeV\n"""
+        mceqidx       : {self.mceqidx}\n"""
         return a_string
 
 
@@ -853,7 +733,7 @@ class ParticleManager:
         self.print_particle_tables(10)
 
     def set_cross_sections_db(self, cs_db):
-        """Sets the inelastic cross section to each interacting particle.
+        """Sets the production cross section to each interacting particle.
 
         This applies to most of the hadrons and does not imply that the
         particle becomes a projectile. parents need in addition defined
@@ -984,6 +864,7 @@ class ParticleManager:
             )
             return
         else:
+            info(10, "Creating new tracking particle")
             # Copy all preferences of the original particle
             tracking_particle = copy(self.pdg2pref[child_pdg])
             tracking_particle.is_tracking = True
@@ -998,9 +879,11 @@ class ParticleManager:
             for i in range(100):
                 if unique_child_pdg not in list(self.pdg2pref):
                     break
+                _tn = tracking_particle.name
+                _u = unique_child_pdg
                 info(
                     20,
-                    f"{i}: trying to find unique_pdg ({tracking_particle.name}) for {unique_child_pdg}",
+                    f"{i}: trying to find unique_pdg ({_tn}) for {_u}",
                 )
                 unique_child_pdg = (
                     unique_child_pdg[0] + int(copysign(10000, child_pdg[0])),
@@ -1009,7 +892,9 @@ class ParticleManager:
             tracking_particle.unique_pdg_id = unique_child_pdg
             info(
                 10,
-                f"Creating new tracking particle {tracking_particle.name} with unique ID {unique_child_pdg}",
+                "Creating new tracking particle {0} with unique ID {1}".format(
+                    tracking_particle.name, unique_child_pdg
+                ),
             )
 
         # Track if attempt to add the tracking particle succeeded at least once
@@ -1030,17 +915,19 @@ class ParticleManager:
                 alias_name,
                 from_interactions,
             ) in self.tracking_relations:
+                _tn = tracking_particle.name
+                _n = self.pdg2pref[parent_pdg].name
                 info(
                     20,
-                    f"Tracking of {tracking_particle.name} from {self.pdg2pref[parent_pdg].name} already activated.",
+                    f"Tracking of {_tn} from {_n} already activated.",
                 )
                 continue
 
             if not from_interactions:
-                info(15, f"Child {parent_pdg} tracks decays")
+                info(15, "Child {0} tracks decays".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_decays
             else:
-                info(15, f"Child {parent_pdg} tracks interactions")
+                info(15, "Child {0} tracks interactions".format(parent_pdg))
                 track_method = self.pdg2pref[parent_pdg].track_interactions
 
             # Check if the tracking is successful. If not the particle is not
@@ -1170,23 +1057,29 @@ class ParticleManager:
 
     def add_new_particle(self, new_mceq_particle):
         if new_mceq_particle in self.all_particles:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 0,
-                f"Particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} has already been added. Use it.",
+                f"Particle {_n}/{_p} has already been added. Use it.",
             )
             return
 
         if not new_mceq_particle.is_resonance:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is not a resonance.",
+                f"New particle {_n}/{_p} is not a resonance.",
             )
             new_mceq_particle.mceqidx = len(self.cascade_particles)
             self.cascade_particles.append(new_mceq_particle)
         else:
+            _n = new_mceq_particle.name
+            _p = new_mceq_particle.pdg_id
             info(
                 2,
-                f"New particle {new_mceq_particle.name}/{new_mceq_particle.pdg_id} is a resonance.",
+                f"New particle {_n}/{_p} is a resonance.",
             )
             self.resonances.append(new_mceq_particle)
 
@@ -1303,10 +1196,11 @@ class ParticleManager:
             return self.pdg2pref[pdg_id_or_name]
         if isinstance(pdg_id_or_name, six.integer_types):
             return self.pdg2pref[(pdg_id_or_name, 0)]
-        try:
-            return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
-        except KeyError:
-            return self.pname2pref[pdg_id_or_name]
+        else:
+            try:
+                return self.pdg2pref[(_pdata.pdg_id(pdg_id_or_name), 0)]
+            except KeyError:
+                return self.pname2pref[pdg_id_or_name]
 
     def keys(self):
         """Returns pdg_ids of all particles"""
@@ -1326,15 +1220,8 @@ class ParticleManager:
         info(min_dbg_lev, "Hadrons and stable particles:", no_caller=True)
         print_in_rows(
             min_dbg_lev,
-            [
-                p.name
-                for p in self.all_particles
-                if p.is_hadron and not p.is_resonance and not p.is_mixed
-            ],
+            [p.name for p in self.all_particles if p.is_hadron and not p.is_resonance],
         )
-
-        info(min_dbg_lev, "\nMixed:", no_caller=True)
-        print_in_rows(min_dbg_lev, [p.name for p in self.all_particles if p.is_mixed])
 
         info(min_dbg_lev, "\nResonances:", no_caller=True)
         print_in_rows(

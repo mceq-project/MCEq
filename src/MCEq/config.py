@@ -1,12 +1,13 @@
-# import os.path as path
+import importlib
+import os
 import pathlib
 import platform
-import numpy as np
 import sys
+import warnings
 
-base_path = pathlib.Path(__file__).parent.resolve()
+import numpy as np
 
-# base_path = path.dirname(path.abspath(__file__))
+from MCEq import base_path
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -24,17 +25,13 @@ print_module = False
 # =================================================================
 
 #: Directory where the data files for the calculation are stored
-data_dir = base_path / "data"
+data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-# mceq_db_fname = "mceq_db_10MeV-10TeV_URQMD_lext_2D.h5"
-mceq_db_fname = "mceq_db_lext_dpm193_v150.h5"
+mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
 
 #: File name of the MCEq database
-em_db_fname = "mceq_db_EM_Tsai_Max_v150.h5"
-
-#: Decay database name
-decay_db_name = "unpolarized"
+em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -52,10 +49,11 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
 #: with ctau < prompt_ctau will be counted in the pr_[mu, numu, nue] category, whereas
 #: everything else will be attributed to the "conventional" category
-prompt_ctau = 2.6842  # cm (everything shorter-lived than K0s will be considered prompt)
+# cm (everything shorter-lived than K0s will be considered prompt)
+prompt_ctau = 2.6842
 
-#: Approximate value for the maximum density expected. Needed for the
-#: resonance approximation. Default value: air at the surface
+#: Approximate value for the maximum density expected. Used by the
+#: atmosphere model. Default value: air at the surface.
 max_density = 0.001225
 #: Material for interaction lengths, ionization and radiation (=continuous) loss terms
 #: Currently available choices: 'air', 'water', 'ice', 'rock', 'co2', 'hydrogen', 'iron'
@@ -68,11 +66,10 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6371.0e5  # Earth radius in cm
-h_obs = 0.0  # observation level in cm
-h_atm = 112.8e5  # top of the atmosphere in cm
+r_E = 6391.0e3  # Earth radius in m
+h_obs = 0.0  # observation level in m
+h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
-
 
 #: Default parameters for GeneralizedTarget
 #: Total length of the target [m]
@@ -80,10 +77,9 @@ len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-
-#: Check if densities requested outside of target dimensions
-except_out_of_bounds = False
-
+#: Approximate value for the maximum density expected. Used by the
+#: atmosphere model. Default value: air at the surface.
+max_density = (0.001225,)
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
@@ -92,7 +88,6 @@ except_out_of_bounds = False
 #: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
 #: stability problems with the integrator with such low thresholds. Use with
 #: care and check results for oscillations and feasibility.
-#: For 2D MCEq, the approximate minimum energy is 5e-2 GeV.
 e_min = 0.1
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
@@ -100,34 +95,44 @@ e_min = 0.1
 #: for inclusive calculations to max. energy of interest + 4-5 orders of
 #: magnitude. For single primaries the maximal energy is directly limited by
 #: this value. Smaller grids speed up the initialization and integration.
-e_max = 1e4
+e_max = 1e11
 
-# TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices
-# on the respective new grid are produced!
+#: TK: frequency grid settings for the 2D MCEq. Do not change unless new matrices
+#: on the respective new grid are produced! (PR #48 / 2D path; phased-out in
+#: Task 1.x — kept here for compatibility with the 2D database loader.)
 k_grid = np.append(0, np.unique(np.geomspace(1, 2000, 25, dtype="int64")))
 
 #: TK: energy grid defaults for the cross sections and continuous _cont_losses
-# ported over from the 1D database to the 2D database. This is used to "cut"
-# the cross section arrays defined on the entire 1D MCEq grid to the smaller 2D grid.
+#: ported over from the 1D database to the 2D database. Used to "cut" the
+#: cross-section arrays defined on the entire 1D MCEq grid down to the
+#: smaller 2D grid.
 default_ebins = np.logspace(-2, 12, 14 * 10 + 1)
 default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
+
+#: TK: Enable 2D shower development. Default ``False`` — the flag is kept
+#: for the merge from PR #48 and will be removed in Task 1.1 once the 2D
+#: database is auto-detected via the ``k_dim`` HDF attribute.
+enable_2D = False
 
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
 
-#: TK: Enable 2D shower development
-enable_2D = True
-
-#: Selection of integrator (euler/odepack)
-integrator = "euler"
-
-#: euler kernel implementation (numpy/MKL/CUDA/accelerate).
-#: With serious nVidia GPUs CUDA a few times faster than MKL
-#: autodetection of fastest kernel below
-kernel_config = "numpy"
+#: ETD2RK kernel implementation. Choices:
+#:   "auto"            — pick the best available ETD2 kernel (see below).
+#:   "numpy_etd2"      — pure-numpy ETD2RK (always available).
+#:   "accelerate_etd2" — Apple Accelerate-backed ETD2RK (macOS only).
+#:   "mkl_etd2"        — Intel MKL-backed ETD2RK (Linux/Windows; faster
+#:                       sparse SpMV than numpy on multi-core CPUs).
+#:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (requires cupy and
+#:                       a CUDA-capable GPU; recommended for large state
+#:                       vectors and many solve() calls).
+kernel_config = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
+
+#: CUDA Floating point precision (default 32-bit 'float')
+cuda_fp_precision = 64
 
 #: Floating point precision (is set automatically)
 floatlen = None
@@ -135,46 +140,59 @@ floatlen = None
 #: Number of MKL threads (for sparse matrix multiplication the performance
 #: advantage from using more than a few threads is limited by memory bandwidth)
 #: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL.
-mkl_threads = 8
+#: numpy is linked to MKL. Default is ``min(16, os.cpu_count())``: MKL's
+#: sparse SpMV scales near-linearly to ~16 threads on the SIBYLL21
+#: matrices, then plateaus / regresses on most servers due to memory
+#: bandwidth and NUMA effects. Override after import for full control:
+#: ``MCEq.config.set_mkl_threads(n)``.
+mkl_threads = min(16, os.cpu_count() or 1)
 
-#: parameters for the odepack integrator. More details at
-#: http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode
-ode_params = {
-    "name": "lsoda",
-    "method": "bdf",
-    "nsteps": 1000,
-    # 'max_step': 10.0,
-    "rtol": 0.01,
-}
+#: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
+#: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
+#: with MKL >= 2024 (see ``docs/mceq_v1.x_v2_diff.md`` §8.4). MKL appears
+#: to specialise its BSR microkernel for ``b in [2, 7]``; ``b >= 8`` falls
+#: into a generic path that's slower than CSR for these matrices. Set
+#: ``None`` to fall back to CSR (useful for debugging or if a future MKL
+#: regresses BSR perf).
+mkl_bsr_blocksize = 6
+
+#: Block size for the numpy ETD2 BSR off-diagonal storage. ``11`` is the
+#: empirically-tuned default — ~2x faster than CSR on SIBYLL21 matrices
+#: via scipy's BSR matvec. scipy's BSR kernel benefits from larger blocks
+#: than MKL's (the C++ template's per-block overhead is amortised better),
+#: and ``b = 11`` happens to tile the 121-energy-bin macro-blocks neatly
+#: (121 = 11**2). Set ``None`` to fall back to CSR.
+numpy_bsr_blocksize = 11
 
 # =========================================================================
 # Advanced settings
 # =========================================================================
 
-#: The leading process is can be either "decays" or "interactions". This depends
-#: on the target density and it is usually chosen automatically. For
-#: advanced applications one can force "interactions" to be the dominant
-#: process. Essentially this affects how the adaptive step size is computed.
-#: There is also the choice of "auto" that takes both processes into account
-leading_process = "auto"
-
-#: Stability margin for the integrator. The default 0.95 means that step
-#: sizes are chosen 5% away from the stability circle. Usually no need to
-#: change, except you know what it does.
-stability_margin = 0.95
-
-#: Ratio of decay_length/interaction_length where particle interactions
-#: are neglected and the resonance approximation is used
-#: 0.5 ~ precision loss <+3% speed gain ~ factor 10
-#: If smoothness and shape accuracy for prompt flux is crucial, use smaller
-#: values around 0.1 or 0.05
-hybrid_crossover = 0.5
-
-#: Maximal integration step dX in g/cm2. No limit necessary in most cases,
-#: use for debugging purposes when searching for stability issues, especially
-#: if e_min is < 1 GeV.
-dXmax = 1.0
+#: Default parameters for the non-uniform integration path used by
+#: ETD2 kernels (`numpy_etd2`, `accelerate_etd2`, ...). See
+#: docs/mceq_v1.x_v2_diff.md and `MCEq.solvers.etd2_nonuniform_path`.
+#: Each value can be overridden per-call via
+#: `MCEqRun.solve(..., eps=..., dX_max=...)`.
+etd2_path = {
+    #: Within-step | d ln rho_inv / dX | bound. Smaller -> finer steps in
+    #: the upper atmosphere. 0.3 gives sub-percent muon-flux agreement
+    #: across the spectrum at all zeniths; see the design doc for the
+    #: tolerance/step-count tradeoff.
+    "eps": 0.3,
+    #: Cap on the step size in g/cm^2 — the off-diagonal stability cliff
+    #: `h * spec(int_off) < 2`, with spec(int_off) ~ 0.094 for the
+    #: standard MCEq matrix.
+    "dX_max": 20.0,
+    #: Floor on the step size. Prevents the controller from picking 0
+    #: when |d ln rho_inv / dX| is very large (top of atmosphere).
+    "dX_min": 0.01,
+    #: Forward-FD probe span in g/cm^2 used to estimate
+    #: |d ln rho_inv / dX|. Must be large enough to cross the
+    #: `r_X2rho` spline saturation cap at the top of atmosphere
+    #: (~1e-4 g/cm^2 for CORSIKA atmospheres) and small enough to
+    #: resolve the local derivative in the bulk.
+    "fd_span": 0.01,
+}
 
 #: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
@@ -191,7 +209,7 @@ enable_default_tracking = True
 enable_energy_loss = True
 
 #: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
-generic_losses_all_charged = True
+generic_losses_all_charged = False
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
@@ -205,10 +223,30 @@ enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
 #: operator
-average_loss_operator = False
+average_loss_operator = True
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
+
+#: Stencil for the continuous-loss differential operator on the
+#: log-uniform energy grid. Choices:
+#:   "expfit"   -- 7-point exponentially-fitted stencil anchored at
+#:                 ``loss_stencil_alpha0``. Designed to be near-exact for
+#:                 power-law spectra E^{-alpha} with alpha ~ alpha0 on the
+#:                 default 10 bins/decade grid; orders of magnitude smaller
+#:                 truncation error than plain FD on steep spectra.
+#:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
+#:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
+#: All three options share the same one-sided polynomial-fit stencils on
+#: the boundary rows (0,1,2 and last-2,last-1,last); see
+#: ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
+loss_stencil_method = "expfit"
+
+#: Anchor exponent for the "expfit" stencil. The stencil is constructed to
+#: be exact for f = exp(a u) at trial slopes a = -alpha0 + delta around
+#: -alpha0; alpha0 ~ 3 covers the typical CR power-law range. The stencil
+#: is robust to mis-specifications of order +/- 1.
+loss_stencil_alpha0 = 3.0
 
 #: Raise exception when requesting unknown particles from get_solution
 excpt_on_missing_particle = False
@@ -222,11 +260,20 @@ use_isospin_sym = True
 muon_helicity_dependence = True
 
 #: Muon multiple scattering from the CORSIKA-like Gauss approximation
+#: (PR #48 / 2D path; folded into the 2D D matrix in Task 1.3).
 muon_multiple_scattering = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
+
+#: This is not used in the code as before, instead the low energy
+#: extension is compiled into the HDF backend files.
+low_energy_extension = {
+    "he_le_transition": 80,  # GeV
+    "nbins_interp": 3,
+    "use_unknown_cs": True,
+}
 
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
@@ -234,11 +281,6 @@ adv_set = {
     "disable_interactions_of_unstable": False,
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
-    #: repair DPMJET-III K0S/L: due to a bug in matrix generation the
-    # matrices are not properly populated. As an intermediate fix, K0S/L
-    # are approximated from a mixture of K+,K- distributions. In future
-    # DPMEJET versions, this bug will be resolved and the parameter is temporal.
-    "fix_dpmjet_neutral_kaons": True,
     #: Disable resonance/prompt contribution (this group of options
     #: is either obsolete or needs maintenance.)
     #: "disable_resonance_decay" : False,
@@ -250,19 +292,24 @@ adv_set = {
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
     #: Disable particle (production)
-    "disabled_particles": [20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
+    #: Default disables both e- (PDG 11) and e+ (PDG -11). Until a
+    #: validated EM database is shipped, the ETD2 EM cascade can blow up
+    #: at extreme zenith — see the "EM cascade caveat" in
+    #: docs/mceq_v1.x_v2_diff.md. Both signs must be listed: the
+    #: disable list is matched literally, not by absolute PDG id.
+    "disabled_particles": [11, -11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Difficult to explain parameter
     "disable_leading_mesons": False,
-    #: Do not apply mixing to these particles
-    "exclude_from_mixing": [13],
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
-    #: Force particles to be treated as resonance
+    #: Force particles (by absolute PDG id, excluding standard_particles) to
+    #: be treated as resonances — folded into other particles' matrices at
+    #: build time and not propagated as their own state vector entries.
+    #: Empty list = full propagation for everything (the default after the
+    #: ETD2RK migration). Retained as an opt-in escape hatch.
     "force_resonance": [],
-    #: Disable mixing between resonance approx. and full propagation
-    "no_mixing": False,
     #: Force the interaction cross sections to a specific model
     "forced_int_cs": None,
     #: Replace only the meson air cross sections with that from a different model
@@ -290,30 +337,131 @@ has_accelerate = False
 
 prefix = pathlib.Path(sys.prefix)
 if "Linux" in pf:
-    mkl_path = prefix / "lib" / "libmkl_rt.so"
+    mkl_libs = list((prefix / "lib").glob("libmkl_rt*"))
+    mkl_path = mkl_libs[0] if mkl_libs else prefix / "lib" / "libmkl_rt.so"
 elif "macOS" in pf:
     mkl_path = prefix / "lib" / "libmkl_rt.dylib"
     has_accelerate = True
 else:
-    # Windows case
-    mkl_path = prefix / "Library" / "bin", "mkl_rt.dll"
+    # Windows or unknown OS: search for mkl_rt*.dll in Library/bin and lib
+    mkl_path = None
+    mkl_dirs = [prefix / "Library" / "bin", prefix / "lib"]
+    mkl_candidates = []
+    for d in mkl_dirs:
+        if d.exists():
+            mkl_candidates.extend(d.glob("mkl_rt*.dll"))
+    if mkl_candidates:
+        mkl_path = mkl_candidates[0]
+    else:
+        # fallback to default path
+        mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
+
+    mkl_path = os.fspath(mkl_path)
 
 # mkl library handler
 mkl = None
 
-# Check if MKL library found
-if mkl_path.is_file():
-    has_mkl = True
-else:
-    has_mkl = False
+has_mkl = bool(pathlib.Path(mkl_path).is_file())
 
 # Look for cupy module
-try:
-    import cupy
+has_cuda = importlib.util.find_spec("cupy") is not None
 
-    has_cuda = True
-except ImportError:
-    has_cuda = False
+# Pick the fastest available ETD2RK kernel. CUDA is intentionally not
+# auto-selected: spinning up a GPU context has nontrivial cost and a
+# matching cupy install is not always present on machines that have a
+# GPU. Apple Accelerate wins on macOS, Intel MKL wins on x86 Linux /
+# Windows when present, otherwise we fall back to plain numpy.
+if kernel_config == "auto":
+    if has_accelerate:
+        kernel_config = "accelerate_etd2"
+    elif has_mkl:
+        kernel_config = "mkl_etd2"
+    else:
+        kernel_config = "numpy_etd2"
+else:
+    kc = kernel_config.lower()
+    if kc in ("cuda", "cuda_etd2") and not has_cuda:
+        raise Exception("CUDA unavailable. Make sure cupy is installed.")
+    elif kc in ("mkl", "mkl_etd2") and not has_mkl:
+        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
+    elif kc in ("accelerate", "accelerate_etd2") and not has_accelerate:
+        raise Exception("Accelerate unavailable. Only on MacOS.")
+
+if debug_level >= 2:
+    print(f"Auto-detected {kernel_config} solver.")
+
+
+def _load_mkl():
+    """Lazily load ``libmkl_rt`` exactly once and cache it on ``mkl``.
+
+    Splitting the load from :func:`set_mkl_threads` is important:
+    ``MklSparseMatrix`` instances pin their own reference to the cdll
+    handle, so re-loading the library on every thread-count change
+    (the previous behaviour) would leave already-built wrappers tied
+    to a stale ``cdll`` while the global ``mkl`` pointed at a fresh
+    one — a subtle source of cross-handle bugs. By keeping the global
+    pinned to a single cdll for the lifetime of the process we ensure
+    every wrapper sees the same symbol table.
+    """
+    global mkl
+    if mkl is not None or not has_mkl:
+        return
+    from ctypes import cdll
+
+    mkl = cdll.LoadLibrary(mkl_path)
+
+
+def set_mkl_threads(nthreads):
+    """Set the MKL thread count (loads ``libmkl_rt`` on the first call).
+
+    Idempotent on the library side: only ``mkl_set_num_threads`` is
+    called on subsequent invocations. The cached cdll handle is
+    preserved, so handles in ``MclSparseMatrix`` wrappers stay valid
+    across thread-count changes.
+    """
+    global mkl_threads
+    from ctypes import byref, c_int
+
+    _load_mkl()
+    mkl_threads = nthreads
+    if mkl is not None:
+        mkl.mkl_set_num_threads(byref(c_int(nthreads)))
+        if debug_level >= 5:
+            print(f"MKL threads limited to {nthreads}")
+
+
+if has_mkl:
+    set_mkl_threads(mkl_threads)
+
+
+# Compatibility layer for dictionary access to config attributes
+# This is deprecated and will be removed in future
+
+
+class MCEqConfigCompatibility(dict):
+    """This class provides access to the attributes of the module as a
+    dictionary, as it was in the previous versions of MCEq
+
+    This method is deprecated and will be removed in future.
+    """
+
+    def __init__(self, namespace):
+        self.__dict__.update(namespace)
+        if debug_level > 1:
+            warn_str = (
+                "Config dictionary is deprecated. "
+                + "Use config.variable instead of config['variable']"
+            )
+            warnings.warn(warn_str, FutureWarning)
+
+    def __setitem__(self, key, value):
+        key = key.lower()
+        if key not in self.__dict__:
+            raise Exception("Unknown config key", key)
+        return super(MCEqConfigCompatibility, self).__setitem__(key, value)
+
+
+config = MCEqConfigCompatibility(globals())
 
 
 class FileIntegrityCheck:
@@ -393,30 +541,41 @@ def _download_file(url, outfile):
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
-url = base_url + release_tag + mceq_db_fname
-# sha256 checksum of the file
+# sha256 checksum of the default database file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
-file_checksum = "6353f661605a0b85c3db32e8fd259f68433392b35baef05fd5f0949b46f9c484"
+file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
-filepath_to_database = data_dir / mceq_db_fname
-# if path.isfile(filepath_to_database):
-#     is_file_complete = FileIntegrityCheck(
-#         filepath_to_database, file_checksum
-#     ).succeeded()
-# else:
-#     is_file_complete = False
-is_file_complete = True
-if not is_file_complete:
-    print(f"Downloading for mceq database file {mceq_db_fname}.")
-    if debug_level >= 2:
-        print(url)
-    _download_file(url, filepath_to_database)
 
-# old_database = "mceq_db_lext_dpm191.h5"
-# filepath_to_old_database = path.join(data_dir, old_database)
+def ensure_db_available():
+    """Download the MCEq database if not already present.
 
-# if path.isfile(filepath_to_old_database):
-#     import os
+    Called by MCEqRun.__init__ so that the download is deferred until the
+    database is actually needed.  This allows tests (and other callers) to
+    override ``config.mceq_db_fname`` before a download is attempted.
 
-#     print("Removing previous database {0}.".format(old_database))
-#     os.unlink(filepath_to_old_database)
+    The integrity check only applies to the default database; non-default
+    files are accepted as-is if they exist.
+    """
+    import os
+
+    _url = base_url + release_tag + mceq_db_fname
+    filepath = data_dir / mceq_db_fname
+    if filepath.exists():
+        is_complete = (
+            FileIntegrityCheck(filepath, file_checksum).succeeded()
+            if mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
+            else True
+        )
+    else:
+        is_complete = False
+
+    if not is_complete:
+        print(f"Downloading MCEq database file {mceq_db_fname}.")
+        if debug_level >= 2:
+            print(_url)
+        _download_file(_url, filepath)
+
+    old_db = data_dir / "mceq_db_lext_dpm191.h5"
+    if old_db.exists():
+        print(f"Removing previous database {old_db.name}.")
+        os.unlink(old_db)

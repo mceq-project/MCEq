@@ -1,4 +1,3 @@
-import atexit
 import os
 import sysconfig
 from ctypes import (
@@ -61,8 +60,6 @@ daxpy = spacc.daxpy
 
 # Initialize
 spacc.free_mstore()
-# On module unload or reload, free the pointers
-atexit.register(spacc.free_mstore)
 
 
 class SpaccMatrix:
@@ -76,8 +73,25 @@ class SpaccMatrix:
         self.store_id = None
         self._create_matrix()
 
+    def close(self):
+        """Free the underlying Accelerate sparse-matrix slot.
+
+        Idempotent — safe to call more than once. Prefer this over
+        ``del`` or letting refcount drive ``__del__`` when you need a
+        deterministic release of the slot (e.g. when juggling caches
+        in ``MCEqRun._build_kernel_dispatch``); the slot pool
+        (``SIZE_MSTORE``) is fixed-size, so prompt release matters.
+        """
+        if self.store_id is not None and spacc is not None:
+            spacc.free_mstore_at(self.store_id)
+            self.store_id = None
+
     def __del__(self):
-        spacc.free_mstore_at(self.store_id)
+        # Defer to ``close()``; both are idempotent.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _create_matrix(self):
         self.store_id = spacc.create_sparse_matrix(
