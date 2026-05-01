@@ -1,38 +1,18 @@
-# PR #48 / 2D extras — kept on top of v2 imports so the 2D-only branches in
-# ``MatrixBuilder`` and ``convert_to_theta_space`` still work after the merge.
-# These will mostly be replaced in Phase 1.2 / 2.3.
-from itertools import product  # noqa: F401  (used in PR 2D branches)
+from itertools import product
 from time import time
 
 import numpy as np
-import scipy  # noqa: F401  (PR 2D branches use scipy.sparse / scipy.linalg / scipy.special)
+import scipy  # noqa: F401  (used by ``convert_to_theta_space`` for ``scipy.special.j0``)
 import scipy.sparse as sp
 import six
-from scipy.interpolate import interp1d  # noqa: F401  (PR Hankel reconstruction)
-
-try:
-    from sparse import GCXS  # noqa: F401  (PR 2D sparse tensor storage)
-except ImportError:  # pragma: no cover - optional 2D-only dependency
-    GCXS = None
+from scipy.interpolate import (
+    interp1d,  # noqa: F401  (used by ``convert_to_theta_space``)
+)
 
 import MCEq.data
 from MCEq import config
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.particlemanager import ParticleManager
-
-# PR #48 used backend-aware aliases imported from ``MCEq.__init__``
-# (``asarray``, ``csr_matrix``, ``diag``, ``eye``, ``linalg``, ``ones``,
-# ``zeros``). v2 dropped that machinery in favour of plain ``numpy``
-# everywhere and per-solver kernels in :mod:`MCEq.solvers`. Keep numpy-backed
-# aliases so the PR's 2D branches continue to compile until Phase 1.2 cleans
-# them up.
-asarray = np.asarray
-diag = np.diag
-eye = np.eye
-linalg = np.linalg
-ones = np.ones
-zeros = np.zeros
-csr_matrix = sp.csr_matrix
 
 # trapz was finally removed with numpy 2.4
 if hasattr(np, "trapezoid"):
@@ -115,8 +95,6 @@ class MCEqRun:
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
-        if self._mceq_db.is_2d:
-            self.phi0_2D = None
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
         # Save initial condition (primary flux) to restore after dimensional resizing
@@ -1038,11 +1016,11 @@ class MCEqRun:
           fd_span (float | None): forward-FD probe span for the ETD2
             schedule's local rate estimate. ``None`` →
             ``config.etd2_path["fd_span"]``.
-          kwargs (dict): Arguments are passed directly to the solver
-            methods. ``X_start`` is honoured by all kernels (defaults to
-            ``config.X_start = 0``). ``eps`` / ``dX_max`` / ``dX_min`` /
-            ``fd_span`` control the ETD2 non-uniform schedule; pass them
-            here to override the defaults in ``config.etd2_path``.
+          kwargs (dict): Reserved for advanced flags. Currently only
+            ``skip_integration_path=True`` is recognised — it bypasses
+            the call to ``_calculate_integration_path`` and reuses the
+            cached ``self.integration_path`` (used by tests / experts who
+            want to keep the path fixed across multiple ``solve`` calls).
 
         """
         info(2, f"Launching {config.kernel_config} solver")
@@ -1067,27 +1045,27 @@ class MCEqRun:
         else:
             info(2, "Warning: integration path calculation skipped.")
 
-        phi0 = np.copy(self._phi0)
-        # TK: if the initial angular density is a delta function
-        # (e.g. a single cosmic ray shower incident at some angle theta),
-        # all Hankel modes k are populated with the same amplitude
-        # (equal to that of the 1D initial condition).
+        # If the initial angular density is a delta function (e.g. a single
+        # cosmic-ray shower incident at some angle theta), all Hankel modes
+        # k are populated with the same amplitude as the 1D initial
+        # condition. The stitched ETD2 path operates on a length
+        # ``n_k * dim_states`` state vector — broadcast ``_phi0`` across
+        # the n_k blocks via ``np.tile`` so block-k of the stacked state
+        # is a copy of ``_phi0``. For 1D databases this reduces to a
+        # plain copy.
         if self._mceq_db.is_2d:
-            nonzero_phi_idcs = np.flatnonzero(phi0)
-            phi0_2D = np.zeros((self._mceq_db.n_k, np.shape(phi0)[0]))
-            for i in nonzero_phi_idcs:
-                phi0_2D[:, i] = phi0[i]
-            self.phi0_2D = np.copy(phi0_2D)
+            phi0 = np.tile(self._phi0, self._mceq_db.n_k)
+        else:
+            phi0 = np.copy(self._phi0)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         info(2, f"for {nsteps} integration steps.")
 
         start = time()
-        extra_kwargs = {}
 
         kernel, args = self._build_kernel_dispatch(nsteps, dX, rho_inv, phi0, grid_idcs)
 
-        self._solution, self.grid_sol = kernel(*args, **extra_kwargs)
+        self._solution, self.grid_sol = kernel(*args)
 
         if isinstance(self.grid_sol, list):
             self.grid_sol = np.asarray(self.grid_sol)
@@ -1192,7 +1170,12 @@ class MCEqRun:
 
         start = time()
 
-        phi0 = np.copy(self._phi0)
+        # See ``MCEqRun.solve`` for the rationale: stitched ETD2 needs a
+        # length ``n_k * dim_states`` initial state for 2D databases.
+        if self._mceq_db.is_2d:
+            phi0 = np.tile(self._phi0, self._mceq_db.n_k)
+        else:
+            phi0 = np.copy(self._phi0)
 
         kernel, args = self._build_kernel_dispatch(nsteps, dX, rho_inv, phi0, grid_idcs)
 
@@ -1649,27 +1632,6 @@ class MCEqRun:
             zfac[p_eidx] = trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
         return zfac
 
-    def prob_muon_mult_scat_hankel(self):
-        """Returns the Gauss approximation of the scattering kernel for muon multiple scattering.
-        See p.12-13 in https://web.iap.kit.edu/corsika/physics_description/corsika_phys.pdf
-        """
-        lambda_s = 37.7
-        E_s = 0.021
-        elab_mu = self.e_grid + self.pman[(13, 0)].mass
-        beta_mu = np.sqrt(elab_mu**2 - self.pman[(13, 0)].mass ** 2) / elab_mu
-        theta_s_sq = (1 / lambda_s) * (E_s / (elab_mu * beta_mu**2)) ** 2
-
-        # delta_lambda is the slant depth traversed by the muon
-        # (equivalent to dX in the integrator).
-        k_grid = self._mceq_db.k_grid
-
-        def exp(delta_lambda):
-            return np.exp(
-                -((k_grid[:, None]) ** 2) * delta_lambda * theta_s_sq[None, :] / 4
-            )
-
-        return exp
-
 
 class MatrixBuilder:
     """This class constructs the interaction and decay matrices."""
@@ -1877,7 +1839,7 @@ class MatrixBuilder:
         if not (self.is_2d and getattr(config, "muon_multiple_scattering", False)):
             return
         # Constants from CORSIKA's Gauss approximation (Heck & Pierog handbook
-        # p.12), as used in ``MCEqRun.prob_muon_mult_scat_hankel``.
+        # p.12).
         lambda_s = 37.7  # g/cm^2
         E_s = 0.021  # GeV
         e_kin = self._energy_grid.c
@@ -2032,10 +1994,6 @@ class MatrixBuilder:
             for p in self._pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
-                    ones_matrix = diag(ones(self.dim)).astype(config.floatlen)
-                    if self.is_2d:
-                        ones_matrix = ones_matrix[None, :, :]
-                        ones_matrix = np.repeat(ones_matrix, repeats=self.n_k, axis=0)
                     self._follow_chains(
                         p,
                         np.diag(np.ones(self.dim)).astype(config.floatlen),
