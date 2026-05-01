@@ -1765,7 +1765,7 @@ class MatrixBuilder:
                                     parent.pdg_id
                                 )
 
-        self.int_m = self._csr_from_blocks(self.C_blocks)
+        self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
         # -I + D
 
         if not skip_decay_matrix or self.dec_m is None:
@@ -1862,7 +1862,59 @@ class MatrixBuilder:
             )
         return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
-    def _csr_from_blocks(self, blocks):
+    def _apply_muon_scattering_to_diagonal(self, per_mode):
+        """Add ``-kappa^2 * theta_s^2(E) / 4`` to muon-row diagonals of each
+        per-mode dense matrix (modifies ``per_mode`` in place).
+
+        This is the v2 way of representing PR #48's muon multiple-scattering
+        damping: instead of an explicit per-step elementwise multiplier on
+        the state vector (operator splitting, O(h) extra error), we put the
+        contribution on the diagonal D so ETD2RK's ``e^{h*D}`` integrates it
+        exactly per step.
+
+        See ``docs/mceq_v1.x_v2_diff.md`` §11.4.
+        """
+        if not (self.is_2d and getattr(config, "muon_multiple_scattering", False)):
+            return
+        # Constants from CORSIKA's Gauss approximation (Heck & Pierog handbook
+        # p.12), as used in ``MCEqRun.prob_muon_mult_scat_hankel``.
+        lambda_s = 37.7  # g/cm^2
+        E_s = 0.021  # GeV
+        e_kin = self._energy_grid.c
+        # Prefer pman's (13, 0) mass; fall back to the PDG value.
+        try:
+            mu_mass = float(self._pman[(13, 0)].mass)
+        except (KeyError, AttributeError):
+            mu_mass = 0.10566  # GeV
+        E_lab = e_kin + mu_mass
+        p2 = E_lab**2 - mu_mass**2
+        p2 = np.where(p2 > 0, p2, 1e-30)
+        beta = np.sqrt(p2) / E_lab
+        theta_s_sq = (1.0 / lambda_s) * (E_s / (E_lab * beta**2)) ** 2
+        # Identify all muon species present (PDG +-13, helicities 0, +-1).
+        muon_lidcs = []
+        n_e = len(e_kin)
+        for pdg in (13, -13):
+            for hel in (0, 1, -1):
+                key = (pdg, hel)
+                if key in self._pman.pdg2pref:
+                    p = self._pman.pdg2pref[key]
+                    if hasattr(p, "lidx") and getattr(p, "mceqidx", -1) >= 0:
+                        muon_lidcs.append(p.lidx)
+        if not muon_lidcs:
+            return
+        diag_idx = np.arange(self.dim_states)
+        for k_idx in range(self.n_k):
+            kappa = self.k_grid[k_idx]
+            if kappa == 0:
+                continue
+            damping = -(kappa**2) * theta_s_sq / 4.0
+            mat = per_mode[k_idx]
+            for lidx in muon_lidcs:
+                rows = diag_idx[lidx : lidx + n_e]
+                mat[rows, rows] += damping
+
+    def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
         """Construct a CSR matrix from a dictionary of submatrices (blocks).
 
         For 1D databases the result is a single ``(dim_states, dim_states)``
@@ -1877,6 +1929,14 @@ class MatrixBuilder:
         tensor representation, but it lets v2's dimension-agnostic ETD2RK
         kernels operate on the stitched matrix directly (see
         ``docs/mceq_v1.x_v2_diff.md`` §11.4).
+
+        When ``apply_muon_scattering`` is True (only set by the interaction
+        matrix path), and ``config.muon_multiple_scattering`` is enabled,
+        the per-mode diagonal entries on muon rows receive the extra
+        ``-kappa^2 * theta_s^2(E) / 4`` damping. ETD2RK absorbs the
+        diagonal exactly via ``e^{h*D}``, so this folds PR #48's
+        per-step elementwise multiplier into the matrix without any
+        operator-splitting error.
 
         Note::
 
@@ -1904,6 +1964,8 @@ class MatrixBuilder:
                         + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
                         + f" c={rc.name}:({rc.lidx},{rc.uidx})"
                     )
+            if apply_muon_scattering:
+                self._apply_muon_scattering_to_diagonal(per_mode)
             per_mode_csr = [csr_matrix(m) for m in per_mode]
             for m in per_mode_csr:
                 m.eliminate_zeros()
