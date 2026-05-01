@@ -1297,39 +1297,139 @@ zenith-independent.
 
 ### 11.7 Suggested rollout
 
-1. *On a `2d-v2` branch off `v2`*: port the 2D matrix-builder pieces
+1. ~~*On a `2d-v2` branch off `v2`*: port the 2D matrix-builder pieces
    (`_zero_mat`, `_csr_from_blocks`, `_follow_chains`, `_fill_matrices`
    2D branches in commits `c597dff`, `77fb4c7`) onto v2's
    `MatrixBuilder`. No solver changes yet; verify that
    `int_m.shape == (n_k, dim_states, dim_states)` rebuilds correctly
    against `mceq_db_URQMD_150GeV_2D.h5` and that the resonance
-   approximation still folds short-lived species at this stage.
-2. *Tier A solver*: add `solv_numpy_etd2_2d(...)` that calls
+   approximation still folds short-lived species at this stage.~~
+   ✅ landed in commits `23e5663`, `179cbce` (Tasks 1.1–1.2);
+   rebuilds correctly against `mceq_db_URQMD_150GeV_2D.h5`. See
+   `tests/test_2d_matrices.py`.
+2. ~~*Tier A solver*: add `solv_numpy_etd2_2d(...)` that calls
    `_etd_get_split_for_numpy` per κ and reuses `_etd_compute_diag_factors`
    /step `n_k` times. Path schedule (§4) is shared. This is the
    minimum-viable v2-2D and should already match the PR's results
-   (sub-percent on the κ=0 mode against 1D MCEq native step).
-3. *Multiple scattering folded into `D`*: add the muon-row κ²-damping
+   (sub-percent on the κ=0 mode against 1D MCEq native step).~~
+   ✅ resolved differently — Tasks 1.4 + 1.5 showed v2's existing
+   `solv_numpy_etd2` is dimension-agnostic; the stitched
+   `(n_k·N, n_k·N)` matrix flows through unchanged across all four
+   backends (numpy / Accelerate / MKL-deferred / CUDA-deferred).
+   Cross-backend equivalence test in `tests/test_solvers_2d.py`
+   (commits `9eb6f31`, `2a8fd06`).
+3. ~~*Multiple scattering folded into `D`*: add the muon-row κ²-damping
    into `_etd_compute_diag_factors` via a `delta_MS` length-`N`
    summand (per-κ-call; trivial). Verify against a CORSIKA-level
-   muon angular profile at a single energy decade.
-4. *Tier B stacked SpMM*: introduce a `BatchedOffdiag` class wrapping
+   muon angular profile at a single energy decade.~~
+   ✅ landed in commit `06af608` (Task 1.3). Tested in
+   `tests/test_2d_muon_scattering.py`. ETD2RK absorbs the
+   κ-dependent muon-row damping exactly via `e^{h·D}`; PR's
+   per-step elementwise multiplier removed.
+4. ~~*Tier B stacked SpMM*: introduce a `BatchedOffdiag` class wrapping
    `(indptr, indices, vals[nnz, n_k])` and replace the per-κ-loop
    with a single fused walk. Bench against tier A; promote when
-   ≥1.5× faster on SIBYLL23D θ=60°.
-5. *Inverse Hankel quality*: legacy cubic-interp + `np.trapz` is
+   ≥1.5× faster on SIBYLL23D θ=60°.~~ — deferred. Block-diagonal
+   stitch is the structurally cleanest first form and was sufficient
+   for the headline 23× wall-time win (§11.8); a custom batched-SpMV
+   kernel is reserved for the moment a downstream physics problem
+   demands it.
+5. ~~*Inverse Hankel quality*: legacy cubic-interp + `np.trapz` is
    retained for v2 (see §11.6 item 2). Filon-J₀ on the existing
    K_GRID was investigated and rejected — neither a Guizar-Sicairos
    DHT nor a cubic-F Filon is a "drop-in"; both require K_GRID
    redesign or significant new quadrature code. Defer until a
    downstream physics problem demonstrably needs better than the
-   2–4·10⁻³ rel-err legacy delivers for σ ≥ 0.005.
-6. *EM cascade (§8.2)*: required before the 2D path is usable for
-   shower physics where the EM component matters.
+   2–4·10⁻³ rel-err legacy delivers for σ ≥ 0.005.~~ — investigated,
+   not adopted. See §11.6 item 2 — Filon-J₀ on the geometric K_GRID
+   is bottlenecked by F-curvature within wide segments, not by J₀
+   oscillation. Legacy `MCEqRun.convert_to_theta_space` (cubic
+   interp + np.trapz) retained; the cubic-F + closed-form
+   J₀-moments path is the principled future improvement when
+   accuracy actually bites.
+6. *EM cascade (§8.2)*: still required for shower physics where the
+   EM component matters. Out of scope for the muon/neutrino path
+   landed here.
 
-The first three steps are independent of §8.2 (block-ETD for muon
-dE/dX cliff) and of the EM-cascade fix; they can ship as a 2D-but-
-hadron-only mode while §8.2 / §7 are landed in parallel.
+### 11.8 Validation summary
+
+Measured at the close of the 2D-on-v2 work (commits
+`9834951`..`db6ebf8`).
+
+**Cross-backend correctness (Task 1.5).**
+- `solv_numpy_etd2` ≡ `solv_spacc_etd2` on the stitched
+  `(36000, 36000)` 2D operator: rel-L2 ≤ `1·10⁻¹⁰`, no tolerance
+  widening needed. Test:
+  `tests/test_solvers_2d.py::test_2d_accelerate_matches_numpy`. MKL
+  and CUDA placeholders auto-skip on this hardware.
+
+**Per-mode Hankel-space agreement vs PR #48 forward-Euler baseline
+(Task 1.6).**
+On the lepton block (510 entries; the hadron block has a
+particle-list ordering difference unrelated to the solver — see
+test docstring) at the deepest snapshot, EPOSLHC, θ=30°, 100 GeV
+proton primary:
+
+| metric | rel-L2 |
+| ------ | -----: |
+| min over k-modes        | 0.124 % |
+| median over k-modes     | 0.488 % |
+| max  over k-modes (k=18, κ=410) | 1.71 % |
+
+The 1.71 % max is the *irreducible* PR-Euler-vs-v2-ETD2RK gap on
+this problem (PR uses `1 + h·D`, v2 absorbs the diagonal exactly
+via `e^{h·D}`). Convergence sweep (`eps=0.05/dX_max=2` →
+`eps=0.01/dX_max=0.5`) shows v2-ETD2RK converged to <0.1 % within
+itself; the gap is solver-method, not insufficient step refinement.
+
+**Angular flux agreement vs baseline (Task 1.6).**
+ν_μ + ν̄_μ summed over helicity, summed over energy, deepest
+snapshot, via the legacy `convert_to_theta_space`: **2.49 % rel-L2**
+vs the PR baseline. Bound: 5 %.
+
+**Filon-J₀ inverse Hankel investigation (Tasks 2.1–2.2 / §11.6).**
+Negative result. Legacy retained.
+
+**Wall-time & step counts (Task 3.1, notebook config).**
+On `examples/Angular_shower_development.ipynb` (EPOSLHC, θ=30°,
+single 100 GeV proton primary, save_depths from
+`dm.h2X([15, 5, 0.2, 0] km)`):
+
+| solver | wall time | steps |
+| ------ | --------: | ----: |
+| PR #48 forward-Euler        | ≈ 22 s | 2560 |
+| v2 ETD2RK (this work)       | **0.96 s** | **92** |
+
+≈ 23× wall-time reduction at unchanged accuracy. Step count drops
+28× because v2's ρ⁻¹-aware path control (§4) sets `h_n` from the
+atmosphere's local scale-height, while PR's forward-Euler step
+count was driven by the diagonal stability bound (§2.2).
+
+### 11.9 Minor follow-ups (cleanup, not blocking)
+
+Two small UX warts surfaced during Task 3.1:
+
+1. **`grid_sol` layout.** v2 stores 2D snapshots as flat
+   `(n_grid, n_k·N)` arrays (consistent with the stitched-state
+   ETD2RK kernel). The legacy `convert_to_theta_space` (PR #48
+   verbatim) expects per-snapshot `(n_k, N)` slabs, so the notebook
+   does an explicit
+   `[snap.reshape(n_k, N) for snap in mceq_2d.grid_sol]` reshape
+   before reconstruction. A future cleanup: have
+   `convert_to_theta_space` accept the v2 layout natively, or
+   expose a `grid_sol_per_mode` view.
+
+2. **`dm.h2X(0) > dm.max_X` floating-point edge.** The CORSIKA
+   atmosphere's `h2X(0)` returns a value ~`1·10⁻¹²` above
+   `dm.max_X`, which v2's path-builder rejects (loop
+   `while X < max_X` exits before the snapshot fires). The notebook
+   clamps `save_depths = np.minimum(save_depths, dm.max_X * (1 - 1e-9))`
+   as a workaround. Cleaner fix: either `h2X` clamps at `max_X`,
+   or `_calculate_integration_path` tolerates
+   `int_grid[-1] >= max_X` within a small ε.
+
+Both are isolated to user-code workarounds today; neither blocks
+downstream work.
 
 ## References
 
