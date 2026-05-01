@@ -869,6 +869,468 @@ mceq.solve(int_grid=np.linspace(50, 2000, 10000))  # >=10k snapshots
   at both edges. Causes oscillation at low-E muon (−8.1 % / +13.2 %
   at the bottom two bins). Rejected (§5.3).
 
+## 11. Integrating 2D MCEq (PR #48) into v2
+
+PR #48 ([branch `origin/2d`](https://github.com/mceq-project/MCEq/pull/48),
+Kozynets / Fröse, based on Kozynets, Fedynitch, Becker Tjus,
+arXiv:2306.15263) extends MCEq from a slant-depth-only cascade to a
+joint *(slant-depth, angle-from-shower-axis)* problem solved in Hankel
+frequency space. This section documents (a) the math the PR is solving,
+(b) what its 1.4-era implementation does, (c) the v2 reformulation —
+which is structurally cleaner and substantially faster than the PR's
+sequential per-mode loop — and (d) what is still open.
+
+### 11.1 Hankel-space cascade equation
+
+The 2D state is a particle density `η_h(E, X, θ)` parameterised by
+energy `E`, slant depth `X`, and the polar angle `θ` between the
+particle and the shower axis. Under axisymmetry, the zeroth-order
+Hankel transform
+
+```
+η̃_h(E, X, κ) = ∫₀^∞ η_h(E, X, θ) · J₀(κ·θ) · θ dθ                    (21)
+```
+
+turns the angular convolution against the production kernel into an
+elementwise product over `κ` (Hankel convolution theorem). Each `κ` mode
+then satisfies an independent cascade equation of the same shape as (1):
+
+```
+dη̃_κ/dX = [ A(κ) + ρ⁻¹(X) · B(κ) ] η̃_κ ,            for κ ∈ k_grid    (22)
+```
+
+Crucially, **k-modes are exactly decoupled** in (22): the off-block
+entries between modes are zero by the convolution theorem, and the
+authors confirm this in §III of the paper. We verified the structure
+empirically against `mceq_db_URQMD_150GeV_2D.h5`: the per-channel
+matrices stored as a `(n_k·n_E, n_k·n_E)` block-diagonal have
+*exactly* zero off-block entries (max-abs `0.0`) for both the hadronic
+and decay groups, and the per-block values fall off smoothly with `κ`
+(SIBYLL-2.3D Λ̄→Λ̄ block-diagonal entries: 4.50 at `κ=0` to 0.19 at
+`κ=2000`).
+
+### 11.2 What is and isn't k-dependent
+
+| Quantity                                             | k-dependent? |
+| ---------------------------------------------------- | ------------ |
+| Hadronic off-diagonal `A_off(κ) = int_off(κ)`        | **yes** (Hankel of angular kernel) |
+| Decay off-diagonal `B_off(κ) = dec_off(κ)`           | **yes** (parent→daughter angle from kinematics) |
+| Cross-section diagonal `−σ_inel/λ_int`                | no  |
+| Decay-rate diagonal `−1/(γ τ ρ)`                     | no  |
+| Continuous-loss FD stencil `M_loss` (acts on E only) | no  |
+| Multiple Coulomb scattering damping (muon rows)      | **yes**, diagonal: `−κ²·θ_s²(E)/4` per step |
+
+So `D = diag(A) + ρ⁻¹·diag(B) + δ_MS(κ)` has only one κ-dependent
+piece — the multiple-scattering damping on muon rows — and that piece
+is purely diagonal. This is the structural insight that makes ETD2RK
+batch cleanly across modes (§11.4).
+
+### 11.3 The PR's 1.4-era implementation
+
+PR #48 keeps the forward-Euler kernel and, in 2D mode, runs it
+sequentially across modes (`solv_numpy`, commit `584eea3`):
+
+```python
+for step in tqdm(range(nsteps)):
+    int_deriv_k = [imc[k].dot(phc[k]) for k in range(len(config.k_grid))]
+    dec_deriv_k = [dmc[k].dot(phc[k]) * ric[step]
+                   for k in range(len(config.k_grid))]
+    full_deriv_k = [int_deriv_k[k] + dec_deriv_k[k]
+                    for k in range(len(config.k_grid))]
+    phc += np.array(full_deriv_k) * dxc[step]
+```
+
+Pain points carried over from 1.4 + new ones from the layout:
+
+1. **Forward-Euler at native step grid** — same diagonal-driven step
+   ceiling as 1.4 (§2.2), with step counts that explode at high zenith.
+   2D inherits this fully; 28 800 steps per mode at θ=89°.
+2. **Sequential mode loop in Python** — list comprehensions inside the
+   per-step loop allocate `n_k` lists and do `n_k` separate scipy SpMVs
+   per step; the `np.array(full_deriv_k)` line then re-materialises
+   the result. Even with the same arithmetic, dispatch overhead is
+   `n_k` ×.
+3. **Resonance approximation** (§2.3) — still on, with the same
+   ~0.3–0.7 % systematic, now applied identically to every mode.
+4. **Decay matrix stored 24× redundantly** — the database has
+   `dec_m[κ]` at 24 different κ. They are *not* identical (kinematic
+   angular spread is real), but they share more than 90 % of their
+   structural sparsity, so this is leaving a lot of compression on
+   the table (§11.5).
+5. **Database energy grid is 60-bin (10 MeV–10 TeV)**, not the 121-bin
+   1D grid; cross sections / continuous losses still come from the 140-
+   bin 1D arrays and are sliced down via `config.default_ecenters`
+   (`HDF5Backend.cs_cuts`). The current cs-cut path was rewritten in
+   `ba916fa` to call the module-level `_eval_energy_cuts(...)` directly
+   instead of the instance method; this needs to be kept.
+6. **`config.enable_2D = True` by default** in PR #48's config, with
+   `mceq_db_fname = "mceq_db_lext_dpm191_v131.h5"` (the 1D database).
+   In v2 `enable_2D` should default to `False` and only flip when the
+   2D database is opened.
+7. **Multiple scattering** is folded as a per-step elementwise multiply
+   on the muon rows (`phc[k][muon_rows] *= exp(−κ²·dX·θ_s²/4)`); this
+   is operator splitting on top of forward-Euler and has the same
+   `O(h)` splitting error as Strang on a stiff diagonal. With ETD2 the
+   damping belongs in `D` directly (§11.4).
+8. **Hankel→θ reconstruction** (`MCEqRun.convert_to_theta_space`,
+   commit `e7abed3`) uses cubic interpolation onto a 5×-oversampled κ
+   grid plus `np.trapz` against `J₀(κθ)·κ`. Adequate but ad-hoc; the
+   structured **discrete Hankel transform** of Guizar-Sicairos &
+   Gutiérrez-Vega (2004, JOSA A 21, 53) samples at zeros of `J₀` and
+   gives near-exact transform pairs at the same cost. Worth swapping
+   in but not load-bearing.
+
+### 11.4 v2 reformulation: stacked-state ETD2RK
+
+Because `D` is k-independent except for the diagonal multiple-scattering
+piece, all k-modes share the integrating factor `e^{h·D}` and the
+φ-functions. With state stacked as `Φ ∈ ℝ^{N×n_k}` (one column per
+mode), the ETD2RK update (10) becomes batched along the mode axis:
+
+```
+F(Φ)[:, k] = int_off(κ_k) · Φ[:, k]  +  ρ⁻¹ · dec_off(κ_k) · Φ[:, k]
+D(κ_k)     = d_int + ρ⁻¹ · d_dec  +  δ_MS(κ_k)               # length-N
+a[:, k]    = exp(h·D(κ_k)) ⊙ Φ[:, k]  +  h · φ₁(h·D(κ_k)) ⊙ F(Φ)[:, k]
+Φ[:, k]   <- a[:, k] + h · φ₂(h·D(κ_k)) ⊙ ( F(a)[:, k] − F(Φ)[:, k] )  (23)
+```
+
+Per-step structure:
+
+* **Diagonal factors are computed once** if `δ_MS = 0` (no muon
+  scattering). With `δ_MS(κ) ≠ 0` only on the muon rows, the cheapest
+  layout is `D` of shape `(N, n_k)` where `D[i, k] = d_int[i] +
+  ρ⁻¹·d_dec[i] + δ_MS[i, k]` (only the muon rows differ across `k`),
+  and `_etd_compute_diag_factors` runs unchanged on the flattened
+  `(N·n_k,)` view. Cost: identical to one 1D step's diagonal compute,
+  amortised across all modes.
+* **Off-diagonal SpMV is batched, not SpMM.** Each κ has its own
+  operator `N(κ_k)` — same sparsity pattern, *different* values — so
+  what looks like a `(N, n_k)` × sparse multiplication is actually
+  `n_k` independent SpMVs. Classical SpMM (one sparse matrix × dense
+  right-hand-side block, e.g. `cusparseSpMM`, `mkl_sparse_d_mm`) does
+  not apply: the operator changes per column. The state stays a
+  vector — per mode — even though we stack it for layout. Three
+  implementation tiers:
+
+  1. *Tier A (drop-in)* — call `solv_numpy_etd2` `n_k` times in a
+     Python `for k in range(n_k):` loop. Each call inherits all of
+     v2's path control, BSR conversion, and step-count reduction.
+     Expected speedup over PR #48 forward-Euler: **9–11×** at fixed
+     accuracy, just as in 1D (§6.3). This is the right first
+     milestone — minimal new code, big win.
+  2. *Tier B (custom batched-SpMV kernel)* — store the off-diagonals
+     as a single value array `int_off_vals` of shape `(nnz, n_k)`
+     sharing one `(indptr, indices)` (the union of per-mode supports;
+     pattern density tracks the densest mode, κ=0). One step walks
+     the sparsity pattern *once* and does `n_k` multiply-accumulates
+     per nonzero into `out[:, k]`. Removes the Python per-mode
+     dispatch overhead and amortises the cache traffic of the
+     pattern walk across all modes. For BSR, the same with values
+     `(n_blocks, b, b, n_k)`. Expected additional **~1.5–2×** on the
+     SpMV portion. (An equivalent form: stitch the `n_k` operators
+     into one block-diagonal sparse matrix of shape `(N·n_k, N·n_k)`
+     and do *one* SpMV against the flattened length-`N·n_k` state.
+     Same arithmetic, simpler kernel, no shared-pattern reuse — a
+     fallback if the custom kernel is undesirable.)
+  3. *Tier C (accelerator-batched)* — cuSPARSE since CUDA 11.3
+     exposes `cusparseSpMVBatched` with one sparsity descriptor and
+     per-batch value arrays — the exact primitive Tier B describes,
+     executed on-device. With `n_k = 24` this is well inside the
+     regime where the batched call beats `n_k` separate SpMVs by
+     an order of magnitude.
+
+     **MKL has no direct batched-SpMV equivalent.** Intel's sparse
+     BLAS exposes `mkl_sparse_d_mv` (one matrix × one vector) and
+     `mkl_sparse_d_mm` (one matrix × dense RHS block — *real* SpMM,
+     does not apply since our operator differs per mode); the
+     `*_batch` family is dense-only (`cblas_dgemm_batch`,
+     `cblas_dgemv_batch`). On the MKL backend, the practical paths are,
+     in order of preference:
+
+     a. **Block-diagonal stitch.** Build one sparse matrix of shape
+        `(N·n_k, N·n_k)` with the per-mode operators on the block
+        diagonal, run one `mkl_sparse_d_mv` per ETD2 stage against
+        the flattened length-`N·n_k` state. Same arithmetic as
+        `n_k` separate SpMVs but a single inspector-executor handle
+        with one cost-analysis pass; slots cleanly into
+        `solv_mkl_etd2`'s `MCEqRun._mkl_etd2_cache` machinery. nnz
+        grows `n_k×` versus a shared-pattern store (no compression),
+        which is fine at MCEq sizes.
+     b. **`n_k` handles sharing `(indptr, indices)`.** Distinct value
+        buffers per mode, `n_k` calls per step in a tight C loop.
+        `mkl_sparse_optimize` still amortises cost analysis since the
+        pattern is identical across handles, but cache reuse across
+        modes is lost.
+     c. **Custom AVX-512 batched-SpMV kernel.** Walk `(indptr,
+        indices)` once, do `n_k` FMAs per nonzero against
+        `vals[nnz, n_k]`. `n_k = 24` doubles fits one AVX-512 register
+        lane neatly. ~1.5–2× over (b) at the cost of a hand-written
+        kernel.
+
+     Option (a) is the right starting point for the MKL backend.
+
+     **Benchmark on Apple Accelerate** (the closest multi-threaded
+     CPU-sparse stack we ship today) confirms the ranking. SIBYLL-2.3D
+     hadronic operator from `mceq_db_URQMD_150GeV_2D.h5` summed across
+     channels gives a per-mode `(1500, 1500)` matrix at 16 % density
+     (363k nnz/mode, 24 modes); the block-diagonal stitch is
+     `(36000, 36000)` at 8.71M nnz. Mean SpMV time per *full step's
+     worth of modes* (i.e., for all 24 modes combined; M-series, 12
+     physical cores):
+
+     | method                              | µs/call (24 modes) | µs/mode | rel. to D |
+     | ----------------------------------- | ------------------:| -------:| ---------:|
+     | A scipy CSR `n_k` SpMVs (loop)      |        7376        |   307   |     0.20× |
+     | B scipy CSR block-diagonal SpMV     |        7270        |   303   |     0.20× |
+     | scipy BSR(6) `n_k` SpMVs (loop)     |        4108        |   171   |     0.35× |
+     | scipy BSR(6) block-diagonal SpMV    |        4325        |   180   |     0.33× |
+     | C Accelerate CSR `n_k` SpMVs (loop) |        2508        |   104   |     0.57× |
+     | D Accelerate CSR block-diagonal SpMV|        1441        |    60   |     1.00× |
+
+     Three orthogonal axes are visible:
+
+     * *Threading.* Forcing single-thread (`VECLIB_MAXIMUM_THREADS=1`)
+       collapses C and D to scipy's CSR level (~7 ms) — the entire
+       Accelerate win is threading. scipy CSR/BSR SpMV is
+       single-threaded, so A and B are identical, and so are the BSR
+       loop and BSR block-diagonal variants.
+     * *Block-diagonal stitch vs per-mode loop.* For *threaded*
+       backends, **D beats C by 1.8×** on the same arithmetic: the
+       24-call loop spawns/joins worker threads 24 times on jobs too
+       small (363k nnz each) to amortise it, whereas the single
+       8.7M-nnz call dispatches once. For single-threaded backends
+       the stitch is neutral.
+     * *BSR vs CSR.* BSR speeds scipy up by ~1.8× independent of
+       loop-vs-stitch (BSR(6) loop ≈ BSR(6) block-diag ≈ 4.1–4.3
+       ms). The optimal `blocksize=6` here matches `60 = 6·10`; the
+       v2 1D config uses `blocksize=11` because `n_E=121=11²`. The 2D
+       database's `n_E=60` factors as `6·10` / `5·12` / `4·15`, and a
+       blocksize sweep confirms `b ∈ {5, 6, 10}` are the winners,
+       degrading at `b ≥ 12`.
+
+     **The orthogonality matters**: BSR helps scipy but does *not*
+     stack on top of the threaded-stitch win, because the threaded
+     stitch is already 3× faster than the best scipy BSR variant.
+
+     We further tested BSR *on Accelerate* directly, by exposing
+     `sparse_matrix_block_create_double` / `sparse_insert_block_double`
+     through a small ctypes shim (the existing `spacc.c` only wraps
+     the point format). At `blocksize=6` (matching the 2D database's
+     `n_E=60` factoring), measured times are:
+
+     | variant                          | µs/call | µs/mode |
+     | -------------------------------- | -------:| -------:|
+     | Accelerate CSR block-diag (D)    |  **1441** | **60** |
+     | Accelerate BSR(6) block-diag     |    2804 |    117 |
+     | Accelerate CSR per-mode loop (C) |    2508 |    104 |
+     | Accelerate BSR(6) per-mode loop  |    8364 |    349 |
+
+     **BSR-on-Accelerate is ~2× slower than CSR-on-Accelerate** on
+     both the block-diag and per-mode forms. The point-format
+     threaded kernel in Apple's Sparse BLAS appears more tightly
+     tuned than the block-format kernel at our matrix sizes
+     (≥ 1500-dim, 16 % density, 6×6 sub-blocks that aren't fully
+     dense). Block-diag still amortises threading by ~3× whether
+     we're on CSR or BSR — so the stitch wins regardless of format
+     — but the format choice on Accelerate is plainly **CSR**.
+
+     For the **MKL** backend the picture is different and we
+     haven't directly measured: MKL's threaded BSR microkernel is
+     designed for `b ∈ [2, 7]` (the regime that gave v2's 1D 1.5×
+     over MKL CSR, §8.4) and its threading model also amortises
+     per-call dispatch differently than Accelerate's. Best guess:
+     MKL BSR(6) block-diagonal stitch will land between Accelerate
+     CSR-stitch and scipy-BSR-stitch. v2's existing
+     `mkl_bsr_blocksize=6` already matches the 2D-database-optimal
+     blocksize, so no new tuning is needed for that backend — but
+     the BSR-vs-CSR decision should be re-measured once the
+     MKL-2D path is wired up rather than assumed from 1D.
+
+     Implication for MKL: option (a) — block-diagonal stitch — is
+     not just easier, it is also the faster MKL path because
+     `mkl_sparse_d_mv`'s thread dispatch follows the same logic as
+     Accelerate's. Confirming this on MKL is a one-call experiment
+     once the MKL-2D backend is wired up; we expect option (a) to
+     beat option (b) by a similar 1.5–2× margin.
+
+     Bench script: `/tmp/bench_2d_spmv.py` (kept as a reference under
+     `docs/scripts/` if revived).
+
+* **Stability bound.** `spec(N(κ))` is dominated by the `M_loss`
+  band (§3.5), which is k-independent — so `h_max ≈ 21 g/cm²` from
+  (14) is the same for every mode. The hadronic Hankel kernel
+  off-diagonal *decreases* with `κ` (verified above), so high-κ modes
+  are at most as stiff as `κ=0`. Path control (§4) is unchanged: one
+  schedule serves all modes.
+
+* **Multiple scattering.** With ETD2RK, the muon scattering damping
+  `−κ²·θ_s²(E)/4` is just a contribution to `D` on muon rows. The
+  integrating factor `e^{h·D}` then absorbs it exactly — no operator
+  splitting, no `O(h)` extra error. This removes the standalone
+  `phc[k][muon] *= exp(...)` factor in the PR's loop. (Sanity check:
+  for k=0, `θ_s = 0` and the term vanishes, recovering the 1D limit
+  exactly.)
+
+**Headline expectation**: Tier A alone replaces the PR's
+`28 872 × 24 = 692 928` per-mode forward-Euler steps at θ=89° with
+≈ `1325 × 24 = 31 800` ETD2 steps, at the same per-step arithmetic
+cost as v2's 1D ETD2 plus a factor of `n_k = 24` on the SpMV. Tier B
+amortises one walk-of-sparsity per step across all modes, removing
+roughly half of the residual Python overhead. End-to-end this should
+land somewhere between **10× and 25×** faster than the PR as written,
+zenith-independent.
+
+### 11.5 Database changes for the integrated v2-2D path
+
+* `enable_2D` should be detected from the database (`'k_dim' in
+  common.attrs`), not from a config flag. The flag should be removed
+  in favour of "the database is 2D-shaped or it isn't" — same pattern
+  as `muon_helicity_dependence` reading from the decay group.
+* The current 2D database stores 24 per-mode matrices side-by-side as
+  a block-diagonal `(n_k·n_E, n_k·n_E)` CSR; the loader reshapes to
+  `(n_k, n_E, n_E)` per (parent, child) pair. v2's matrix builder
+  outputs `int_m, dec_m` of *the same* `(n_k, dim_states, dim_states)`
+  tensor shape today (commit `c597dff`); switching the storage to a
+  `(nnz_pattern, n_k)` value array against a single shared
+  `(indptr, indices)` is a one-time loader change and is what enables
+  tier B. The shared sparsity pattern is the union of nonzero supports
+  across modes; pattern density scales as the densest mode (`κ=0`),
+  so this is approximately free in storage.
+* Cross sections and continuous losses live on the 1D 140-bin grid
+  and are sliced down to the 60-bin 2D grid via
+  `_eval_energy_cuts(config.default_ecenters, e_min, e_max)` (the
+  `ba916fa` fix). v2 should keep this — there is no reason to
+  re-tabulate cross sections on the 2D grid.
+
+### 11.6 Open issues for 2D-on-v2
+
+1. **EM cascade (§7) becomes load-bearing.** Lateral spread of EAS at
+   small angles is dominated by the EM component (γ, e±). Disabling e±
+   by default — the current v2 production stance — is acceptable for
+   inclusive *muon* / *neutrino* fluxes but **not** for the angular
+   distributions PR #48 is targeting. The 2D integration depends on
+   shipping the block-ETD §8.2 fix that handles the L/R semi-Lagrangian
+   triplets, *or* on a 2D database that omits the L/R variants
+   altogether. Recommend: bring §8.2 forward in priority once 2D work
+   resumes.
+2. **Hankel reconstruction quality (investigated, legacy retained).**
+   We investigated replacing the legacy cubic-interp + `np.trapz`
+   inverse Hankel (`MCEqRun.convert_to_theta_space`, ported to
+   `MCEq.hankel.inverse_hankel_legacy`) with a Filon-J₀ quadrature
+   that integrates the J₀ oscillation exactly per segment via the
+   closed form `∫ k J₀(αk) dk = (k/α) J₁(αk)`. Two variants tested:
+
+   * **Segment-mean F per `[k_i, k_{i+1}]`** (no F interpolation).
+   * **Linear F per `[k_i, k_{i+1}]`** (chord between endpoints; needs
+     `∫ k² J₀(αk) dk` via the Struve identity from DLMF 10.22.5).
+
+   Both implementations were verified against `scipy.integrate.quad`
+   to machine precision on synthetic problems. On the production
+   K_GRID `[0, 1, 2, 3, 4, 6, 9, 12, 17, 23, 32, 44, 61, 84, 115,
+   158, 217, 299, 410, 563, 773, 1061, 1457, 2000]`, neither variant
+   beat legacy on a Gaussian round-trip:
+
+   | sigma  | legacy rel-err | linear-F Filon | ratio (Filon/legacy) |
+   | -----: | -------------: | --------------: | -------------------: |
+   | 0.001  |        1.4·10⁻¹|      1.2·10⁻¹  | 0.9× (truncation-bound, see below) |
+   | 0.005  |        3.9·10⁻³|      5.1·10⁻²  | 13× **worse**       |
+   | 0.01   |        2.4·10⁻³|      5.2·10⁻²  | 22× worse           |
+   | 0.05   |        2.7·10⁻³|      5.3·10⁻²  | 20× worse           |
+   | 0.1    |        2.0·10⁻³|      5.3·10⁻²  | 26× worse           |
+
+   **Diagnosis:** the error budget is dominated by F-curvature within
+   wide segments of the geometric K_GRID — *not* by J₀ oscillation.
+   Concretely, in the segment `[44, 61]` for σ=0.05, F drops from
+   `2.4·10⁻⁴` to `5·10⁻⁷` (factor ~480 within the segment); a linear
+   chord overshoots the concave-up Gaussian by ~5 % at θ=0, which is
+   the worst-θ case (J₀ does not oscillate, so the Filon advantage
+   collapses). The legacy cubic spline catches this curvature; linear-F
+   cannot. At high θ where J₀ oscillates within a segment, Filon does
+   win — RMS error over θ ∈ [0, π/2] for σ=0.05 is 0.7 % (Filon) vs
+   0.3 % (legacy) — but the `max` is dominated by θ=0.
+
+   **Truncation floor for narrow Gaussians:** at σ=0.001 we have
+   `∫_{2000}^∞ σ²·exp(−σ²k²/2)·k dk = exp(−2) ≈ 0.135`, so any
+   quadrature on `[0, k_max]` is bounded above by 86.5 % recovery of
+   `f(0) = 1`. Legacy's 13.7 % at σ=0.001 happens to come in slightly
+   under that bound because `scipy.interpolate.interp1d(kind="cubic")`
+   accidentally extrapolates past `k_max`; that's a coincidence, not
+   a method advantage.
+
+   **Conclusion: the database K_GRID density, not the J₀-quadrature
+   strategy, is the binding accuracy constraint** for any low-order F
+   approximation. The principled fix would be cubic-F Filon (cubic
+   spline of F + closed-form `∫ k^n J₀(αk) dk` for `n = 0..3` per
+   segment via Struve recursion) — this matches legacy at θ=0 and
+   should beat it at high θ where J₀ oscillates within a segment.
+   ~80–150 LOC of careful work; deferred until a downstream physics
+   problem demonstrably needs better accuracy.
+
+   `MCEq.hankel.inverse_hankel_legacy` is retained as the standalone,
+   testable extraction (`tests/test_hankel.py` pins its accuracy on
+   Gaussian round-trip). `MCEqRun.convert_to_theta_space` is left
+   unchanged in v2 — same algorithm as PR #48, verified against the
+   PR baseline (Task 1.6, ν_μ angular flux at 2.49 % rel-L2).
+
+   Bench script preserved as `/tmp/bench_2d_spmv.py` and the
+   investigation history is in branches `2d-on-v2` working tree
+   (uncommitted Filon attempts) — recoverable from agent transcripts
+   if cubic-F Filon is later picked up.
+3. **The `ba916fa` "Do we actually need that?"** comment on the
+   cross-section cut: yes, because the 2D HDF5 stores `cross_sections`
+   on the 1D grid (`shape=(140, ...)`) and the 2D state vector lives on
+   the 60-bin grid. The cut is needed; the `ba916fa` rewrite to use
+   the module-level `_eval_energy_cuts` is correct.
+4. **Force-resonance opt-in (§3.4).** With ETD2RK the resonance
+   approximation is removed. The 2D database (`URQMD 3.4` low-E) was
+   produced under the 1D resonance approximation though, so all
+   short-lived species in the 2D matrices are already folded into
+   parents at build time. Either re-tabulate without the approximation,
+   or set `adv_set["force_resonance"]` to the same PDG list the 2D
+   database was built with — see `URQMD34` equivalences map in
+   `data.py` (`3122 → 2112`, `−3122 → −2112` for cross sections).
+5. **Muon scattering parameters.** `lambda_s = 37.7 g/cm²`,
+   `E_s = 0.021 GeV` are CORSIKA's Gauss-approximation constants
+   (Heck & Pierog handbook p.12). Reasonable, but worth flagging
+   that this is a model choice that lives outside the database — keep
+   it in `config` and document the source.
+
+### 11.7 Suggested rollout
+
+1. *On a `2d-v2` branch off `v2`*: port the 2D matrix-builder pieces
+   (`_zero_mat`, `_csr_from_blocks`, `_follow_chains`, `_fill_matrices`
+   2D branches in commits `c597dff`, `77fb4c7`) onto v2's
+   `MatrixBuilder`. No solver changes yet; verify that
+   `int_m.shape == (n_k, dim_states, dim_states)` rebuilds correctly
+   against `mceq_db_URQMD_150GeV_2D.h5` and that the resonance
+   approximation still folds short-lived species at this stage.
+2. *Tier A solver*: add `solv_numpy_etd2_2d(...)` that calls
+   `_etd_get_split_for_numpy` per κ and reuses `_etd_compute_diag_factors`
+   /step `n_k` times. Path schedule (§4) is shared. This is the
+   minimum-viable v2-2D and should already match the PR's results
+   (sub-percent on the κ=0 mode against 1D MCEq native step).
+3. *Multiple scattering folded into `D`*: add the muon-row κ²-damping
+   into `_etd_compute_diag_factors` via a `delta_MS` length-`N`
+   summand (per-κ-call; trivial). Verify against a CORSIKA-level
+   muon angular profile at a single energy decade.
+4. *Tier B stacked SpMM*: introduce a `BatchedOffdiag` class wrapping
+   `(indptr, indices, vals[nnz, n_k])` and replace the per-κ-loop
+   with a single fused walk. Bench against tier A; promote when
+   ≥1.5× faster on SIBYLL23D θ=60°.
+5. *Inverse Hankel quality*: legacy cubic-interp + `np.trapz` is
+   retained for v2 (see §11.6 item 2). Filon-J₀ on the existing
+   K_GRID was investigated and rejected — neither a Guizar-Sicairos
+   DHT nor a cubic-F Filon is a "drop-in"; both require K_GRID
+   redesign or significant new quadrature code. Defer until a
+   downstream physics problem demonstrably needs better than the
+   2–4·10⁻³ rel-err legacy delivers for σ ≥ 0.005.
+6. *EM cascade (§8.2)*: required before the 2D path is usable for
+   shower physics where the EM component matters.
+
+The first three steps are independent of §8.2 (block-ETD for muon
+dE/dX cliff) and of the EM-cascade fix; they can ship as a 2D-but-
+hadron-only mode while §8.2 / §7 are landed in parallel.
+
 ## References
 
 * Cox D. A., Matthews P. C., 2002. *Exponential time differencing for
@@ -888,3 +1350,13 @@ mceq.solve(int_grid=np.linspace(50, 2000, 10000))  # >=10k snapshots
 * Liechty C., Skeel R. D., 2009. *Exponentially fitted finite
   differences.* Numerical methods background for the `expfit` stencil
   family (§5).
+* Kozynets T., Fedynitch A., Becker Tjus J., 2023.
+  *Atmospheric lepton fluxes via two-dimensional matrix cascade
+  equations.* arXiv:2306.15263. The 2D (Hankel-mode) extension of
+  MCEq (§11): equation (15) in the paper is (22) here, the inverse
+  Hankel transform is (21).
+* Guizar-Sicairos M., Gutiérrez-Vega J. C., 2004. *Computation of
+  quasi-discrete Hankel transforms of integer order for propagating
+  optical wave fields.* JOSA A **21**, 53–58. Reference DHT for a
+  future `convert_to_theta_space` replacement; sampled at zeros of
+  `J₀`, would require redesigning the database K_GRID (see §11.6).
