@@ -1,8 +1,13 @@
+from itertools import product
 from time import time
 
 import numpy as np
+import scipy  # noqa: F401  (used by ``convert_to_theta_space`` for ``scipy.special.j0``)
 import scipy.sparse as sp
 import six
+from scipy.interpolate import (
+    interp1d,  # noqa: F401  (used by ``convert_to_theta_space``)
+)
 
 import MCEq.data
 from MCEq import config
@@ -160,8 +165,7 @@ class MCEqRun:
 
         if return_bins:
             return ptot_bins, ptot_grid
-        else:
-            return ptot_grid
+        return ptot_grid
 
     def etot_grid(self, particle_name, return_bins=False):
         """Computes and returns the total energy grid.
@@ -175,8 +179,7 @@ class MCEqRun:
 
         if return_bins:
             return etot_bins, etot_grid
-        else:
-            return etot_grid
+        return etot_grid
 
     def xgrid(self, particle_name, return_as, return_bins=False):
         """Uniform access to the spectrum variable, depending on the
@@ -184,12 +187,11 @@ class MCEqRun:
 
         if return_as == "kinetic energy":
             return (self.e_bins, self.e_grid) if return_bins else self.e_grid
-        elif return_as == "total energy":
+        if return_as == "total energy":
             return self.etot_grid(particle_name, return_bins)
-        elif return_as == "total momentum":
+        if return_as == "total momentum":
             return self.ptot_grid(particle_name, return_bins)
-        else:
-            raise Exception("Unknown grid type requested.")
+        raise Exception("Unknown grid type requested.")
 
     def closest_energy(self, kin_energy):
         """Convenience function to obtain the nearest grid energy
@@ -221,11 +223,9 @@ class MCEqRun:
         order = [(p.mceqidx, p.name) for p in self.pman.cascade_particles]
         if order_i != order and not only_available:
             raise Exception(
-                "The orders of the state vecs don't match {0}!={1}".format(
-                    order_i, order
-                )
+                f"The orders of the state vecs don't match {order_i}!={order}"
             )
-        elif order_i != order and only_available:
+        if order_i != order and only_available:
             particles_requested = [o[1] for o in order_i]
             for pidx, pname in order:
                 if pname in self.pman.pname2pref:
@@ -388,28 +388,24 @@ class MCEqRun:
             etot_grid = self.etot_grid(lep_str)
             if not integrate:
                 return res * etot_grid**mag
-            else:
-                return res * etot_grid**mag * self.e_widths
+            return res * etot_grid**mag * self.e_widths
 
-        elif return_as == "kinetic energy":
+        if return_as == "kinetic energy":
             if not integrate:
                 return res * self._energy_grid.c**mag
-            else:
-                return res * self._energy_grid.c**mag * self.e_widths
+            return res * self._energy_grid.c**mag * self.e_widths
 
-        elif return_as == "total momentum":
+        if return_as == "total momentum":
             ptot_bins, ptot_grid = self.ptot_grid(lep_str, return_bins=True)
             dEkindp = np.diff(ptot_bins) / self.e_widths
             if not integrate:
                 return dEkindp * res * ptot_grid**mag
-            else:
-                return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
+            return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
 
-        else:
-            raise Exception(
-                "Unknown 'return_as' variable choice.",
-                'the options are "kinetic energy", "total energy", "total momentum"',
-            )
+        raise Exception(
+            "Unknown 'return_as' variable choice.",
+            'the options are "kinetic energy", "total energy", "total momentum"',
+        )
 
     def set_interaction_model(
         self,
@@ -468,7 +464,7 @@ class MCEqRun:
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
-            self.matrix_builder = MatrixBuilder(self.pman)
+            self.matrix_builder = MatrixBuilder(self.pman, self._mceq_db)
 
         elif update_particle_list and particle_list != self._particle_list:
             info(10, "Updating particle list.")
@@ -1020,11 +1016,11 @@ class MCEqRun:
           fd_span (float | None): forward-FD probe span for the ETD2
             schedule's local rate estimate. ``None`` →
             ``config.etd2_path["fd_span"]``.
-          kwargs (dict): Arguments are passed directly to the solver
-            methods. ``X_start`` is honoured by all kernels (defaults to
-            ``config.X_start = 0``). ``eps`` / ``dX_max`` / ``dX_min`` /
-            ``fd_span`` control the ETD2 non-uniform schedule; pass them
-            here to override the defaults in ``config.etd2_path``.
+          kwargs (dict): Reserved for advanced flags. Currently only
+            ``skip_integration_path=True`` is recognised — it bypasses
+            the call to ``_calculate_integration_path`` and reuses the
+            cached ``self.integration_path`` (used by tests / experts who
+            want to keep the path fixed across multiple ``solve`` calls).
 
         """
         info(2, f"Launching {config.kernel_config} solver")
@@ -1032,7 +1028,7 @@ class MCEqRun:
         if not kwargs.pop("skip_integration_path", False):
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be strickly",
+                    "The X values in int_grid are required to be strictly",
                     "increasing.",
                 )
 
@@ -1049,7 +1045,18 @@ class MCEqRun:
         else:
             info(2, "Warning: integration path calculation skipped.")
 
-        phi0 = np.copy(self._phi0)
+        # If the initial angular density is a delta function (e.g. a single
+        # cosmic-ray shower incident at some angle theta), all Hankel modes
+        # k are populated with the same amplitude as the 1D initial
+        # condition. The stitched ETD2 path operates on a length
+        # ``n_k * dim_states`` state vector — broadcast ``_phi0`` across
+        # the n_k blocks via ``np.tile`` so block-k of the stacked state
+        # is a copy of ``_phi0``. For 1D databases this reduces to a
+        # plain copy.
+        if self._mceq_db.is_2d:
+            phi0 = np.tile(self._phi0, self._mceq_db.n_k)
+        else:
+            phi0 = np.copy(self._phi0)
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         info(2, f"for {nsteps} integration steps.")
@@ -1064,6 +1071,77 @@ class MCEqRun:
             self.grid_sol = np.asarray(self.grid_sol)
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
+
+    def convert_to_theta_space(
+        self,
+        hankel_transf,
+        pdg_id,
+        hel,
+        oversample_res=5,
+        theta_res=600,
+        log_theta=False,
+    ):
+        """Convert Hankel-space amplitudes from the 2D MCEq solver to real
+        (angular) space.
+
+        .. note::
+            Inherited verbatim from PR #48 — replaced by the Filon-J0
+            quadrature in Phase 2.3.
+
+        Args:
+            hankel_transf (list of np.arrays): list of Hankel space solutions at
+                the requested slant depths (i.e. the output of ``self.grid_sol``)
+            pdg_id (int): PDG ID of the particle whose angular density is being
+                requested (e.g. 14 for NuMu)
+            hel (int): helicity of the particle whose angular density is being
+                requested (e.g. 0 or ±1 for polarized muons)
+            oversample_res (int): resolution of the Hankel grid oversampling
+                (used to approximate the continuous inverse Hankel transform)
+            theta_res (int): resolution of the angular (theta) grid where the
+                inverse Hankel transform will output the densities
+            log_theta (bool): whether to return logarithmic angular grid
+                (True=logarithmic, False=linear)
+        """
+        if log_theta:
+            theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
+        else:
+            theta_range = np.linspace(0, np.pi / 2, theta_res)
+        k_grid = self._mceq_db.k_grid
+        oversample_pts = np.max(k_grid) * oversample_res
+        oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
+        j0_ktheta_k = (
+            scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
+            * oversampled_k_arr[:, None]
+        )
+
+        store_oversampled_hankel_amps = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+        store_inverse_hankel_transfs = [
+            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
+        ]
+
+        for j in range(len(hankel_transf)):
+            for eidx in range(len(self.e_grid)):
+                mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
+                oversampled_hankel_amps = interp1d(
+                    k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
+                )(oversampled_k_arr)
+                inverse_hankel_transf = trapz(
+                    j0_ktheta_k * oversampled_hankel_amps[:, None],
+                    oversampled_k_arr,
+                    axis=0,
+                )
+
+                store_oversampled_hankel_amps[j][eidx] = oversampled_hankel_amps
+                store_inverse_hankel_transfs[j][eidx] = inverse_hankel_transf
+
+        return (
+            oversampled_k_arr,
+            store_oversampled_hankel_amps,
+            theta_range,
+            store_inverse_hankel_transfs,
+        )
 
     def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):
         """Launches the solver directly for parameters of the integration path.
@@ -1092,7 +1170,12 @@ class MCEqRun:
 
         start = time()
 
-        phi0 = np.copy(self._phi0)
+        # See ``MCEqRun.solve`` for the rationale: stitched ETD2 needs a
+        # length ``n_k * dim_states`` initial state for 2D databases.
+        if self._mceq_db.is_2d:
+            phi0 = np.tile(self._phi0, self._mceq_db.n_k)
+        else:
+            phi0 = np.copy(self._phi0)
 
         kernel, args = self._build_kernel_dispatch(nsteps, dX, rho_inv, phi0, grid_idcs)
 
@@ -1553,12 +1636,15 @@ class MCEqRun:
 class MatrixBuilder:
     """This class constructs the interaction and decay matrices."""
 
-    def __init__(self, particle_manager):
+    def __init__(self, particle_manager, backend):
         self._pman = particle_manager
+        self._backend = backend
+        self.is_2d = backend.is_2d
+        self.n_k = backend.n_k
+        self.k_grid = backend.k_grid
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -1585,8 +1671,6 @@ class MatrixBuilder:
 
         """
 
-        from itertools import product
-
         info(
             3,
             f"Start filling matrices. Skip_decay_matrix = {skip_decay_matrix}",
@@ -1607,7 +1691,12 @@ class MatrixBuilder:
             if child.mceqidx == parent.mceqidx and parent.can_interact:
                 # Subtract unity from the main diagonals
                 info(10, "subtracting main C diagonal from", child.name, parent.name)
-                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                if self.is_2d:
+                    self.C_blocks[idx][
+                        :, np.diag_indices(self.dim)[0], np.diag_indices(self.dim)[1]
+                    ] -= 1.0
+                else:
+                    self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
             if idx in self.C_blocks:
                 # Multiply with Lambda_int and keep track the maximal
@@ -1628,9 +1717,17 @@ class MatrixBuilder:
                         or (config.generic_losses_all_charged and pid != 11)
                     ):
                         info(5, "Cont. loss for", parent.name)
-                        self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+                        if config.enable_cont_rad_loss:
+                            if self.is_2d:
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )[None, :, :]
+                            else:
+                                self.C_blocks[idx] += self.cont_loss_operator(
+                                    parent.pdg_id
+                                )
 
-        self.int_m = self._csr_from_blocks(self.C_blocks)
+        self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
         # -I + D
 
         if not skip_decay_matrix or self.dec_m is None:
@@ -1643,7 +1740,14 @@ class MatrixBuilder:
                     info(
                         10, "subtracting main D diagonal from", child.name, parent.name
                     )
-                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
+                    if self.is_2d:
+                        self.D_blocks[idx][
+                            :,
+                            np.diag_indices(self.dim)[0],
+                            np.diag_indices(self.dim)[1],
+                        ] -= 1.0
+                    else:
+                        self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.0
                 if idx not in self.D_blocks:
                     info(25, parent.pdg_id[0], child.pdg_id, "not in D_blocks")
                     continue
@@ -1693,8 +1797,7 @@ class MatrixBuilder:
 
         if config.average_loss_operator:
             return self._average_operator(op_mat)
-        else:
-            return op_mat
+        return op_mat
 
     @property
     def dim(self):
@@ -1708,11 +1811,94 @@ class MatrixBuilder:
         return int(self._pman.dim_states)
 
     def _zero_mat(self):
-        """Returns a new square zero valued matrix with dimensions of grid."""
+        """Returns a new square zero valued matrix with dimensions of grid.
+
+        For 2D databases the per-channel block carries an extra leading
+        ``n_k`` axis (one slab per Hankel mode), so the returned shape is
+        ``(n_k, dim, dim)`` instead of ``(dim, dim)``.
+        """
+        if self.is_2d:
+            return np.zeros(
+                (self.n_k, self._pman.dim, self._pman.dim),
+                dtype=config.floatlen,
+            )
         return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
-    def _csr_from_blocks(self, blocks):
-        """Construct a csr matrix from a dictionary of submatrices (blocks)
+    def _apply_muon_scattering_to_diagonal(self, per_mode):
+        """Add ``-kappa^2 * theta_s^2(E) / 4`` to muon-row diagonals of each
+        per-mode dense matrix (modifies ``per_mode`` in place).
+
+        This is the v2 way of representing PR #48's muon multiple-scattering
+        damping: instead of an explicit per-step elementwise multiplier on
+        the state vector (operator splitting, O(h) extra error), we put the
+        contribution on the diagonal D so ETD2RK's ``e^{h*D}`` integrates it
+        exactly per step.
+
+        See ``docs/mceq_v1.x_v2_diff.md`` §11.4.
+        """
+        if not (self.is_2d and getattr(config, "muon_multiple_scattering", False)):
+            return
+        # Constants from CORSIKA's Gauss approximation (Heck & Pierog handbook
+        # p.12).
+        lambda_s = 37.7  # g/cm^2
+        E_s = 0.021  # GeV
+        e_kin = self._energy_grid.c
+        # Prefer pman's (13, 0) mass; fall back to the PDG value.
+        try:
+            mu_mass = float(self._pman[(13, 0)].mass)
+        except (KeyError, AttributeError):
+            mu_mass = 0.10566  # GeV
+        E_lab = e_kin + mu_mass
+        p2 = E_lab**2 - mu_mass**2
+        p2 = np.where(p2 > 0, p2, 1e-30)
+        beta = np.sqrt(p2) / E_lab
+        theta_s_sq = (1.0 / lambda_s) * (E_s / (E_lab * beta**2)) ** 2
+        # Identify all muon species present (PDG +-13, helicities 0, +-1).
+        muon_lidcs = []
+        n_e = len(e_kin)
+        for pdg in (13, -13):
+            for hel in (0, 1, -1):
+                key = (pdg, hel)
+                if key in self._pman.pdg2pref:
+                    p = self._pman.pdg2pref[key]
+                    if hasattr(p, "lidx") and getattr(p, "mceqidx", -1) >= 0:
+                        muon_lidcs.append(p.lidx)
+        if not muon_lidcs:
+            return
+        diag_idx = np.arange(self.dim_states)
+        for k_idx in range(self.n_k):
+            kappa = self.k_grid[k_idx]
+            if kappa == 0:
+                continue
+            damping = -(kappa**2) * theta_s_sq / 4.0
+            mat = per_mode[k_idx]
+            for lidx in muon_lidcs:
+                rows = diag_idx[lidx : lidx + n_e]
+                mat[rows, rows] += damping
+
+    def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
+        """Construct a CSR matrix from a dictionary of submatrices (blocks).
+
+        For 1D databases the result is a single ``(dim_states, dim_states)``
+        sparse matrix.
+
+        For 2D databases each block carries a leading ``n_k`` axis (one
+        per-mode slab, shape ``(n_k, dim, dim)``). We assemble one
+        ``(dim_states, dim_states)`` dense scratch buffer per Hankel mode
+        and then stitch the n_k blocks into a single block-diagonal CSR of
+        shape ``(n_k * dim_states, n_k * dim_states)``. Since k-modes are
+        decoupled this is mathematically equivalent to the old per-mode
+        tensor representation, but it lets v2's dimension-agnostic ETD2RK
+        kernels operate on the stitched matrix directly (see
+        ``docs/mceq_v1.x_v2_diff.md`` §11.4).
+
+        When ``apply_muon_scattering`` is True (only set by the interaction
+        matrix path), and ``config.muon_multiple_scattering`` is enabled,
+        the per-mode diagonal entries on muon rows receive the extra
+        ``-kappa^2 * theta_s^2(E) / 4`` damping. ETD2RK absorbs the
+        diagonal exactly via ``e^{h*D}``, so this folds PR #48's
+        per-step elementwise multiplier into the matrix without any
+        operator-splitting error.
 
         Note::
 
@@ -1721,8 +1907,37 @@ class MatrixBuilder:
         """
         from scipy.sparse import csr_matrix
 
-        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+        if self.is_2d:
+            # Build n_k (dim_states, dim_states) dense scratch buffers,
+            # scatter each per-channel block into all of them.
+            per_mode = [
+                np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+                for _ in range(self.n_k)
+            ]
+            for (c, p), d in six.iteritems(blocks):
+                rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
+                try:
+                    for k in range(self.n_k):
+                        per_mode[k][rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d[k]
+                except ValueError:
+                    _d = self.dim_states
+                    raise Exception(
+                        "Dimension mismatch: matrix "
+                        + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
+                        + f" c={rc.name}:({rc.lidx},{rc.uidx})"
+                    )
+            if apply_muon_scattering:
+                self._apply_muon_scattering_to_diagonal(per_mode)
+            per_mode_csr = [csr_matrix(m) for m in per_mode]
+            for m in per_mode_csr:
+                m.eliminate_zeros()
+                m.sort_indices()
+            stitched = sp.block_diag(per_mode_csr, format="csr")
+            stitched.eliminate_zeros()
+            stitched.sort_indices()
+            return stitched
 
+        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
