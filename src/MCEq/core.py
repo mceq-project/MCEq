@@ -516,19 +516,6 @@ class MCEqRun:
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False
         )
-        # TK: Forming lists of sparse matrices corresponding to secondary particle yields for each
-        # mode k of the Hankel grid in 2D MCEq (if enabled)
-        if self._mceq_db.is_2d:
-            int_m_dense = self.int_m.todense()
-            self.int_m_hankel = [
-                scipy.sparse.csr_matrix(int_m_dense[k, :, :])
-                for k in range(self._mceq_db.n_k)
-            ]
-            dec_m_dense = self.dec_m.todense()
-            self.dec_m_hankel = [
-                scipy.sparse.csr_matrix(dec_m_dense[k, :, :])
-                for k in range(self._mceq_db.n_k)
-            ]
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -1696,9 +1683,6 @@ class MatrixBuilder:
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-        if self.is_2d:
-            self.int_m_hankel = None
-            self.dec_m_hankel = None
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -1865,11 +1849,34 @@ class MatrixBuilder:
         return int(self._pman.dim_states)
 
     def _zero_mat(self):
-        """Returns a new square zero valued matrix with dimensions of grid."""
+        """Returns a new square zero valued matrix with dimensions of grid.
+
+        For 2D databases the per-channel block carries an extra leading
+        ``n_k`` axis (one slab per Hankel mode), so the returned shape is
+        ``(n_k, dim, dim)`` instead of ``(dim, dim)``.
+        """
+        if self.is_2d:
+            return np.zeros(
+                (self.n_k, self._pman.dim, self._pman.dim),
+                dtype=config.floatlen,
+            )
         return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _csr_from_blocks(self, blocks):
-        """Construct a csr matrix from a dictionary of submatrices (blocks)
+        """Construct a CSR matrix from a dictionary of submatrices (blocks).
+
+        For 1D databases the result is a single ``(dim_states, dim_states)``
+        sparse matrix.
+
+        For 2D databases each block carries a leading ``n_k`` axis (one
+        per-mode slab, shape ``(n_k, dim, dim)``). We assemble one
+        ``(dim_states, dim_states)`` dense scratch buffer per Hankel mode
+        and then stitch the n_k blocks into a single block-diagonal CSR of
+        shape ``(n_k * dim_states, n_k * dim_states)``. Since k-modes are
+        decoupled this is mathematically equivalent to the old per-mode
+        tensor representation, but it lets v2's dimension-agnostic ETD2RK
+        kernels operate on the stitched matrix directly (see
+        ``docs/mceq_v1.x_v2_diff.md`` §11.4).
 
         Note::
 
@@ -1878,15 +1885,39 @@ class MatrixBuilder:
         """
         from scipy.sparse import csr_matrix
 
-        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+        if self.is_2d:
+            # Build n_k (dim_states, dim_states) dense scratch buffers,
+            # scatter each per-channel block into all of them.
+            per_mode = [
+                np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
+                for _ in range(self.n_k)
+            ]
+            for (c, p), d in six.iteritems(blocks):
+                rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
+                try:
+                    for k in range(self.n_k):
+                        per_mode[k][rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d[k]
+                except ValueError:
+                    _d = self.dim_states
+                    raise Exception(
+                        "Dimension mismatch: matrix "
+                        + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
+                        + f" c={rc.name}:({rc.lidx},{rc.uidx})"
+                    )
+            per_mode_csr = [csr_matrix(m) for m in per_mode]
+            for m in per_mode_csr:
+                m.eliminate_zeros()
+                m.sort_indices()
+            stitched = sp.block_diag(per_mode_csr, format="csr")
+            stitched.eliminate_zeros()
+            stitched.sort_indices()
+            return stitched
 
+        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
         for (c, p), d in six.iteritems(blocks):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
-                if self.is_2d:
-                    new_mat[:, rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
-                else:
-                    new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
+                new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
             except ValueError:
                 _d = self.dim_states
                 _n = rp.name
@@ -1899,10 +1930,7 @@ class MatrixBuilder:
                     "Dimension mismatch: matrix "
                     + f"{_d}x{_d}, p={_n}:({_l},{_u}), c={_nc}:({_lc},{_uc})"
                 )
-        if self.is_2d:
-            return GCXS.from_numpy(new_mat)
-        else:
-            return csr_matrix(new_mat)
+        return csr_matrix(new_mat)
 
     def _follow_chains(self, p, pprod_mat, p_orig, propmat, reclev=0):
         """Recursively project ``p_orig``'s production through resonance

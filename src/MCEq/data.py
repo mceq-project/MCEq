@@ -494,9 +494,23 @@ class HDF5Backend:
 
         with h5py.File(self.had_fname, "r") as mceq_db:
             self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
+            # 2D databases store ``polarized`` as a *delta* (only helicity-
+            # resolved muon entries; the base 1D-style entries live in the
+            # ``unpolarized`` dataset). 1D databases store ``polarized`` as
+            # the full superset. Detect the 2D layout and load ``unpolarized``
+            # as the base in that case — the helicity overlay below then
+            # updates muon entries to their polarized counterparts.
+            base_dset_name = decay_dset_name
+            if (
+                self.is_2d
+                and config.muon_helicity_dependence
+                and decay_dset_name == "polarized"
+                and "unpolarized" in mceq_db["decays"]
+            ):
+                base_dset_name = "unpolarized"
             dec_index = self._gen_db_dictionary(
-                mceq_db["decays"][decay_dset_name],
-                mceq_db["decays"][decay_dset_name + "_indptrs"],
+                mceq_db["decays"][base_dset_name],
+                mceq_db["decays"][base_dset_name + "_indptrs"],
             )
 
             if config.muon_helicity_dependence:
@@ -562,7 +576,11 @@ class HDF5Backend:
             cs_db = mceq_db["cross_sections"][medium][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = list(cs_db.attrs["parents"])
+            # 2D databases use "projectiles"; 1D databases use "parents".
+            if "parents" in cs_db.attrs:
+                parents = list(cs_db.attrs["parents"])
+            else:
+                parents = list(cs_db.attrs["projectiles"])
             for ip, p in enumerate(parents):
                 # 1D path uses the standard e_grid cuts (self._cuts). The
                 # PR #48 ``self.cs_cuts`` (over ``config.default_ecenters``)
