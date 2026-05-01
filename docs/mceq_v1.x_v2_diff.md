@@ -1450,7 +1450,7 @@ downstream work.
 * Liechty C., Skeel R. D., 2009. *Exponentially fitted finite
   differences.* Numerical methods background for the `expfit` stencil
   family (§5).
-* Kozynets T., Fedynitch A., Becker Tjus J., 2023.
+* Kozynets T., Fedynitch A., Koskinen J,, 2023.
   *Atmospheric lepton fluxes via two-dimensional matrix cascade
   equations.* arXiv:2306.15263. The 2D (Hankel-mode) extension of
   MCEq (§11): equation (15) in the paper is (22) here, the inverse
