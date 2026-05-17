@@ -236,6 +236,23 @@ class HDF5Backend:
     def energy_grid(self):
         return self._energy_grid
 
+    def em_rho_grid(self, medium=None):
+        """Return the ρ-stack densities (g/cm³) for ``medium``, or ``None``.
+
+        Only the air medium currently carries a stack (built by
+        mceq-maintenance-tools's ``5_assemble_em_db --air-density-grid``).
+        Returns the 1-D ρ array when present, ``None`` otherwise.
+        """
+        if not config.enable_em:
+            return None
+        if medium is None:
+            medium = self.medium
+        with h5py.File(self.em_fname, "r") as em_db:
+            grp = em_db.get(f"electromagnetic/{medium}", None)
+            if grp is None or "rho_grid" not in grp:
+                return None
+            return np.asarray(grp["rho_grid"][:], dtype=float)
+
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
         from scipy.sparse import csr_matrix
 
