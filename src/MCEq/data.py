@@ -140,6 +140,55 @@ equivalences = {
 equivalences["FLUKA"] = equivalences["DPMJET"]
 
 
+def _select_em_rho_slice(em_group, medium):
+    """Return the index into ``em_group['rho_grid']`` whose stored density
+    is closest in log10 to ``config.em_air_density`` (g/cm³), or ``None``
+    when no ρ stack is present / no override is requested.
+
+    Only the air medium has a stacked layout in the current pipeline; for
+    other media this returns ``None`` silently.  See
+    ``mceq-em-integration/wiki/methods/lpm-density-factorization.md`` for
+    the design.
+    """
+    if getattr(config, "em_air_density", None) is None:
+        return None
+    if medium != "air":
+        return None
+    if "rho_grid" not in em_group:
+        info(2, "EM DB has no rho_grid; ignoring config.em_air_density.")
+        return None
+    rho_grid = np.asarray(em_group["rho_grid"][:], dtype=float)
+    if rho_grid.size == 0:
+        return None
+    log_target = np.log10(float(config.em_air_density))
+    idx = int(np.argmin(np.abs(np.log10(rho_grid) - log_target)))
+    info(
+        2,
+        f"EM ρ-stack: selecting slice {idx} (ρ={rho_grid[idx]:.3e} g/cm³) "
+        f"for requested ρ={config.em_air_density:.3e} g/cm³.",
+    )
+    return idx
+
+
+def _select_emca_nodes(em_group, medium, caller):
+    """Pick (emca_mats, emca_mats_indptrs) HDF5 nodes honoring the ρ-stack."""
+    idx = _select_em_rho_slice(em_group, medium)
+    if idx is None:
+        return em_group["emca_mats"], em_group["emca_mats_indptrs"]
+    slice_group = em_group[f"rho_{idx:02d}"]
+    info(3, f"[{caller}] using ρ slice {idx} of /electromagnetic/{medium}/")
+    return slice_group["emca_mats"], slice_group["emca_mats_indptrs"]
+
+
+def _select_em_cs_node(em_group, medium, caller):
+    """Pick the cs HDF5 node honoring the ρ-stack."""
+    idx = _select_em_rho_slice(em_group, medium)
+    if idx is None:
+        return em_group["cs"]
+    info(3, f"[{caller}] using ρ slice {idx} of /electromagnetic/{medium}/")
+    return em_group[f"rho_{idx:02d}"]["cs"]
+
+
 class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
@@ -361,9 +410,13 @@ class HDF5Backend:
                 info(2, "Injecting EmCA matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
                 self._check_subgroup_exists(em_db["electromagnetic"], self.medium)
+                em_group = em_db["electromagnetic"][self.medium]
+                emca_node, emca_indptrs_node = _select_emca_nodes(
+                    em_group, self.medium, "interaction_db"
+                )
                 em_index = self._gen_db_dictionary(
-                    em_db["electromagnetic"][self.medium]["emca_mats"],
-                    em_db["electromagnetic"][self.medium]["emca_mats" + "_indptrs"],
+                    emca_node,
+                    emca_indptrs_node,
                 )
             if config.muon_helicity_dependence:
                 # This is only approximately valid and is done for consistency.
@@ -496,10 +549,10 @@ class HDF5Backend:
                 info(2, "Injecting EmCA matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
                 self._check_subgroup_exists(em_db["electromagnetic"], medium)
-                em_cs = em_db["electromagnetic"][medium]["cs"][:]
-                em_parents = list(
-                    em_db["electromagnetic"][medium]["cs"].attrs["projectiles"]
-                )
+                em_group = em_db["electromagnetic"][medium]
+                cs_node = _select_em_cs_node(em_group, medium, "cs_db")
+                em_cs = cs_node[:]
+                em_parents = list(cs_node.attrs["projectiles"])
 
                 for ip, p in enumerate(em_parents):
                     if p in index_d:
