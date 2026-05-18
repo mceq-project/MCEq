@@ -93,6 +93,10 @@ def test_set_interaction_model_model(mceq_sib21, model, n):
 
 
 def test_set_interaction_model_update_particle_list(mceq_sib21):
+    # Establish a known baseline by re-running update_particle_list under the
+    # current (autouse-restored) config; prior parametrized model switches in
+    # the session leave _particle_list in an unrelated state otherwise.
+    mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
     n_particles_sib = len(mceq_sib21._particle_list)
 
     mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=True)
@@ -512,13 +516,19 @@ profiles = {
 
 @pytest.mark.parametrize("model, density_config", test_densities_cases)
 def test_set_density_profile(mceq_sib21, model, density_config):
-    mceq_sib21.set_density_model((model, density_config))
-    mceq_sib21.solve()
+    try:
+        mceq_sib21.set_density_model((model, density_config))
+        mceq_sib21.solve()
 
-    # test instances instead of str
-    profile = profiles[model](*density_config)
-    mceq_sib21.set_density_model(profile)
-    mceq_sib21.solve()
+        # test instances instead of str
+        profile = profiles[model](*density_config)
+        mceq_sib21.set_density_model(profile)
+        mceq_sib21.solve()
+    finally:
+        # Restore the session-fixture default so later tests can still call
+        # set_theta_deg / use the atmospheric path. GeneralizedTarget in
+        # particular rejects angle changes and would poison the shared fixture.
+        mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
 
 
 def test_set_mod_pprod(mceq_sib21):
