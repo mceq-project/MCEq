@@ -92,15 +92,14 @@ def average_A_target(mat="auto"):
     """
     if isinstance(mat, str) and mat.lower() == "auto":
         return _target_masses[config.interaction_medium.lower()]
-    elif isinstance(mat, str) and mat.lower() in _target_masses:
+    if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
-    elif isinstance(mat, float) or isinstance(mat, int):
+    if isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
-    else:
-        raise ValueError(
-            "mceq_config.A_target is expected to be a "
-            + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
-        )
+    raise ValueError(
+        "mceq_config.A_target is expected to be a "
+        + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+    )
 
 
 def theta_deg(cos_theta):
@@ -177,8 +176,8 @@ def getAZN(pdg_id):
     if pdg_id == 2212:
         return 1, 1, 0
     if pdg_id > 1000000000:
-        A = pdg_id % 1000 / 10
-        Z = pdg_id % 1000000 / 10000
+        A = (pdg_id % 1000) // 10
+        Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
     return 1, 0, 0
 
@@ -313,3 +312,45 @@ def info(min_dbg_level, *message, **kwargs):
         if blank_caller:
             cname = len(cname) * " "
         print(cname + " ".join(message))
+
+
+def reset_plt(ticksize, fontsize):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib.pyplot as plt
+
+    plt.rcParams["xtick.labelsize"] = ticksize
+    plt.rcParams["ytick.labelsize"] = ticksize
+    plt.rcParams["font.size"] = fontsize
+    plt.rcParams["mathtext.fontset"] = "stix"
+    plt.rcParams["font.family"] = "STIXGeneral"
+    plt.rcParams["legend.facecolor"] = "white"
+    plt.rcParams["axes.formatter.limits"] = (-1, 3)
+    plt.rcParams["axes.linewidth"] = 2.25
+
+
+def put_ticks(this_fig, this_ax):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib
+
+    this_ax.xaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, right=True
+    )
+    this_ax.xaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, right=True
+    )
+    dx = -3 / 72
+    dy = -3 / 72
+    y_offset = matplotlib.transforms.ScaledTranslation(0, dy, this_fig.dpi_scale_trans)
+    x_offset = matplotlib.transforms.ScaledTranslation(dx, 0, this_fig.dpi_scale_trans)
+
+    for label in this_ax.xaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + y_offset)
+
+    for label in this_ax.yaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + x_offset)

@@ -62,7 +62,7 @@ daxpy = spacc.daxpy
 spacc.free_mstore()
 
 
-class SpaccMatrix(object):
+class SpaccMatrix:
     def __init__(self, scipy_sparse_matrix):
         spm = scipy_sparse_matrix.tocoo()
         self.dim_rows, self.dim_cols = spm.shape
