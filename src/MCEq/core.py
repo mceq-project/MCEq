@@ -1275,9 +1275,26 @@ class MCEqRun:
         start = time()
 
         if kc == "numpy_etd2":
-            sol, grid_sol = MCEq.solvers.solv_numpy_etd2_multirhs(
-                nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
-            )
+            # If a ρ-stack has been built (via enable_em_density_interpolation),
+            # route to the ρ-aware multi-RHS kernel so per-step log-linear
+            # blending of the air block kicks in for all K columns.
+            int_m_stack = getattr(self, "_int_m_stack", None)
+            em_rho_grid = getattr(self, "_em_rho_grid", None)
+            if int_m_stack is not None and em_rho_grid is not None:
+                sol, grid_sol = MCEq.solvers.solv_numpy_etd2_rho_stack_multirhs(
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    int_m_stack,
+                    em_rho_grid,
+                    self.dec_m,
+                    phi0,
+                    grid_idcs,
+                )
+            else:
+                sol, grid_sol = MCEq.solvers.solv_numpy_etd2_multirhs(
+                    nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
+                )
         elif kc == "accelerate_etd2":
             # Reuse the same spacc handle cache as the single-RHS path so
             # the Sparse BLAS optimisation cost is paid once per solve()

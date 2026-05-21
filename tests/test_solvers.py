@@ -225,6 +225,89 @@ def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
         solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs)
 
 
+@pytest.mark.parametrize("K", [1, 4, 16])
+def test_solv_numpy_etd2_rho_stack_multirhs_matches_single_rhs_toy(K):
+    """ρ-stack multi-RHS columns match K independent single-RHS ρ-stack solves.
+
+    Toy: 2-slice ρ-stack with scaled interaction matrices, shared decay
+    matrix, ramped rho_inv. Multi-RHS columns must equal arithmetic-identical
+    single-RHS ρ-stack solves run with BSR disabled (CSR-vs-CSR comparison).
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        solv_numpy_etd2_rho_stack,
+        solv_numpy_etd2_rho_stack_multirhs,
+    )
+
+    rng = np.random.default_rng(11)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    # rho_inv spans the ρ-grid so the per-step blend exercises both slices.
+    rho_inv = np.linspace(1.0, 4.0, nsteps)
+    grid_idcs = [5, 15, 25]
+
+    A_base = rng.standard_normal((size, size)) * 0.05
+    A_base[np.abs(A_base) < 0.02] = 0.0
+    A_base -= np.diag(np.abs(A_base).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+
+    # Two distinct slices to make the per-step blend non-trivial.
+    int_m_stack = [
+        sp.csr_matrix(A_base),
+        sp.csr_matrix(A_base * 0.7),
+    ]
+    rho_grid = np.array([1e-4, 1e-3])
+    dec_m = sp.csr_matrix(B)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_multi, grid_multi = solv_numpy_etd2_rho_stack_multirhs(
+        nsteps, dX, rho_inv, int_m_stack, rho_grid, dec_m, phi0_multi, grid_idcs
+    )
+    assert sol_multi.shape == (size, K)
+    assert grid_multi.shape == (len(grid_idcs), size, K)
+
+    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
+    config.numpy_bsr_blocksize = None
+    try:
+        for k in range(K):
+            for slice_m in int_m_stack:
+                try:
+                    delattr(slice_m, "_etd_split_cache_v2")
+                except AttributeError:
+                    pass
+            sol_k, grid_k = solv_numpy_etd2_rho_stack(
+                nsteps,
+                dX,
+                rho_inv,
+                int_m_stack,
+                rho_grid,
+                dec_m,
+                phi0_multi[:, k].copy(),
+                grid_idcs,
+            )
+            np.testing.assert_allclose(
+                sol_multi[:, k],
+                sol_k,
+                rtol=1e-12,
+                atol=0,
+                err_msg=f"column {k} of ρ-stack multi-RHS solution diverges",
+            )
+            np.testing.assert_allclose(
+                grid_multi[:, :, k],
+                grid_k,
+                rtol=1e-12,
+                atol=0,
+                err_msg=f"column {k} of ρ-stack multi-RHS grid snapshots diverges",
+            )
+    finally:
+        config.numpy_bsr_blocksize = saved_bs
+
+
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 @pytest.mark.parametrize("K", [1, 4, 16])
