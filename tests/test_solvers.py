@@ -225,6 +225,149 @@ def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
         solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs)
 
 
+@pytest.mark.parametrize("K", [1, 3, 8])
+def test_solv_numpy_etd2_multipath_matches_single_rhs_per_column_paths(K):
+    """Per-RHS-path multi-RHS kernel: each column has its own dX/rho_inv.
+
+    Builds K toy paths with distinct nsteps, distinct dX, and distinct
+    rho_inv. The multipath kernel zero-pads shorter columns past their
+    own nsteps[k]; the math freezes those columns automatically
+    (h=0 ⇒ eD=1, φ₁=1, φ₂=1/2 ⇒ state ← state). Each column's result
+    must match a serial single-RHS solve over that column's own
+    (nsteps, dX, rho_inv).
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solv_numpy_etd2, solv_numpy_etd2_multipath
+
+    rng = np.random.default_rng(99)
+    size = 16
+
+    # Build a non-trivial sparse op.
+    A = rng.standard_normal((size, size)) * 0.04
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    # Distinct path per column — K columns, nsteps spread, dX/ri ramps.
+    rng_path = np.random.default_rng(7)
+    ns_per_col = [int(15 + 10 * i) for i in range(K)]
+    nsteps_max = max(ns_per_col)
+
+    dX_2d = np.zeros((nsteps_max, K))
+    rho_inv_2d = np.zeros((nsteps_max, K))
+    for k in range(K):
+        ns = ns_per_col[k]
+        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
+        rho_inv_2d[:ns, k] = np.linspace(
+            0.5 + 0.5 * rng_path.random(),
+            1.0 + 0.5 * rng_path.random(),
+            ns,
+        )
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_multi, _ = solv_numpy_etd2_multipath(
+        nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
+    )
+    assert sol_multi.shape == (size, K)
+
+    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
+    config.numpy_bsr_blocksize = None
+    try:
+        for k in range(K):
+            ns = ns_per_col[k]
+            try:
+                delattr(int_m, "_etd_split_cache_v2")
+            except AttributeError:
+                pass
+            sol_k, _ = solv_numpy_etd2(
+                ns,
+                dX_2d[:ns, k].copy(),
+                rho_inv_2d[:ns, k].copy(),
+                int_m,
+                dec_m,
+                phi0_multi[:, k].copy(),
+                [],
+            )
+            np.testing.assert_allclose(
+                sol_multi[:, k],
+                sol_k,
+                rtol=1e-12,
+                atol=0,
+                err_msg=f"column {k}: multipath diverges from serial path",
+            )
+    finally:
+        config.numpy_bsr_blocksize = saved_bs
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+@pytest.mark.parametrize("K", [1, 3, 8])
+def test_solv_spacc_etd2_multipath_matches_numpy_multipath(K):
+    """Spacc per-RHS-path kernel matches numpy multipath within fp64 ε."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        _etd_split_cache,
+        solv_numpy_etd2_multipath,
+        solv_spacc_etd2_multipath,
+    )
+    from MCEq.spacc import SpaccMatrix
+
+    rng = np.random.default_rng(101)
+    size = 16
+    A = rng.standard_normal((size, size)) * 0.04
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    ns_per_col = [int(15 + 5 * i) for i in range(K)]
+    nsteps_max = max(ns_per_col)
+    dX_2d = np.zeros((nsteps_max, K))
+    rho_inv_2d = np.zeros((nsteps_max, K))
+    rng_path = np.random.default_rng(3)
+    for k in range(K):
+        ns = ns_per_col[k]
+        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
+        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
+    spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
+    try:
+        sol_numpy, _ = solv_numpy_etd2_multipath(
+            nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
+        )
+        sol_spacc, _ = solv_spacc_etd2_multipath(
+            nsteps_max,
+            dX_2d,
+            rho_inv_2d,
+            spacc_int,
+            spacc_dec,
+            d_int,
+            d_dec,
+            phi0_multi,
+            [],
+        )
+        np.testing.assert_allclose(sol_spacc, sol_numpy, rtol=5e-13, atol=0)
+    finally:
+        if spacc_int is not None:
+            spacc_int.close()
+        if spacc_dec is not None:
+            spacc_dec.close()
+
+
 @pytest.mark.parametrize("K", [1, 4, 16])
 def test_solv_numpy_etd2_rho_stack_multirhs_matches_single_rhs_toy(K):
     """ρ-stack multi-RHS columns match K independent single-RHS ρ-stack solves.

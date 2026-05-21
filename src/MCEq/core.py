@@ -1352,6 +1352,304 @@ class MCEqRun:
         info(2, f"time elapsed during multi-RHS integration: {time() - start:5.2f}sec")
         return sol, grid_sol
 
+    def _build_pixel_paths(
+        self,
+        zenith_grid,
+        azimuth_grid=None,
+        *,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+    ):
+        """Build per-pixel ETD2 integration paths for a (zenith × azimuth) grid.
+
+        Returns ``(paths, pixel_index, K)`` where ``paths`` is a list of
+        ``(nsteps, dX, rho_inv, grid_idcs)`` tuples (one per pixel,
+        flattened with azimuth as the inner axis) and ``pixel_index`` is
+        a ``(K, 2)`` int array mapping each column back to its
+        ``(i_zen, i_az)`` grid coordinates. Restores the active
+        ``(zenith, azimuth)`` to whatever it was before the call.
+
+        Used by both :meth:`solve_fullsky` (single dispatch) and the
+        Stage-4 bucketed path (one dispatch per nsteps-bucket).
+        """
+        zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
+        if azimuth_grid is not None:
+            azimuth_grid = np.asarray(azimuth_grid, dtype=np.float64).reshape(-1)
+        n_zen = zenith_grid.size
+        n_az = azimuth_grid.size if azimuth_grid is not None else 1
+        K = n_zen * n_az
+        if K < 1:
+            raise ValueError("_build_pixel_paths: empty (zenith, azimuth) grid")
+
+        saved_zen = getattr(self, "theta_deg", None)
+        saved_az = getattr(self, "azimuth_deg", None)
+        paths = []
+        pixel_index = np.empty((K, 2), dtype=np.int32)
+        try:
+            k = 0
+            for i_zen, zen in enumerate(zenith_grid):
+                for i_az in range(n_az):
+                    az = float(azimuth_grid[i_az]) if azimuth_grid is not None else None
+                    if az is None:
+                        self.set_zenith_azimuth(float(zen))
+                    else:
+                        self.set_zenith_azimuth(float(zen), az)
+                    self._calculate_integration_path(
+                        None,
+                        "X",
+                        X_start=X_start,
+                        eps=eps,
+                        dX_max=dX_max,
+                        dX_min=dX_min,
+                        fd_span=fd_span,
+                    )
+                    paths.append(self.integration_path)
+                    pixel_index[k] = (i_zen, i_az)
+                    k += 1
+        finally:
+            if saved_zen is not None:
+                self.set_zenith_azimuth(saved_zen, saved_az)
+            self.integration_path = None
+        return paths, pixel_index, K
+
+    def _dispatch_multipath(self, nsteps_max, dX_2d, rho_inv_2d, phi0_multi):
+        """Dispatch a single multipath kernel call. Picks the kernel from
+        ``config.kernel_config``; reuses the spacc handle cache. Returns the
+        final ``(dim, K)`` solution.
+        """
+        import MCEq.solvers
+
+        kc = config.kernel_config.lower()
+        if kc == "numpy_etd2":
+            sol, _ = MCEq.solvers.solv_numpy_etd2_multipath(
+                nsteps_max,
+                dX_2d,
+                rho_inv_2d,
+                self.int_m,
+                self.dec_m,
+                phi0_multi,
+                [],
+            )
+            return sol
+        if kc == "accelerate_etd2":
+            import MCEq.spacc as spacc
+            from MCEq.solvers import _etd_split_cache
+
+            cached = getattr(self, "_spacc_etd2_cache", None)
+            if (
+                cached is None
+                or cached["int_m"] is not self.int_m
+                or cached["dec_m"] is not self.dec_m
+            ):
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                new_cached = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "spacc_int_off": (
+                        spacc.SpaccMatrix(int_off) if int_off.nnz else None
+                    ),
+                    "spacc_dec_off": (
+                        spacc.SpaccMatrix(dec_off) if dec_off.nnz else None
+                    ),
+                    "d_int": d_int,
+                    "d_dec": d_dec,
+                }
+                old_cached = cached
+                self._spacc_etd2_cache = new_cached
+                if old_cached is not None:
+                    for key in ("spacc_int_off", "spacc_dec_off"):
+                        old = old_cached.get(key)
+                        if old is not None:
+                            old.close()
+            c = self._spacc_etd2_cache
+            sol, _ = MCEq.solvers.solv_spacc_etd2_multipath(
+                nsteps_max,
+                dX_2d,
+                rho_inv_2d,
+                c["spacc_int_off"],
+                c["spacc_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                phi0_multi,
+                [],
+            )
+            return sol
+        raise NotImplementedError(
+            f"solve_fullsky is not yet wired for kernel_config={kc!r}. "
+            f"v1 supports 'numpy_etd2' and 'accelerate_etd2'."
+        )
+
+    @staticmethod
+    def _stack_paths(paths, nsteps_max):
+        """Stack a list of per-pixel paths into (nsteps_max, K) tensors,
+        zero-padding columns shorter than ``nsteps_max``."""
+        K = len(paths)
+        dX_2d = np.zeros((nsteps_max, K), dtype=np.float64)
+        rho_inv_2d = np.zeros((nsteps_max, K), dtype=np.float64)
+        for j, (ns, dX_k, ri_k, _) in enumerate(paths):
+            dX_2d[:ns, j] = dX_k
+            rho_inv_2d[:ns, j] = ri_k
+        return dX_2d, rho_inv_2d
+
+    def solve_fullsky(
+        self,
+        zenith_grid,
+        azimuth_grid=None,
+        phi0=None,
+        *,
+        bucket_count=None,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+        return_pixel_index=False,
+    ):
+        """Propagate one initial spectrum through every (zenith, azimuth)
+        pixel of a sky grid in a (Stage-4 bucketed) multi-RHS solve.
+
+        For each pixel, builds an independent ETD2 integration path
+        (zenith-dependent ρ(X), own ``dX`` / ``rho_inv`` / ``nsteps``)
+        via the standard :func:`MCEq.solvers.etd2_nonuniform_path`
+        scheduler. With ``bucket_count = 1`` (Stage-3 behaviour) the
+        kernel runs a single multipath call with ``(nsteps_max, K)``
+        path tensors and zero-pads shorter columns past their own
+        ``nsteps[k]`` (the math freezes those columns automatically:
+        ``h = 0 ⇒ eD = 1, φ₁ = 1, φ₂ = 1/2 ⇒ state ← state``).
+
+        With ``bucket_count > 1`` (Stage 4): pixels are sorted by
+        ``nsteps`` and partitioned into ``bucket_count`` equal-size
+        buckets; one multipath call per bucket runs with a
+        bucket-local ``nsteps_max_b`` ≈ ``max(nsteps_in_bucket)``,
+        which is dramatically smaller than the global ``nsteps_max``
+        when the per-pixel ``nsteps`` distribution is long-tailed
+        (e.g. uniform-cos sweeps to ~85° zenith, where the
+        ``dX_min`` floor at thin top-of-atmosphere pushes the steepest
+        paths to 10× the overhead path's nsteps). Wasted work drops
+        from ``nsteps_max · K`` to ``sum_b (nsteps_max_b · K_b)``,
+        which is 3–5× smaller at realistic full-sky grids.
+
+        Args:
+          zenith_grid (np.ndarray): 1-D zenith angles in degrees.
+          azimuth_grid (np.ndarray | None): 1-D azimuth angles in
+            degrees. If ``None``, the calculation reduces to the
+            ``len(zenith_grid)``-pixel zenith-only sky.
+          phi0 (np.ndarray | None): 1-D initial spectrum of length
+            ``dim_states``. If ``None``, uses the currently set
+            ``self._phi0``. The same ``phi0`` is replicated across all
+            K pixel columns — a single primary, propagated through K
+            different atmospheres.
+          bucket_count (int | None): number of nsteps-buckets to
+            partition pixels into. ``None`` ⇒ heuristic default
+            (1 if K ≤ 4 else min(K, 8)). ``1`` ⇒ Stage-3 single
+            dispatch. ``K`` ⇒ degenerates to serial (each bucket is
+            one column).
+          X_start, eps, dX_max, dX_min, fd_span: ETD2 path-builder
+            knobs forwarded for every pixel.
+          return_pixel_index (bool): if True, also return the K × 2
+            mapping ``(i_zen, i_az)`` so callers can reshape the
+            output back onto a ``(n_zen, n_az)`` grid.
+
+        Returns:
+          (np.ndarray[dim_states, K], np.ndarray[K] | None): final
+          state per pixel and the per-pixel ``nsteps`` array
+          (preserved in original ``(i_zen, i_az)`` order). With
+          ``return_pixel_index=True`` also returns the ``(K, 2)``
+          pixel grid mapping.
+
+        Notes:
+          * Currently wired for ``kernel_config = "numpy_etd2"`` and
+            ``"accelerate_etd2"``; MKL / CUDA paths raise
+            ``NotImplementedError``.
+          * Bucketing is orthogonal to the K-tile (``_SPACC_SPMM_TILE``)
+            on the Accelerate backend — that tile applies inside each
+            bucket's SpMM call.
+        """
+        info(
+            2,
+            f"solve_fullsky: kernel={config.kernel_config}",
+        )
+        start = time()
+
+        if phi0 is None:
+            phi0_1d = self._phi0.copy()
+        else:
+            phi0_1d = np.asarray(phi0, dtype=np.float64).reshape(-1)
+            if phi0_1d.size != self.dim_states:
+                raise ValueError(
+                    f"solve_fullsky: phi0 has length {phi0_1d.size}, "
+                    f"expected {self.dim_states}"
+                )
+
+        paths, pixel_index, K = self._build_pixel_paths(
+            zenith_grid,
+            azimuth_grid,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+        )
+        nsteps_per_col = np.array([p[0] for p in paths], dtype=np.int32)
+        ns_min = int(nsteps_per_col.min())
+        ns_max = int(nsteps_per_col.max())
+        ns_mean = float(nsteps_per_col.mean())
+        info(
+            2,
+            f"solve_fullsky: K={K}, nsteps range [{ns_min}, {ns_max}], "
+            f"mean={ns_mean:.1f}",
+        )
+
+        if bucket_count is None:
+            bucket_count = 1 if K <= 4 else min(K, 8)
+        bucket_count = max(1, min(int(bucket_count), K))
+
+        sol = np.empty((self.dim_states, K), dtype=np.float64)
+
+        if bucket_count == 1:
+            dX_2d, rho_inv_2d = self._stack_paths(paths, ns_max)
+            phi0_multi = np.broadcast_to(phi0_1d[:, None], (self.dim_states, K)).copy()
+            sol = self._dispatch_multipath(ns_max, dX_2d, rho_inv_2d, phi0_multi)
+        else:
+            # Sort columns by nsteps; partition into equal-K buckets.
+            # Within-bucket nsteps spread ≪ global spread, so each
+            # bucket's nsteps_max_b is close to the bucket mean and
+            # very little SpMM work is wasted on frozen columns.
+            order = np.argsort(nsteps_per_col)
+            edges = np.linspace(0, K, bucket_count + 1, dtype=int)
+            for b in range(bucket_count):
+                cols = order[edges[b] : edges[b + 1]]
+                if cols.size == 0:
+                    continue
+                K_b = cols.size
+                ns_max_b = int(nsteps_per_col[cols].max())
+                bucket_paths = [paths[i] for i in cols]
+                dX_b, rho_inv_b = self._stack_paths(bucket_paths, ns_max_b)
+                phi0_b = np.broadcast_to(
+                    phi0_1d[:, None], (self.dim_states, K_b)
+                ).copy()
+                sol_b = self._dispatch_multipath(ns_max_b, dX_b, rho_inv_b, phi0_b)
+                # Scatter the bucket's solution back into the original
+                # column positions so the caller sees pixels in their
+                # original ``(i_zen, i_az)``-flattened order.
+                sol[:, cols] = sol_b
+            info(
+                2,
+                f"solve_fullsky: bucket_count={bucket_count}, "
+                f"per-bucket nsteps_max ranged "
+                f"[{int(nsteps_per_col[order[edges[1] - 1]])}, {ns_max}]",
+            )
+
+        info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
+        if return_pixel_index:
+            return sol, nsteps_per_col, pixel_index
+        return sol, nsteps_per_col
+
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.
 
