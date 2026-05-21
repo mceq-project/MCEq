@@ -206,6 +206,64 @@ def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
         config.numpy_bsr_blocksize = saved_bs
 
 
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+def test_solve_multirhs_dtype_float32():
+    """End-to-end fp32 dispatch through MCEqRun.solve_multirhs.
+
+    Compares the fp32 spacc multirhs path to the fp64 reference at K=4
+    on the real SIBYLL21 config; asserts per-cell relative error stays
+    below the empirically established 1e-4 budget for the production
+    particle set (e± disabled — they're the ``_EM_BLOWUP_CAVEAT`` rows
+    whose semi-Lagrangian ETD2 update saturates fp32 dynamic range at
+    finite zenith). Stability test
+    ``runs/2026-05-21_multi-rhs-etd2-prototype/inputs/test_etd2_fp32.py``
+    tracks the per-species figure in more detail.
+
+    Builds a fresh MCEqRun (rather than reusing the ``mceq_sib21``
+    fixture which leaves e± enabled) so the test exactly matches the
+    production default.
+    """
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    saved_kernel = config.kernel_config
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    saved_db = config.mceq_db_fname
+    config.kernel_config = "accelerate_etd2"
+    config.adv_set["disabled_particles"] = [11, -11]
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    try:
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=30.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+        mceq.solve()
+        phi0 = mceq._phi0.copy()
+        rng = np.random.default_rng(0)
+        K = 4
+        phi0_multi = np.stack([s * phi0 for s in rng.uniform(0.5, 1.5, K)], axis=1)
+
+        sol_f64, _ = mceq.solve_multirhs(phi0_multi)
+        sol_f32, _ = mceq.solve_multirhs(phi0_multi, dtype=np.float32)
+        assert sol_f64.dtype == np.float64
+        assert sol_f32.dtype == np.float32
+
+        denom = np.maximum(np.abs(sol_f64), 1e-30)
+        rel = np.abs(sol_f32.astype(np.float64) - sol_f64) / denom
+        assert rel.max() < 1e-4, (
+            f"solve_multirhs fp32 vs fp64 max rel err {rel.max():.2e} "
+            f"exceeds 1e-4 budget"
+        )
+        mceq.close()
+    finally:
+        config.kernel_config = saved_kernel
+        config.adv_set["disabled_particles"] = saved_disabled
+        config.mceq_db_fname = saved_db
+
+
 def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
     """Multi-RHS kernel must reject 1-D phi (caller should use solv_numpy_etd2)."""
     import scipy.sparse as sp

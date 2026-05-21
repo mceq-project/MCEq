@@ -1179,12 +1179,67 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
+    def _dispatch_spacc_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+        """Pick the spacc multirhs kernel by ``dtype`` and reuse a per-dtype
+        sparse-handle cache so the Sparse BLAS optimisation cost is paid
+        once per ``MCEqRun`` instance per dtype. fp64 lives in
+        ``self._spacc_etd2_cache`` (shared with the single-RHS spacc path);
+        fp32 lives in ``self._spacc_etd2_cache_f32``.
+        """
+        import MCEq.spacc as spacc
+        from MCEq.solvers import _etd_split_cache
+
+        if dtype == np.float64:
+            cache_attr = "_spacc_etd2_cache"
+            matrix_cls = spacc.SpaccMatrix
+            solver = MCEq.solvers.solv_spacc_etd2_multirhs
+        else:  # float32
+            cache_attr = "_spacc_etd2_cache_f32"
+            matrix_cls = spacc.SpaccMatrixF32
+            solver = MCEq.solvers.solv_spacc_etd2_multirhs_f32
+
+        cached = getattr(self, cache_attr, None)
+        if (
+            cached is None
+            or cached["int_m"] is not self.int_m
+            or cached["dec_m"] is not self.dec_m
+        ):
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
+            new_cached = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "spacc_int_off": matrix_cls(int_off) if int_off.nnz else None,
+                "spacc_dec_off": matrix_cls(dec_off) if dec_off.nnz else None,
+                "d_int": d_int,
+                "d_dec": d_dec,
+            }
+            old_cached = cached
+            setattr(self, cache_attr, new_cached)
+            if old_cached is not None:
+                for key in ("spacc_int_off", "spacc_dec_off"):
+                    old = old_cached.get(key)
+                    if old is not None:
+                        old.close()
+        c = getattr(self, cache_attr)
+        return solver(
+            nsteps,
+            dX,
+            rho_inv,
+            c["spacc_int_off"],
+            c["spacc_dec_off"],
+            c["d_int"],
+            c["d_dec"],
+            phi0,
+            grid_idcs,
+        )
+
     def solve_multirhs(
         self,
         phi0_matrix,
         int_grid=None,
         grid_var="X",
         *,
+        dtype=np.float64,
         X_start=None,
         eps=None,
         dX_max=None,
@@ -1225,6 +1280,17 @@ class MCEqRun:
           int_grid (list | None): X values at which to record snapshots,
             shared across all K columns. Same semantics as :meth:`solve`.
           grid_var (str): currently only ``"X"`` is supported.
+          dtype (np.float32 | np.float64): precision of the state buffers
+            and the SpMM. Default ``np.float64``. When ``np.float32`` and
+            ``kernel_config == "accelerate_etd2"``, the solver dispatches
+            to :func:`MCEq.solvers.solv_spacc_etd2_multirhs_f32` with a
+            cached :class:`MCEq.spacc.SpaccMatrixF32` handle; ~1.10–1.14×
+            faster per-RHS on Mac M3 Pro at K ≥ 64, with per-particle
+            relative error ≤ 1e-5 vs the fp64 reference (verified by
+            ``runs/2026-05-21_multi-rhs-etd2-prototype/inputs/test_etd2_fp32.py``).
+            ``np.float32`` is not yet wired for ``numpy_etd2`` — the
+            scipy CSR @ X path would need fp32 versions of
+            ``int_m``/``dec_m`` and the numpy kernel; defer until needed.
           X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
             non-uniform path knobs forwarded to
             :meth:`_calculate_integration_path`; same semantics as
@@ -1233,7 +1299,8 @@ class MCEqRun:
         Returns:
           (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
           final state matrix and stacked snapshots. The trailing K axis
-          is preserved; index by column for per-RHS retrieval.
+          is preserved; index by column for per-RHS retrieval. The
+          ``sol`` dtype matches the ``dtype`` argument.
         """
         import MCEq.solvers
 
@@ -1270,11 +1337,26 @@ class MCEqRun:
         nsteps, dX, rho_inv, grid_idcs = self.integration_path
 
         kc = config.kernel_config.lower()
-        phi0 = np.asarray(phi0_matrix, dtype=np.float64).copy()
+        # ``dtype`` controls the state-buffer precision; the diagonals
+        # ``d_int`` / ``d_dec`` remain fp64 in the diag-factor pipeline
+        # for the fp32 path (exp(h·D) saturates fp32 fast at high zenith).
+        dtype = np.dtype(dtype)
+        if dtype not in (np.float32, np.float64):
+            raise ValueError(
+                f"solve_multirhs: dtype must be float32 or float64, got {dtype}"
+            )
+        phi0 = np.asarray(phi0_matrix, dtype=dtype).copy()
 
         start = time()
 
         if kc == "numpy_etd2":
+            if dtype == np.float32:
+                raise NotImplementedError(
+                    "solve_multirhs(dtype=float32) is currently wired only for "
+                    "kernel_config='accelerate_etd2'. A scipy fp32 path would "
+                    "need fp32 versions of int_m / dec_m and the numpy "
+                    "multirhs kernel — defer until needed."
+                )
             # If a ρ-stack has been built (via enable_em_density_interpolation),
             # route to the ρ-aware multi-RHS kernel so per-step log-linear
             # blending of the air block kicks in for all K columns.
@@ -1296,51 +1378,8 @@ class MCEqRun:
                     nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
                 )
         elif kc == "accelerate_etd2":
-            # Reuse the same spacc handle cache as the single-RHS path so
-            # the Sparse BLAS optimisation cost is paid once per solve()
-            # invocation that touches this MCEqRun instance.
-            import MCEq.spacc as spacc
-            from MCEq.solvers import _etd_split_cache
-
-            cached = getattr(self, "_spacc_etd2_cache", None)
-            if (
-                cached is None
-                or cached["int_m"] is not self.int_m
-                or cached["dec_m"] is not self.dec_m
-            ):
-                d_int, d_dec, int_off, dec_off = _etd_split_cache(
-                    self.int_m, self.dec_m
-                )
-                new_cached = {
-                    "int_m": self.int_m,
-                    "dec_m": self.dec_m,
-                    "spacc_int_off": (
-                        spacc.SpaccMatrix(int_off) if int_off.nnz else None
-                    ),
-                    "spacc_dec_off": (
-                        spacc.SpaccMatrix(dec_off) if dec_off.nnz else None
-                    ),
-                    "d_int": d_int,
-                    "d_dec": d_dec,
-                }
-                old_cached = cached
-                self._spacc_etd2_cache = new_cached
-                if old_cached is not None:
-                    for key in ("spacc_int_off", "spacc_dec_off"):
-                        old = old_cached.get(key)
-                        if old is not None:
-                            old.close()
-            c = self._spacc_etd2_cache
-            sol, grid_sol = MCEq.solvers.solv_spacc_etd2_multirhs(
-                nsteps,
-                dX,
-                rho_inv,
-                c["spacc_int_off"],
-                c["spacc_dec_off"],
-                c["d_int"],
-                c["d_dec"],
-                phi0,
-                grid_idcs,
+            sol, grid_sol = self._dispatch_spacc_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
             )
         else:
             raise NotImplementedError(
@@ -1868,6 +1907,7 @@ class MCEqRun:
         # is reclaimed by cupy's allocator when the cache dict drops.
         for cache_attr, wrapper_keys in (
             ("_spacc_etd2_cache", ("spacc_int_off", "spacc_dec_off")),
+            ("_spacc_etd2_cache_f32", ("spacc_int_off", "spacc_dec_off")),
             ("_mkl_etd2_cache", ("mkl_int_off", "mkl_dec_off")),
         ):
             cached = getattr(self, cache_attr, None)
