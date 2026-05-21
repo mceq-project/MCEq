@@ -492,6 +492,155 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 # ---------------------------------------------------------------------------
+# Multi-RHS variant: propagate K independent initial conditions through the
+# same operator simultaneously. Mirrors PriNCe's
+# ``MultiRHSPropagationSolverETD2``; the state becomes ``(dim, K)`` and
+# scipy's CSR/BSR ``@`` over a 2-D dense RHS issues a single SpMM per stage
+# instead of K back-to-back SpMVs. Per-step cost: 4 SpMMs (vs 4·K SpMVs) +
+# (n, K) elementwise broadcasts of the shared phi factors. Operator,
+# diagonal, eD/phi1/phi2 all depend only on (X, ρ⁻¹(X)) and are reused
+# across all K columns. See ../tests/test_solvers.py::test_solv_numpy_etd2_multirhs_*
+# and runs/2026-05-21_multi-rhs-etd2-prototype/ for bit-exactness and
+# K-scaling benchmarks.
+# ---------------------------------------------------------------------------
+def solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+    """ETD2RK with K independent initial conditions in a single solve.
+
+    Identical Cox–Matthews update as :func:`solv_numpy_etd2`, but the
+    state is ``(dim, K)`` instead of ``(dim,)``. Each column k carries an
+    independent initial condition ``phi[:, k]``; the operator
+    ``A + ρ⁻¹·B``, its diagonal split, and all phi-function buffers are
+    shared across columns.
+
+    Per step replaces 4·K SpMVs with 4 SpMMs (scipy ``A @ X`` issues
+    SpMM natively when ``X`` is 2-D); the elementwise post-apply pipeline
+    broadcasts ``eD[:, None]``, ``phi1[:, None]``, ``phi2[:, None]`` over
+    the K axis. The single-RHS kernel's BSR off-diagonal cache
+    (``_etd_get_split_for_numpy``) is reused unchanged.
+
+    Numerically bit-exact against K back-to-back :func:`solv_numpy_etd2`
+    calls — scipy SpMM is implemented as K independent CSR SpMVs, so the
+    arithmetic is identical.
+
+    Args:
+      nsteps (int): number of integration steps
+      dX (np.ndarray[nsteps]): step sizes ΔX_i in g/cm²
+      rho_inv (np.ndarray[nsteps]): 1/ρ(X_i)
+      int_m (scipy.sparse): interaction matrix A
+      dec_m (scipy.sparse): decay matrix B
+      phi (np.ndarray[dim, K]): initial states; one column per RHS
+      grid_idcs (list[int]): step indices at which to record snapshots
+
+    Returns:
+      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]): final
+      state matrix and stacked snapshots. Snapshot tensor leading axis
+      is the grid index, matching the single-RHS kernel's
+      ``(len(grid_idcs), dim)`` convention.
+    """
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_numpy_etd2_multirhs: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K < 1:
+        raise ValueError(f"K must be >= 1, got {K}")
+
+    # Force CSR off-diagonals regardless of ``config.numpy_bsr_blocksize``.
+    # scipy's BSR ``@`` on a 2-D RHS dispatches to ``bsr_matvecs`` (K sequential
+    # block-SpMVs with no K-axis vectorisation), while CSR ``@`` on the same
+    # 2-D RHS is a true SpMM that vectorises across the K columns. Empirically
+    # the crossover is K ≈ 8: below that, the BSR-loop beats CSR-SpMM (matching
+    # the production single-RHS kernel's preference); at K ≥ 8 CSR-SpMM wins
+    # and the gap widens with K. The multi-RHS kernel only pays off above the
+    # crossover by design, so CSR is the right default here.
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    if not sp.isspmatrix_csr(int_off):
+        int_off = int_off.tocsr()
+    if not sp.isspmatrix_csr(dec_off):
+        dec_off = dec_off.tocsr()
+    n_padded = dim
+
+    # (n_padded, K) padded buffers so scipy BSR ``.dot()`` writes its result
+    # directly into them without an internal copy. Padding rows stay zero
+    # (matrix has zero rows/cols there); padding cols don't exist — K is
+    # exactly the number of RHSs.
+    phc = np.zeros((n_padded, K), dtype=np.float64)
+    phc[:dim, :] = phi
+    F_phi = np.empty((n_padded, K), dtype=np.float64)
+    F_a = np.empty((n_padded, K), dtype=np.float64)
+    a = np.empty((n_padded, K), dtype=np.float64)
+    # (dim,) diag scratch — shared across all K columns.
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    # (dim, K) elementwise scratch — separate from the (dim,) ``scratch`` in
+    # ``bufs`` because the multi-RHS step needs full-state-shape scratch for
+    # ``phi1 ⊙ F_phi`` etc.
+    scratch_NK = np.empty((dim, K), dtype=np.float64)
+
+    # Live views into the unpadded prefix; per-step elementwise math
+    # touches only these, leaving the padding slots at their initial 0.
+    phc_v = phc[:dim, :]
+    F_phi_v = F_phi[:dim, :]
+    F_a_v = F_a[:dim, :]
+    a_v = a[:dim, :]
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`. EM blowup is contained
+    # to its rows; same suppression contract here.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+
+            # F_phi = int_off @ phc + ri * dec_off @ phc  (SpMM over K cols)
+            np.copyto(F_phi, int_off.dot(phc))
+            ri_dec = dec_off.dot(phc)
+            ri_dec *= ri
+            np.add(F_phi, ri_dec, out=F_phi)
+
+            # a = eD[:, None] * phc + h * phi1[:, None] * F_phi
+            np.multiply(eD[:, None], phc_v, out=a_v)
+            np.multiply(phi1[:, None], F_phi_v, out=scratch_NK)
+            scratch_NK *= h
+            np.add(a_v, scratch_NK, out=a_v)
+
+            # F_a = int_off @ a + ri * dec_off @ a
+            np.copyto(F_a, int_off.dot(a))
+            ri_dec = dec_off.dot(a)
+            ri_dec *= ri
+            np.add(F_a, ri_dec, out=F_a)
+
+            # phc = a + h * phi2[:, None] * (F_a - F_phi)
+            np.subtract(F_a_v, F_phi_v, out=scratch_NK)
+            scratch_NK *= h
+            np.multiply(phi2[:, None], scratch_NK, out=scratch_NK)
+            np.add(a_v, scratch_NK, out=phc_v)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc_v))
+                grid_step += 1
+
+    info(
+        2,
+        f"Performance (multirhs K={K}): "
+        f"{1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * (time() - start) / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc_v.copy(), np.array(grid_sol)
+
+
+# ---------------------------------------------------------------------------
 # ρ-stack variant: per-step log-linear interpolation between two int_m slices
 # ---------------------------------------------------------------------------
 def _build_step_blend_indices(rho_inv, rho_grid):
@@ -1289,6 +1438,138 @@ def solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi, grid_idcs):
     )
 
     return phc_host, grid_arr
+
+
+def solv_spacc_etd2_multirhs(
+    nsteps,
+    dX,
+    rho_inv,
+    spacc_int_off,
+    spacc_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on Apple Accelerate Sparse BLAS — multi-RHS variant.
+
+    Same Cox–Matthews update as :func:`solv_spacc_etd2` and
+    :func:`solv_numpy_etd2_multirhs`, but the four per-step SpMVs are
+    promoted to SpMMs through Accelerate's
+    ``sparse_matrix_product_dense_double`` (wrapped as
+    :meth:`MCEq.spacc.SpaccMatrix.gemm_ctargs`).
+
+    State layout is column-major ``(dim, K)`` Fortran-contiguous; Apple
+    Accelerate's SpMM API expects column-major dense buffers and walks
+    columns with leading dimension ``ldB = ldC = dim``.
+
+    The Accelerate sparse handle re-optimises the matrix layout on
+    construction (see :class:`MCEq.spacc.SpaccMatrix`); reusing the same
+    handle across all SpMVs/SpMMs in a solve is what amortises that cost.
+    Pre-existing handles are reused via the kernel-dispatch cache in
+    :meth:`MCEq.core.MCEqRun._build_kernel_dispatch`.
+
+    Args:
+      nsteps, dX, rho_inv: same as :func:`solv_spacc_etd2`.
+      spacc_int_off, spacc_dec_off: :class:`SpaccMatrix` wrappers; may be
+        ``None`` if the underlying off-diagonal has zero nnz.
+      d_int, d_dec (np.ndarray): diagonals (length ``dim``).
+      phi (np.ndarray[dim, K]): initial states, column-major (Fortran-
+        contiguous). The function ``np.asfortranarray``s the input if
+        needed.
+      grid_idcs (list[int]): step indices at which to record snapshots.
+
+    Returns:
+      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]): final
+      state matrix and stacked snapshots; the final state is a copy
+      (column-major).
+    """
+    from ctypes import POINTER, c_double
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_spacc_etd2_multirhs: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K < 1:
+        raise ValueError(f"K must be >= 1, got {K}")
+
+    # Persistent column-major buffers — gemm reads/writes through raw
+    # ctypes pointers, so the backing storage must keep its address
+    # across the loop. Fortran-order arrays are column-major with leading
+    # dimension == number of rows.
+    phc = np.asfortranarray(phi.astype(np.float64, copy=True))
+    F_phi = np.zeros((dim, K), dtype=np.float64, order="F")
+    F_a = np.zeros((dim, K), dtype=np.float64, order="F")
+    a = np.empty((dim, K), dtype=np.float64, order="F")
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    # (dim, K) elementwise scratch — same role as in solv_numpy_etd2_multirhs.
+    scratch_NK = np.empty((dim, K), dtype=np.float64, order="F")
+
+    phc_p = phc.ctypes.data_as(POINTER(c_double))
+    F_phi_p = F_phi.ctypes.data_as(POINTER(c_double))
+    F_a_p = F_a.ctypes.data_as(POINTER(c_double))
+    a_p = a.ctypes.data_as(POINTER(c_double))
+
+    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
+    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+
+            # F_phi = int_off @ phc + ri * dec_off @ phc  (accumulating SpMM)
+            F_phi.fill(0.0)
+            if not int_off_empty:
+                spacc_int_off.gemm_ctargs(1.0, K, phc_p, dim, F_phi_p, dim)
+            if not dec_off_empty:
+                spacc_dec_off.gemm_ctargs(ri, K, phc_p, dim, F_phi_p, dim)
+
+            # a = eD[:, None] * phc + h * phi1[:, None] * F_phi
+            np.multiply(eD[:, None], phc, out=a)
+            np.multiply(phi1[:, None], F_phi, out=scratch_NK)
+            scratch_NK *= h
+            np.add(a, scratch_NK, out=a)
+
+            # F_a = int_off @ a + ri * dec_off @ a
+            F_a.fill(0.0)
+            if not int_off_empty:
+                spacc_int_off.gemm_ctargs(1.0, K, a_p, dim, F_a_p, dim)
+            if not dec_off_empty:
+                spacc_dec_off.gemm_ctargs(ri, K, a_p, dim, F_a_p, dim)
+
+            # phc = a + h * phi2[:, None] * (F_a - F_phi)
+            np.subtract(F_a, F_phi, out=scratch_NK)
+            scratch_NK *= h
+            np.multiply(phi2[:, None], scratch_NK, out=scratch_NK)
+            np.add(a, scratch_NK, out=phc)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc))
+                grid_step += 1
+
+    info(
+        2,
+        f"Performance (spacc multirhs K={K}): "
+        f"{1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * (time() - start) / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc.copy(), np.array(grid_sol)
 
 
 def solv_spacc_etd2(

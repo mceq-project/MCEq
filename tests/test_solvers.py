@@ -139,6 +139,158 @@ def test_solv_numpy_etd2_does_not_modify_input_phi(toy_solver_setup):
     )
 
 
+@pytest.mark.parametrize("K", [1, 4, 16])
+def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
+    """Multi-RHS ETD2 columns match K independent single-RHS solves bit-exactly.
+
+    scipy's CSR ``@`` against a 2-D (n, K) RHS issues per-column SpMVs with
+    the same arithmetic as the single-RHS path; the multi-RHS kernel uses
+    CSR off-diagonals throughout (bypassing the production BSR conversion
+    which doesn't vectorise across K), so the per-column result is
+    arithmetically identical to ``solv_numpy_etd2`` with
+    ``config.numpy_bsr_blocksize = None``.
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solv_numpy_etd2, solv_numpy_etd2_multirhs
+
+    rng = np.random.default_rng(42)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+    grid_idcs = [5, 15, 25]
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_multi, grid_multi = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    )
+    assert sol_multi.shape == (size, K)
+    assert grid_multi.shape == (len(grid_idcs), size, K)
+
+    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
+    config.numpy_bsr_blocksize = None
+    try:
+        for k in range(K):
+            try:
+                delattr(int_m, "_etd_split_cache_v2")
+            except AttributeError:
+                pass
+            sol_k, grid_k = solv_numpy_etd2(
+                nsteps,
+                dX,
+                rho_inv,
+                int_m,
+                dec_m,
+                phi0_multi[:, k].copy(),
+                grid_idcs,
+            )
+            assert np.array_equal(sol_multi[:, k], sol_k), (
+                f"column {k} of multi-RHS solution diverges from single-RHS"
+            )
+            assert np.array_equal(grid_multi[:, :, k], grid_k), (
+                f"column {k} of multi-RHS grid snapshots diverges from single-RHS"
+            )
+    finally:
+        config.numpy_bsr_blocksize = saved_bs
+
+
+def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
+    """Multi-RHS kernel must reject 1-D phi (caller should use solv_numpy_etd2)."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solv_numpy_etd2_multirhs
+
+    nsteps = 3
+    size = 4
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.ones(nsteps)
+    grid_idcs = []
+    int_m = sp.csr_matrix(-0.1 * np.eye(size))
+    dec_m = sp.csr_matrix(-0.05 * np.eye(size))
+    phi0_1d = np.ones(size)
+
+    with pytest.raises(ValueError, match="phi must be 2-D"):
+        solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs)
+
+
+@pytest.mark.xdist_group("spacc")
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
+@pytest.mark.parametrize("K", [1, 4, 16])
+def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
+    """Spacc multi-RHS columns match numpy multi-RHS columns within fp64 eps.
+
+    Both kernels evaluate identical math (Cox–Matthews ETD2 with the same
+    diagonal split and accumulated SpMM); the only difference is the
+    sparse SpMM backend (scipy CSR vs Apple Accelerate
+    ``sparse_matrix_product_dense_double``). Differences are at the few
+    ULP level and the test uses np.allclose with a tight tolerance.
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solv_numpy_etd2_multirhs, solv_spacc_etd2_multirhs
+    from MCEq.spacc import SpaccMatrix
+
+    rng = np.random.default_rng(7)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+    grid_idcs = [5, 15, 25]
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    # Pre-split for spacc — solv_spacc_etd2_multirhs expects SpaccMatrix-wrapped
+    # off-diagonals plus plain numpy diagonals, like the single-RHS spacc kernel.
+    from MCEq.solvers import _etd_split_cache
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
+    spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_numpy, _ = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    )
+    sol_spacc, _ = solv_spacc_etd2_multirhs(
+        nsteps,
+        dX,
+        rho_inv,
+        spacc_int,
+        spacc_dec,
+        d_int,
+        d_dec,
+        phi0_multi,
+        grid_idcs,
+    )
+
+    np.testing.assert_allclose(sol_spacc, sol_numpy, rtol=5e-13, atol=0)
+
+    if spacc_int is not None:
+        spacc_int.close()
+    if spacc_dec is not None:
+        spacc_dec.close()
+
+
 def _muon_flux(mceq, phi):
     """E^3 * (mu+ + mu-) flux on mceq.e_grid, in arbitrary units."""
     e = mceq.e_grid
@@ -514,9 +666,7 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
     )
 
     assert np.all(np.isfinite(sol_mkl)), "mkl_etd2 produced non-finite values"
-    rel_l2 = np.linalg.norm(sol_mkl - sol_numpy) / max(
-        np.linalg.norm(sol_numpy), 1e-30
-    )
+    rel_l2 = np.linalg.norm(sol_mkl - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
     # CSR is the same arithmetic as numpy → bit-exact bound. BSR groups
     # the SpMV per block, which reorders partial sums and loosens to ~1e-10.
     tol = 1e-12 if blocksize is None else 1e-9
@@ -535,9 +685,9 @@ def test_mkl_bsr_handles_padding():
     end-to-end via the kernel. Padding rows/cols stay zero through SpMV, so
     the result should match a CSR run to round-off.
     """
-    from MCEq.solvers import MklSparseMatrix, solv_mkl_etd2
-
     import scipy.sparse as sp
+
+    from MCEq.solvers import MklSparseMatrix, solv_mkl_etd2
 
     rng = np.random.default_rng(0)
     dim = 7  # not a multiple of any common blocksize
@@ -654,9 +804,7 @@ def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
         device_id=config.cuda_gpu_id,
         fp_precision=64,
     )
-    sol_cuda, _ = solv_cuda_etd2(
-        nsteps, dX, rho_inv, ctx, phi0.copy(), grid_idcs
-    )
+    sol_cuda, _ = solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi0.copy(), grid_idcs)
 
     assert np.all(np.isfinite(sol_cuda)), "cuda_etd2 produced non-finite values"
     rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(

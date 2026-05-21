@@ -53,6 +53,30 @@ int gemv(double alpha, int ia, double *x, double *y)
 
     return 0;
 }
+
+// SpMM: C := alpha * A * B + C  (accumulate, no beta), B is (n_rows_A, nrhs),
+// C is (n_rows_A, nrhs). Column-major layout (CblasColMajor) so a single
+// stride of ldX = n_rows_A walks columns the same way numpy's (dim, K)
+// Fortran-contiguous layout does. Caller is responsible for zeroing C
+// before the first accumulating call if a non-accumulating result is wanted.
+int gemm(double alpha, int ia, int nrhs, double *B, int ldb, double *C, int ldc)
+{
+    if (!mstore[ia])
+    {
+        printf("Matrix with index %i not found.\n", ia);
+        return -1;
+    }
+
+    if (sparse_matrix_product_dense_double(
+            CblasColMajor, CblasNoTrans, nrhs, alpha, mstore[ia],
+            B, ldb, C, ldc) != SPARSE_SUCCESS)
+    {
+        printf("Error in sparse matrix-matrix multiplication.\n");
+        return -1;
+    };
+
+    return 0;
+}
 // Performs y = alpha*x + y
 void daxpy(int N, double alpha, double *x, double *y)
 {

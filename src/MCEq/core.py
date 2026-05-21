@@ -1179,6 +1179,162 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
+    def solve_multirhs(
+        self,
+        phi0_matrix,
+        int_grid=None,
+        grid_var="X",
+        *,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+    ):
+        """Propagate K independent initial conditions through one shared
+        ETD2 operator.
+
+        Mirrors :meth:`solve` but operates on a ``(dim_states, K)`` initial
+        state matrix instead of the single-RHS ``self._phi0``. Each
+        column ``phi0_matrix[:, k]`` is an independent initial spectrum,
+        layout identical to ``self._phi0`` (i.e. composed in the same way
+        you would prepare ``set_initial_spectrum`` / ``set_single_primary_particle``
+        calls). Per-step work that depends only on ``(X, ρ⁻¹(X))`` —
+        the diagonal split, ``exp(h·D)``, ``φ₁(h·D)``, ``φ₂(h·D)`` — is
+        computed once per step and broadcast over the K column axis.
+
+        Selection rules:
+
+        * ``kernel_config == "numpy_etd2"`` →
+          :func:`MCEq.solvers.solv_numpy_etd2_multirhs` (CSR-SpMM through
+          scipy ``@`` on a 2-D RHS).
+        * ``kernel_config == "accelerate_etd2"`` →
+          :func:`MCEq.solvers.solv_spacc_etd2_multirhs`
+          (Accelerate Sparse BLAS ``sparse_matrix_product_dense_double``).
+        * Other kernels raise ``NotImplementedError`` (MKL Sparse BLAS
+          and cuSPARSE multi-RHS variants are not yet wired).
+
+        Does NOT mutate ``self._phi0`` / ``self._solution`` /
+        ``self.grid_sol``. The returned arrays are the entire state of
+        the multi-RHS solve; the caller indexes columns to retrieve
+        per-RHS final spectra or grid snapshots.
+
+        Args:
+          phi0_matrix (np.ndarray[dim_states, K]): initial state matrix.
+            Each column carries one independent initial spectrum.
+          int_grid (list | None): X values at which to record snapshots,
+            shared across all K columns. Same semantics as :meth:`solve`.
+          grid_var (str): currently only ``"X"`` is supported.
+          X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
+            non-uniform path knobs forwarded to
+            :meth:`_calculate_integration_path`; same semantics as
+            :meth:`solve`.
+
+        Returns:
+          (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
+          final state matrix and stacked snapshots. The trailing K axis
+          is preserved; index by column for per-RHS retrieval.
+        """
+        import MCEq.solvers
+
+        if phi0_matrix.ndim != 2:
+            raise ValueError(
+                f"solve_multirhs: phi0_matrix must be 2-D (dim_states, K), "
+                f"got shape {phi0_matrix.shape}"
+            )
+        if phi0_matrix.shape[0] != self.dim_states:
+            raise ValueError(
+                f"solve_multirhs: phi0_matrix.shape[0] ({phi0_matrix.shape[0]}) "
+                f"must equal self.dim_states ({self.dim_states})"
+            )
+
+        info(
+            2,
+            f"Launching {config.kernel_config} multi-RHS solver "
+            f"(K={phi0_matrix.shape[1]})",
+        )
+
+        if int_grid is not None and np.any(np.diff(int_grid) < 0):
+            raise Exception(
+                "The X values in int_grid are required to be strictly increasing."
+            )
+        self._calculate_integration_path(
+            int_grid,
+            grid_var,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+        )
+        nsteps, dX, rho_inv, grid_idcs = self.integration_path
+
+        kc = config.kernel_config.lower()
+        phi0 = np.asarray(phi0_matrix, dtype=np.float64).copy()
+
+        start = time()
+
+        if kc == "numpy_etd2":
+            sol, grid_sol = MCEq.solvers.solv_numpy_etd2_multirhs(
+                nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
+            )
+        elif kc == "accelerate_etd2":
+            # Reuse the same spacc handle cache as the single-RHS path so
+            # the Sparse BLAS optimisation cost is paid once per solve()
+            # invocation that touches this MCEqRun instance.
+            import MCEq.spacc as spacc
+            from MCEq.solvers import _etd_split_cache
+
+            cached = getattr(self, "_spacc_etd2_cache", None)
+            if (
+                cached is None
+                or cached["int_m"] is not self.int_m
+                or cached["dec_m"] is not self.dec_m
+            ):
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                new_cached = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "spacc_int_off": (
+                        spacc.SpaccMatrix(int_off) if int_off.nnz else None
+                    ),
+                    "spacc_dec_off": (
+                        spacc.SpaccMatrix(dec_off) if dec_off.nnz else None
+                    ),
+                    "d_int": d_int,
+                    "d_dec": d_dec,
+                }
+                old_cached = cached
+                self._spacc_etd2_cache = new_cached
+                if old_cached is not None:
+                    for key in ("spacc_int_off", "spacc_dec_off"):
+                        old = old_cached.get(key)
+                        if old is not None:
+                            old.close()
+            c = self._spacc_etd2_cache
+            sol, grid_sol = MCEq.solvers.solv_spacc_etd2_multirhs(
+                nsteps,
+                dX,
+                rho_inv,
+                c["spacc_int_off"],
+                c["spacc_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                phi0,
+                grid_idcs,
+            )
+        else:
+            raise NotImplementedError(
+                f"solve_multirhs is not yet wired for kernel_config={kc!r}. "
+                f"v1 supports 'numpy_etd2' and 'accelerate_etd2'; "
+                f"MKL and CUDA variants are TBD."
+            )
+
+        info(2, f"time elapsed during multi-RHS integration: {time() - start:5.2f}sec")
+        return sol, grid_sol
+
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.
 

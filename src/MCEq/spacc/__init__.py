@@ -48,6 +48,20 @@ spacc.gemv.argtypes = [
     POINTER(c_double),
 ]
 
+# gemm: C := alpha * A * B + C with B, C dense (n_rows_A, nrhs) column-major.
+# Wraps Apple Accelerate's sparse_matrix_product_dense_double; used by the
+# multi-RHS spacc kernel (solv_spacc_etd2_multirhs). See spacc.c.
+spacc.gemm.restype = c_int
+spacc.gemm.argtypes = [
+    c_double,
+    c_int,
+    c_int,
+    POINTER(c_double),
+    c_int,
+    POINTER(c_double),
+    c_int,
+]
+
 spacc.daxpy.restype = None
 spacc.daxpy.argtypes = [
     c_int,
@@ -131,3 +145,19 @@ class SpaccMatrix(object):
         cx = x.ctypes.data_as(POINTER(c_double))
         if spacc.gemv(alpha, self.store_id, cx, cy) != 0:
             raise Exception("Sparse matrix-vector multiplication failed.")
+
+    def gemm_ctargs(self, alpha, nrhs, cB, ldb, cC, ldc):
+        """Sparse-dense SpMM with raw ctypes pointers.
+
+        Performs ``C := alpha * M * B + C`` where ``B`` and ``C`` are dense
+        ``(dim_cols, nrhs)`` / ``(dim_rows, nrhs)`` matrices in column-major
+        layout with leading dimensions ``ldb`` / ``ldc``. Accumulating —
+        zero ``C`` before the first call if you want a non-accumulating
+        result.
+
+        No dimensional checks are performed. Caller is responsible for
+        ensuring ``B`` and ``C`` are float64 column-major arrays
+        (Fortran-contiguous; ``np.asfortranarray`` is the canonical way).
+        """
+        if spacc.gemm(alpha, self.store_id, nrhs, cB, ldb, cC, ldc) != 0:
+            raise Exception("Sparse matrix-matrix multiplication failed.")
