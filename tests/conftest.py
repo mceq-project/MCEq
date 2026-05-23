@@ -9,6 +9,33 @@ from MCEq import config
 from MCEq.core import MCEqRun
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_config_state():
+    """Defend session-scoped fixtures against tests that mutate global
+    ``config`` state without restoring it.
+
+    Snapshots/restores the bits that have caused order-dependent test
+    failures in CI: ``config.adv_set`` entries, ``config.kernel_config``,
+    ``config.mceq_db_fname``, and ``config.X_start``. Cheap (just dict/value
+    copies) and runs around every test, including ones that don't take the
+    ``mceq_sib21`` fixture.
+    """
+    import copy
+
+    saved_adv_set = copy.deepcopy(config.adv_set)
+    saved_kernel = config.kernel_config
+    saved_db = config.mceq_db_fname
+    saved_X_start = config.X_start
+    try:
+        yield
+    finally:
+        config.adv_set.clear()
+        config.adv_set.update(saved_adv_set)
+        config.kernel_config = saved_kernel
+        config.mceq_db_fname = saved_db
+        config.X_start = saved_X_start
+
+
 @pytest.fixture(scope="session")
 def mceq_sib21():
     config.debug_level = 2
