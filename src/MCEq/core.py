@@ -16,6 +16,28 @@ else:
     trapz = np.trapz
 
 
+# Module-level worker state for the optional process-pool path build
+# inside :meth:`MCEqRun._build_pixel_paths`. Workers fork from the parent
+# and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
+# instance itself never has to be picklable. Each worker process gets
+# its own CoW copy of the density model, so per-worker
+# ``set_zenith_azimuth`` mutations stay process-local. Only used when
+# ``solve_fullsky(path_workers=N>0)`` is requested *and* the atmosphere
+# is not azimuth-symmetric (MSIS location-centered case).
+_PATH_WORKER_MCEQ = None
+
+
+def _path_worker_one(args):
+    """Build one (zenith, azimuth) integration path inside a forked worker."""
+    flat_idx, zen, az, kwargs = args
+    if az is None:
+        _PATH_WORKER_MCEQ.set_zenith_azimuth(zen)
+    else:
+        _PATH_WORKER_MCEQ.set_zenith_azimuth(zen, az)
+    _PATH_WORKER_MCEQ._calculate_integration_path(None, "X", **kwargs)
+    return flat_idx, _PATH_WORKER_MCEQ.integration_path
+
+
 class MCEqRun:
     """Main class for handling the calculation.
 
@@ -1519,6 +1541,7 @@ class MCEqRun:
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        path_workers=0,
     ):
         """Build per-pixel ETD2 integration paths for a (zenith × azimuth) grid.
 
@@ -1541,31 +1564,115 @@ class MCEqRun:
         if K < 1:
             raise ValueError("_build_pixel_paths: empty (zenith, azimuth) grid")
 
+        # Auto-detect azimuth symmetry from the density model. Only
+        # ``MSIS00LocationCentered`` and subclasses bind the impact point
+        # to (zenith, azimuth) — their ``set_theta`` accepts ``azimuth_deg``.
+        # Every other atmosphere (CORSIKA, Isothermal, plain MSIS00,
+        # AIRS) ignores azimuth, so the path at fixed zenith is identical
+        # across all azimuth pixels and only needs to be built once.
+        import inspect as _inspect
+        az_symmetric = (
+            "azimuth_deg" not in _inspect.signature(
+                self.density_model.set_theta
+            ).parameters
+        )
+
         saved_zen = getattr(self, "theta_deg", None)
         saved_az = getattr(self, "azimuth_deg", None)
         paths = []
         pixel_index = np.empty((K, 2), dtype=np.int32)
         try:
-            k = 0
-            for i_zen, zen in enumerate(zenith_grid):
-                for i_az in range(n_az):
-                    az = float(azimuth_grid[i_az]) if azimuth_grid is not None else None
-                    if az is None:
-                        self.set_zenith_azimuth(float(zen))
-                    else:
-                        self.set_zenith_azimuth(float(zen), az)
+            if az_symmetric and azimuth_grid is not None and n_az > 1:
+                # Build one path per unique zenith, then duplicate the
+                # tuple ``n_az`` times — same (nsteps, dX, rho_inv, grid_idcs)
+                # for every azimuth at that zenith.
+                k = 0
+                for i_zen, zen in enumerate(zenith_grid):
+                    self.set_zenith_azimuth(float(zen))
                     self._calculate_integration_path(
-                        None,
-                        "X",
-                        X_start=X_start,
-                        eps=eps,
-                        dX_max=dX_max,
-                        dX_min=dX_min,
-                        fd_span=fd_span,
+                        None, "X",
+                        X_start=X_start, eps=eps,
+                        dX_max=dX_max, dX_min=dX_min, fd_span=fd_span,
                     )
-                    paths.append(self.integration_path)
-                    pixel_index[k] = (i_zen, i_az)
-                    k += 1
+                    shared_path = self.integration_path
+                    for i_az in range(n_az):
+                        paths.append(shared_path)
+                        pixel_index[k] = (i_zen, i_az)
+                        k += 1
+            else:
+                # Per-pixel paths. Optional fork-based worker pool —
+                # used only for atmospheres where each (zen, az) is
+                # distinct (MSIS location-centered). Pickling MCEqRun
+                # would be fragile; instead set a module-level global
+                # and rely on fork() to share via CoW.
+                jobs = []
+                k = 0
+                for i_zen, zen in enumerate(zenith_grid):
+                    for i_az in range(n_az):
+                        az = (
+                            float(azimuth_grid[i_az])
+                            if azimuth_grid is not None
+                            else None
+                        )
+                        jobs.append((k, float(zen), az, i_zen, i_az))
+                        k += 1
+                paths = [None] * K
+                kwargs = dict(
+                    X_start=X_start, eps=eps,
+                    dX_max=dX_max, dX_min=dX_min, fd_span=fd_span,
+                )
+                if path_workers and int(path_workers) > 1:
+                    import multiprocessing as _mp
+
+                    # MSIS is not safe across forked workers: the
+                    # underlying nrlmsise-00 Fortran library has
+                    # state that does not properly isolate via fork
+                    # CoW. Empirically the paths drift by ~fp32-ε
+                    # relative — small but non-reproducible. Refuse
+                    # the worker pool for MSIS rather than silently
+                    # producing non-bit-exact runs.
+                    from MCEq.geometry.density_profiles import (
+                        MSIS00Atmosphere,
+                    )
+
+                    if isinstance(self.density_model, MSIS00Atmosphere):
+                        raise ValueError(
+                            "path_workers > 1 is not safe with MSIS-based "
+                            "atmospheres (nrlmsise-00 is not fork-safe; "
+                            "paths drift by ~1e-7 relative and are not "
+                            "reproducible). Use path_workers=0 for MSIS."
+                        )
+
+                    global _PATH_WORKER_MCEQ
+                    n_workers = int(path_workers)
+                    _PATH_WORKER_MCEQ = self  # inherited by forked children
+                    try:
+                        ctx = _mp.get_context("fork")
+                        worker_args = [
+                            (j[0], j[1], j[2], kwargs) for j in jobs
+                        ]
+                        chunksize = max(1, K // (n_workers * 8))
+                        with ctx.Pool(n_workers) as pool:
+                            for flat_idx, path in pool.imap_unordered(
+                                _path_worker_one, worker_args, chunksize=chunksize
+                            ):
+                                paths[flat_idx] = path
+                    finally:
+                        _PATH_WORKER_MCEQ = None
+                    for j in jobs:
+                        pixel_index[j[0]] = (j[3], j[4])
+                else:
+                    for j in jobs:
+                        flat_idx, zen, az, i_zen, i_az = j
+                        if az is None:
+                            self.set_zenith_azimuth(zen)
+                        else:
+                            self.set_zenith_azimuth(zen, az)
+                        self._calculate_integration_path(
+                            None, "X", **kwargs
+                        )
+                        paths[flat_idx] = self.integration_path
+                        pixel_index[flat_idx] = (i_zen, i_az)
         finally:
             if saved_zen is not None:
                 self.set_zenith_azimuth(saved_zen, saved_az)
@@ -1650,6 +1757,82 @@ class MCEqRun:
             f"solve_fullsky is not yet wired for kernel_config={kc!r}. "
             f"Supported: 'numpy_etd2', 'accelerate_etd2', 'cuda_etd2', "
             f"'mkl_etd2'."
+        )
+
+    def _dispatch_carousel(
+        self,
+        dX_c,
+        rho_inv_c,
+        phi_initial,
+        schedule,
+        phi0_per_pixel,
+        dtype=np.float64,
+    ):
+        """Dispatch one carousel solve. Currently wired for numpy_etd2 only;
+        cuda_etd2 lift is next. Returns ``(dim, K_total)`` pixel-order final
+        states.
+        """
+        import MCEq.solvers
+
+        kc = config.kernel_config.lower()
+        if kc == "numpy_etd2":
+            sol = MCEq.solvers.solv_numpy_etd2_carousel(
+                self.int_m,
+                self.dec_m,
+                dX_c,
+                rho_inv_c,
+                phi_initial,
+                schedule,
+                phi0_per_pixel,
+            )
+            return np.asarray(sol, dtype=np.dtype(dtype))
+        if kc == "cuda_etd2":
+            # Reuse the multi-RHS cupy context cache (keyed on (dtype, K))
+            # — the carousel uses ctx.K = K_pipe (pipeline width), not
+            # K_total. Different K_pipe values get separate ctx slots.
+            from MCEq.solvers import _etd_split_cache
+
+            K_pipe = schedule.K
+            dtype = np.dtype(dtype)
+            if dtype not in (np.float32, np.float64):
+                raise ValueError(
+                    f"_dispatch_carousel: cuda dtype must be float32/64, got {dtype}"
+                )
+            fp_precision = 32 if dtype == np.float32 else 64
+            cache_key = (fp_precision, K_pipe)
+            cache = getattr(self, "_cuda_etd2_multirhs_cache", None)
+            if cache is None:
+                cache = {}
+                self._cuda_etd2_multirhs_cache = cache
+            entry = cache.get(cache_key)
+            if (
+                entry is None
+                or entry["int_m"] is not self.int_m
+                or entry["dec_m"] is not self.dec_m
+            ):
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
+                device_id = int(getattr(config, "cuda_device_id", 0))
+                ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
+                    int_off, dec_off, d_int, d_dec,
+                    K=K_pipe, device_id=device_id,
+                    fp_precision=fp_precision,
+                )
+                cache[cache_key] = {"int_m": self.int_m, "dec_m": self.dec_m, "ctx": ctx}
+                entry = cache[cache_key]
+            ctx = entry["ctx"]
+            phi_init_typed = np.asarray(phi_initial, dtype=dtype)
+            phi0_typed = np.asarray(phi0_per_pixel, dtype=dtype)
+            dX_typed = np.asarray(dX_c, dtype=dtype)
+            ri_typed = np.asarray(rho_inv_c, dtype=dtype)
+            sol = MCEq.solvers.solv_cuda_etd2_carousel(
+                ctx, dX_typed, ri_typed, phi_init_typed, schedule, phi0_typed
+            )
+            return sol
+        raise NotImplementedError(
+            f"_dispatch_carousel: kernel_config={kc!r} not yet wired. "
+            f"Supported: 'numpy_etd2', 'cuda_etd2'."
         )
 
     def _dispatch_mkl_multipath(
@@ -1789,6 +1972,7 @@ class MCEqRun:
         phi0=None,
         *,
         bucket_count=None,
+        carousel_K=None,
         dtype=np.float64,
         X_start=None,
         eps=None,
@@ -1796,6 +1980,7 @@ class MCEqRun:
         dX_min=None,
         fd_span=None,
         return_pixel_index=False,
+        path_workers=0,
     ):
         """Propagate one initial spectrum through every (zenith, azimuth)
         pixel of a sky grid in a (Stage-4 bucketed) multi-RHS solve.
@@ -1903,6 +2088,7 @@ class MCEqRun:
             dX_max=dX_max,
             dX_min=dX_min,
             fd_span=fd_span,
+            path_workers=path_workers,
         )
         nsteps_per_col = np.array([p[0] for p in paths], dtype=np.int32)
         ns_min = int(nsteps_per_col.min())
@@ -1919,6 +2105,36 @@ class MCEqRun:
                 f"solve_fullsky: phi0 has shape {phi0_arr.shape}, expected "
                 f"second axis = K = {K} pixels from the (zenith, azimuth) grid"
             )
+
+        if carousel_K is not None:
+            # Stage 5 — LPT static carousel. Supersedes bucket_count.
+            from MCEq.solvers import schedule_lpt, compile_carousel_schedule
+
+            K_pipe = max(1, min(int(carousel_K), K))
+            slots, T = schedule_lpt(nsteps_per_col, K_pipe)
+            if phi0_is_2d:
+                phi0_per_pixel = np.ascontiguousarray(phi0_arr)
+            else:
+                phi0_per_pixel = np.broadcast_to(
+                    phi0_arr[:, None], (self.dim_states, K)
+                ).copy()
+            dX_c, ri_c, phi_init, sched = compile_carousel_schedule(
+                paths, slots, T, self.dim_states, phi0_per_pixel
+            )
+            sum_ns = int(nsteps_per_col.sum())
+            waste = 1.0 - sum_ns / float(T * K_pipe) if (T * K_pipe) else 0.0
+            info(
+                2,
+                f"solve_fullsky: carousel K_pipe={K_pipe} T={T} "
+                f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
+            )
+            sol = self._dispatch_carousel(
+                dX_c, ri_c, phi_init, sched, phi0_per_pixel, dtype=dtype
+            )
+            info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
+            if return_pixel_index:
+                return sol, nsteps_per_col, pixel_index
+            return sol, nsteps_per_col
 
         if bucket_count is None:
             bucket_count = 1 if K <= 4 else min(K, 8)

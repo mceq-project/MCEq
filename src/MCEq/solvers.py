@@ -867,6 +867,310 @@ def solv_numpy_etd2_multipath(nsteps_max, dX, rho_inv, int_m, dec_m, phi, grid_i
 
 
 # ---------------------------------------------------------------------------
+# Stage 5 — LPT carousel multipath
+#
+# Replaces the Stage 3 zero-pad (wastes ~64 % SpMM work at full-sky) and
+# Stage 4 nsteps-bucket tile (residual 10–30 % padding) with an offline
+# longest-processing-time-first multiway-makespan schedule. ``K_total``
+# pixels stream through a fixed-width ``K`` pipeline; when a slot
+# finishes its current pixel, the next pixel's phi0 is loaded into that
+# slot's column on the same step. The hot loop is unchanged from
+# :func:`solv_numpy_etd2_multipath` except for sparse harvest + reset
+# events at step boundaries.
+#
+# The build phase (``schedule_lpt`` + ``compile_carousel_schedule``) is
+# pure-Python / NumPy and backend-agnostic. Each backend ships its own
+# ``solv_*_etd2_carousel`` kernel that consumes the schedule.
+#
+# Design: ../mceq-em-integration/wiki/methods/multi-rhs-lpt-carousel.md
+# ---------------------------------------------------------------------------
+from collections import namedtuple
+
+CarouselSchedule = namedtuple(
+    "CarouselSchedule",
+    [
+        "T",                # int — makespan (outer loop iters)
+        "K",                # int — pipeline width (slots)
+        "K_total",          # int — total pixels packed
+        "slot_assignments", # list[list[int]] — per-slot pixel ids in run order
+        "reset_t_starts",   # (T+1,) int32 — CSR ptrs into reset_j / reset_pixel
+        "reset_j",          # (R,) int32 — slot id of each reset event
+        "reset_pixel",      # (R,) int32 — pixel id whose phi0 to load
+        "record_t_starts",  # (T+1,) int32 — CSR ptrs into record_j / record_pixel
+        "record_j",         # (K_total,) int32 — slot id of each harvest event
+        "record_pixel",     # (K_total,) int32 — pixel id to record into
+    ],
+)
+
+
+def schedule_lpt(nsteps_per_pixel, K):
+    """LPT (longest-processing-time-first) multiway-makespan assignment.
+
+    Sorts pixels by ``nsteps`` descending and greedily appends each to the
+    slot with the currently smallest running length sum. LPT is guaranteed
+    to be within 4/3 of optimal; in our regime (no single pixel
+    dominates) it typically achieves ``T ≈ ⌈Σ/K⌉``.
+
+    Args:
+        nsteps_per_pixel: array-like of int, length K_total.
+        K: int — desired pipeline width. Clamped to ``min(K, K_total)``.
+
+    Returns:
+        slot_assignments: list of K lists; slot j → ordered pixel ids.
+        T: int — makespan = max over slots of total assigned nsteps.
+
+    Notes:
+        Pixel order within a slot does not affect the makespan; we keep
+        the natural LPT order (longest first) for determinism.
+    """
+    import heapq
+
+    ns = np.asarray(nsteps_per_pixel, dtype=np.int64)
+    K_total = int(ns.size)
+    K_eff = int(min(K, K_total))
+    if K_eff < 1:
+        raise ValueError(f"schedule_lpt: K must be >= 1 (got {K})")
+
+    order = np.argsort(ns, kind="stable")[::-1]  # longest first
+
+    # Min-heap keyed on (current slot length, slot id). The list of pixel
+    # ids per slot lives outside the heap to keep heap entries small.
+    heap = [(0, j) for j in range(K_eff)]
+    heapq.heapify(heap)
+    slot_assignments = [[] for _ in range(K_eff)]
+    for pid in order:
+        pid_i = int(pid)
+        L_j, j = heapq.heappop(heap)
+        slot_assignments[j].append(pid_i)
+        heapq.heappush(heap, (L_j + int(ns[pid_i]), j))
+
+    T = max(int(ns[s].sum() if s else 0) for s in slot_assignments) if True else 0
+    # Recompute T cleanly from the heap residuals:
+    T = max(L_j for L_j, _ in heap)
+    return slot_assignments, T
+
+
+def compile_carousel_schedule(paths, slot_assignments, T, dim, phi0_per_pixel):
+    """Build the (T, K) path tensors and sparse reset/record events.
+
+    Concatenates each slot's pixel paths end-to-end into columns of
+    ``dX_2d`` / ``rho_inv_2d``. Records the per-pixel harvest step (last
+    step of that pixel's slice within its slot) and the per-pixel reset
+    step (right after the prior pixel's harvest, except for the first
+    pixel in a slot which is loaded directly into ``phi_initial``).
+
+    Args:
+        paths: list of ``(nsteps, dX_k, rho_inv_k, _grid_idcs)`` tuples,
+            indexed by pixel id.
+        slot_assignments: from :func:`schedule_lpt`.
+        T: makespan from :func:`schedule_lpt`.
+        dim: state dimension.
+        phi0_per_pixel: ``(dim, K_total)`` array — per-pixel initial phi.
+
+    Returns:
+        dX_carousel: ``(T, K)`` f64 — slot-concatenated step sizes,
+            zero-padded after each slot's total length.
+        rho_inv_carousel: ``(T, K)`` f64 — slot-concatenated densities.
+        phi_initial: ``(dim, K)`` f64 — first pixel's phi0 per slot.
+        schedule: :class:`CarouselSchedule`.
+    """
+    K = len(slot_assignments)
+    K_total = sum(len(s) for s in slot_assignments)
+
+    dX_2d = np.zeros((T, K), dtype=np.float64)
+    rho_inv_2d = np.zeros((T, K), dtype=np.float64)
+    phi_initial = np.zeros((dim, K), dtype=np.float64)
+
+    reset_per_t = [[] for _ in range(T)]
+    record_per_t = [[] for _ in range(T)]
+
+    for j, pixels in enumerate(slot_assignments):
+        if not pixels:
+            continue
+        phi_initial[:, j] = phi0_per_pixel[:, pixels[0]]
+        t_cursor = 0
+        for i, pid in enumerate(pixels):
+            ns_p, dX_p, ri_p, _ = paths[pid]
+            if int(ns_p) != len(dX_p) or int(ns_p) != len(ri_p):
+                raise ValueError(
+                    f"compile_carousel_schedule: pixel {pid} path "
+                    f"length mismatch (nsteps={ns_p}, len(dX)={len(dX_p)}, "
+                    f"len(rho_inv)={len(ri_p)})"
+                )
+            dX_2d[t_cursor : t_cursor + ns_p, j] = dX_p
+            rho_inv_2d[t_cursor : t_cursor + ns_p, j] = ri_p
+            t_finish = t_cursor + ns_p - 1
+            record_per_t[t_finish].append((j, pid))
+            t_cursor += ns_p
+            if i + 1 < len(pixels):
+                reset_per_t[t_finish].append((j, pixels[i + 1]))
+
+    reset_t_starts = np.zeros(T + 1, dtype=np.int32)
+    record_t_starts = np.zeros(T + 1, dtype=np.int32)
+    for t in range(T):
+        reset_t_starts[t + 1] = reset_t_starts[t] + len(reset_per_t[t])
+        record_t_starts[t + 1] = record_t_starts[t] + len(record_per_t[t])
+    R = int(reset_t_starts[T])
+    Rec = int(record_t_starts[T])
+    reset_j = np.empty(R, dtype=np.int32)
+    reset_pixel = np.empty(R, dtype=np.int32)
+    record_j = np.empty(Rec, dtype=np.int32)
+    record_pixel = np.empty(Rec, dtype=np.int32)
+    r_c = 0
+    rec_c = 0
+    for t in range(T):
+        for j, pid in reset_per_t[t]:
+            reset_j[r_c] = j
+            reset_pixel[r_c] = pid
+            r_c += 1
+        for j, pid in record_per_t[t]:
+            record_j[rec_c] = j
+            record_pixel[rec_c] = pid
+            rec_c += 1
+
+    schedule = CarouselSchedule(
+        T=T,
+        K=K,
+        K_total=K_total,
+        slot_assignments=slot_assignments,
+        reset_t_starts=reset_t_starts,
+        reset_j=reset_j,
+        reset_pixel=reset_pixel,
+        record_t_starts=record_t_starts,
+        record_j=record_j,
+        record_pixel=record_pixel,
+    )
+    return dX_2d, rho_inv_2d, phi_initial, schedule
+
+
+def solv_numpy_etd2_carousel(
+    int_m, dec_m, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
+):
+    """ETD2RK carousel — Stage 5 LPT-scheduled multipath.
+
+    Per-step body identical to :func:`solv_numpy_etd2_multipath`. At
+    each step boundary, *first* harvest the columns whose currently
+    loaded pixel just finished, *then* overwrite those columns with the
+    next pixel's phi0 (the harvest-before-reset order matters because
+    a reset event overwrites the column whose state we want to save).
+
+    Args:
+        int_m, dec_m: shared interaction + decay sparse matrices.
+        dX: ``(T, K)`` per-slot step sizes from
+            :func:`compile_carousel_schedule`.
+        rho_inv: ``(T, K)`` per-slot densities.
+        phi_initial: ``(dim, K)`` first-pixel phi0 per slot.
+        schedule: :class:`CarouselSchedule`.
+        phi0_per_pixel: ``(dim, K_total)`` per-pixel initial spectra —
+            indexed by ``schedule.reset_pixel`` during the run.
+
+    Returns:
+        sol_pixel: ``(dim, K_total)`` — final state per pixel, in
+        original pixel order (pixel id = column index).
+    """
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = phi_initial.shape[0]
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
+        raise ValueError(
+            f"solv_numpy_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+    if phi_initial.shape != (dim, K):
+        raise ValueError(
+            f"solv_numpy_etd2_carousel: phi_initial must be (dim,K)="
+            f"({dim},{K}); got {phi_initial.shape}"
+        )
+    if phi0_per_pixel.shape != (dim, K_total):
+        raise ValueError(
+            f"solv_numpy_etd2_carousel: phi0_per_pixel must be "
+            f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
+        )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    if not sp.isspmatrix_csr(int_off):
+        int_off = int_off.tocsr()
+    if not sp.isspmatrix_csr(dec_off):
+        dec_off = dec_off.tocsr()
+
+    phc = np.array(phi_initial, dtype=np.float64, copy=True)
+    F_phi = np.empty((dim, K), dtype=np.float64)
+    F_a = np.empty((dim, K), dtype=np.float64)
+    a = np.empty((dim, K), dtype=np.float64)
+    scratch_NK = np.empty((dim, K), dtype=np.float64)
+
+    bufs = _etd_step_buffers_multipath(dim, K)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+
+    sol_pixel = np.empty((dim, K_total), dtype=np.float64)
+
+    rs = schedule.reset_t_starts
+    rj = schedule.reset_j
+    rp = schedule.reset_pixel
+    cs = schedule.record_t_starts
+    cj = schedule.record_j
+    cp = schedule.record_pixel
+
+    from time import time
+
+    start = time()
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(T):
+            h_K = dX[k]
+            ri_K = rho_inv[k]
+
+            _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, bufs)
+
+            # F_phi = (int_off + ri · dec_off) @ phc
+            np.copyto(F_phi, int_off.dot(phc))
+            ri_dec = dec_off.dot(phc)
+            ri_dec *= ri_K[None, :]
+            np.add(F_phi, ri_dec, out=F_phi)
+
+            # a = eD * phc + h * phi1 * F_phi
+            np.multiply(eD, phc, out=a)
+            np.multiply(phi1, F_phi, out=scratch_NK)
+            scratch_NK *= h_K[None, :]
+            np.add(a, scratch_NK, out=a)
+
+            # F_a = (int_off + ri · dec_off) @ a
+            np.copyto(F_a, int_off.dot(a))
+            ri_dec = dec_off.dot(a)
+            ri_dec *= ri_K[None, :]
+            np.add(F_a, ri_dec, out=F_a)
+
+            # phc = a + h * phi2 * (F_a - F_phi)
+            np.subtract(F_a, F_phi, out=scratch_NK)
+            scratch_NK *= h_K[None, :]
+            np.multiply(phi2, scratch_NK, out=scratch_NK)
+            np.add(a, scratch_NK, out=phc)
+
+            # Harvest pixels that just finished, BEFORE the slot is reset.
+            for r in range(cs[k], cs[k + 1]):
+                sol_pixel[:, cp[r]] = phc[:, cj[r]]
+            # Load next pixel's phi0 into reset slots.
+            for r in range(rs[k], rs[k + 1]):
+                phc[:, rj[r]] = phi0_per_pixel[:, rp[r]]
+
+    elapsed = time() - start
+    useful = int(np.count_nonzero(dX))
+    waste = 1.0 - useful / float(T * K) if (T * K) else 0.0
+    info(
+        2,
+        f"Performance (carousel K={K}, K_total={K_total}, T={T}): "
+        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot, "
+        f"waste={waste:.1%})",
+    )
+
+    return sol_pixel
+
+
+# ---------------------------------------------------------------------------
 # ρ-stack variant: per-step log-linear interpolation between two int_m slices
 # ---------------------------------------------------------------------------
 def _build_step_blend_indices(rho_inv, rho_grid):
@@ -2635,6 +2939,166 @@ def solv_cuda_etd2_multipath(
     )
 
     return phc_host, grid_arr
+
+
+def solv_cuda_etd2_carousel(
+    ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
+):
+    """ETD2RK on cuSPARSE via cupy — Stage 5 LPT carousel multipath.
+
+    Per-step body is structurally identical to
+    :func:`solv_cuda_etd2_multipath`. At each step boundary, harvest
+    record events (``cu_sol[:, pid] = cu_phc[:, slot_j]``) and apply
+    reset events (``cu_phc[:, slot_j] = cu_phi0[:, pid]``) on the
+    device via cupy advanced indexing. Harvest must precede reset on
+    the same step because the reset overwrites the column whose state
+    we want to save.
+
+    Args:
+      ctx (CudaEtd2MultiRHSContext): GPU state — its ``K`` must equal
+        ``schedule.K`` (pipeline width).
+      dX (np.ndarray[T, K]): per-slot step sizes (slot-concatenated and
+        zero-padded by :func:`compile_carousel_schedule`).
+      rho_inv (np.ndarray[T, K]): per-slot densities.
+      phi_initial (np.ndarray[dim, K]): first-pixel phi0 per slot.
+      schedule (CarouselSchedule): from :func:`schedule_lpt` +
+        :func:`compile_carousel_schedule`.
+      phi0_per_pixel (np.ndarray[dim, K_total]): per-pixel initial phi
+        (reset events index into this).
+
+    Returns:
+      np.ndarray[dim, K_total]: final state per pixel on host, in
+      pixel-id (= original) order.
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+    Kset = _cuda_etd2_kernels()
+
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = ctx.dim
+    if K != ctx.K:
+        raise ValueError(
+            f"solv_cuda_etd2_carousel: schedule.K ({K}) does not match "
+            f"ctx.K ({ctx.K})"
+        )
+    if phi_initial.shape != (dim, K):
+        raise ValueError(
+            f"solv_cuda_etd2_carousel: phi_initial must be (dim, K)="
+            f"({dim}, {K}); got {phi_initial.shape}"
+        )
+    if phi0_per_pixel.shape != (dim, K_total):
+        raise ValueError(
+            f"solv_cuda_etd2_carousel: phi0_per_pixel must be "
+            f"(dim, K_total)=({dim}, {K_total}); got {phi0_per_pixel.shape}"
+        )
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
+        raise ValueError(
+            f"solv_cuda_etd2_carousel: dX/rho_inv must be (T, K)=({T}, {K}); "
+            f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+
+    cp.cuda.Device(ctx.device_id).use()
+    ctx.ensure_multipath_buffers()
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_dec_phc = ctx.cu_dec_phc
+    cu_dec_a = ctx.cu_dec_a
+    cu_eD = ctx.cu_eD_mp
+    cu_phi1 = ctx.cu_phi1_mp
+    cu_phi2 = ctx.cu_phi2_mp
+
+    # Upload slot initial state.
+    cu_phc[:] = cp.asarray(phi_initial, dtype=fl_pr)
+
+    # Per-pixel phi0 + per-pixel output buffer on device. (dim × K_total)
+    # extra memory beyond the (dim × K) Stage-3 footprint — at fp32 with
+    # dim=7986, K_total=2664 this is ~170 MB total, trivial on RTX 3090.
+    cu_phi0_pp = cp.asarray(phi0_per_pixel, dtype=fl_pr)
+    cu_sol = cp.empty((dim, K_total), dtype=fl_pr)
+
+    # Path tensors uploaded once (same pattern as multipath).
+    dX_d = cp.asarray(dX, dtype=fl_pr)
+    rho_inv_d = cp.asarray(rho_inv, dtype=fl_pr)
+
+    # Reset / record event indices on device — accessed via advanced
+    # indexing inside the per-step branch.
+    rj_d = cp.asarray(schedule.reset_j, dtype=cp.int32)
+    rp_d = cp.asarray(schedule.reset_pixel, dtype=cp.int32)
+    cj_d = cp.asarray(schedule.record_j, dtype=cp.int32)
+    cp_d = cp.asarray(schedule.record_pixel, dtype=cp.int32)
+    rs = schedule.reset_t_starts   # host int32, used for the per-step gate
+    cs = schedule.record_t_starts
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+    d_int_col = ctx.cu_d_int.reshape(dim, 1)
+    d_dec_col = ctx.cu_d_dec.reshape(dim, 1)
+
+    from time import time
+
+    start = time()
+
+    for step in range(T):
+        h_row = dX_d[step : step + 1]    # (1, K) device view
+        ri_row = rho_inv_d[step : step + 1]
+
+        Kset.phi_compute_multipath(
+            d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2
+        )
+
+        if not int_off_empty:
+            cp.copyto(cu_F_phi, ctx.cu_int_off @ cu_phc)
+        else:
+            cu_F_phi.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_phc, ctx.cu_dec_off @ cu_phc)
+            cu_dec_phc *= ri_row
+            cu_F_phi += cu_dec_phc
+
+        Kset.post_apply1(cu_eD, cu_phc, cu_phi1, cu_F_phi, h_row, cu_a)
+
+        if not int_off_empty:
+            cp.copyto(cu_F_a, ctx.cu_int_off @ cu_a)
+        else:
+            cu_F_a.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_a, ctx.cu_dec_off @ cu_a)
+            cu_dec_a *= ri_row
+            cu_F_a += cu_dec_a
+
+        Kset.post_apply2(cu_a, cu_F_a, cu_F_phi, cu_phi2, h_row, cu_phc)
+
+        # Harvest BEFORE reset on the same step boundary.
+        c_lo = int(cs[step])
+        c_hi = int(cs[step + 1])
+        if c_hi > c_lo:
+            cu_sol[:, cp_d[c_lo:c_hi]] = cu_phc[:, cj_d[c_lo:c_hi]]
+        r_lo = int(rs[step])
+        r_hi = int(rs[step + 1])
+        if r_hi > r_lo:
+            cu_phc[:, rj_d[r_lo:r_hi]] = cu_phi0_pp[:, rp_d[r_lo:r_hi]]
+
+    cp.cuda.Stream.null.synchronize()
+    sol_host = cp.asnumpy(cu_sol)
+
+    elapsed = time() - start
+    useful = int(cp.count_nonzero(dX_d).get())
+    waste = 1.0 - useful / float(T * K) if (T * K) else 0.0
+    info(
+        2,
+        f"Performance (cuda carousel dtype={fl_pr.__name__} K={K}, "
+        f"K_total={K_total}, T={T}): "
+        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot, "
+        f"waste={waste:.1%})",
+    )
+
+    return sol_host
 
 
 # --------------------------------------------------------------------
