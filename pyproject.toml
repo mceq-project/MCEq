@@ -113,5 +113,10 @@ name="New Features"
 exclude_lines = [
     "if config.enable_em:",
     "cuda",
-    "CUDA"
+    "CUDA",
+    "cupy",
+    "CuPy",
+    "cusp",
+    "cp\\.",
+    "Cuda",
 ]
