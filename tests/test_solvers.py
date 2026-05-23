@@ -1721,3 +1721,110 @@ def test_etd2_solve_int_grid_below_X_start_raises(mceq_sib21):
     finally:
         config.kernel_config = saved_kernel
         config.X_start = saved_X_start
+
+
+# ---------------------------------------------------------------------------
+# solve_fullsky — 2-D phi0 (per-pixel initial spectrum)
+# ---------------------------------------------------------------------------
+def test_solve_fullsky_2d_phi0_tiled_matches_1d(mceq_sib21):
+    """Tiling a 1-D phi0 into a 2-D (dim, K) array must produce identical
+    per-pixel solutions to passing the 1-D phi0 directly. Locks in the
+    invariant that 2-D phi0 with identical columns is the broadcast path.
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([0.0, 30.0, 60.0])
+        K = zenith_grid.size
+        phi0_1d = mceq_sib21._phi0.copy()
+
+        sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid, bucket_count=1)
+        phi0_2d = np.broadcast_to(
+            phi0_1d[:, None], (mceq_sib21.dim_states, K)
+        ).copy()
+        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, bucket_count=1)
+
+        assert sol_2d.shape == sol_1d.shape
+        np.testing.assert_allclose(sol_2d, sol_1d, rtol=0, atol=0)
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_fullsky_2d_phi0_per_pixel_matches_serial(mceq_sib21):
+    """Per-pixel 2-D phi0 must match K independent 1-D ``solve_fullsky``
+    calls (one per zenith with that pixel's phi0 column). This is the
+    correctness test for the per-pixel cutoff use case.
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([10.0, 45.0, 70.0])
+        K = zenith_grid.size
+        rng = np.random.default_rng(20260523)
+        phi0_base = mceq_sib21._phi0.copy()
+        # Independent per-pixel phi0s: scale phi0_base by a random positive
+        # factor and zero a different slice per pixel (simulates the cutoff
+        # mask zeroing low-E bins per primary species per direction).
+        phi0_2d = np.zeros((mceq_sib21.dim_states, K), dtype=np.float64)
+        for k in range(K):
+            scale = float(rng.uniform(0.5, 2.0))
+            mask = np.ones(mceq_sib21.dim_states, dtype=np.float64)
+            cut = int(rng.integers(0, mceq_sib21.dim_states // 4))
+            mask[:cut] = 0.0
+            phi0_2d[:, k] = scale * mask * phi0_base
+
+        sol_2d, _ = mceq_sib21.solve_fullsky(
+            zenith_grid, phi0=phi0_2d, bucket_count=1
+        )
+
+        for k in range(K):
+            sol_k, _ = mceq_sib21.solve_fullsky(
+                zenith_grid[k : k + 1], phi0=phi0_2d[:, k].copy(), bucket_count=1
+            )
+            np.testing.assert_allclose(sol_2d[:, k], sol_k[:, 0], rtol=1e-12, atol=0)
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_fullsky_2d_phi0_bucketed_matches_single_dispatch(mceq_sib21):
+    """Stage-4 bucketed dispatch must give the same per-pixel result as the
+    Stage-3 single-dispatch path when phi0 is 2-D. Pixels are scattered
+    back to their original column positions, so phi0[:, cols] slicing
+    must agree.
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([0.0, 20.0, 40.0, 60.0, 80.0])
+        K = zenith_grid.size
+        rng = np.random.default_rng(20260524)
+        phi0_base = mceq_sib21._phi0.copy()
+        phi0_2d = (
+            phi0_base[:, None]
+            * rng.uniform(0.5, 2.0, size=K).astype(np.float64)[None, :]
+        )
+
+        sol_single, _ = mceq_sib21.solve_fullsky(
+            zenith_grid, phi0=phi0_2d, bucket_count=1
+        )
+        sol_bucketed, _ = mceq_sib21.solve_fullsky(
+            zenith_grid, phi0=phi0_2d, bucket_count=3
+        )
+        np.testing.assert_allclose(sol_bucketed, sol_single, rtol=1e-12, atol=0)
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_fullsky_2d_phi0_shape_validation(mceq_sib21):
+    """Reject 2-D phi0 with wrong first axis or wrong K."""
+    zenith_grid = np.array([0.0, 30.0])
+    dim = mceq_sib21.dim_states
+    # Wrong first axis
+    with pytest.raises(ValueError, match="first axis"):
+        mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim - 1, 2)))
+    # Wrong second axis (K mismatch)
+    with pytest.raises(ValueError, match="second axis"):
+        mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim, 3)))
+    # 3-D phi0 rejected
+    with pytest.raises(ValueError, match="1-D .* or 2-D"):
+        mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim, 2, 1)))

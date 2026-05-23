@@ -769,16 +769,20 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
         Azimuth convention: 0° = North, 90° = East (clockwise from North).
         For downgoing showers (zenith < 90°) the impact point is on the
-        surface directly in the direction the shower came from.  For
-        upgoing showers pass the effective downgoing angle (180° − zenith)
-        with the azimuth rotated by 180°; see :meth:`set_theta`.
+        Earth surface above the detector in the direction the shower
+        came from. For upgoing showers (zenith > 90°), the same
+        intersection formula picks the *far-side* surface crossing,
+        i.e. the trajectory's transparent-Earth antipodal-hemisphere
+        atmospheric entry point — the original (theta, azimuth) at the
+        detector should be passed in, no mirror needed.
 
         At South Pole this formula is algebraically equivalent to the
-        original 2-D formula in the legacy :class:`MSIS00IceCubeCentered`.
+        original 2-D formula in the legacy :class:`MSIS00IceCubeCentered`
+        for downgoing; for upgoing it correctly maps to the North-Pole
+        side (and analogous antipodal points elsewhere).
 
         Args:
-            zenith_deg (float): Zenith angle in degrees (must be ≤ 90°;
-                pass the effective downgoing angle for upgoing showers).
+            zenith_deg (float): Zenith angle in degrees [0, 180].
             azimuth_deg (float): Azimuth angle in degrees (0° = North,
                 90° = East).
 
@@ -952,15 +956,22 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
                 f"Zenith angle {theta_deg} not in allowed range [0, {self.max_theta}]."
             )
 
-        # For upgoing showers use the mirror downgoing angle
+        # Transparent-Earth projection: upgoing trajectories at the
+        # detector trace backward through Earth and exit on the antipodal
+        # hemisphere. The existing ``_impact_point`` formula
+        # ``t = -A + sqrt(A**2 + d*(2r-d))`` already picks the forward
+        # surface crossing in the d_ECEF direction — for downgoing that
+        # is the detector-side atmosphere top; for upgoing (d_ECEF
+        # pointing into Earth) it is the antipodal-side surface. So we
+        # pass the *original* (theta, azi) here and don't mirror.
+        #
+        # The slant-path integration uses the mirror angle (the antipodal
+        # column has identical slant geometry to a downgoing shower at
+        # ``180 - theta``).
         effective_theta = theta_deg if theta_deg <= 90.0 else 180.0 - theta_deg
 
         if azimuth_deg is not None:
-            # For upgoing, flip azimuth to point to the atmospheric entry side
-            eff_azi = (
-                azimuth_deg if theta_deg <= 90.0 else (azimuth_deg + 180.0) % 360.0
-            )
-            lat, lon = self._impact_point(effective_theta, eff_azi)
+            lat, lon = self._impact_point(theta_deg, azimuth_deg)
             self._msis.set_location_coord(lon, lat)
             self._current_impact_latitude = lat
             self._current_impact_longitude = lon
@@ -974,9 +985,11 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         else:
             # Pre-compute all impact points once; they depend only on zenith,
             # not on height, so they are constant for this set_theta call.
+            # Use the original theta_deg (transparent-Earth projection — see
+            # the comment above for the single-azimuth branch).
             azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
             self._azimuth_avg_coords = [
-                self._impact_point(effective_theta, azi) for azi in azi_grid
+                self._impact_point(theta_deg, azi) for azi in azi_grid
             ]
             self._azimuth_averaging = True
             self._current_impact_latitude = None

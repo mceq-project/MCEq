@@ -1826,11 +1826,18 @@ class MCEqRun:
           azimuth_grid (np.ndarray | None): 1-D azimuth angles in
             degrees. If ``None``, the calculation reduces to the
             ``len(zenith_grid)``-pixel zenith-only sky.
-          phi0 (np.ndarray | None): 1-D initial spectrum of length
-            ``dim_states``. If ``None``, uses the currently set
-            ``self._phi0``. The same ``phi0`` is replicated across all
-            K pixel columns — a single primary, propagated through K
-            different atmospheres.
+          phi0 (np.ndarray | None): initial spectrum. Two shapes accepted:
+            * ``(dim_states,)`` — single primary, replicated across all K
+              pixel columns. Propagates one spectrum through K different
+              atmospheres.
+            * ``(dim_states, K)`` — per-pixel initial spectrum. Column
+              order matches the ``(i_zen, i_az)``-flattened pixel order
+              (azimuth is the inner axis; same convention as
+              :meth:`_build_pixel_paths`). Use this to apply per-pixel
+              modifications (e.g. geomagnetic rigidity cutoff masks on
+              the primary).
+            If ``None``, uses the currently set ``self._phi0`` and
+            replicates as in the 1-D case.
           bucket_count (int | None): number of nsteps-buckets to
             partition pixels into. ``None`` ⇒ heuristic default
             (1 if K ≤ 4 else min(K, 8)). ``1`` ⇒ Stage-3 single
@@ -1864,13 +1871,28 @@ class MCEqRun:
         start = time()
 
         if phi0 is None:
-            phi0_1d = self._phi0.copy()
+            phi0_arr = self._phi0.copy()
+            phi0_is_2d = False
         else:
-            phi0_1d = np.asarray(phi0, dtype=np.float64).reshape(-1)
-            if phi0_1d.size != self.dim_states:
+            phi0_arr = np.asarray(phi0, dtype=np.float64)
+            if phi0_arr.ndim == 1:
+                if phi0_arr.size != self.dim_states:
+                    raise ValueError(
+                        f"solve_fullsky: phi0 has length {phi0_arr.size}, "
+                        f"expected {self.dim_states}"
+                    )
+                phi0_is_2d = False
+            elif phi0_arr.ndim == 2:
+                if phi0_arr.shape[0] != self.dim_states:
+                    raise ValueError(
+                        f"solve_fullsky: phi0 has shape {phi0_arr.shape}, "
+                        f"expected first axis = dim_states = {self.dim_states}"
+                    )
+                phi0_is_2d = True
+            else:
                 raise ValueError(
-                    f"solve_fullsky: phi0 has length {phi0_1d.size}, "
-                    f"expected {self.dim_states}"
+                    f"solve_fullsky: phi0 must be 1-D (dim_states,) or 2-D "
+                    f"(dim_states, K); got shape {phi0_arr.shape}"
                 )
 
         paths, pixel_index, K = self._build_pixel_paths(
@@ -1892,6 +1914,12 @@ class MCEqRun:
             f"mean={ns_mean:.1f}",
         )
 
+        if phi0_is_2d and phi0_arr.shape[1] != K:
+            raise ValueError(
+                f"solve_fullsky: phi0 has shape {phi0_arr.shape}, expected "
+                f"second axis = K = {K} pixels from the (zenith, azimuth) grid"
+            )
+
         if bucket_count is None:
             bucket_count = 1 if K <= 4 else min(K, 8)
         bucket_count = max(1, min(int(bucket_count), K))
@@ -1900,7 +1928,12 @@ class MCEqRun:
 
         if bucket_count == 1:
             dX_2d, rho_inv_2d = self._stack_paths(paths, ns_max)
-            phi0_multi = np.broadcast_to(phi0_1d[:, None], (self.dim_states, K)).copy()
+            if phi0_is_2d:
+                phi0_multi = np.ascontiguousarray(phi0_arr)
+            else:
+                phi0_multi = np.broadcast_to(
+                    phi0_arr[:, None], (self.dim_states, K)
+                ).copy()
             sol = self._dispatch_multipath(
                 ns_max, dX_2d, rho_inv_2d, phi0_multi, dtype=dtype
             )
@@ -1919,9 +1952,12 @@ class MCEqRun:
                 ns_max_b = int(nsteps_per_col[cols].max())
                 bucket_paths = [paths[i] for i in cols]
                 dX_b, rho_inv_b = self._stack_paths(bucket_paths, ns_max_b)
-                phi0_b = np.broadcast_to(
-                    phi0_1d[:, None], (self.dim_states, K_b)
-                ).copy()
+                if phi0_is_2d:
+                    phi0_b = np.ascontiguousarray(phi0_arr[:, cols])
+                else:
+                    phi0_b = np.broadcast_to(
+                        phi0_arr[:, None], (self.dim_states, K_b)
+                    ).copy()
                 sol_b = self._dispatch_multipath(
                     ns_max_b, dX_b, rho_inv_b, phi0_b, dtype=dtype
                 )
