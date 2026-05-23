@@ -25,6 +25,12 @@ python_add_library(_libcorsikaatm MODULE
                    src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
 install(TARGETS _libcorsikaatm DESTINATION ${INSTALL_DIR}/geometry/corsikaatm)
 
+# Platform-neutral fused ETD2 post-apply kernels — no sparse-backend deps,
+# builds on every platform. Used by the MKL multi-RHS path on Linux/Windows.
+python_add_library(_libetd2_kernels MODULE
+                   src/MCEq/etd2_kernels/etd2_kernels.c WITH_SOABI)
+install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/etd2_kernels)
+
 if(APPLE)
   # –– declare and name the extension with the correct SOABI suffix
   python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
