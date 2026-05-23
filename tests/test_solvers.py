@@ -1261,6 +1261,7 @@ def _uniform_path_theta60(mceq, h=5.0):
     return len(dX), dX, rho_inv
 
 
+@pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 @pytest.mark.parametrize("blocksize", [None, 6], ids=["csr", "bsr6"])
 def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
@@ -1373,6 +1374,7 @@ def test_mkl_bsr_handles_padding():
     )
 
 
+@pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 def test_solv_mkl_etd2_stable_at_high_zenith():
     """Regression: MKL ETD2 must stay finite at theta=89 deg.
@@ -1410,6 +1412,7 @@ def test_solv_mkl_etd2_stable_at_high_zenith():
 # ---------------------------------------------------------------------------
 # ETD2 (NVIDIA CUDA) tests
 # ---------------------------------------------------------------------------
+@pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
     """Equivalence test on real MCEq matrices.
@@ -1456,6 +1459,7 @@ def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
     )
 
 
+@pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 def test_solv_cuda_etd2_stable_at_high_zenith():
     """Regression: CUDA ETD2 must stay finite at theta=89 deg."""
