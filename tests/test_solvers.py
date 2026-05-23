@@ -426,6 +426,230 @@ def test_solv_spacc_etd2_multipath_matches_numpy_multipath(K):
             spacc_dec.close()
 
 
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+@pytest.mark.parametrize("K", [1, 4, 16])
+def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
+    """MKL multi-RHS columns match numpy multi-RHS columns within fp64 ε."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        MklSparseMatrix,
+        _etd_split_cache,
+        solv_mkl_etd2_multirhs,
+        solv_numpy_etd2_multirhs,
+    )
+
+    rng = np.random.default_rng(7)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_numpy, _ = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    )
+    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
+    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
+    try:
+        sol_mkl, _ = solv_mkl_etd2_multirhs(
+            nsteps, dX, rho_inv, mkl_int, mkl_dec, d_int, d_dec, phi0_multi, []
+        )
+        np.testing.assert_allclose(sol_mkl, sol_numpy, rtol=5e-13, atol=0)
+    finally:
+        if mkl_int is not None:
+            mkl_int.close()
+        if mkl_dec is not None:
+            mkl_dec.close()
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+@pytest.mark.parametrize("K", [1, 4])
+def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
+    """fp32 MKL multi-RHS holds 1e-4 rel-L2 vs numpy fp64 reference."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        MklSparseMatrixF32,
+        _etd_split_cache,
+        solv_mkl_etd2_multirhs_f32,
+        solv_numpy_etd2_multirhs,
+    )
+
+    rng = np.random.default_rng(7)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_numpy, _ = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    )
+    mkl_int32 = (
+        MklSparseMatrixF32(int_off.astype(np.float32)) if int_off.nnz else None
+    )
+    mkl_dec32 = (
+        MklSparseMatrixF32(dec_off.astype(np.float32)) if dec_off.nnz else None
+    )
+    try:
+        sol_mkl32, _ = solv_mkl_etd2_multirhs_f32(
+            nsteps, dX, rho_inv, mkl_int32, mkl_dec32,
+            d_int, d_dec, phi0_multi, [],
+        )
+        rel_l2 = np.linalg.norm(sol_mkl32 - sol_numpy) / max(
+            np.linalg.norm(sol_numpy), 1e-30
+        )
+        assert rel_l2 < 1e-4, (
+            f"mkl multirhs f32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
+        )
+    finally:
+        if mkl_int32 is not None:
+            mkl_int32.close()
+        if mkl_dec32 is not None:
+            mkl_dec32.close()
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+@pytest.mark.parametrize("K", [1, 4, 8])
+def test_solv_mkl_etd2_multipath_matches_numpy_multipath(K):
+    """MKL per-RHS-path kernel matches numpy multipath within fp64 ε,
+    including frozen-column semantics."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        MklSparseMatrix,
+        _etd_split_cache,
+        solv_mkl_etd2_multipath,
+        solv_numpy_etd2_multipath,
+    )
+
+    rng = np.random.default_rng(101)
+    size = 16
+    A = rng.standard_normal((size, size)) * 0.04
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    ns_per_col = [int(15 + 5 * i) for i in range(K)]
+    nsteps_max = max(ns_per_col)
+    dX_2d = np.zeros((nsteps_max, K))
+    rho_inv_2d = np.zeros((nsteps_max, K))
+    rng_path = np.random.default_rng(3)
+    for k in range(K):
+        ns = ns_per_col[k]
+        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
+        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
+    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
+    try:
+        sol_numpy, _ = solv_numpy_etd2_multipath(
+            nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
+        )
+        sol_mkl, _ = solv_mkl_etd2_multipath(
+            nsteps_max, dX_2d, rho_inv_2d, mkl_int, mkl_dec,
+            d_int, d_dec, phi0_multi, [],
+        )
+        np.testing.assert_allclose(sol_mkl, sol_numpy, rtol=5e-13, atol=0)
+    finally:
+        if mkl_int is not None:
+            mkl_int.close()
+        if mkl_dec is not None:
+            mkl_dec.close()
+
+
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+@pytest.mark.parametrize("K", [1, 4, 8])
+def test_solv_cuda_etd2_multipath_matches_numpy_multipath(K):
+    """cupy per-RHS-path kernel matches numpy multipath within cuSPARSE-
+    reorder tolerance, and frozen-column semantics work (a column with
+    zero-padded path after step n_k freezes its state at step n_k)."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        CudaEtd2MultiRHSContext,
+        _etd_split_cache,
+        solv_cuda_etd2_multipath,
+        solv_numpy_etd2_multipath,
+    )
+
+    rng = np.random.default_rng(101)
+    size = 16
+    A = rng.standard_normal((size, size)) * 0.04
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    ns_per_col = [int(15 + 5 * i) for i in range(K)]
+    nsteps_max = max(ns_per_col)
+    dX_2d = np.zeros((nsteps_max, K))
+    rho_inv_2d = np.zeros((nsteps_max, K))
+    rng_path = np.random.default_rng(3)
+    for k in range(K):
+        ns = ns_per_col[k]
+        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
+        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    ctx = CudaEtd2MultiRHSContext(
+        int_off,
+        dec_off,
+        d_int,
+        d_dec,
+        K=K,
+        device_id=config.cuda_gpu_id,
+        fp_precision=64,
+    )
+    sol_numpy, _ = solv_numpy_etd2_multipath(
+        nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
+    )
+    sol_cuda, _ = solv_cuda_etd2_multipath(
+        nsteps_max, dX_2d, rho_inv_2d, ctx, phi0_multi, []
+    )
+    rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    assert rel_l2 < 1e-10, (
+        f"cuda multipath (K={K}) vs numpy multipath rel-L2 = {rel_l2:.3e}"
+    )
+
+
 @pytest.mark.parametrize("K", [1, 4, 16])
 def test_solv_numpy_etd2_rho_stack_multirhs_matches_single_rhs_toy(K):
     """ρ-stack multi-RHS columns match K independent single-RHS ρ-stack solves.
@@ -573,6 +797,137 @@ def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
         spacc_int.close()
     if spacc_dec is not None:
         spacc_dec.close()
+
+
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+@pytest.mark.parametrize("K", [1, 4, 16])
+def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
+    """cupy multi-RHS columns match numpy multi-RHS columns within
+    cuSPARSE-reorder tolerance.
+
+    cuSPARSE reorders partial sums (warp-reduction order differs from
+    scipy's row-major accumulation), so we tolerate a relative L2 of 1e-10
+    rather than round-off. The single-RHS cuda test uses the same bound.
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        CudaEtd2MultiRHSContext,
+        _etd_split_cache,
+        solv_cuda_etd2_multirhs,
+        solv_numpy_etd2_multirhs,
+    )
+
+    rng = np.random.default_rng(7)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+    grid_idcs = [5, 15, 25]
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_numpy, grid_numpy = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    )
+
+    ctx = CudaEtd2MultiRHSContext(
+        int_off,
+        dec_off,
+        d_int,
+        d_dec,
+        K=K,
+        device_id=config.cuda_gpu_id,
+        fp_precision=64,
+    )
+    sol_cuda, grid_cuda = solv_cuda_etd2_multirhs(
+        nsteps, dX, rho_inv, ctx, phi0_multi, grid_idcs
+    )
+
+    rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    assert rel_l2 < 1e-10, (
+        f"cuda multirhs (K={K}) vs numpy multirhs rel-L2 = {rel_l2:.3e}"
+    )
+    if grid_idcs:
+        rel_grid = np.linalg.norm(grid_cuda - grid_numpy) / max(
+            np.linalg.norm(grid_numpy), 1e-30
+        )
+        assert rel_grid < 1e-10, (
+            f"cuda multirhs grid snapshots rel-L2 = {rel_grid:.3e}"
+        )
+
+
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+@pytest.mark.parametrize("K", [1, 4])
+def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
+    """fp32 cupy multi-RHS holds 1e-4 rel-L2 vs the fp64 numpy reference.
+
+    Per the multi-RHS handover plan: fp32 stability budget is 1e-4 relative
+    error (verified against per-particle MCEq SIBYLL21 fluxes on Mac
+    Accelerate; same arithmetic carries to cupy by construction).
+    """
+    import scipy.sparse as sp
+
+    from MCEq.solvers import (
+        CudaEtd2MultiRHSContext,
+        _etd_split_cache,
+        solv_cuda_etd2_multirhs,
+        solv_numpy_etd2_multirhs,
+    )
+
+    rng = np.random.default_rng(7)
+    nsteps = 30
+    size = 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+
+    A = rng.standard_normal((size, size)) * 0.05
+    A[np.abs(A) < 0.02] = 0.0
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B[np.abs(B) < 0.01] = 0.0
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m = sp.csr_matrix(A)
+    dec_m = sp.csr_matrix(B)
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+
+    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
+
+    sol_numpy, _ = solv_numpy_etd2_multirhs(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    )
+    ctx = CudaEtd2MultiRHSContext(
+        int_off,
+        dec_off,
+        d_int,
+        d_dec,
+        K=K,
+        device_id=config.cuda_gpu_id,
+        fp_precision=32,
+    )
+    sol_cuda32, _ = solv_cuda_etd2_multirhs(
+        nsteps, dX, rho_inv, ctx, phi0_multi, []
+    )
+    rel_l2 = np.linalg.norm(sol_cuda32 - sol_numpy) / max(
+        np.linalg.norm(sol_numpy), 1e-30
+    )
+    assert rel_l2 < 1e-4, (
+        f"cuda multirhs f32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
+    )
 
 
 def _muon_flux(mceq, phi):

@@ -1179,6 +1179,115 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
+    def _dispatch_mkl_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+        """Pick the MKL multirhs kernel by ``dtype`` and reuse a per-dtype
+        sparse-handle cache. The MKL handle owns the optimised internal
+        layout (after ``mkl_sparse_optimize``) — reusing the handle across
+        a multi-RHS solve is what amortises that cost. fp64 lives in
+        ``self._mkl_etd2_cache_multirhs``; fp32 in
+        ``self._mkl_etd2_cache_multirhs_f32``.
+        """
+        import MCEq.solvers
+        from MCEq.solvers import _etd_split_cache
+
+        if dtype == np.float64:
+            cache_attr = "_mkl_etd2_cache_multirhs"
+            matrix_cls = MCEq.solvers.MklSparseMatrix
+            solver = MCEq.solvers.solv_mkl_etd2_multirhs
+        else:
+            cache_attr = "_mkl_etd2_cache_multirhs_f32"
+            matrix_cls = MCEq.solvers.MklSparseMatrixF32
+            solver = MCEq.solvers.solv_mkl_etd2_multirhs_f32
+
+        cached = getattr(self, cache_attr, None)
+        if (
+            cached is None
+            or cached["int_m"] is not self.int_m
+            or cached["dec_m"] is not self.dec_m
+        ):
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
+            new_cached = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "mkl_int_off": matrix_cls(int_off) if int_off.nnz else None,
+                "mkl_dec_off": matrix_cls(dec_off) if dec_off.nnz else None,
+                "d_int": d_int,
+                "d_dec": d_dec,
+            }
+            old_cached = cached
+            setattr(self, cache_attr, new_cached)
+            if old_cached is not None:
+                for key in ("mkl_int_off", "mkl_dec_off"):
+                    old = old_cached.get(key)
+                    if old is not None:
+                        old.close()
+        c = getattr(self, cache_attr)
+        return solver(
+            nsteps,
+            dX,
+            rho_inv,
+            c["mkl_int_off"],
+            c["mkl_dec_off"],
+            c["d_int"],
+            c["d_dec"],
+            phi0,
+            grid_idcs,
+        )
+
+    def _dispatch_cuda_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+        """Pick the cupy multirhs kernel and reuse a per-(dtype, K) context
+        cache. The context owns the cuSPARSE CSR copies of the off-diagonals
+        and the (dim, K) state/scratch buffers, so reconstructing them costs
+        a non-trivial number of allocations + CSR builds. Cached in
+        ``self._cuda_etd2_multirhs_cache`` keyed on (dtype, K) and tied
+        to the current ``int_m`` / ``dec_m`` identity.
+        """
+        import MCEq.solvers
+        from MCEq.solvers import _etd_split_cache
+
+        fp_precision = 32 if dtype == np.float32 else 64
+        dim, K = phi0.shape
+        cache_key = (fp_precision, K)
+        cache = getattr(self, "_cuda_etd2_multirhs_cache", None)
+        if cache is None:
+            cache = {}
+            self._cuda_etd2_multirhs_cache = cache
+
+        entry = cache.get(cache_key)
+        if (
+            entry is None
+            or entry["int_m"] is not self.int_m
+            or entry["dec_m"] is not self.dec_m
+        ):
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                self.int_m, self.dec_m
+            )
+            device_id = int(getattr(config, "cuda_device_id", 0))
+            ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
+                int_off,
+                dec_off,
+                d_int,
+                d_dec,
+                K=K,
+                device_id=device_id,
+                fp_precision=fp_precision,
+            )
+            cache[cache_key] = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "ctx": ctx,
+            }
+            entry = cache[cache_key]
+        ctx = entry["ctx"]
+        return MCEq.solvers.solv_cuda_etd2_multirhs(
+            nsteps,
+            dX,
+            rho_inv,
+            ctx,
+            phi0,
+            grid_idcs,
+        )
+
     def _dispatch_spacc_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
         """Pick the spacc multirhs kernel by ``dtype`` and reuse a per-dtype
         sparse-handle cache so the Sparse BLAS optimisation cost is paid
@@ -1353,9 +1462,10 @@ class MCEqRun:
             if dtype == np.float32:
                 raise NotImplementedError(
                     "solve_multirhs(dtype=float32) is currently wired only for "
-                    "kernel_config='accelerate_etd2'. A scipy fp32 path would "
-                    "need fp32 versions of int_m / dec_m and the numpy "
-                    "multirhs kernel — defer until needed."
+                    "kernel_config in {'accelerate_etd2', 'cuda_etd2', "
+                    "'mkl_etd2'}. A scipy fp32 path would need fp32 versions "
+                    "of int_m / dec_m and the numpy multirhs kernel — defer "
+                    "until needed."
                 )
             # If a ρ-stack has been built (via enable_em_density_interpolation),
             # route to the ρ-aware multi-RHS kernel so per-step log-linear
@@ -1381,11 +1491,19 @@ class MCEqRun:
             sol, grid_sol = self._dispatch_spacc_multirhs(
                 nsteps, dX, rho_inv, grid_idcs, phi0, dtype
             )
+        elif kc == "cuda_etd2":
+            sol, grid_sol = self._dispatch_cuda_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+            )
+        elif kc == "mkl_etd2":
+            sol, grid_sol = self._dispatch_mkl_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+            )
         else:
             raise NotImplementedError(
                 f"solve_multirhs is not yet wired for kernel_config={kc!r}. "
-                f"v1 supports 'numpy_etd2' and 'accelerate_etd2'; "
-                f"MKL and CUDA variants are TBD."
+                f"Supported: 'numpy_etd2', 'accelerate_etd2', 'cuda_etd2', "
+                f"'mkl_etd2'."
             )
 
         info(2, f"time elapsed during multi-RHS integration: {time() - start:5.2f}sec")
@@ -1454,10 +1572,10 @@ class MCEqRun:
             self.integration_path = None
         return paths, pixel_index, K
 
-    def _dispatch_multipath(self, nsteps_max, dX_2d, rho_inv_2d, phi0_multi):
+    def _dispatch_multipath(self, nsteps_max, dX_2d, rho_inv_2d, phi0_multi, dtype=np.float64):
         """Dispatch a single multipath kernel call. Picks the kernel from
-        ``config.kernel_config``; reuses the spacc handle cache. Returns the
-        final ``(dim, K)`` solution.
+        ``config.kernel_config``; reuses the spacc/cuda handle cache. Returns
+        the final ``(dim, K)`` solution.
         """
         import MCEq.solvers
 
@@ -1518,10 +1636,139 @@ class MCEqRun:
                 [],
             )
             return sol
+        if kc == "cuda_etd2":
+            sol, _ = self._dispatch_cuda_multipath(
+                nsteps_max, dX_2d, rho_inv_2d, phi0_multi, dtype=dtype
+            )
+            return sol
+        if kc == "mkl_etd2":
+            sol, _ = self._dispatch_mkl_multipath(
+                nsteps_max, dX_2d, rho_inv_2d, phi0_multi, dtype=dtype
+            )
+            return sol
         raise NotImplementedError(
             f"solve_fullsky is not yet wired for kernel_config={kc!r}. "
-            f"v1 supports 'numpy_etd2' and 'accelerate_etd2'."
+            f"Supported: 'numpy_etd2', 'accelerate_etd2', 'cuda_etd2', "
+            f"'mkl_etd2'."
         )
+
+    def _dispatch_mkl_multipath(
+        self, nsteps_max, dX_2d, rho_inv_2d, phi0_multi, dtype=np.float64
+    ):
+        """Dispatch the MKL multipath kernel. fp64 only for now —
+        the multipath path uses ``_etd_compute_diag_factors_multipath``
+        which is fp64-internal; a fully-fp32 multipath would need an fp32
+        analogue of that helper. Cast back if the caller requested fp32.
+        """
+        import MCEq.solvers
+        from MCEq.solvers import _etd_split_cache
+
+        if np.dtype(dtype) == np.float32:
+            raise NotImplementedError(
+                "_dispatch_mkl_multipath: fp32 multipath not yet wired "
+                "(diag-factor pipeline runs fp64). Use kernel_config="
+                "'cuda_etd2' for fp32 full-sky."
+            )
+
+        cache_attr = "_mkl_etd2_cache_multirhs"
+        cached = getattr(self, cache_attr, None)
+        if (
+            cached is None
+            or cached["int_m"] is not self.int_m
+            or cached["dec_m"] is not self.dec_m
+        ):
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
+            new_cached = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "mkl_int_off": (
+                    MCEq.solvers.MklSparseMatrix(int_off) if int_off.nnz else None
+                ),
+                "mkl_dec_off": (
+                    MCEq.solvers.MklSparseMatrix(dec_off) if dec_off.nnz else None
+                ),
+                "d_int": d_int,
+                "d_dec": d_dec,
+            }
+            old_cached = cached
+            setattr(self, cache_attr, new_cached)
+            if old_cached is not None:
+                for key in ("mkl_int_off", "mkl_dec_off"):
+                    old = old_cached.get(key)
+                    if old is not None:
+                        old.close()
+        c = getattr(self, cache_attr)
+        sol, _ = MCEq.solvers.solv_mkl_etd2_multipath(
+            nsteps_max,
+            dX_2d,
+            rho_inv_2d,
+            c["mkl_int_off"],
+            c["mkl_dec_off"],
+            c["d_int"],
+            c["d_dec"],
+            phi0_multi,
+            [],
+        )
+        return sol, None
+
+    def _dispatch_cuda_multipath(
+        self, nsteps_max, dX_2d, rho_inv_2d, phi0_multi, dtype=np.float64
+    ):
+        """Dispatch the cupy multipath kernel. Reuses the multi-RHS context
+        cache (keyed on (dtype, K)); multipath uses the same (dim, K) state
+        buffers plus the lazily-allocated (dim, K) diag-factor buffers.
+
+        ``dtype`` (np.float32 or np.float64) controls state + SpMM precision.
+        On Ampere (RTX 3090) without fp64 tensor cores, fp32 buys ~6× per-step
+        at this dim/sparsity. fp32 stability budget against the fp64 reference
+        is 1e-4 rel-L2 (verified on the toy test).
+        """
+        import MCEq.solvers
+        from MCEq.solvers import _etd_split_cache
+
+        dim, K = phi0_multi.shape
+        dtype = np.dtype(dtype)
+        if dtype not in (np.float32, np.float64):
+            raise ValueError(
+                f"_dispatch_cuda_multipath: dtype must be float32 or float64, got {dtype}"
+            )
+        fp_precision = 32 if dtype == np.float32 else 64
+        cache_key = (fp_precision, K)
+        cache = getattr(self, "_cuda_etd2_multirhs_cache", None)
+        if cache is None:
+            cache = {}
+            self._cuda_etd2_multirhs_cache = cache
+        entry = cache.get(cache_key)
+        if (
+            entry is None
+            or entry["int_m"] is not self.int_m
+            or entry["dec_m"] is not self.dec_m
+        ):
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                self.int_m, self.dec_m
+            )
+            device_id = int(getattr(config, "cuda_device_id", 0))
+            ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
+                int_off,
+                dec_off,
+                d_int,
+                d_dec,
+                K=K,
+                device_id=device_id,
+                fp_precision=fp_precision,
+            )
+            cache[cache_key] = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "ctx": ctx,
+            }
+            entry = cache[cache_key]
+        ctx = entry["ctx"]
+        phi0_typed = np.asarray(phi0_multi, dtype=dtype)
+        sol, _ = MCEq.solvers.solv_cuda_etd2_multipath(
+            nsteps_max, dX_2d, rho_inv_2d, ctx, phi0_typed, []
+        )
+        return sol, None
 
     @staticmethod
     def _stack_paths(paths, nsteps_max):
@@ -1542,6 +1789,7 @@ class MCEqRun:
         phi0=None,
         *,
         bucket_count=None,
+        dtype=np.float64,
         X_start=None,
         eps=None,
         dX_max=None,
@@ -1648,12 +1896,14 @@ class MCEqRun:
             bucket_count = 1 if K <= 4 else min(K, 8)
         bucket_count = max(1, min(int(bucket_count), K))
 
-        sol = np.empty((self.dim_states, K), dtype=np.float64)
+        sol = np.empty((self.dim_states, K), dtype=np.dtype(dtype))
 
         if bucket_count == 1:
             dX_2d, rho_inv_2d = self._stack_paths(paths, ns_max)
             phi0_multi = np.broadcast_to(phi0_1d[:, None], (self.dim_states, K)).copy()
-            sol = self._dispatch_multipath(ns_max, dX_2d, rho_inv_2d, phi0_multi)
+            sol = self._dispatch_multipath(
+                ns_max, dX_2d, rho_inv_2d, phi0_multi, dtype=dtype
+            )
         else:
             # Sort columns by nsteps; partition into equal-K buckets.
             # Within-bucket nsteps spread ≪ global spread, so each
@@ -1672,7 +1922,9 @@ class MCEqRun:
                 phi0_b = np.broadcast_to(
                     phi0_1d[:, None], (self.dim_states, K_b)
                 ).copy()
-                sol_b = self._dispatch_multipath(ns_max_b, dX_b, rho_inv_b, phi0_b)
+                sol_b = self._dispatch_multipath(
+                    ns_max_b, dX_b, rho_inv_b, phi0_b, dtype=dtype
+                )
                 # Scatter the bucket's solution back into the original
                 # column positions so the caller sees pixels in their
                 # original ``(i_zen, i_az)``-flattened order.

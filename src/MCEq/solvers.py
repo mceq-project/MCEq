@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -1223,6 +1225,74 @@ def solv_numpy_etd2_rho_stack_multirhs(
 # ---------------------------------------------------------------------------
 # MKL ETD2 kernel
 # ---------------------------------------------------------------------------
+class _MklMatrixDescr:
+    """Shared ``struct matrix_descr`` ctypes wrapper for MKL sparse calls.
+
+    Has to be a module-level class so the argtypes-registered version and
+    the per-wrapper instance reference the same Python type — ctypes does
+    strict isinstance() checking on Structure argtypes.
+    """
+
+
+def _build_mkl_descr_class():
+    from ctypes import Structure, c_int
+
+    class _MatrixDescr(Structure):
+        _fields_ = [("type", c_int), ("mode", c_int), ("diag", c_int)]
+
+    return _MatrixDescr
+
+
+_MklMatrixDescr = _build_mkl_descr_class()
+
+
+_MKL_ARGTYPES_SET = False
+
+
+def _set_mkl_argtypes(mkl):
+    """Register ctypes argtypes/restype on the MKL functions we call.
+
+    Without explicit argtypes, Python ctypes inspects the value passed at
+    each call site to decide how to marshal it. That breaks when callers
+    pass ``c_double.from_address(addr)`` where ``POINTER(c_double)`` is
+    expected — ctypes marshals the c_double by value (not as a pointer)
+    and MKL rejects the call with ``SPARSE_STATUS_INVALID_VALUE``.
+    Setting argtypes once after the library load fixes the marshalling.
+    """
+    global _MKL_ARGTYPES_SET
+    if _MKL_ARGTYPES_SET:
+        return
+    from ctypes import POINTER, c_int, c_void_p
+    from ctypes import c_double as fl64
+    from ctypes import c_float as fl32
+
+    # fp64
+    mkl.mkl_sparse_d_mv.argtypes = [
+        c_int, fl64, c_void_p, _MklMatrixDescr,
+        POINTER(fl64), fl64, POINTER(fl64),
+    ]
+    mkl.mkl_sparse_d_mv.restype = c_int
+    mkl.mkl_sparse_d_mm.argtypes = [
+        c_int, fl64, c_void_p, _MklMatrixDescr, c_int,
+        POINTER(fl64), c_int, c_int, fl64, POINTER(fl64), c_int,
+    ]
+    mkl.mkl_sparse_d_mm.restype = c_int
+    # fp32
+    if hasattr(mkl, "mkl_sparse_s_mv"):
+        mkl.mkl_sparse_s_mv.argtypes = [
+            c_int, fl32, c_void_p, _MklMatrixDescr,
+            POINTER(fl32), fl32, POINTER(fl32),
+        ]
+        mkl.mkl_sparse_s_mv.restype = c_int
+        mkl.mkl_sparse_s_mm.argtypes = [
+            c_int, fl32, c_void_p, _MklMatrixDescr, c_int,
+            POINTER(fl32), c_int, c_int, fl32, POINTER(fl32), c_int,
+        ]
+        mkl.mkl_sparse_s_mm.restype = c_int
+
+    _MKL_ARGTYPES_SET = True
+
+
 class MklSparseMatrix:
     """Thin RAII wrapper around an Intel MKL sparse-matrix handle.
 
@@ -1275,6 +1345,7 @@ class MklSparseMatrix:
 
         mkl = config.mkl
         self._mkl = mkl
+        _set_mkl_argtypes(mkl)
 
         if blocksize is None:
             # ----- CSR path -----
@@ -1358,14 +1429,7 @@ class MklSparseMatrix:
                 raise RuntimeError(f"mkl_sparse_d_create_bsr failed with status {st}")
         self._handle = handle
 
-        class _MatrixDescr(Structure):
-            _fields_ = [
-                ("type", c_int),
-                ("mode", c_int),
-                ("diag", c_int),
-            ]
-
-        descr = _MatrixDescr()
+        descr = _MklMatrixDescr()
         descr.type = c_int(20)  # SPARSE_MATRIX_TYPE_GENERAL
         descr.mode = c_int(121)
         descr.diag = c_int(131)
@@ -1401,6 +1465,66 @@ class MklSparseMatrix:
         if st != 0:
             raise RuntimeError(f"mkl_sparse_d_mv failed with status {st}")
 
+    def gemm_ctargs(self, alpha, nrhs, B_p, ldb, C_p, ldc, beta=1.0):
+        """``C = alpha * A * B + beta * C`` via raw c_double pointers.
+
+        Wraps ``mkl_sparse_d_mm`` with column-major layout so the (dim, K)
+        Fortran-contiguous buffers from the multi-RHS / multipath kernels
+        work without transpose. ``ldb`` and ``ldc`` are the leading
+        dimensions (= ``dim`` for un-tiled callers; per-tile callers can
+        offset the pointer instead).
+
+        Default ``beta = 1.0`` matches :class:`MCEq.spacc.SpaccMatrix.gemm_ctargs`
+        (accumulating SpMM). Caller is responsible for zeroing ``C`` before
+        the first call in an accumulator chain.
+        """
+        from ctypes import c_double as fl_pr
+        from ctypes import c_int
+
+        # SPARSE_LAYOUT_COLUMN_MAJOR = 102. Operation enum (10 = non-transpose)
+        # comes from self._operation, set in __init__.
+        st = self._mkl.mkl_sparse_d_mm(
+            self._operation,
+            fl_pr(alpha),
+            self._handle,
+            self._descr,
+            c_int(102),
+            B_p,
+            c_int(int(nrhs)),
+            c_int(int(ldb)),
+            fl_pr(beta),
+            C_p,
+            c_int(int(ldc)),
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_d_mm failed with status {st}")
+
+    def set_mm_hint(self, nrhs, expected_calls=200):
+        """Tell MKL the SpMM-specific shape so it can re-plan.
+
+        ``mkl_sparse_set_mm_hint`` accepts the layout, op, descr, ncols, and
+        expected call count; if the layout/ncols differs from the SpMV hint
+        registered at construction, the optimiser can pick a different
+        kernel. Followed by another ``mkl_sparse_optimize``. Optional —
+        callers can skip if the SpMV hint is already adequate.
+        """
+        from ctypes import c_int
+
+        # SPARSE_LAYOUT_COLUMN_MAJOR = 102.
+        st = self._mkl.mkl_sparse_set_mm_hint(
+            self._handle,
+            self._operation,
+            self._descr,
+            c_int(102),
+            c_int(int(nrhs)),
+            c_int(int(expected_calls)),
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_set_mm_hint failed with status {st}")
+        st = self._mkl.mkl_sparse_optimize(self._handle)
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
+
     def close(self):
         """Free the underlying MKL sparse handle.
 
@@ -1424,6 +1548,163 @@ class MklSparseMatrix:
         # Defer to ``close()``; both are idempotent. Guards in ``close()``
         # cover partially-initialised instances (constructor raised before
         # the handle was created).
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class MklSparseMatrixF32:
+    """fp32 sibling of :class:`MklSparseMatrix` for the multi-RHS f32 path.
+
+    Wraps an Intel MKL fp32 sparse-matrix handle. The fp32 ETD2 multirhs
+    kernel needs the SpMM to produce fp32 directly (avoids the (dim, K) cast
+    that would otherwise dominate at K ≥ 64); MKL's ``mkl_sparse_s_*``
+    functions are the standard route.
+
+    Currently CSR-only — BSR was a 1.5× win at fp64 on SIBYLL21 but the BSR
+    block-microkernels MKL ships are fp64-only on most builds; CSR is the
+    safe default. Revisit if benches motivate it.
+
+    Args:
+      csr (scipy.sparse.csr_matrix): float32 OR float64 CSR matrix. fp64
+        input is cast down once at construction; downstream the SpMM runs
+        purely in fp32.
+      expected_calls (int): SpMV count hint for MKL planning.
+    """
+
+    def __init__(self, csr, expected_calls=200):
+        from ctypes import POINTER, Structure, byref, c_int, c_void_p
+        from ctypes import c_float as fl_pr
+
+        if config.mkl is None:
+            raise RuntimeError(
+                "MklSparseMatrixF32: MKL library is not loaded. "
+                "Call config.set_mkl_threads(...) first."
+            )
+        if not sp.isspmatrix_csr(csr):
+            raise TypeError(
+                f"MklSparseMatrixF32 expects a CSR matrix, got {type(csr).__name__}"
+            )
+
+        n_orig = csr.shape[0]
+        self.n_orig = n_orig
+        self.n_padded = n_orig
+        self.blocksize = None
+
+        mkl = config.mkl
+        self._mkl = mkl
+        _set_mkl_argtypes(mkl)
+
+        indices = csr.indices.astype(np.int32, copy=False)
+        indptr = csr.indptr.astype(np.int32, copy=False)
+        data = csr.data.astype(np.float32, copy=False)
+        self._data = data
+        self._indices = indices
+        self._indptr = indptr
+        self.nnz = csr.nnz
+
+        handle = c_void_p()
+        data_p = data.ctypes.data_as(POINTER(fl_pr))
+        ci_p = indices.ctypes.data_as(POINTER(c_int))
+        pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
+        pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
+
+        st = mkl.mkl_sparse_s_create_csr(
+            byref(handle),
+            c_int(0),
+            c_int(n_orig),
+            c_int(n_orig),
+            pb_p,
+            pe_p,
+            ci_p,
+            data_p,
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_s_create_csr failed with status {st}")
+        self._handle = handle
+
+        descr = _MklMatrixDescr()
+        descr.type = c_int(20)
+        descr.mode = c_int(121)
+        descr.diag = c_int(131)
+        self._descr = descr
+        self._operation = c_int(10)
+
+        st = mkl.mkl_sparse_set_mv_hint(
+            handle, self._operation, descr, c_int(int(expected_calls))
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_set_mv_hint failed with status {st}")
+        st = mkl.mkl_sparse_optimize(handle)
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
+
+    def gemv_ctargs(self, alpha, x_p, beta, y_p):
+        from ctypes import c_float as fl_pr
+
+        st = self._mkl.mkl_sparse_s_mv(
+            self._operation,
+            fl_pr(alpha),
+            self._handle,
+            self._descr,
+            x_p,
+            fl_pr(beta),
+            y_p,
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_s_mv failed with status {st}")
+
+    def gemm_ctargs(self, alpha, nrhs, B_p, ldb, C_p, ldc, beta=1.0):
+        """``C = alpha * A * B + beta * C`` via raw c_float pointers."""
+        from ctypes import c_float as fl_pr
+        from ctypes import c_int
+
+        st = self._mkl.mkl_sparse_s_mm(
+            self._operation,
+            fl_pr(alpha),
+            self._handle,
+            self._descr,
+            c_int(102),
+            B_p,
+            c_int(int(nrhs)),
+            c_int(int(ldb)),
+            fl_pr(beta),
+            C_p,
+            c_int(int(ldc)),
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_s_mm failed with status {st}")
+
+    def set_mm_hint(self, nrhs, expected_calls=200):
+        from ctypes import c_int
+
+        st = self._mkl.mkl_sparse_set_mm_hint(
+            self._handle,
+            self._operation,
+            self._descr,
+            c_int(102),
+            c_int(int(nrhs)),
+            c_int(int(expected_calls)),
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_set_mm_hint failed with status {st}")
+        st = self._mkl.mkl_sparse_optimize(self._handle)
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
+
+    def close(self):
+        handle = getattr(self, "_handle", None)
+        mkl = getattr(self, "_mkl", None)
+        if handle is None or mkl is None:
+            return
+        try:
+            mkl.mkl_sparse_destroy(handle)
+        except Exception:
+            pass
+        self._handle = None
+
+    def __del__(self):
         try:
             self.close()
         except Exception:
@@ -1845,6 +2126,1057 @@ def solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi, grid_idcs):
     )
 
     return phc_host, grid_arr
+
+
+# --------------------------------------------------------------------
+# cupy / cuSPARSE multi-RHS — Stage 1 (shared path)
+#
+# Eager-mode cuSPARSE SpMM through ``cupyx.scipy.sparse.csr_matrix @
+# dense_2d``. No CUDA Graph capture: cupy 14 explicitly blocks cuSPARSE
+# during ``stream.begin_capture()`` and PriNCe found (and we confirmed)
+# the eager SpMM is already amortised at K ≥ 32, so the graph win for
+# multi-RHS is marginal. The post-apply step uses a small set of
+# ElementwiseKernels broadcast across the K axis.
+# --------------------------------------------------------------------
+_CUDA_ETD2_KERNELS = None
+
+
+def _build_cuda_etd2_kernels(cp):
+    """Build the cupy ElementwiseKernel set used by the multi-RHS path.
+
+    Transplanted from PriNCe's etd2.py (lines 57–131). The kernels broadcast
+    the (dim,) per-step factors over the (dim, K) state via cupy's
+    ElementwiseKernel broadcasting (pass ``factor[:, None]`` at the call
+    site). Kept dtype-agnostic via the ``T`` template — cupy compiles a
+    specialisation per (input dtype combination) on first launch.
+
+    ``post_apply1`` / ``post_apply2`` also serve the per-RHS-path
+    (multipath) variant: pass ``h`` as a ``(1, K)`` broadcasted buffer
+    instead of a Python scalar — the kernel signature is unchanged
+    because ``T`` accepts both scalars and arrays.
+    """
+    phi_compute = cp.ElementwiseKernel(
+        "T hD, T eD_in",
+        "T eD_out, T phi1, T phi2",
+        f"""
+        T abs_hd = (hD >= T(0)) ? hD : -hD;
+        eD_out = eD_in;
+        if (abs_hd > T({_PHI1_SMALL!r})) {{
+            phi1 = (eD_in - T(1)) / hD;
+        }} else {{
+            phi1 = T(1) + hD * (T(0.5) + hD * T({_INV_6!r}));
+        }}
+        if (abs_hd > T({_PHI2_SMALL!r})) {{
+            phi2 = (eD_in - T(1) - hD) / (hD * hD);
+        }} else {{
+            phi2 = T(0.5) + hD * (T({_INV_6!r}) + hD * T({_INV_24!r}));
+        }}
+        """,
+        "mceq_etd2_phi_compute",
+    )
+    # Per-RHS-path diag factor kernel: D = d_int + ri * d_dec ; hD = h * D ;
+    # eD = exp(hD) ; phi1, phi2 via the same analytic/Taylor branch as
+    # ``phi_compute``. Single fused kernel — saves the intermediate (dim, K)
+    # hD/eD buffers vs the staged numpy implementation. Pass
+    # ``d_int[:, None], d_dec[:, None], h_K[None, :], ri_K[None, :]`` to
+    # broadcast onto the (dim, K) output shape.
+    phi_compute_multipath = cp.ElementwiseKernel(
+        "T d_int, T d_dec, T h, T ri",
+        "T eD, T phi1, T phi2",
+        f"""
+        T D = d_int + ri * d_dec;
+        T hd = h * D;
+        T e = exp(hd);
+        eD = e;
+        T abs_hd = (hd >= T(0)) ? hd : -hd;
+        if (abs_hd > T({_PHI1_SMALL!r})) {{
+            phi1 = (e - T(1)) / hd;
+        }} else {{
+            phi1 = T(1) + hd * (T(0.5) + hd * T({_INV_6!r}));
+        }}
+        if (abs_hd > T({_PHI2_SMALL!r})) {{
+            phi2 = (e - T(1) - hd) / (hd * hd);
+        }} else {{
+            phi2 = T(0.5) + hd * (T({_INV_6!r}) + hd * T({_INV_24!r}));
+        }}
+        """,
+        "mceq_etd2_phi_compute_multipath",
+    )
+    post_apply1 = cp.ElementwiseKernel(
+        "T eD, T state, T phi1, T F_phi, T h",
+        "T a",
+        "a = eD * state + h * phi1 * F_phi;",
+        "mceq_etd2_post_apply1",
+    )
+    post_apply2 = cp.ElementwiseKernel(
+        "T a, T F_a, T F_phi, T phi2, T h",
+        "T state",
+        "state = a + h * phi2 * (F_a - F_phi);",
+        "mceq_etd2_post_apply2",
+    )
+    return SimpleNamespace(
+        phi_compute=phi_compute,
+        phi_compute_multipath=phi_compute_multipath,
+        post_apply1=post_apply1,
+        post_apply2=post_apply2,
+    )
+
+
+def _cuda_etd2_kernels():
+    """Lazy singleton — cupy ElementwiseKernels for the multi-RHS path."""
+    global _CUDA_ETD2_KERNELS
+    if _CUDA_ETD2_KERNELS is None:
+        import cupy as cp
+
+        _CUDA_ETD2_KERNELS = _build_cuda_etd2_kernels(cp)
+    return _CUDA_ETD2_KERNELS
+
+
+class CudaEtd2MultiRHSContext:
+    """GPU-resident state for the multi-RHS cupy ETD2 kernels.
+
+    Owns:
+
+    * ``cu_int_off`` / ``cu_dec_off``: cupyx.scipy.sparse.csr_matrix copies
+      (``None`` when the corresponding off-diagonal has zero nnz).
+    * ``cu_d_int`` / ``cu_d_dec``: (dim,) device buffers of the diagonals.
+    * ``cu_phc`` / ``cu_F_phi`` / ``cu_F_a`` / ``cu_a``: (dim, K) state +
+      scratch in row-major (C-contig) order; cupy's ``csr @ dense_2d``
+      and the ElementwiseKernels both expect row-major (no transpose).
+    * ``cu_dec_phc`` / ``cu_dec_a``: (dim, K) scratch for the dec_off SpMM
+      result before scaling by ``ri`` (or per-column ``ri_K`` in multipath).
+      Allocated lazily on first use.
+    * ``cu_D`` / ``cu_hD`` / ``cu_eD`` / ``cu_phi1`` / ``cu_phi2``: (dim,)
+      device buffers for the diag-factor pipeline; shared across K columns
+      in the Stage-1 multi-RHS path (broadcast in the ElementwiseKernel).
+    * ``fl_pr``: ``cp.float32`` or ``cp.float64`` — buffer dtype.
+
+    Constructed once per ``MCEqRun`` per (dtype, K) pair and cached in
+    ``MCEqRun._cuda_etd2_multirhs_cache`` so the cuSPARSE handle and the
+    state buffers are reused across ``solve_multirhs`` / ``solve_fullsky``
+    calls.
+    """
+
+    def __init__(self, int_off, dec_off, d_int, d_dec, K, device_id, fp_precision):
+        _preload_nvidia_pip_libs()
+        try:
+            import cupy as cp
+            import cupyx.scipy.sparse as cusp
+        except ImportError as e:
+            raise RuntimeError(
+                "CudaEtd2MultiRHSContext: CuPy is not available."
+            ) from e
+
+        if fp_precision == 32:
+            fl_pr = cp.float32
+        elif fp_precision == 64:
+            fl_pr = cp.float64
+        else:
+            raise ValueError(
+                f"CudaEtd2MultiRHSContext: fp_precision must be 32 or 64, "
+                f"got {fp_precision}"
+            )
+
+        self.cp = cp
+        self.fl_pr = fl_pr
+        self.device_id = int(device_id)
+        cp.cuda.Device(self.device_id).use()
+
+        dim = int(d_int.shape[0])
+        self.dim = dim
+        self.K = int(K)
+        if self.K < 1:
+            raise ValueError(f"K must be >= 1, got {self.K}")
+
+        # cuSPARSE CSR copies — None when empty (matches the single-RHS
+        # context's convention; the kernel skips empty SpMMs).
+        self.cu_int_off = (
+            cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
+        )
+        self.cu_dec_off = (
+            cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
+        )
+        # Diagonals stay on device in fp64-precision arithmetic; we cast
+        # down to fl_pr for the phi/eD pipeline (sufficient — the Mac fp32
+        # stability test holds at 1e-4 rel-err with the same arithmetic).
+        self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
+        self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
+
+        # (dim, K) state + scratch.
+        self.cu_phc = cp.empty((dim, self.K), dtype=fl_pr)
+        self.cu_F_phi = cp.empty((dim, self.K), dtype=fl_pr)
+        self.cu_F_a = cp.empty((dim, self.K), dtype=fl_pr)
+        self.cu_a = cp.empty((dim, self.K), dtype=fl_pr)
+        # dec_off scratch only used when dec_off is non-empty.
+        self.cu_dec_phc = (
+            cp.empty((dim, self.K), dtype=fl_pr) if self.cu_dec_off is not None else None
+        )
+        self.cu_dec_a = (
+            cp.empty((dim, self.K), dtype=fl_pr) if self.cu_dec_off is not None else None
+        )
+
+        # (dim,) diag-factor buffers — shared across the K columns.
+        self.cu_D = cp.empty(dim, dtype=fl_pr)
+        self.cu_hD = cp.empty(dim, dtype=fl_pr)
+        self.cu_eD = cp.empty(dim, dtype=fl_pr)
+        self.cu_phi1 = cp.empty(dim, dtype=fl_pr)
+        self.cu_phi2 = cp.empty(dim, dtype=fl_pr)
+
+        # (dim, K) diag-factor buffers — only used by the multipath kernel.
+        # Allocated lazily on first call via ``ensure_multipath_buffers`` so
+        # the multi-RHS path doesn't pay the ~3× (dim, K) cost.
+        self.cu_eD_mp = None
+        self.cu_phi1_mp = None
+        self.cu_phi2_mp = None
+        # (K,) per-step path buffers, allocated lazily.
+        self.cu_h_K = None
+        self.cu_ri_K = None
+        # (1, K) view used by post_apply for broadcasted-h call sites.
+        self.cu_h_K_row = None
+
+    def ensure_multipath_buffers(self):
+        """Allocate (dim, K) diag and (K,) path buffers on first multipath use."""
+        if self.cu_eD_mp is not None:
+            return
+        cp = self.cp
+        dim, K = self.dim, self.K
+        self.cu_eD_mp = cp.empty((dim, K), dtype=self.fl_pr)
+        self.cu_phi1_mp = cp.empty((dim, K), dtype=self.fl_pr)
+        self.cu_phi2_mp = cp.empty((dim, K), dtype=self.fl_pr)
+        self.cu_h_K = cp.empty(K, dtype=self.fl_pr)
+        self.cu_ri_K = cp.empty(K, dtype=self.fl_pr)
+        # Row view for broadcast.
+        self.cu_h_K_row = self.cu_h_K.reshape(1, K)
+
+
+def solv_cuda_etd2_multirhs(
+    nsteps,
+    dX,
+    rho_inv,
+    ctx,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on cuSPARSE via cupy — multi-RHS (shared path) variant.
+
+    Stage-1 multi-RHS sibling of :func:`solv_cuda_etd2`. Promotes the four
+    per-step SpMVs to eager cuSPARSE SpMMs through
+    ``cupyx.scipy.sparse.csr_matrix @ dense_2d``. State is row-major
+    ``(dim, K)``; the (dim,) per-step factors (eD, phi1, phi2) are
+    broadcast across the K axis through the ElementwiseKernels in
+    :func:`_cuda_etd2_kernels`.
+
+    All K columns share ``(h, ri)`` per step (single integration path);
+    the per-RHS-path variant lives in
+    :func:`solv_cuda_etd2_multipath`.
+
+    Args:
+      nsteps, dX, rho_inv: same as :func:`solv_cuda_etd2`.
+      ctx (CudaEtd2MultiRHSContext): GPU state.
+      phi (np.ndarray[dim, K]): initial state on host.
+      grid_idcs (list[int]): step indices to snapshot.
+
+    Returns:
+      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]): final
+      state and stacked snapshots, both on host.
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+    K_set = _cuda_etd2_kernels()
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_cuda_etd2_multirhs: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K != ctx.K:
+        raise ValueError(
+            f"solv_cuda_etd2_multirhs: K ({K}) does not match ctx.K ({ctx.K})"
+        )
+
+    cp.cuda.Device(ctx.device_id).use()
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_dec_phc = ctx.cu_dec_phc
+    cu_dec_a = ctx.cu_dec_a
+    cu_D = ctx.cu_D
+    cu_hD = ctx.cu_hD
+    cu_eD = ctx.cu_eD
+    cu_phi1 = ctx.cu_phi1
+    cu_phi2 = ctx.cu_phi2
+
+    # Upload initial state.
+    cu_phc[:] = cp.asarray(phi, dtype=fl_pr)
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+
+    grid_sol_gpu = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    for k in range(nsteps):
+        h = fl_pr(dX[k])
+        ri = fl_pr(rho_inv[k])
+
+        # D = d_int + ri * d_dec  (dim,)
+        cp.multiply(ctx.cu_d_dec, ri, out=cu_D)
+        cp.add(cu_D, ctx.cu_d_int, out=cu_D)
+        # hD = h * D ; eD = exp(hD) ; then phi1/phi2 via fused kernel.
+        cp.multiply(cu_D, h, out=cu_hD)
+        cp.exp(cu_hD, out=cu_eD)
+        K_set.phi_compute(cu_hD, cu_eD, cu_eD, cu_phi1, cu_phi2)
+
+        # F_phi = int_off @ phc + ri * (dec_off @ phc)
+        if not int_off_empty:
+            cp.copyto(cu_F_phi, ctx.cu_int_off @ cu_phc)
+        else:
+            cu_F_phi.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_phc, ctx.cu_dec_off @ cu_phc)
+            # F_phi += ri * dec_phc  (fused into one ufunc using axpy-ish).
+            cu_F_phi += ri * cu_dec_phc
+
+        # a = eD * phc + h * phi1 * F_phi  (fused, broadcast (dim,) over K)
+        K_set.post_apply1(cu_eD[:, None], cu_phc, cu_phi1[:, None], cu_F_phi, h, cu_a)
+
+        # F_a = int_off @ a + ri * (dec_off @ a)
+        if not int_off_empty:
+            cp.copyto(cu_F_a, ctx.cu_int_off @ cu_a)
+        else:
+            cu_F_a.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_a, ctx.cu_dec_off @ cu_a)
+            cu_F_a += ri * cu_dec_a
+
+        # phc = a + h * phi2 * (F_a - F_phi)
+        K_set.post_apply2(cu_a, cu_F_a, cu_F_phi, cu_phi2[:, None], h, cu_phc)
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+            grid_sol_gpu.append(cu_phc.copy())
+            grid_step += 1
+
+    cp.cuda.Stream.null.synchronize()
+    phc_host = cp.asnumpy(cu_phc)
+    if grid_sol_gpu:
+        grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu))
+    else:
+        grid_arr = np.array([])
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (cuda multirhs dtype={fl_pr.__name__} K={K}): "
+        f"{1e3 * elapsed / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc_host, grid_arr
+
+
+def solv_cuda_etd2_multipath(
+    nsteps_max,
+    dX,
+    rho_inv,
+    ctx,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on cuSPARSE via cupy — per-RHS-path (multipath) variant.
+
+    Stage-3 sibling of :func:`solv_cuda_etd2_multirhs`. Path arrays
+    ``dX`` and ``rho_inv`` are ``(nsteps_max, K)`` 2-D tensors; each
+    column carries its own zenith-dependent integration path. The
+    per-step diagonal factors ``eD`` / ``φ₁`` / ``φ₂`` are computed in
+    (dim, K) via the fused ``phi_compute_multipath`` ElementwiseKernel
+    (one kernel launch per step covers the entire diag pipeline).
+
+    Frozen-column semantics: ``dX[step, k] == 0`` ⇒ ``h_K[k] = 0`` ⇒
+    ``hD = 0`` ⇒ ``eD = 1, φ₁ = 1, φ₂ = 1/2`` ⇒ ``state ← state``. The
+    math freezes columns whose own ``nsteps[k]`` has been reached.
+
+    Args:
+      nsteps_max (int): outer loop count.
+      dX (np.ndarray[nsteps_max, K]): per-column ΔX in g/cm² (zero-padded).
+      rho_inv (np.ndarray[nsteps_max, K]): per-column 1/ρ.
+      ctx (CudaEtd2MultiRHSContext): GPU state (multipath buffers
+        materialised lazily on first call).
+      phi (np.ndarray[dim, K]): initial state (one column per RHS).
+      grid_idcs (list[int]): step indices to snapshot.
+
+    Returns:
+      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]).
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+    Kset = _cuda_etd2_kernels()
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_cuda_etd2_multipath: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    if dX.ndim != 2 or rho_inv.ndim != 2:
+        raise ValueError(
+            "solv_cuda_etd2_multipath: dX and rho_inv must be 2-D "
+            f"(nsteps_max, K); got dX.shape={dX.shape}, "
+            f"rho_inv.shape={rho_inv.shape}"
+        )
+    dim, K = phi.shape
+    if K != ctx.K:
+        raise ValueError(
+            f"solv_cuda_etd2_multipath: K ({K}) does not match ctx.K ({ctx.K})"
+        )
+    if dX.shape != (nsteps_max, K) or rho_inv.shape != (nsteps_max, K):
+        raise ValueError(
+            f"solv_cuda_etd2_multipath: path tensors must be shape "
+            f"({nsteps_max}, {K}); got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+
+    cp.cuda.Device(ctx.device_id).use()
+    ctx.ensure_multipath_buffers()
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_dec_phc = ctx.cu_dec_phc
+    cu_dec_a = ctx.cu_dec_a
+    cu_eD = ctx.cu_eD_mp
+    cu_phi1 = ctx.cu_phi1_mp
+    cu_phi2 = ctx.cu_phi2_mp
+    cu_h_K = ctx.cu_h_K
+    cu_ri_K = ctx.cu_ri_K
+    cu_h_K_row = ctx.cu_h_K_row
+
+    cu_phc[:] = cp.asarray(phi, dtype=fl_pr)
+
+    # Upload the full (nsteps_max, K) path tensors once — small (~MB) and
+    # we want to avoid one host→device hop per step. dtype matches state.
+    dX_d = cp.asarray(dX, dtype=fl_pr)
+    rho_inv_d = cp.asarray(rho_inv, dtype=fl_pr)
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+    d_int_col = ctx.cu_d_int.reshape(dim, 1)
+    d_dec_col = ctx.cu_d_dec.reshape(dim, 1)
+
+    grid_sol_gpu = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    for step in range(nsteps_max):
+        # ``dX_d[step:step+1]`` is a (1, K) view on the device — no host
+        # roundtrip, no kernel launch (vs the previous cp.copyto into a
+        # preallocated (K,) buffer). Same for rho_inv_d.
+        h_row = dX_d[step : step + 1]   # (1, K) view
+        ri_row = rho_inv_d[step : step + 1]  # (1, K) view
+
+        # eD, phi1, phi2 ∈ (dim, K) via fused diag-factor kernel.
+        Kset.phi_compute_multipath(d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2)
+
+        # F_phi = int_off @ phc + diag(ri_K) · (dec_off @ phc)
+        # Per-column ri_K cannot fold into the SpMM alpha; accumulate the
+        # dec contribution into scratch and broadcast-multiply by ri_K[None, :].
+        if not int_off_empty:
+            cp.copyto(cu_F_phi, ctx.cu_int_off @ cu_phc)
+        else:
+            cu_F_phi.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_phc, ctx.cu_dec_off @ cu_phc)
+            cu_dec_phc *= ri_row
+            cu_F_phi += cu_dec_phc
+
+        # a = eD * phc + h_K * phi1 * F_phi  (broadcast h over dim)
+        Kset.post_apply1(cu_eD, cu_phc, cu_phi1, cu_F_phi, h_row, cu_a)
+
+        # F_a = int_off @ a + diag(ri_K) · (dec_off @ a)
+        if not int_off_empty:
+            cp.copyto(cu_F_a, ctx.cu_int_off @ cu_a)
+        else:
+            cu_F_a.fill(0)
+        if not dec_off_empty:
+            cp.copyto(cu_dec_a, ctx.cu_dec_off @ cu_a)
+            cu_dec_a *= ri_row
+            cu_F_a += cu_dec_a
+
+        # phc = a + h_K * phi2 * (F_a - F_phi)
+        Kset.post_apply2(cu_a, cu_F_a, cu_F_phi, cu_phi2, h_row, cu_phc)
+
+        if (
+            grid_idcs
+            and grid_step < len(grid_idcs)
+            and grid_idcs[grid_step] == step
+        ):
+            grid_sol_gpu.append(cu_phc.copy())
+            grid_step += 1
+
+    cp.cuda.Stream.null.synchronize()
+    phc_host = cp.asnumpy(cu_phc)
+    if grid_sol_gpu:
+        grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu))
+    else:
+        grid_arr = np.array([])
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (cuda multipath dtype={fl_pr.__name__} K={K}): "
+        f"{1e3 * elapsed / float(nsteps_max):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc_host, grid_arr
+
+
+# --------------------------------------------------------------------
+# MKL Sparse BLAS multi-RHS — Stage 1 (shared path) + Stage 3 (multipath)
+#
+# Structural clone of the spacc multi-RHS kernels but using
+# ``MklSparseMatrix.gemm_ctargs`` (wraps ``mkl_sparse_d_mm``) and the
+# platform-neutral ``MCEq.etd2_kernels`` post-apply C kernels (the same
+# ones the spacc path uses, lifted out of ``MCEq.spacc.spacc.c`` so they
+# build on Linux without Accelerate).
+# --------------------------------------------------------------------
+
+# Default K-tile for the MKL Sparse BLAS SpMM call. MKL's
+# ``mkl_sparse_d_mm`` should scale better than Accelerate's beyond
+# K = 64 (the EPYC AVX2/AVX-512 microkernels stay cache-friendly for
+# larger K), but we keep the same tiling shape for parity with the
+# Accelerate kernel — micro-bench in :doc:`runs/2026-05-23_multirhs-satori-gpu`
+# can tune this if needed. Override via ``config.mkl_spmm_tile``.
+_MKL_SPMM_TILE = 64
+
+
+def solv_mkl_etd2_multirhs(
+    nsteps,
+    dX,
+    rho_inv,
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on Intel MKL Sparse BLAS — multi-RHS variant.
+
+    Same Cox–Matthews update as :func:`solv_numpy_etd2_multirhs`; promotes
+    the four per-step SpMVs to SpMMs through ``mkl_sparse_d_mm``
+    (column-major layout). State buffers are ``(n_padded, K)`` Fortran-
+    contiguous; per-step elementwise math operates on the unpadded
+    ``[:dim, :]`` slice.
+
+    Args mirror :func:`solv_spacc_etd2_multirhs` with
+    :class:`MklSparseMatrix` wrappers instead of :class:`SpaccMatrix`.
+    Returns a ``(dim, K)`` final state (padding trimmed).
+    """
+    from ctypes import POINTER, c_double, sizeof
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_mkl_etd2_multirhs: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K < 1:
+        raise ValueError(f"K must be >= 1, got {K}")
+
+    # BSR-padded path-length, shared across both wrappers (both come from
+    # the same dim so n_padded agrees).
+    n_padded = dim
+    for m in (mkl_int_off, mkl_dec_off):
+        if m is not None:
+            n_padded = max(n_padded, m.n_padded)
+
+    tile = getattr(config, "mkl_spmm_tile", None) or _MKL_SPMM_TILE
+    tile = max(1, min(int(tile), K))
+
+    # Column-major (n_padded, K) Fortran-contiguous state buffers.
+    phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    phc[:dim, :] = phi
+    F_phi = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    F_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    a = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+
+    # Pre-bake per-tile column-offset pointers. Stride is n_padded * sizeof(double).
+    dbl = sizeof(c_double)
+    tile_starts = list(range(0, K, tile))
+    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
+    n_tiles = len(tile_starts)
+
+    phc_addr = phc.ctypes.data
+    F_phi_addr = F_phi.ctypes.data
+    F_a_addr = F_a.ctypes.data
+    a_addr = a.ctypes.data
+
+    def _ptrs_at(addr, c0):
+        return c_double.from_address(addr + c0 * n_padded * dbl)
+
+    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
+    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
+    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
+    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
+
+    # Whole-buffer pointers for the fused post-apply kernels. The C kernels
+    # treat (n_padded, K) as (dim, K) by reading only the first `dim` rows
+    # of each column — but since our buffer is column-major with leading
+    # dim n_padded, the C kernel's `dim` parameter must be n_padded (or we
+    # pad eD/phi1/phi2 to n_padded too). Simpler: pad eD/phi1/phi2 to
+    # n_padded with zeros in the tail; the math then writes 0 into the
+    # padding rows of `a` / `phc`, which is invariant-preserving.
+    if n_padded != dim:
+        eD_p_buf = np.zeros(n_padded, dtype=np.float64)
+        phi1_p_buf = np.zeros(n_padded, dtype=np.float64)
+        phi2_p_buf = np.zeros(n_padded, dtype=np.float64)
+    else:
+        eD_p_buf = eD
+        phi1_p_buf = phi1
+        phi2_p_buf = phi2
+
+    phc_p_full = phc.ctypes.data_as(POINTER(c_double))
+    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_double))
+    F_a_p_full = F_a.ctypes.data_as(POINTER(c_double))
+    a_p_full = a.ctypes.data_as(POINTER(c_double))
+    eD_p = eD_p_buf.ctypes.data_as(POINTER(c_double))
+    phi1_p = phi1_p_buf.ctypes.data_as(POINTER(c_double))
+    phi2_p = phi2_p_buf.ctypes.data_as(POINTER(c_double))
+
+    from MCEq.etd2_kernels import etd2_post_apply1_multirhs as _post1
+    from MCEq.etd2_kernels import etd2_post_apply2_multirhs as _post2
+
+    int_off_empty = (mkl_int_off is None) or (mkl_int_off.nnz == 0)
+    dec_off_empty = (mkl_dec_off is None) or (mkl_dec_off.nnz == 0)
+
+    # Register MM hints so MKL picks an SpMM-specific plan. The expected
+    # call count is 4 SpMMs per step × nsteps (over all tiles, multiplied
+    # by n_tiles), but a single set_mm_hint pass at the actual tile width
+    # is enough — MKL plans for that nrhs.
+    primary_nrhs = tile_widths[0]
+    if not int_off_empty:
+        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
+    if not dec_off_empty:
+        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+            if n_padded != dim:
+                eD_p_buf[:dim] = eD
+                phi1_p_buf[:dim] = phi1
+                phi2_p_buf[:dim] = phi2
+
+            # F_phi = int_off @ phc + ri * dec_off @ phc  (accumulating SpMM)
+            F_phi.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
+                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                if not dec_off_empty:
+                    mkl_dec_off.gemm_ctargs(
+                        ri, nrhs, phc_tile_ptrs[t], n_padded,
+                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+
+            # a = eD[:, None] * phc + h * phi1[:, None] * F_phi  (fused C)
+            # C kernel sees leading-dim n_padded as `dim`; trailing rows
+            # stay zero throughout.
+            _post1(n_padded, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
+
+            F_a.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, a_tile_ptrs[t], n_padded,
+                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                if not dec_off_empty:
+                    mkl_dec_off.gemm_ctargs(
+                        ri, nrhs, a_tile_ptrs[t], n_padded,
+                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+
+            _post2(n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc[:dim, :]))
+                grid_step += 1
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (mkl multirhs K={K}): "
+        f"{1e3 * elapsed / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc[:dim, :].copy(order="F"), np.array(grid_sol)
+
+
+def solv_mkl_etd2_multirhs_f32(
+    nsteps,
+    dX,
+    rho_inv,
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+):
+    """fp32 sibling of :func:`solv_mkl_etd2_multirhs`.
+
+    State + SpMM in fp32 via :class:`MklSparseMatrixF32`. The diagonal
+    pipeline still runs fp64 (exp(h·D) saturates fp32 quickly at high
+    zenith); eD/phi1/phi2 are cast down once per step for the post-apply.
+    """
+    from ctypes import POINTER, c_float, sizeof
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_mkl_etd2_multirhs_f32: phi must be 2-D (dim, K), "
+            f"got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K < 1:
+        raise ValueError(f"K must be >= 1, got {K}")
+
+    n_padded = dim
+    for m in (mkl_int_off, mkl_dec_off):
+        if m is not None:
+            n_padded = max(n_padded, m.n_padded)
+
+    tile = getattr(config, "mkl_spmm_tile", None) or _MKL_SPMM_TILE
+    tile = max(1, min(int(tile), K))
+
+    phc = np.zeros((n_padded, K), dtype=np.float32, order="F")
+    phc[:dim, :] = phi.astype(np.float32, copy=False)
+    F_phi = np.zeros((n_padded, K), dtype=np.float32, order="F")
+    F_a = np.zeros((n_padded, K), dtype=np.float32, order="F")
+    a = np.zeros((n_padded, K), dtype=np.float32, order="F")
+
+    bufs = _etd_step_buffers(dim)
+    eD_f64 = bufs["eD"]
+    phi1_f64 = bufs["phi1"]
+    phi2_f64 = bufs["phi2"]
+    eD_f32 = np.zeros(n_padded, dtype=np.float32)
+    phi1_f32 = np.zeros(n_padded, dtype=np.float32)
+    phi2_f32 = np.zeros(n_padded, dtype=np.float32)
+
+    flt = sizeof(c_float)
+    tile_starts = list(range(0, K, tile))
+    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
+    n_tiles = len(tile_starts)
+
+    phc_addr = phc.ctypes.data
+    F_phi_addr = F_phi.ctypes.data
+    F_a_addr = F_a.ctypes.data
+    a_addr = a.ctypes.data
+
+    def _ptrs_at(addr, c0):
+        return c_float.from_address(addr + c0 * n_padded * flt)
+
+    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
+    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
+    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
+    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
+
+    phc_p_full = phc.ctypes.data_as(POINTER(c_float))
+    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_float))
+    F_a_p_full = F_a.ctypes.data_as(POINTER(c_float))
+    a_p_full = a.ctypes.data_as(POINTER(c_float))
+    eD_p = eD_f32.ctypes.data_as(POINTER(c_float))
+    phi1_p = phi1_f32.ctypes.data_as(POINTER(c_float))
+    phi2_p = phi2_f32.ctypes.data_as(POINTER(c_float))
+
+    from MCEq.etd2_kernels import etd2_post_apply1_multirhs_f32 as _post1
+    from MCEq.etd2_kernels import etd2_post_apply2_multirhs_f32 as _post2
+
+    int_off_empty = (mkl_int_off is None) or (mkl_int_off.nnz == 0)
+    dec_off_empty = (mkl_dec_off is None) or (mkl_dec_off.nnz == 0)
+
+    primary_nrhs = tile_widths[0]
+    if not int_off_empty:
+        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
+    if not dec_off_empty:
+        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = float(dX[k])
+            ri = float(rho_inv[k])
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+            eD_f32[:dim] = eD_f64
+            phi1_f32[:dim] = phi1_f64
+            phi2_f32[:dim] = phi2_f64
+
+            F_phi.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
+                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                if not dec_off_empty:
+                    mkl_dec_off.gemm_ctargs(
+                        ri, nrhs, phc_tile_ptrs[t], n_padded,
+                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+
+            _post1(n_padded, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
+
+            F_a.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, a_tile_ptrs[t], n_padded,
+                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                if not dec_off_empty:
+                    mkl_dec_off.gemm_ctargs(
+                        ri, nrhs, a_tile_ptrs[t], n_padded,
+                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+
+            _post2(n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc[:dim, :]))
+                grid_step += 1
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (mkl multirhs f32 K={K}): "
+        f"{1e3 * elapsed / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc[:dim, :].copy(order="F"), np.array(grid_sol)
+
+
+def solv_mkl_etd2_multipath(
+    nsteps_max,
+    dX,
+    rho_inv,
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+):
+    """ETD2RK on Intel MKL Sparse BLAS — per-RHS path (multipath) variant.
+
+    Stage-3 sibling of :func:`solv_mkl_etd2_multirhs`. Path arrays
+    ``dX`` and ``rho_inv`` are ``(nsteps_max, K)`` 2-D; per-column h_K /
+    ri_K cannot fold into the SpMM alpha, so we accumulate the dec_off
+    contribution into a scratch buffer and column-scale by ri_K before
+    adding into F_phi / F_a.
+
+    Frozen-column semantics identical to the spacc multipath kernel.
+    """
+    from ctypes import POINTER, c_double, sizeof
+
+    if phi.ndim != 2:
+        raise ValueError(
+            f"solv_mkl_etd2_multipath: phi must be 2-D (dim, K), got shape {phi.shape}"
+        )
+    if dX.ndim != 2 or rho_inv.ndim != 2:
+        raise ValueError(
+            "solv_mkl_etd2_multipath: dX and rho_inv must be 2-D "
+            f"(nsteps_max, K); got dX.shape={dX.shape}, "
+            f"rho_inv.shape={rho_inv.shape}"
+        )
+    dim, K = phi.shape
+
+    n_padded = dim
+    for m in (mkl_int_off, mkl_dec_off):
+        if m is not None:
+            n_padded = max(n_padded, m.n_padded)
+
+    tile = getattr(config, "mkl_spmm_tile", None) or _MKL_SPMM_TILE
+    tile = max(1, min(int(tile), K))
+
+    phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    phc[:dim, :] = phi
+    F_phi = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    F_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    a = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    dec_phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
+    dec_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
+
+    # (n_padded, K) diag buffers, padding zero-rows preserved invariantly.
+    diag = {key: np.zeros((n_padded, K), dtype=np.float64, order="F")
+            for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
+    diag["mask1"] = np.zeros((dim, K), dtype=bool, order="F")
+    diag["mask2"] = np.zeros((dim, K), dtype=bool, order="F")
+    # The unpadded views feed _etd_compute_diag_factors_multipath.
+    diag_view = {k: diag[k][:dim, :] for k in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
+    diag_view["mask1"] = diag["mask1"]
+    diag_view["mask2"] = diag["mask2"]
+
+    eD = diag["eD"]
+    phi1 = diag["phi1"]
+    phi2 = diag["phi2"]
+
+    dbl = sizeof(c_double)
+    tile_starts = list(range(0, K, tile))
+    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
+    n_tiles = len(tile_starts)
+
+    phc_addr = phc.ctypes.data
+    F_phi_addr = F_phi.ctypes.data
+    F_a_addr = F_a.ctypes.data
+    a_addr = a.ctypes.data
+    dec_phc_addr = dec_phc.ctypes.data
+    dec_a_addr = dec_a.ctypes.data
+
+    def _ptrs_at(addr, c0):
+        return c_double.from_address(addr + c0 * n_padded * dbl)
+
+    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
+    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
+    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
+    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
+    dec_phc_tile_ptrs = [_ptrs_at(dec_phc_addr, c0) for c0 in tile_starts]
+    dec_a_tile_ptrs = [_ptrs_at(dec_a_addr, c0) for c0 in tile_starts]
+
+    phc_p_full = phc.ctypes.data_as(POINTER(c_double))
+    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_double))
+    F_a_p_full = F_a.ctypes.data_as(POINTER(c_double))
+    a_p_full = a.ctypes.data_as(POINTER(c_double))
+    eD_p = eD.ctypes.data_as(POINTER(c_double))
+    phi1_p = phi1.ctypes.data_as(POINTER(c_double))
+    phi2_p = phi2.ctypes.data_as(POINTER(c_double))
+
+    from MCEq.etd2_kernels import etd2_post_apply1_multipath as _post1
+    from MCEq.etd2_kernels import etd2_post_apply2_multipath as _post2
+
+    int_off_empty = (mkl_int_off is None) or (mkl_int_off.nnz == 0)
+    dec_off_empty = (mkl_dec_off is None) or (mkl_dec_off.nnz == 0)
+
+    primary_nrhs = tile_widths[0]
+    if not int_off_empty:
+        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps_max * n_tiles)
+    if not dec_off_empty:
+        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps_max * n_tiles)
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for step in range(nsteps_max):
+            h_K = dX[step]
+            ri_K = rho_inv[step]
+
+            _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, diag_view)
+
+            # F_phi = int_off @ phc + diag(ri_K) · (dec_off @ phc)
+            F_phi.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
+                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+            if not dec_off_empty:
+                dec_phc.fill(0.0)
+                for t in range(n_tiles):
+                    nrhs = tile_widths[t]
+                    mkl_dec_off.gemm_ctargs(
+                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
+                        dec_phc_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                dec_phc *= ri_K[None, :]
+                np.add(F_phi, dec_phc, out=F_phi)
+
+            h_K_p = np.ascontiguousarray(h_K, dtype=np.float64).ctypes.data_as(
+                POINTER(c_double)
+            )
+            _post1(n_padded, K, h_K_p, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
+
+            F_a.fill(0.0)
+            for t in range(n_tiles):
+                nrhs = tile_widths[t]
+                if not int_off_empty:
+                    mkl_int_off.gemm_ctargs(
+                        1.0, nrhs, a_tile_ptrs[t], n_padded,
+                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+            if not dec_off_empty:
+                dec_a.fill(0.0)
+                for t in range(n_tiles):
+                    nrhs = tile_widths[t]
+                    mkl_dec_off.gemm_ctargs(
+                        1.0, nrhs, a_tile_ptrs[t], n_padded,
+                        dec_a_tile_ptrs[t], n_padded, beta=1.0,
+                    )
+                dec_a *= ri_K[None, :]
+                np.add(F_a, dec_a, out=F_a)
+
+            _post2(
+                n_padded, K, h_K_p, phi2_p,
+                a_p_full, F_a_p_full, F_phi_p_full, phc_p_full,
+            )
+
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol.append(np.copy(phc[:dim, :]))
+                grid_step += 1
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (mkl multipath K={K}): "
+        f"{1e3 * elapsed / float(nsteps_max):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
+    )
+
+    return phc[:dim, :].copy(order="F"), np.array(grid_sol)
 
 
 def solv_spacc_etd2_multirhs(
