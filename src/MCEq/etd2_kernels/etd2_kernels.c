@@ -16,9 +16,20 @@
 
 #include <stddef.h>
 
+/* Windows: export each function from the DLL. Mirrors the pattern in
+ * src/MCEq/geometry/{corsikaatm,nrlmsise00}/*.c. On non-MSVC platforms
+ * the attribute resolves to nothing and default ELF/Mach-O symbol
+ * visibility applies. */
+#if defined(_MSC_VER) && _MSC_VER >= 1200
+#  define MCEQ_EXPORT __declspec(dllexport)
+#else
+#  define MCEQ_EXPORT
+#endif
+
 /* ---- fp64 ---- */
 
 /* post_apply1 multirhs: a = eD * phc + h * phi1 * F_phi  (eD/phi1: (dim,)) */
+MCEQ_EXPORT
 void etd2_post_apply1_multirhs(
     int dim, int K, double h,
     const double *eD, const double *phi1,
@@ -37,6 +48,7 @@ void etd2_post_apply1_multirhs(
 }
 
 /* post_apply2 multirhs: phc = a + h * phi2 * (F_a - F_phi)  (phi2: (dim,)) */
+MCEQ_EXPORT
 void etd2_post_apply2_multirhs(
     int dim, int K, double h,
     const double *phi2,
@@ -56,6 +68,7 @@ void etd2_post_apply2_multirhs(
 }
 
 /* post_apply1 multipath: per-column h_K and per-column (dim, K) eD/phi1. */
+MCEQ_EXPORT
 void etd2_post_apply1_multipath(
     int dim, int K,
     const double *h_K,
@@ -78,6 +91,7 @@ void etd2_post_apply1_multipath(
 }
 
 /* post_apply2 multipath: per-column h_K and per-column (dim, K) phi2. */
+MCEQ_EXPORT
 void etd2_post_apply2_multipath(
     int dim, int K,
     const double *h_K,
@@ -101,6 +115,7 @@ void etd2_post_apply2_multipath(
 
 /* ---- fp32 ---- */
 
+MCEQ_EXPORT
 void etd2_post_apply1_multirhs_f32(
     int dim, int K, float h,
     const float *eD, const float *phi1,
@@ -118,6 +133,7 @@ void etd2_post_apply1_multirhs_f32(
     }
 }
 
+MCEQ_EXPORT
 void etd2_post_apply2_multirhs_f32(
     int dim, int K, float h,
     const float *phi2,
@@ -136,6 +152,7 @@ void etd2_post_apply2_multirhs_f32(
     }
 }
 
+MCEQ_EXPORT
 void etd2_post_apply1_multipath_f32(
     int dim, int K,
     const float *h_K,
@@ -157,6 +174,7 @@ void etd2_post_apply1_multipath_f32(
     }
 }
 
+MCEQ_EXPORT
 void etd2_post_apply2_multipath_f32(
     int dim, int K,
     const float *h_K,
