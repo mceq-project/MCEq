@@ -98,6 +98,17 @@ e_max = 1e11
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
 
+#: Air-target EM matrices: select a specific density slice from a
+#: ρ-stratified EM database (one produced by
+#: ``mceq-maintenance-tools/database_generator/5_assemble_em_db.py``
+#: with ``--air-density-grid``).  Value is air density in g/cm³.
+#: ``None`` (default) loads the legacy single-density slice — back-compat
+#: with un-stratified EM databases.  When set, the loader picks the
+#: ρ subgroup whose stored density is closest in log10 to this value.
+#: Used for LPM-realistic atmospheric cascades; see
+#: ``wiki/methods/lpm-density-factorization.md`` in mceq-em-integration.
+em_air_density = None
+
 #: ETD2RK kernel implementation. Choices:
 #:   "auto"            — pick the best available ETD2 kernel (see below).
 #:   "numpy_etd2"      — pure-numpy ETD2RK (always available).

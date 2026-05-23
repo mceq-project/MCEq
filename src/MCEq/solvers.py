@@ -219,8 +219,10 @@ def _etd_off_to_bsr(off_csr, blocksize):
     pad = (-n_orig) % blocksize
     if pad:
         indptr = np.concatenate(
-            [off_csr.indptr,
-             np.full(pad, off_csr.indptr[-1], dtype=off_csr.indptr.dtype)]
+            [
+                off_csr.indptr,
+                np.full(pad, off_csr.indptr[-1], dtype=off_csr.indptr.dtype),
+            ]
         )
         off_csr = sp.csr_matrix(
             (off_csr.data, off_csr.indices, indptr),
@@ -490,6 +492,179 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 # ---------------------------------------------------------------------------
+# ρ-stack variant: per-step log-linear interpolation between two int_m slices
+# ---------------------------------------------------------------------------
+def _build_step_blend_indices(rho_inv, rho_grid):
+    """Map each step's effective density to (lo_idx, weight) into ``rho_grid``.
+
+    ``ρ_eff[k] = 1 / rho_inv[k]`` and the blend is log-linear:
+    blended ≈ (1−w) · slice[lo] + w · slice[lo+1].
+
+    Clamps to the stack endpoints when ρ_eff falls outside the grid range.
+    """
+    rho_eff = 1.0 / np.asarray(rho_inv, dtype=float)
+    log_rho_eff = np.log10(np.clip(rho_eff, 1e-30, None))
+    log_grid = np.log10(np.asarray(rho_grid, dtype=float))
+    if not np.all(np.diff(log_grid) > 0):
+        order = np.argsort(log_grid)
+        log_grid = log_grid[order]
+        # Caller must apply the same permutation to int_m_stack.
+        return None  # signal — handled by caller
+    n = len(log_grid)
+    lo = np.searchsorted(log_grid, log_rho_eff, side="right") - 1
+    lo = np.clip(lo, 0, n - 2)
+    span = log_grid[lo + 1] - log_grid[lo]
+    weight = np.where(span > 0, (log_rho_eff - log_grid[lo]) / span, 0.0)
+    weight = np.clip(weight, 0.0, 1.0)
+    return lo.astype(np.int64), weight.astype(np.float64)
+
+
+def solv_numpy_etd2_rho_stack(
+    nsteps, dX, rho_inv, int_m_stack, rho_grid, dec_m, phi, grid_idcs
+):
+    """ETD2RK with per-step log-linear blending of ``int_m`` slices.
+
+    Variant of :func:`solv_numpy_etd2` for the LPM-density-stratified air
+    pipeline.  At each step the effective interaction matrix is
+    ``int_m_eff = (1-w) · int_m_stack[lo] + w · int_m_stack[lo+1]``
+    where ``w`` is the log-linear weight from ρ_eff = 1/rho_inv to the
+    bracketing ρ-grid slices.
+
+    Memory: ``N_ρ × int_m`` (each slice carries its own (d_int, int_off,
+    BSR-conv).  Per-step cost: 2× the standard kernel's off-diagonal SpMVs
+    plus a 1-D blend on the diagonal.  Decay branch is ρ-invariant.
+
+    Args:
+      int_m_stack: list/tuple of N_ρ scipy sparse matrices, one per
+        entry of ``rho_grid``.  All must share the same shape and
+        sparsity-compatible structure.
+      rho_grid: 1-D array of densities (g/cm³) corresponding to
+        ``int_m_stack`` slices.  Must be strictly monotonic; the
+        function clamps ρ_eff to the grid endpoints.
+    """
+    blocksize = getattr(config, "numpy_bsr_blocksize", None)
+    n_slices = len(int_m_stack)
+    if n_slices < 2:
+        raise ValueError("rho_stack solver requires at least 2 slices.")
+
+    # Per-slice splits + BSR conversion (memoised on the matrices themselves).
+    slice_splits = [
+        _etd_get_split_for_numpy(int_m_stack[i], dec_m, blocksize)
+        for i in range(n_slices)
+    ]
+    # Each split: (d_int, d_dec, int_off, dec_off, n_padded).
+    # d_dec, dec_off, n_padded are shared across slices (decay branch is
+    # density-invariant); take them from slice 0.
+    d_dec = slice_splits[0][1]
+    dec_off = slice_splits[0][3]
+    n_padded = slice_splits[0][4]
+    d_ints = [sp[0] for sp in slice_splits]
+    int_offs = [sp[2] for sp in slice_splits]
+
+    # Pre-compute step → (lo_idx, weight) blend.
+    log_rho = np.log10(np.clip(1.0 / np.asarray(rho_inv, dtype=float), 1e-30, None))
+    log_grid = np.log10(np.asarray(rho_grid, dtype=float))
+    if not np.all(np.diff(log_grid) > 0):
+        order = np.argsort(log_grid)
+        log_grid = log_grid[order]
+        d_ints = [d_ints[i] for i in order]
+        int_offs = [int_offs[i] for i in order]
+    lo_idx = np.clip(
+        np.searchsorted(log_grid, log_rho, side="right") - 1, 0, n_slices - 2
+    )
+    span = log_grid[lo_idx + 1] - log_grid[lo_idx]
+    w_step = np.where(span > 0, (log_rho - log_grid[lo_idx]) / span, 0.0)
+    w_step = np.clip(w_step, 0.0, 1.0)
+
+    dim = phi.shape[0]
+    phc = np.zeros(n_padded, dtype=np.float64)
+    phc[:dim] = phi
+    F_phi = np.empty(n_padded, dtype=np.float64)
+    F_a = np.empty(n_padded, dtype=np.float64)
+    a = np.empty(n_padded, dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
+
+    phc_v = phc[:dim]
+    F_phi_v = F_phi[:dim]
+    F_a_v = F_a[:dim]
+    a_v = a[:dim]
+
+    # Scratch for the second-slice SpMV (off-diagonal blend).
+    aux_off = np.empty(n_padded, dtype=np.float64)
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+            i_lo = int(lo_idx[k])
+            i_hi = i_lo + 1
+            w = float(w_step[k])
+            one_minus_w = 1.0 - w
+
+            # Per-step diagonal blend
+            d_int_eff = one_minus_w * d_ints[i_lo] + w * d_ints[i_hi]
+            int_off_lo = int_offs[i_lo]
+            int_off_hi = int_offs[i_hi]
+
+            _etd_compute_diag_factors(h, ri, d_int_eff, d_dec, bufs)
+
+            # F_phi = (1-w) * int_off_lo @ phc + w * int_off_hi @ phc + ri * dec_off @ phc
+            np.copyto(F_phi, int_off_lo.dot(phc))
+            F_phi *= one_minus_w
+            np.copyto(aux_off, int_off_hi.dot(phc))
+            aux_off *= w
+            np.add(F_phi, aux_off, out=F_phi)
+            ri_dec = dec_off.dot(phc)
+            ri_dec *= ri
+            np.add(F_phi, ri_dec, out=F_phi)
+
+            # a = eD * phc + h * phi1 * F_phi
+            np.multiply(eD, phc_v, out=a_v)
+            np.multiply(phi1, F_phi_v, out=scratch)
+            scratch *= h
+            np.add(a_v, scratch, out=a_v)
+
+            # F_a = blended off-diag @ a + ri * dec_off @ a
+            np.copyto(F_a, int_off_lo.dot(a))
+            F_a *= one_minus_w
+            np.copyto(aux_off, int_off_hi.dot(a))
+            aux_off *= w
+            np.add(F_a, aux_off, out=F_a)
+            ri_dec = dec_off.dot(a)
+            ri_dec *= ri
+            np.add(F_a, ri_dec, out=F_a)
+
+            # phc = a + h * phi2 * (F_a - F_phi)
+            np.subtract(F_a_v, F_phi_v, out=scratch)
+            scratch *= h
+            np.multiply(scratch, phi2, out=scratch)
+            np.add(a_v, scratch, out=phc_v)
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc_v))
+                grid_step += 1
+
+    info(
+        2,
+        f"Performance (ρ-stack): "
+        f"{1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
+
+    return phc_v.copy(), np.array(grid_sol)
+
+
+# ---------------------------------------------------------------------------
 # MKL ETD2 kernel
 # ---------------------------------------------------------------------------
 class MklSparseMatrix:
@@ -536,9 +711,7 @@ class MklSparseMatrix:
                 f"MklSparseMatrix expects a CSR matrix, got {type(csr).__name__}"
             )
         if csr.dtype != np.float64:
-            raise TypeError(
-                f"MklSparseMatrix expects float64 data, got {csr.dtype}"
-            )
+            raise TypeError(f"MklSparseMatrix expects float64 data, got {csr.dtype}")
 
         n_orig = csr.shape[0]
         self.n_orig = n_orig
@@ -565,8 +738,14 @@ class MklSparseMatrix:
             pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
 
             st = mkl.mkl_sparse_d_create_csr(
-                byref(handle), c_int(0), c_int(n_orig), c_int(n_orig),
-                pb_p, pe_p, ci_p, data_p,
+                byref(handle),
+                c_int(0),
+                c_int(n_orig),
+                c_int(n_orig),
+                pb_p,
+                pe_p,
+                ci_p,
+                data_p,
             )
             if st != 0:
                 raise RuntimeError(f"mkl_sparse_d_create_csr failed with status {st}")
@@ -579,8 +758,7 @@ class MklSparseMatrix:
                 # Append `pad` zero rows / cols at the end. CSR-pad: extend
                 # indptr with copies of the last value (no new entries).
                 indptr_padded = np.concatenate(
-                    [csr.indptr,
-                     np.full(pad, csr.indptr[-1], dtype=csr.indptr.dtype)]
+                    [csr.indptr, np.full(pad, csr.indptr[-1], dtype=csr.indptr.dtype)]
                 )
                 csr = sp.csr_matrix(
                     (csr.data, csr.indices, indptr_padded),
@@ -609,9 +787,16 @@ class MklSparseMatrix:
             # SPARSE_LAYOUT_ROW_MAJOR = 101 — scipy stores BSR blocks
             # row-major within each block.
             st = mkl.mkl_sparse_d_create_bsr(
-                byref(handle), c_int(0), c_int(101),
-                n_blocks, n_blocks, c_int(blocksize),
-                pb_p, pe_p, ci_p, data_p,
+                byref(handle),
+                c_int(0),
+                c_int(101),
+                n_blocks,
+                n_blocks,
+                c_int(blocksize),
+                pb_p,
+                pe_p,
+                ci_p,
+                data_p,
             )
             if st != 0:
                 raise RuntimeError(f"mkl_sparse_d_create_bsr failed with status {st}")
@@ -950,12 +1135,8 @@ class CudaEtd2Context:
         # cuSPARSE CSR copies. None when the off-diagonal is empty — the
         # kernel skips those SpMVs (an empty CSR can be ill-defined for
         # cuSPARSE handles on some versions).
-        self.cu_int_off = (
-            cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
-        )
-        self.cu_dec_off = (
-            cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
-        )
+        self.cu_int_off = cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
+        self.cu_dec_off = cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
         self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
         self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
 

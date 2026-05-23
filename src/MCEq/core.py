@@ -499,6 +499,85 @@ class MCEqRun:
             skip_decay_matrix=False
         )
 
+    def enable_em_density_interpolation(self, rho_grid=None):
+        """Build an int_m stack indexed by air density ρ for LPM-realistic runs.
+
+        Reads the ρ-stack written by mceq-maintenance-tools's
+        ``5_assemble_em_db --air-density-grid`` from the active EM HDF5 file
+        and rebuilds the interaction matrix once per slice.  The solver
+        kernel (currently only ``numpy_etd2``) will log-linear-interpolate
+        between bracketing slices at each integration step using ρ(X).
+
+        Default behaviour (no call) keeps the single-density legacy slice —
+        which for air showers below ~10 EeV is what the project's
+        validated CORSIKA closures use, so this method is opt-in.
+
+        Args:
+          rho_grid: 1-D array of densities (g/cm³).  Defaults to the
+            ``rho_grid`` dataset present in the EM DB.
+
+        Raises:
+          RuntimeError: when ``config.enable_em`` is False, the EM DB has
+            no ρ-stack, or the medium is not air.
+        """
+        if not config.enable_em:
+            raise RuntimeError("EM module disabled (config.enable_em is False).")
+        if self.medium != "air":
+            raise RuntimeError(
+                f"ρ-stratified EM is only available for the air medium "
+                f"(self.medium={self.medium!r})."
+            )
+        if rho_grid is None:
+            rho_grid = self._mceq_db.em_rho_grid(self.medium)
+        if rho_grid is None or len(rho_grid) < 2:
+            raise RuntimeError(
+                "No ρ-stack in the active EM database — build one with "
+                "5_assemble_em_db --air-density-grid=lo,hi,N."
+            )
+
+        info(
+            1,
+            f"Building int_m stack for {len(rho_grid)} ρ slices "
+            f"({float(rho_grid[0]):.2e} – {float(rho_grid[-1]):.2e} g/cm³)...",
+        )
+        prev_density = getattr(config, "em_air_density", None)
+        int_m_stack = []
+        try:
+            for rho in rho_grid:
+                config.em_air_density = float(rho)
+                # Force-reload EM cross sections and yield matrices for this slice.
+                self._int_cs.load(self._interactions.iam)
+                self._interactions.load(
+                    self._interactions.iam, parent_list=self._particle_list
+                )
+                self.pman.set_interaction_model(self._int_cs, self._interactions)
+                int_m_slice, _ = self.matrix_builder.construct_matrices(
+                    skip_decay_matrix=True
+                )
+                int_m_stack.append(int_m_slice)
+        finally:
+            config.em_air_density = prev_density
+            # Restore the working int_m to the previously active density slice.
+            self._int_cs.load(self._interactions.iam)
+            self._interactions.load(
+                self._interactions.iam, parent_list=self._particle_list
+            )
+            self.pman.set_interaction_model(self._int_cs, self._interactions)
+            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+                skip_decay_matrix=False
+            )
+
+        self._int_m_stack = int_m_stack
+        self._em_rho_grid = np.asarray(rho_grid, dtype=float)
+        info(1, f"int_m stack ready ({len(int_m_stack)} slices).")
+
+    def disable_em_density_interpolation(self):
+        """Drop the ρ-stack; subsequent solves use the single int_m."""
+        if hasattr(self, "_int_m_stack"):
+            del self._int_m_stack
+        if hasattr(self, "_em_rho_grid"):
+            del self._em_rho_grid
+
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
         or the interaction models change. The previous state, such as the
@@ -1115,6 +1194,22 @@ class MCEqRun:
         kc = config.kernel_config.lower()
 
         if kc == "numpy_etd2":
+            # If an EM ρ-stack has been built (via
+            # enable_em_density_interpolation), route to the ρ-aware kernel
+            # so per-step log-linear blending of the air block kicks in.
+            int_m_stack = getattr(self, "_int_m_stack", None)
+            em_rho_grid = getattr(self, "_em_rho_grid", None)
+            if int_m_stack is not None and em_rho_grid is not None:
+                return MCEq.solvers.solv_numpy_etd2_rho_stack, (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    int_m_stack,
+                    em_rho_grid,
+                    self.dec_m,
+                    phi0,
+                    grid_idcs,
+                )
             return MCEq.solvers.solv_numpy_etd2, (
                 nsteps,
                 dX,
