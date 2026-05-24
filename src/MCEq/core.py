@@ -1642,13 +1642,16 @@ class MCEqRun:
                 if path_workers and int(path_workers) > 1:
                     import multiprocessing as _mp
 
-                    # MSIS is not safe across forked workers: the
-                    # underlying nrlmsise-00 Fortran library has
-                    # state that does not properly isolate via fork
-                    # CoW. Empirically the paths drift by ~fp32-ε
-                    # relative — small but non-reproducible. Refuse
-                    # the worker pool for MSIS rather than silently
-                    # producing non-bit-exact runs.
+                    # MSIS00 is not fork-safe: the underlying nrlmsise-00
+                    # Fortran library has SAVE state that does not properly
+                    # isolate via fork CoW — paths drift by ~1e-7 rel,
+                    # small but non-reproducible. Reject path_workers > 1
+                    # for MSIS00 rather than silently producing non-bit-
+                    # exact runs.
+                    #
+                    # The pure-Python MSIS21*Atmosphere tree (added on
+                    # 2026-05-24) is fork-safe and IS the production user
+                    # of this worker pool — see results/allsky-orca-msis21.md.
                     from MCEq.geometry.density_profiles import (
                         MSIS00Atmosphere,
                     )
