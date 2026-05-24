@@ -736,145 +736,11 @@ def solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
 
 # ---------------------------------------------------------------------------
-# Multi-RHS variant with per-column atmosphere paths (Stage 3).
-# ``dX`` and ``rho_inv`` are 2-D ``(nsteps_max, K)`` tensors — each
-# column carries its own zenith-dependent integration path. Columns
-# shorter than ``nsteps_max`` are zero-padded; the math automatically
-# freezes those columns once their per-pixel ``nsteps[k]`` is reached
-# (h = 0 ⇒ eD = 1, φ₁ = 1, φ₂ = 1/2 ⇒ state ← state). Designed for
-# ``MCEqRun.solve_fullsky``: build per-pixel paths via the existing
-# non-uniform scheduler, stack them into the 2-D tensors, and solve.
-# ---------------------------------------------------------------------------
-def solv_numpy_etd2_multipath(nsteps_max, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
-    """ETD2RK with per-RHS atmosphere paths.
-
-    Same Cox–Matthews update as :func:`solv_numpy_etd2_multirhs`, but
-    each column carries its own ``dX[step, k]`` and ``rho_inv[step, k]``.
-    The interaction and decay matrices remain shared (zenith-independent).
-
-    Args:
-      nsteps_max (int): outer loop count = max(nsteps_per_column).
-      dX (np.ndarray[nsteps_max, K]): per-column step sizes ΔX_i in
-        g/cm². Zero-pad past each column's own ``nsteps[k]`` so the
-        column freezes automatically.
-      rho_inv (np.ndarray[nsteps_max, K]): per-column 1/ρ(X_i).
-      int_m, dec_m: shared interaction + decay sparse matrices.
-      phi (np.ndarray[dim, K]): initial states; one column per RHS.
-      grid_idcs (list[int]): step indices at which to record snapshots.
-        Snapshots are taken at step indices in the *unified* path; for
-        columns that have already finished at the snapshot step, the
-        recorded state equals the column's frozen final state.
-
-    Returns:
-      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]): final
-      state matrix and stacked snapshots.
-    """
-    if phi.ndim != 2:
-        raise ValueError(
-            f"solv_numpy_etd2_multipath: phi must be 2-D (dim, K), "
-            f"got shape {phi.shape}"
-        )
-    if dX.ndim != 2 or rho_inv.ndim != 2:
-        raise ValueError(
-            "solv_numpy_etd2_multipath: dX and rho_inv must be 2-D "
-            f"(nsteps_max, K); got dX.shape={dX.shape}, "
-            f"rho_inv.shape={rho_inv.shape}"
-        )
-    dim, K = phi.shape
-    if K < 1:
-        raise ValueError(f"K must be >= 1, got {K}")
-    if dX.shape != (nsteps_max, K) or rho_inv.shape != (nsteps_max, K):
-        raise ValueError(
-            f"solv_numpy_etd2_multipath: path tensors must be shape "
-            f"({nsteps_max}, {K}); got dX={dX.shape}, "
-            f"rho_inv={rho_inv.shape}"
-        )
-
-    # CSR off-diagonals (see :func:`solv_numpy_etd2_multirhs` for the
-    # CSR-vs-BSR-on-2D-RHS rationale). Stage-3 inherits the same SpMM
-    # backend choice as Stage-1.
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    if not sp.isspmatrix_csr(int_off):
-        int_off = int_off.tocsr()
-    if not sp.isspmatrix_csr(dec_off):
-        dec_off = dec_off.tocsr()
-
-    # State-shape buffers — (dim, K), C-contiguous (scipy CSR @ X returns
-    # C-contig regardless of X's order, so matching avoids per-step copies).
-    phc = np.array(phi, dtype=np.float64, copy=True)
-    F_phi = np.empty((dim, K), dtype=np.float64)
-    F_a = np.empty((dim, K), dtype=np.float64)
-    a = np.empty((dim, K), dtype=np.float64)
-    scratch_NK = np.empty((dim, K), dtype=np.float64)
-
-    # (dim, K) diag-factor buffers — the Stage-3 lift versus Stage-1/2.
-    bufs = _etd_step_buffers_multipath(dim, K)
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps_max):
-            h_K = dX[k]
-            ri_K = rho_inv[k]
-
-            _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, bufs)
-
-            # F_phi[:, j] = int_off @ phc[:, j] + ri_K[j] · dec_off @ phc[:, j]
-            np.copyto(F_phi, int_off.dot(phc))
-            ri_dec = dec_off.dot(phc)
-            ri_dec *= ri_K[None, :]
-            np.add(F_phi, ri_dec, out=F_phi)
-
-            # a = eD * phc + h * phi1 * F_phi  -- all (dim, K) cellwise.
-            np.multiply(eD, phc, out=a)
-            np.multiply(phi1, F_phi, out=scratch_NK)
-            scratch_NK *= h_K[None, :]
-            np.add(a, scratch_NK, out=a)
-
-            # F_a = int_off @ a + ri * dec_off @ a
-            np.copyto(F_a, int_off.dot(a))
-            ri_dec = dec_off.dot(a)
-            ri_dec *= ri_K[None, :]
-            np.add(F_a, ri_dec, out=F_a)
-
-            # phc = a + h * phi2 * (F_a - F_phi)
-            np.subtract(F_a, F_phi, out=scratch_NK)
-            scratch_NK *= h_K[None, :]
-            np.multiply(phi2, scratch_NK, out=scratch_NK)
-            np.add(a, scratch_NK, out=phc)
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc))
-                grid_step += 1
-
-    info(
-        2,
-        f"Performance (multipath K={K}, nsteps_max={nsteps_max}): "
-        f"{1e3 * (time() - start) / float(nsteps_max):6.2f}ms/iteration "
-        f"({1e3 * (time() - start) / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
-    )
-
-    return phc.copy(), np.array(grid_sol)
-
-
-# ---------------------------------------------------------------------------
-# Stage 5 — LPT carousel multipath
+# Stage 5 — LPT carousel multipath (only multi-RHS path)
 #
-# Replaces the Stage 3 zero-pad (wastes ~64 % SpMM work at full-sky) and
-# Stage 4 nsteps-bucket tile (residual 10–30 % padding) with an offline
-# longest-processing-time-first multiway-makespan schedule. ``K_total``
-# pixels stream through a fixed-width ``K`` pipeline; when a slot
-# finishes its current pixel, the next pixel's phi0 is loaded into that
-# slot's column on the same step. The hot loop is unchanged from
+# ``K_total`` pixels stream through a fixed-width ``K`` pipeline; when a
+# slot finishes its current pixel, the next pixel's phi0 is loaded into
+# that slot's column on the same step. The hot loop is unchanged from
 # :func:`solv_numpy_etd2_multipath` except for sparse harvest + reset
 # events at step boundaries.
 #
@@ -2784,163 +2650,6 @@ def solv_cuda_etd2_multirhs(
     return phc_host, grid_arr
 
 
-def solv_cuda_etd2_multipath(
-    nsteps_max,
-    dX,
-    rho_inv,
-    ctx,
-    phi,
-    grid_idcs,
-):
-    """ETD2RK on cuSPARSE via cupy — per-RHS-path (multipath) variant.
-
-    Stage-3 sibling of :func:`solv_cuda_etd2_multirhs`. Path arrays
-    ``dX`` and ``rho_inv`` are ``(nsteps_max, K)`` 2-D tensors; each
-    column carries its own zenith-dependent integration path. The
-    per-step diagonal factors ``eD`` / ``φ₁`` / ``φ₂`` are computed in
-    (dim, K) via the fused ``phi_compute_multipath`` ElementwiseKernel
-    (one kernel launch per step covers the entire diag pipeline).
-
-    Frozen-column semantics: ``dX[step, k] == 0`` ⇒ ``h_K[k] = 0`` ⇒
-    ``hD = 0`` ⇒ ``eD = 1, φ₁ = 1, φ₂ = 1/2`` ⇒ ``state ← state``. The
-    math freezes columns whose own ``nsteps[k]`` has been reached.
-
-    Args:
-      nsteps_max (int): outer loop count.
-      dX (np.ndarray[nsteps_max, K]): per-column ΔX in g/cm² (zero-padded).
-      rho_inv (np.ndarray[nsteps_max, K]): per-column 1/ρ.
-      ctx (CudaEtd2MultiRHSContext): GPU state (multipath buffers
-        materialised lazily on first call).
-      phi (np.ndarray[dim, K]): initial state (one column per RHS).
-      grid_idcs (list[int]): step indices to snapshot.
-
-    Returns:
-      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]).
-    """
-    cp = ctx.cp
-    fl_pr = ctx.fl_pr
-    Kset = _cuda_etd2_kernels()
-
-    if phi.ndim != 2:
-        raise ValueError(
-            f"solv_cuda_etd2_multipath: phi must be 2-D (dim, K), got shape {phi.shape}"
-        )
-    if dX.ndim != 2 or rho_inv.ndim != 2:
-        raise ValueError(
-            "solv_cuda_etd2_multipath: dX and rho_inv must be 2-D "
-            f"(nsteps_max, K); got dX.shape={dX.shape}, "
-            f"rho_inv.shape={rho_inv.shape}"
-        )
-    dim, K = phi.shape
-    if K != ctx.K:
-        raise ValueError(
-            f"solv_cuda_etd2_multipath: K ({K}) does not match ctx.K ({ctx.K})"
-        )
-    if dX.shape != (nsteps_max, K) or rho_inv.shape != (nsteps_max, K):
-        raise ValueError(
-            f"solv_cuda_etd2_multipath: path tensors must be shape "
-            f"({nsteps_max}, {K}); got dX={dX.shape}, rho_inv={rho_inv.shape}"
-        )
-
-    cp.cuda.Device(ctx.device_id).use()
-    ctx.ensure_multipath_buffers()
-
-    cu_phc = ctx.cu_phc
-    cu_F_phi = ctx.cu_F_phi
-    cu_F_a = ctx.cu_F_a
-    cu_a = ctx.cu_a
-    cu_dec_phc = ctx.cu_dec_phc
-    cu_dec_a = ctx.cu_dec_a
-    cu_eD = ctx.cu_eD_mp
-    cu_phi1 = ctx.cu_phi1_mp
-    cu_phi2 = ctx.cu_phi2_mp
-    cu_h_K = ctx.cu_h_K
-    cu_ri_K = ctx.cu_ri_K
-    cu_h_K_row = ctx.cu_h_K_row
-
-    cu_phc[:] = cp.asarray(phi, dtype=fl_pr)
-
-    # Upload the full (nsteps_max, K) path tensors once — small (~MB) and
-    # we want to avoid one host→device hop per step. dtype matches state.
-    dX_d = cp.asarray(dX, dtype=fl_pr)
-    rho_inv_d = cp.asarray(rho_inv, dtype=fl_pr)
-
-    int_off_empty = ctx.cu_int_off is None
-    dec_off_empty = ctx.cu_dec_off is None
-    d_int_col = ctx.cu_d_int.reshape(dim, 1)
-    d_dec_col = ctx.cu_d_dec.reshape(dim, 1)
-
-    grid_sol_gpu = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    for step in range(nsteps_max):
-        # ``dX_d[step:step+1]`` is a (1, K) view on the device — no host
-        # roundtrip, no kernel launch (vs the previous cp.copyto into a
-        # preallocated (K,) buffer). Same for rho_inv_d.
-        h_row = dX_d[step : step + 1]   # (1, K) view
-        ri_row = rho_inv_d[step : step + 1]  # (1, K) view
-
-        # eD, phi1, phi2 ∈ (dim, K) via fused diag-factor kernel.
-        Kset.phi_compute_multipath(d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2)
-
-        # F_phi = int_off @ phc + diag(ri_K) · (dec_off @ phc)
-        # Per-column ri_K cannot fold into the SpMM alpha; accumulate the
-        # dec contribution into scratch and broadcast-multiply by ri_K[None, :].
-        if not int_off_empty:
-            cp.copyto(cu_F_phi, ctx.cu_int_off @ cu_phc)
-        else:
-            cu_F_phi.fill(0)
-        if not dec_off_empty:
-            cp.copyto(cu_dec_phc, ctx.cu_dec_off @ cu_phc)
-            cu_dec_phc *= ri_row
-            cu_F_phi += cu_dec_phc
-
-        # a = eD * phc + h_K * phi1 * F_phi  (broadcast h over dim)
-        Kset.post_apply1(cu_eD, cu_phc, cu_phi1, cu_F_phi, h_row, cu_a)
-
-        # F_a = int_off @ a + diag(ri_K) · (dec_off @ a)
-        if not int_off_empty:
-            cp.copyto(cu_F_a, ctx.cu_int_off @ cu_a)
-        else:
-            cu_F_a.fill(0)
-        if not dec_off_empty:
-            cp.copyto(cu_dec_a, ctx.cu_dec_off @ cu_a)
-            cu_dec_a *= ri_row
-            cu_F_a += cu_dec_a
-
-        # phc = a + h_K * phi2 * (F_a - F_phi)
-        Kset.post_apply2(cu_a, cu_F_a, cu_F_phi, cu_phi2, h_row, cu_phc)
-
-        if (
-            grid_idcs
-            and grid_step < len(grid_idcs)
-            and grid_idcs[grid_step] == step
-        ):
-            grid_sol_gpu.append(cu_phc.copy())
-            grid_step += 1
-
-    cp.cuda.Stream.null.synchronize()
-    phc_host = cp.asnumpy(cu_phc)
-    if grid_sol_gpu:
-        grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu))
-    else:
-        grid_arr = np.array([])
-
-    elapsed = time() - start
-    info(
-        2,
-        f"Performance (cuda multipath dtype={fl_pr.__name__} K={K}): "
-        f"{1e3 * elapsed / float(nsteps_max):6.2f}ms/iteration "
-        f"({1e3 * elapsed / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
-    )
-
-    return phc_host, grid_arr
-
-
 def solv_cuda_etd2_carousel(
     ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
 ):
@@ -3454,40 +3163,45 @@ def solv_mkl_etd2_multirhs_f32(
     return phc[:dim, :].copy(order="F"), np.array(grid_sol)
 
 
-def solv_mkl_etd2_multipath(
-    nsteps_max,
-    dX,
-    rho_inv,
+def solv_mkl_etd2_carousel(
     mkl_int_off,
     mkl_dec_off,
     d_int,
     d_dec,
-    phi,
-    grid_idcs,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
 ):
-    """ETD2RK on Intel MKL Sparse BLAS — per-RHS path (multipath) variant.
+    """ETD2RK carousel on Intel MKL Sparse BLAS — Stage-5 LPT multipath.
 
-    Stage-3 sibling of :func:`solv_mkl_etd2_multirhs`. Path arrays
-    ``dX`` and ``rho_inv`` are ``(nsteps_max, K)`` 2-D; per-column h_K /
-    ri_K cannot fold into the SpMM alpha, so we accumulate the dec_off
-    contribution into a scratch buffer and column-scale by ri_K before
-    adding into F_phi / F_a.
-
-    Frozen-column semantics identical to the spacc multipath kernel.
+    Step body identical to :func:`solv_mkl_etd2_multipath` (per-column
+    h_K / ri_K, tile-by-tile gemm). After each step, harvest pixels
+    that just finished THEN reset the freed slots to the next pixel's
+    phi0. See :func:`solv_numpy_etd2_carousel` for the algorithm.
     """
     from ctypes import POINTER, c_double, sizeof
 
-    if phi.ndim != 2:
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = phi_initial.shape[0]
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_mkl_etd2_multipath: phi must be 2-D (dim, K), got shape {phi.shape}"
+            f"solv_mkl_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
-    if dX.ndim != 2 or rho_inv.ndim != 2:
+    if phi_initial.shape != (dim, K):
         raise ValueError(
-            "solv_mkl_etd2_multipath: dX and rho_inv must be 2-D "
-            f"(nsteps_max, K); got dX.shape={dX.shape}, "
-            f"rho_inv.shape={rho_inv.shape}"
+            f"solv_mkl_etd2_carousel: phi_initial must be (dim,K)="
+            f"({dim},{K}); got {phi_initial.shape}"
         )
-    dim, K = phi.shape
+    if phi0_per_pixel.shape != (dim, K_total):
+        raise ValueError(
+            f"solv_mkl_etd2_carousel: phi0_per_pixel must be "
+            f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
+        )
 
     n_padded = dim
     for m in (mkl_int_off, mkl_dec_off):
@@ -3498,20 +3212,19 @@ def solv_mkl_etd2_multipath(
     tile = max(1, min(int(tile), K))
 
     phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
-    phc[:dim, :] = phi
+    phc[:dim, :] = phi_initial
     F_phi = np.zeros((n_padded, K), dtype=np.float64, order="F")
     F_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
     a = np.zeros((n_padded, K), dtype=np.float64, order="F")
     dec_phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
     dec_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
 
-    # (n_padded, K) diag buffers, padding zero-rows preserved invariantly.
     diag = {key: np.zeros((n_padded, K), dtype=np.float64, order="F")
             for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
     diag["mask1"] = np.zeros((dim, K), dtype=bool, order="F")
     diag["mask2"] = np.zeros((dim, K), dtype=bool, order="F")
-    # The unpadded views feed _etd_compute_diag_factors_multipath.
-    diag_view = {k: diag[k][:dim, :] for k in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
+    diag_view = {k: diag[k][:dim, :] for k in
+                 ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
     diag_view["mask1"] = diag["mask1"]
     diag_view["mask2"] = diag["mask2"]
 
@@ -3557,25 +3270,30 @@ def solv_mkl_etd2_multipath(
 
     primary_nrhs = tile_widths[0]
     if not int_off_empty:
-        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps_max * n_tiles)
+        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * T * n_tiles)
     if not dec_off_empty:
-        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps_max * n_tiles)
+        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * T * n_tiles)
 
-    grid_sol = []
-    grid_step = 0
+    sol_pixel = np.empty((dim, K_total), dtype=np.float64)
+
+    rs = schedule.reset_t_starts
+    rj = schedule.reset_j
+    rp = schedule.reset_pixel
+    cs = schedule.record_t_starts
+    cj = schedule.record_j
+    cp = schedule.record_pixel
 
     from time import time
 
     start = time()
 
     with np.errstate(over="ignore", invalid="ignore"):
-        for step in range(nsteps_max):
-            h_K = dX[step]
-            ri_K = rho_inv[step]
+        for k in range(T):
+            h_K = dX[k]
+            ri_K = rho_inv[k]
 
             _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, diag_view)
 
-            # F_phi = int_off @ phc + diag(ri_K) · (dec_off @ phc)
             F_phi.fill(0.0)
             for t in range(n_tiles):
                 nrhs = tile_widths[t]
@@ -3624,23 +3342,25 @@ def solv_mkl_etd2_multipath(
                 a_p_full, F_a_p_full, F_phi_p_full, phc_p_full,
             )
 
-            if (
-                grid_idcs
-                and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step
-            ):
-                grid_sol.append(np.copy(phc[:dim, :]))
-                grid_step += 1
+            # Harvest pixels that just finished — BEFORE the reset.
+            for r in range(cs[k], cs[k + 1]):
+                sol_pixel[:, cp[r]] = phc[:dim, cj[r]]
+            # Load next pixel's phi0 into reset slots.
+            for r in range(rs[k], rs[k + 1]):
+                phc[:dim, rj[r]] = phi0_per_pixel[:, rp[r]]
 
     elapsed = time() - start
+    useful = int(np.count_nonzero(dX))
+    waste = 1.0 - useful / float(T * K) if (T * K) else 0.0
     info(
         2,
-        f"Performance (mkl multipath K={K}): "
-        f"{1e3 * elapsed / float(nsteps_max):6.2f}ms/iteration "
-        f"({1e3 * elapsed / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
+        f"Performance (mkl carousel K={K}, K_total={K_total}, T={T}): "
+        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot, "
+        f"waste={waste:.1%})",
     )
 
-    return phc[:dim, :].copy(order="F"), np.array(grid_sol)
+    return sol_pixel
 
 
 def solv_spacc_etd2_multirhs(
@@ -3984,89 +3704,58 @@ def solv_spacc_etd2_multirhs_f32(
     return phc.copy(), np.array(grid_sol)
 
 
-def solv_spacc_etd2_multipath(
-    nsteps_max,
-    dX,
-    rho_inv,
+def solv_spacc_etd2_carousel(
     spacc_int_off,
     spacc_dec_off,
     d_int,
     d_dec,
-    phi,
-    grid_idcs,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
 ):
-    """ETD2RK on Apple Accelerate Sparse BLAS — per-RHS path variant.
+    """ETD2RK carousel on Apple Accelerate Sparse BLAS.
 
-    Stage-3 sibling of :func:`solv_spacc_etd2_multirhs`. Path arrays
-    ``dX`` and ``rho_inv`` are ``(nsteps_max, K)`` 2-D tensors; each
-    column carries its own zenith-dependent path. The Accelerate
-    SpMM call is identical (K-tiled at ``_SPACC_SPMM_TILE = 64``) —
-    the operator is shared; the per-step diagonal and elementwise
-    blocks change. See :func:`solv_numpy_etd2_multipath` for the
-    numpy analogue and ``wiki/methods/multi-rhs-etd2-design.md``
-    Stage-3 section for the design.
-
-    Columns that have already finished (``dX[step, k] == 0``)
-    auto-freeze: ``eD = 1``, ``φ₁ = 1``, ``φ₂ = 1/2`` ⇒ ``state ← state``.
-    The SpMM still touches those columns (uniform 2-D RHS), so the
-    wasted work scales with the variance in per-column nsteps.
-
-    Args:
-      nsteps_max (int): outer loop count.
-      dX (np.ndarray[nsteps_max, K]): per-column ΔX in g/cm² (zero-padded).
-      rho_inv (np.ndarray[nsteps_max, K]): per-column 1/ρ.
-      spacc_int_off, spacc_dec_off: SpaccMatrix off-diagonals (or None).
-      d_int, d_dec (np.ndarray[dim]): shared diagonals.
-      phi (np.ndarray[dim, K]): initial states (one column per RHS).
-      grid_idcs (list[int]): step indices to snapshot in the unified path.
-
-    Returns:
-      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]).
+    Step body identical to :func:`solv_spacc_etd2_multipath`. After
+    each step boundary, harvest pixels that just finished, then reset
+    those slots to the next pixel's phi0. See
+    :func:`solv_numpy_etd2_carousel` for the algorithm; the only
+    backend-specific bit is the SpMM dispatch and the (dim, K)
+    column-major buffer layout that Accelerate expects.
     """
     from ctypes import POINTER, c_double, sizeof
 
-    if phi.ndim != 2:
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = phi_initial.shape[0]
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_spacc_etd2_multipath: phi must be 2-D (dim, K), "
-            f"got shape {phi.shape}"
+            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
-    if dX.ndim != 2 or rho_inv.ndim != 2:
+    if phi_initial.shape != (dim, K):
         raise ValueError(
-            "solv_spacc_etd2_multipath: dX and rho_inv must be 2-D "
-            f"(nsteps_max, K); got dX.shape={dX.shape}, "
-            f"rho_inv.shape={rho_inv.shape}"
+            f"solv_spacc_etd2_carousel: phi_initial must be (dim,K)="
+            f"({dim},{K}); got {phi_initial.shape}"
         )
-    dim, K = phi.shape
-    if K < 1:
-        raise ValueError(f"K must be >= 1, got {K}")
-    if dX.shape != (nsteps_max, K) or rho_inv.shape != (nsteps_max, K):
+    if phi0_per_pixel.shape != (dim, K_total):
         raise ValueError(
-            f"solv_spacc_etd2_multipath: path tensors must be shape "
-            f"({nsteps_max}, {K}); got dX={dX.shape}, rho_inv={rho_inv.shape}"
+            f"solv_spacc_etd2_carousel: phi0_per_pixel must be "
+            f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
         )
 
-    # K-tile (see solv_spacc_etd2_multirhs docstring).
     tile = getattr(config, "accelerate_spmm_tile", None) or _SPACC_SPMM_TILE
     tile = max(1, min(int(tile), K))
 
-    # Column-major Fortran-contiguous state buffers — Accelerate's SpMM API
-    # expects ldB = ldC = dim, walking columns by stride dim.
-    phc = np.asfortranarray(phi.astype(np.float64, copy=True))
+    phc = np.asfortranarray(phi_initial.astype(np.float64, copy=True))
     F_phi = np.zeros((dim, K), dtype=np.float64, order="F")
     F_a = np.zeros((dim, K), dtype=np.float64, order="F")
     a = np.empty((dim, K), dtype=np.float64, order="F")
-    # ``ri_K`` is per-column so we cannot fold it into the SpMM scalar
-    # alpha; instead we accumulate ``dec_off @ x`` into a persistent
-    # scratch buffer with α=1, then column-scale by ``ri_K[None, :]``
-    # and add into F_phi / F_a. Hoist these (dim, K) scratch buffers
-    # out of the hot loop — they were being re-allocated every step
-    # in the original Stage-3 prototype.
     dec_phc = np.zeros((dim, K), dtype=np.float64, order="F")
     dec_a = np.zeros((dim, K), dtype=np.float64, order="F")
 
-    # (dim, K) diag-factor buffers (Stage-3 lift) — Fortran order so the
-    # downstream elementwise ops against (dim, K) Fortran arrays match
-    # in stride (avoids the per-step strided-broadcast overhead).
     diag = {}
     for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD"):
         diag[key] = np.empty((dim, K), dtype=np.float64, order="F")
@@ -4077,7 +3766,6 @@ def solv_spacc_etd2_multipath(
     phi1 = diag["phi1"]
     phi2 = diag["phi2"]
 
-    # Pre-build per-tile pointer offsets (same scheme as Stage-2 spacc multirhs).
     dbl = sizeof(c_double)
     tile_starts = list(range(0, K, tile))
     tile_widths = [min(tile, K - c0) for c0 in tile_starts]
@@ -4100,7 +3788,6 @@ def solv_spacc_etd2_multipath(
     dec_phc_tile_ptrs = [_ptrs_at(dec_phc_addr, c0) for c0 in tile_starts]
     dec_a_tile_ptrs = [_ptrs_at(dec_a_addr, c0) for c0 in tile_starts]
 
-    # Whole-buffer pointers for the fused post-apply C kernels.
     phc_p_full = phc.ctypes.data_as(POINTER(c_double))
     F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_double))
     F_a_p_full = F_a.ctypes.data_as(POINTER(c_double))
@@ -4108,7 +3795,6 @@ def solv_spacc_etd2_multipath(
     eD_p = eD.ctypes.data_as(POINTER(c_double))
     phi1_p = phi1.ctypes.data_as(POINTER(c_double))
     phi2_p = phi2.ctypes.data_as(POINTER(c_double))
-    # Reuse h_K and ri_K buffers per step — point to the dX/rho_inv rows.
 
     from MCEq.spacc import etd2_post_apply1_multipath as _post1
     from MCEq.spacc import etd2_post_apply2_multipath as _post2
@@ -4116,24 +3802,26 @@ def solv_spacc_etd2_multipath(
     int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
     dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
 
-    grid_sol = []
-    grid_step = 0
+    sol_pixel = np.empty((dim, K_total), dtype=np.float64)
+
+    rs = schedule.reset_t_starts
+    rj = schedule.reset_j
+    rp = schedule.reset_pixel
+    cs = schedule.record_t_starts
+    cj = schedule.record_j
+    cp = schedule.record_pixel
 
     from time import time
 
     start = time()
 
     with np.errstate(over="ignore", invalid="ignore"):
-        for step in range(nsteps_max):
-            h_K = dX[step]
-            ri_K = rho_inv[step]
+        for k in range(T):
+            h_K = dX[k]
+            ri_K = rho_inv[k]
 
             _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, diag)
 
-            # F_phi = int_off @ phc + diag(ri_K) · (dec_off @ phc)
-            # We can't fold per-column ri_K into the SpMM alpha (which is
-            # scalar), so accumulate the dec contribution into a persistent
-            # scratch ``dec_phc`` and column-scale it before adding.
             F_phi.fill(0.0)
             for t in range(n_tiles):
                 nrhs = tile_widths[t]
@@ -4151,11 +3839,9 @@ def solv_spacc_etd2_multipath(
                 dec_phc *= ri_K[None, :]
                 np.add(F_phi, dec_phc, out=F_phi)
 
-            # a = eD * phc + h_K * phi1 * F_phi  (fused C — per-column h_K)
             h_K_p = h_K.ctypes.data_as(POINTER(c_double))
             _post1(dim, K, h_K_p, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
 
-            # F_a = int_off @ a + diag(ri_K) · (dec_off @ a)
             F_a.fill(0.0)
             for t in range(n_tiles):
                 nrhs = tile_widths[t]
@@ -4173,27 +3859,24 @@ def solv_spacc_etd2_multipath(
                 dec_a *= ri_K[None, :]
                 np.add(F_a, dec_a, out=F_a)
 
-            # phc = a + h_K * phi2 * (F_a - F_phi)  (fused C)
             _post2(
                 dim, K, h_K_p, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
             )
 
-            if (
-                grid_idcs
-                and grid_step < len(grid_idcs)
-                and grid_idcs[grid_step] == step
-            ):
-                grid_sol.append(np.copy(phc))
-                grid_step += 1
+            for r in range(cs[k], cs[k + 1]):
+                sol_pixel[:, cp[r]] = phc[:, cj[r]]
+            for r in range(rs[k], rs[k + 1]):
+                phc[:, rj[r]] = phi0_per_pixel[:, rp[r]]
 
+    elapsed = time() - start
     info(
         2,
-        f"Performance (spacc multipath K={K}, nsteps_max={nsteps_max}): "
-        f"{1e3 * (time() - start) / float(nsteps_max):6.2f}ms/iteration "
-        f"({1e3 * (time() - start) / float(nsteps_max) / float(K):6.2f}ms/iteration/RHS)",
+        f"Performance (spacc carousel K={K}, K_total={K_total}, T={T}): "
+        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot)",
     )
 
-    return phc.copy(), np.array(grid_sol)
+    return sol_pixel
 
 
 def solv_spacc_etd2(
