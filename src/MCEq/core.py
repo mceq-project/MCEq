@@ -883,6 +883,9 @@ class MCEqRun:
             available_models = [
                 "MSIS00",
                 "MSIS00_IC",
+                "MSIS21",
+                "MSIS21_IC",
+                "MSIS21_KM3NeT",
                 "CORSIKA",
                 "AIRS",
                 "Isothermal",
@@ -903,6 +906,12 @@ class MCEqRun:
                 self.density_model = dprof.MSIS00Atmosphere(*model_config)
             elif base_model == "MSIS00_IC":
                 self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
+            elif base_model == "MSIS21":
+                self.density_model = dprof.MSIS21Atmosphere(*model_config)
+            elif base_model == "MSIS21_IC":
+                self.density_model = dprof.MSIS21IceCubeCentered(*model_config)
+            elif base_model == "MSIS21_KM3NeT":
+                self.density_model = dprof.MSIS21KM3NeTCentered(*model_config)
             elif base_model == "CORSIKA":
                 self.density_model = dprof.CorsikaAtmosphere(*model_config)
             elif base_model == "AIRS":

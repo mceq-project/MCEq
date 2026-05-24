@@ -1720,3 +1720,19 @@ if __name__ == "__main__":
     plt.legend(loc="upper left")
     plt.tight_layout()
     plt.show()
+
+
+# ---------------------------------------------------------------------------
+# NRLMSIS 2.1 atmosphere models (see geometry/msis21_atmosphere.py).
+# Re-exported here so users can do
+#     from MCEq.geometry.density_profiles import MSIS21Atmosphere, ...
+# alongside MSIS00Atmosphere and friends.  The classes live in a separate
+# module to keep this file from growing further; their public API mirrors
+# the MSIS00 hierarchy 1:1.
+# ---------------------------------------------------------------------------
+from MCEq.geometry.msis21_atmosphere import (  # noqa: E402
+    MSIS21Atmosphere,
+    MSIS21LocationCentered,
+    MSIS21IceCubeCentered,
+    MSIS21KM3NeTCentered,
+)
