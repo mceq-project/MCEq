@@ -17,9 +17,8 @@ The class hierarchy mirrors :mod:`MCEq.geometry.density_profiles`:
 - :class:`MSIS21IceCubeCentered`   — South Pole, depth 1948 m
 - :class:`MSIS21KM3NeTCentered`    — ORCA / ARCA
 
-Requires ``nrlmsis`` (https://github.com/afedynitch/nrlmsis2.1) installed
-with the vectorised below-ZETA_B path landed on branch
-``feat/vectorize-below-zetab``.
+Requires ``nrlmsis`` (https://github.com/afedynitch/nrlmsis2.1) installed.
+The vectorised below-ZETA_B path is on master as of 2026-05-24.
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
             raise ImportError(
                 "MSIS21Atmosphere requires the 'nrlmsis' package. "
                 "Install via: pip install "
-                "'git+https://github.com/afedynitch/nrlmsis2.1@feat/vectorize-below-zetab'"
+                "'git+https://github.com/afedynitch/nrlmsis2.1'"
             ) from e
 
         self._model = NRLMSIS21()
@@ -307,7 +306,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
             raise ImportError(
                 "MSIS21LocationCentered requires the 'nrlmsis' package. "
                 "Install via: pip install "
-                "'git+https://github.com/afedynitch/nrlmsis2.1@feat/vectorize-below-zetab'"
+                "'git+https://github.com/afedynitch/nrlmsis2.1'"
             ) from e
 
         longitude, latitude = detector_coord
