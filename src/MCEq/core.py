@@ -987,7 +987,16 @@ class MCEqRun:
             info(2, "Angle selection corresponds to cached value, skipping calc.")
             return
 
-        if isinstance(self.density_model, dprof.MSIS00LocationCentered):
+        # Dispatch to set_theta with or without azimuth_deg depending on
+        # the density model's set_theta signature. Both
+        # MSIS00LocationCentered and MSIS21LocationCentered accept the
+        # extra azimuth_deg argument; everything else ignores azimuth.
+        import inspect as _inspect
+
+        _az_aware = "azimuth_deg" in _inspect.signature(
+            self.density_model.set_theta
+        ).parameters
+        if _az_aware:
             self.density_model.set_theta(zenith_deg, azimuth_deg=azimuth_deg)
         else:
             self.density_model.set_theta(zenith_deg)
