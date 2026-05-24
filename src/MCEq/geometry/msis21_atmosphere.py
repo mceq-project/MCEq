@@ -228,8 +228,8 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         thrad = self.thrad
         path_length = self.geom.path_len(thrad)
         dl_vec = np.linspace(0.0, path_length, n_steps)
-        # geom.h returns height in cm along path step dl
-        h_vec_cm = np.array([self.geom.h(dl, thrad) for dl in dl_vec])
+        # geom.h is pure-numpy and accepts an array dl — call once.
+        h_vec_cm = self.geom.h(dl_vec, thrad)
         # nrlmsis is valid 0..2000 km; clamp negatives (can occur for
         # detector-depth geometries on the way to obs level)
         z_km_vec = np.maximum(h_vec_cm / 1.0e5, 0.0)
@@ -244,15 +244,17 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         info(5, f".. nrlmsis2.1 vectorised call took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec_post = dl_vec[1:]
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
 
         self._max_X = X_int[-1]
         self._min_X = X_int[0]
         self._max_den = float(rho_vec[0])
 
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec_post[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
+        # Base-class spline fit: h_intp = reversed(geom.h(dl_vec[2:], thrad)),
+        # X_intp = reversed(X_int[1:]). h_vec_cm[i] = geom.h(dl_vec[i], thrad),
+        # so dl_vec[2:] → h_vec_cm[2:].
+        h_intp = h_vec_cm[2:][::-1]
+        X_intp = X_int[1:][::-1]
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
@@ -432,7 +434,9 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         thrad = self.thrad
         path_length = self.geom.path_len(thrad)
         dl_vec = np.linspace(0.0, path_length, n_steps)
-        h_vec_cm = np.array([self.geom.h(dl, thrad) for dl in dl_vec])
+        # geom.h is pure-numpy, broadcast-friendly — single call replaces
+        # the n_steps Python loop.
+        h_vec_cm = self.geom.h(dl_vec, thrad)
         z_km_vec = np.maximum(h_vec_cm / 1.0e5, 0.0)
 
         now = time()
@@ -468,15 +472,17 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
         info(5, f".. spline build took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec_post = dl_vec[1:]
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
 
         self._max_X = X_int[-1]
         self._min_X = X_int[0]
         self._max_den = float(rho_vec[0])
 
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec_post[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
+        # Same indexing as the MSIS00 base-class spline contract:
+        # h_intp = reversed(geom.h(dl_vec[2:], thrad))
+        # X_intp = reversed(X_int[1:])
+        h_intp = h_vec_cm[2:][::-1]
+        X_intp = X_int[1:][::-1]
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
