@@ -41,7 +41,8 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
-    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1",
+    # Requires Python >= 3.10; on 3.9 the MSIS21 smoke test importorskips.
+    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1 ; python_version >= '3.10'",
 ]
 docs = [
     # Core
