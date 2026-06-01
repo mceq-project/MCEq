@@ -283,149 +283,6 @@ def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
         solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs)
 
 
-@pytest.mark.parametrize("K", [1, 3, 8])
-def test_solv_numpy_etd2_multipath_matches_single_rhs_per_column_paths(K):
-    """Per-RHS-path multi-RHS kernel: each column has its own dX/rho_inv.
-
-    Builds K toy paths with distinct nsteps, distinct dX, and distinct
-    rho_inv. The multipath kernel zero-pads shorter columns past their
-    own nsteps[k]; the math freezes those columns automatically
-    (h=0 ⇒ eD=1, φ₁=1, φ₂=1/2 ⇒ state ← state). Each column's result
-    must match a serial single-RHS solve over that column's own
-    (nsteps, dX, rho_inv).
-    """
-    import scipy.sparse as sp
-
-    from MCEq.solvers import solv_numpy_etd2, solv_numpy_etd2_multipath
-
-    rng = np.random.default_rng(99)
-    size = 16
-
-    # Build a non-trivial sparse op.
-    A = rng.standard_normal((size, size)) * 0.04
-    A[np.abs(A) < 0.02] = 0.0
-    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-    int_m = sp.csr_matrix(A)
-    dec_m = sp.csr_matrix(B)
-
-    # Distinct path per column — K columns, nsteps spread, dX/ri ramps.
-    rng_path = np.random.default_rng(7)
-    ns_per_col = [int(15 + 10 * i) for i in range(K)]
-    nsteps_max = max(ns_per_col)
-
-    dX_2d = np.zeros((nsteps_max, K))
-    rho_inv_2d = np.zeros((nsteps_max, K))
-    for k in range(K):
-        ns = ns_per_col[k]
-        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
-        rho_inv_2d[:ns, k] = np.linspace(
-            0.5 + 0.5 * rng_path.random(),
-            1.0 + 0.5 * rng_path.random(),
-            ns,
-        )
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    sol_multi, _ = solv_numpy_etd2_multipath(
-        nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
-    )
-    assert sol_multi.shape == (size, K)
-
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-    config.numpy_bsr_blocksize = None
-    try:
-        for k in range(K):
-            ns = ns_per_col[k]
-            try:
-                delattr(int_m, "_etd_split_cache_v2")
-            except AttributeError:
-                pass
-            sol_k, _ = solv_numpy_etd2(
-                ns,
-                dX_2d[:ns, k].copy(),
-                rho_inv_2d[:ns, k].copy(),
-                int_m,
-                dec_m,
-                phi0_multi[:, k].copy(),
-                [],
-            )
-            np.testing.assert_allclose(
-                sol_multi[:, k],
-                sol_k,
-                rtol=1e-12,
-                atol=0,
-                err_msg=f"column {k}: multipath diverges from serial path",
-            )
-    finally:
-        config.numpy_bsr_blocksize = saved_bs
-
-
-@pytest.mark.xdist_group("spacc")
-@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-@pytest.mark.parametrize("K", [1, 3, 8])
-def test_solv_spacc_etd2_multipath_matches_numpy_multipath(K):
-    """Spacc per-RHS-path kernel matches numpy multipath within fp64 ε."""
-    import scipy.sparse as sp
-
-    from MCEq.solvers import (
-        _etd_split_cache,
-        solv_numpy_etd2_multipath,
-        solv_spacc_etd2_multipath,
-    )
-    from MCEq.spacc import SpaccMatrix
-
-    rng = np.random.default_rng(101)
-    size = 16
-    A = rng.standard_normal((size, size)) * 0.04
-    A[np.abs(A) < 0.02] = 0.0
-    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-    int_m = sp.csr_matrix(A)
-    dec_m = sp.csr_matrix(B)
-
-    ns_per_col = [int(15 + 5 * i) for i in range(K)]
-    nsteps_max = max(ns_per_col)
-    dX_2d = np.zeros((nsteps_max, K))
-    rho_inv_2d = np.zeros((nsteps_max, K))
-    rng_path = np.random.default_rng(3)
-    for k in range(K):
-        ns = ns_per_col[k]
-        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
-        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
-    spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
-    try:
-        sol_numpy, _ = solv_numpy_etd2_multipath(
-            nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
-        )
-        sol_spacc, _ = solv_spacc_etd2_multipath(
-            nsteps_max,
-            dX_2d,
-            rho_inv_2d,
-            spacc_int,
-            spacc_dec,
-            d_int,
-            d_dec,
-            phi0_multi,
-            [],
-        )
-        np.testing.assert_allclose(sol_spacc, sol_numpy, rtol=5e-13, atol=0)
-    finally:
-        if spacc_int is not None:
-            spacc_int.close()
-        if spacc_dec is not None:
-            spacc_dec.close()
-
-
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 @pytest.mark.parametrize("K", [1, 4, 16])
 def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
@@ -530,124 +387,6 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
             mkl_int32.close()
         if mkl_dec32 is not None:
             mkl_dec32.close()
-
-
-@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-@pytest.mark.parametrize("K", [1, 4, 8])
-def test_solv_mkl_etd2_multipath_matches_numpy_multipath(K):
-    """MKL per-RHS-path kernel matches numpy multipath within fp64 ε,
-    including frozen-column semantics."""
-    import scipy.sparse as sp
-
-    from MCEq.solvers import (
-        MklSparseMatrix,
-        _etd_split_cache,
-        solv_mkl_etd2_multipath,
-        solv_numpy_etd2_multipath,
-    )
-
-    rng = np.random.default_rng(101)
-    size = 16
-    A = rng.standard_normal((size, size)) * 0.04
-    A[np.abs(A) < 0.02] = 0.0
-    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-    int_m = sp.csr_matrix(A)
-    dec_m = sp.csr_matrix(B)
-
-    ns_per_col = [int(15 + 5 * i) for i in range(K)]
-    nsteps_max = max(ns_per_col)
-    dX_2d = np.zeros((nsteps_max, K))
-    rho_inv_2d = np.zeros((nsteps_max, K))
-    rng_path = np.random.default_rng(3)
-    for k in range(K):
-        ns = ns_per_col[k]
-        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
-        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
-    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
-    try:
-        sol_numpy, _ = solv_numpy_etd2_multipath(
-            nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
-        )
-        sol_mkl, _ = solv_mkl_etd2_multipath(
-            nsteps_max, dX_2d, rho_inv_2d, mkl_int, mkl_dec,
-            d_int, d_dec, phi0_multi, [],
-        )
-        np.testing.assert_allclose(sol_mkl, sol_numpy, rtol=5e-13, atol=0)
-    finally:
-        if mkl_int is not None:
-            mkl_int.close()
-        if mkl_dec is not None:
-            mkl_dec.close()
-
-
-@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-@pytest.mark.parametrize("K", [1, 4, 8])
-def test_solv_cuda_etd2_multipath_matches_numpy_multipath(K):
-    """cupy per-RHS-path kernel matches numpy multipath within cuSPARSE-
-    reorder tolerance, and frozen-column semantics work (a column with
-    zero-padded path after step n_k freezes its state at step n_k)."""
-    import scipy.sparse as sp
-
-    from MCEq.solvers import (
-        CudaEtd2MultiRHSContext,
-        _etd_split_cache,
-        solv_cuda_etd2_multipath,
-        solv_numpy_etd2_multipath,
-    )
-
-    rng = np.random.default_rng(101)
-    size = 16
-    A = rng.standard_normal((size, size)) * 0.04
-    A[np.abs(A) < 0.02] = 0.0
-    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-    int_m = sp.csr_matrix(A)
-    dec_m = sp.csr_matrix(B)
-
-    ns_per_col = [int(15 + 5 * i) for i in range(K)]
-    nsteps_max = max(ns_per_col)
-    dX_2d = np.zeros((nsteps_max, K))
-    rho_inv_2d = np.zeros((nsteps_max, K))
-    rng_path = np.random.default_rng(3)
-    for k in range(K):
-        ns = ns_per_col[k]
-        dX_2d[:ns, k] = 0.04 + 0.05 * rng_path.random()
-        rho_inv_2d[:ns, k] = np.linspace(0.5, 2.0, ns)
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    ctx = CudaEtd2MultiRHSContext(
-        int_off,
-        dec_off,
-        d_int,
-        d_dec,
-        K=K,
-        device_id=config.cuda_gpu_id,
-        fp_precision=64,
-    )
-    sol_numpy, _ = solv_numpy_etd2_multipath(
-        nsteps_max, dX_2d, rho_inv_2d, int_m, dec_m, phi0_multi, []
-    )
-    sol_cuda, _ = solv_cuda_etd2_multipath(
-        nsteps_max, dX_2d, rho_inv_2d, ctx, phi0_multi, []
-    )
-    rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
-        np.linalg.norm(sol_numpy), 1e-30
-    )
-    assert rel_l2 < 1e-10, (
-        f"cuda multipath (K={K}) vs numpy multipath rel-L2 = {rel_l2:.3e}"
-    )
 
 
 @pytest.mark.parametrize("K", [1, 4, 16])
@@ -1738,11 +1477,11 @@ def test_solve_fullsky_2d_phi0_tiled_matches_1d(mceq_sib21):
         K = zenith_grid.size
         phi0_1d = mceq_sib21._phi0.copy()
 
-        sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid, bucket_count=1)
+        sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid)
         phi0_2d = np.broadcast_to(
             phi0_1d[:, None], (mceq_sib21.dim_states, K)
         ).copy()
-        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, bucket_count=1)
+        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
 
         assert sol_2d.shape == sol_1d.shape
         np.testing.assert_allclose(sol_2d, sol_1d, rtol=0, atol=0)
@@ -1773,24 +1512,21 @@ def test_solve_fullsky_2d_phi0_per_pixel_matches_serial(mceq_sib21):
             mask[:cut] = 0.0
             phi0_2d[:, k] = scale * mask * phi0_base
 
-        sol_2d, _ = mceq_sib21.solve_fullsky(
-            zenith_grid, phi0=phi0_2d, bucket_count=1
-        )
+        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
 
         for k in range(K):
             sol_k, _ = mceq_sib21.solve_fullsky(
-                zenith_grid[k : k + 1], phi0=phi0_2d[:, k].copy(), bucket_count=1
+                zenith_grid[k : k + 1], phi0=phi0_2d[:, k].copy()
             )
             np.testing.assert_allclose(sol_2d[:, k], sol_k[:, 0], rtol=1e-12, atol=0)
     finally:
         config.kernel_config = saved_kernel
 
 
-def test_solve_fullsky_2d_phi0_bucketed_matches_single_dispatch(mceq_sib21):
-    """Stage-4 bucketed dispatch must give the same per-pixel result as the
-    Stage-3 single-dispatch path when phi0 is 2-D. Pixels are scattered
-    back to their original column positions, so phi0[:, cols] slicing
-    must agree.
+def test_solve_fullsky_2d_phi0_carousel_K_invariant(mceq_sib21):
+    """The LPT-carousel pipeline width (``carousel_K``) is a scheduling knob
+    and must not change the per-pixel result: solving with carousel_K=1 and
+    carousel_K=3 must agree bit-for-bit when phi0 is 2-D.
     """
     saved_kernel = config.kernel_config
     try:
@@ -1805,12 +1541,12 @@ def test_solve_fullsky_2d_phi0_bucketed_matches_single_dispatch(mceq_sib21):
         )
 
         sol_single, _ = mceq_sib21.solve_fullsky(
-            zenith_grid, phi0=phi0_2d, bucket_count=1
+            zenith_grid, phi0=phi0_2d, carousel_K=1
         )
-        sol_bucketed, _ = mceq_sib21.solve_fullsky(
-            zenith_grid, phi0=phi0_2d, bucket_count=3
+        sol_pipelined, _ = mceq_sib21.solve_fullsky(
+            zenith_grid, phi0=phi0_2d, carousel_K=3
         )
-        np.testing.assert_allclose(sol_bucketed, sol_single, rtol=1e-12, atol=0)
+        np.testing.assert_allclose(sol_pipelined, sol_single, rtol=1e-12, atol=0)
     finally:
         config.kernel_config = saved_kernel
 
@@ -1826,5 +1562,5 @@ def test_solve_fullsky_2d_phi0_shape_validation(mceq_sib21):
     with pytest.raises(ValueError, match="second axis"):
         mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim, 3)))
     # 3-D phi0 rejected
-    with pytest.raises(ValueError, match="1-D .* or 2-D"):
+    with pytest.raises(ValueError, match="must be 1-D or 2-D"):
         mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim, 2, 1)))
