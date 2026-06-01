@@ -212,13 +212,26 @@ class HDF5Backend:
                 f'Electromagnetic DB file {_n} not found in "data" directory.'
             )
 
-        with h5py.File(self.had_fname, "r") as mceq_db:
-            from MCEq.misc import energy_grid
+        # DIAGNOSTIC (em-20dec-binning-test): when config.em_standalone_grid is
+        # set, the energy grid is taken from the EM DB instead of the hadronic
+        # DB, so the EM cascade can run on a finer bins/decade grid than the
+        # (10/dec) hadronic DB. The inert hadronic interaction/decay matrices
+        # are then skipped and the e± ionization continuous-loss curve is
+        # interpolated onto the EM grid (see interaction_db / decay_db / cs_db /
+        # continuous_loss_db below). Default off → standard behaviour unchanged.
+        self._em_standalone = bool(getattr(config, "em_standalone_grid", False))
+        grid_fname = self.em_fname if self._em_standalone else self.had_fname
 
-            ca = mceq_db["common"].attrs
+        with h5py.File(self.had_fname, "r") as mceq_db:
             self.version = (
                 mceq_db.attrs["version"] if "version" in mceq_db.attrs else "1.0.0"
             )
+
+        with h5py.File(grid_fname, "r") as grid_db:
+            from MCEq.misc import energy_grid
+
+            ca = grid_db["common"].attrs
+            self._e_grid_full = np.asarray(ca["e_grid"])
             self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
                 ca["e_grid"], config.e_min, config.e_max
             )
@@ -411,11 +424,20 @@ class HDF5Backend:
                 eqv = equivalences["FLUKA"]
             else:
                 raise ValueError("Unknown equivalence table for", mname)
-            int_index = self._gen_db_dictionary(
-                mceq_db["hadronic_interactions"][medium][mname],
-                mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
-                equivalences=eqv,
-            )
+            if self._em_standalone:
+                # Hadronic matrices live on the (coarser) hadronic grid; they
+                # are inert for a γ/e± cascade. Skip them so they never hit the
+                # dim_full reshape against the EM grid.
+                int_index = {
+                    "parents": [], "particles": [], "relations": {},
+                    "index_d": {}, "description": None,
+                }
+            else:
+                int_index = self._gen_db_dictionary(
+                    mceq_db["hadronic_interactions"][medium][mname],
+                    mceq_db["hadronic_interactions"][medium][mname + "_indptrs"],
+                    equivalences=eqv,
+                )
 
         # Append electromagnetic interaction matrices from EmCA
         if config.enable_em:
@@ -482,6 +504,15 @@ class HDF5Backend:
     def decay_db(self, decay_dset_name):
         info(10, f"Generating decay db. dset_name={decay_dset_name}")
 
+        if self._em_standalone:
+            # Decay matrices live on the hadronic grid and are inert for a
+            # γ/e± cascade (the only decaying secondaries are sub-permille
+            # muons from γ→μ⁺μ⁻). Skip them.
+            return {
+                "parents": [], "particles": [], "relations": defaultdict(list),
+                "index_d": {}, "description": None,
+            }
+
         with h5py.File(self.had_fname, "r") as mceq_db:
             if config.muon_helicity_dependence:
                 if decay_dset_name != "polarized":
@@ -534,15 +565,17 @@ class HDF5Backend:
             info(5, "air-legacy target replaced by air for", mname)
             medium = "air"
 
-        with h5py.File(self.had_fname, "r") as mceq_db:
-            self._check_subgroup_exists(mceq_db["cross_sections"], medium)
-            self._check_subgroup_exists(mceq_db["cross_sections"][medium], mname)
-            cs_db = mceq_db["cross_sections"][medium][mname]
-            cs_data = cs_db[:]
-            index_d = {}
-            parents = list(cs_db.attrs["parents"])
-            for ip, p in enumerate(parents):
-                index_d[p] = cs_data[self._cuts, ip]
+        index_d = {}
+        parents = []
+        if not self._em_standalone:
+            with h5py.File(self.had_fname, "r") as mceq_db:
+                self._check_subgroup_exists(mceq_db["cross_sections"], medium)
+                self._check_subgroup_exists(mceq_db["cross_sections"][medium], mname)
+                cs_db = mceq_db["cross_sections"][medium][mname]
+                cs_data = cs_db[:]
+                parents = list(cs_db.attrs["parents"])
+                for ip, p in enumerate(parents):
+                    index_d[p] = cs_data[self._cuts, ip]
 
         if config.adv_set["replace_meson_cross_sections_with"] is not None:
             mname_mesons = config.adv_set["replace_meson_cross_sections_with"]
@@ -592,10 +625,29 @@ class HDF5Backend:
             index_d = {}
             generic_dedx = None
 
+            # In em_standalone mode the loss curves are stored on the hadronic
+            # grid; interpolate them onto the (finer) EM grid before applying
+            # the energy cuts. dE/dX is smooth (Bethe-Bloch) and stored with a
+            # negative sign, so interpolate the value linearly in log(E) — a
+            # log-log interpolation would take log of a negative number.
+            had_eg = (
+                np.asarray(mceq_db["common"].attrs["e_grid"])
+                if self._em_standalone
+                else None
+            )
+
             for k in list(cl_db):
                 if k != "hadron":
+                    if self._em_standalone:
+                        dedx = np.interp(
+                            np.log(self._e_grid_full),
+                            np.log(had_eg),
+                            np.asarray(cl_db[k]),
+                        )[self._cuts]
+                    else:
+                        dedx = cl_db[k][self._cuts]
                     for hel in [0, 1, -1]:
-                        index_d[(int(k), hel)] = cl_db[k][self._cuts]
+                        index_d[(int(k), hel)] = dedx
                 else:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])

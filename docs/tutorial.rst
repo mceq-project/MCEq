@@ -108,19 +108,55 @@ Most geometries support angles between 0 (vertical) and 90 degrees.
 
 To change the density profile ::
 
-    mceq.set_density_model(('MSIS00', ('Sudbury', 'June')))
+    mceq.set_density_model(('MSIS21', ('Sudbury', 'June')))
 
 Available models are:
 
-- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC (see :func:`MCEq.geometry.density_models.CorsikaAtmosphere.init_parameters`)
-- 'MSIS00' and 'MSIS00_IC' - NRLMSISE-00 global static atmospheric model by NASA (_IC = centered on IceCube at the South Pole, where zenith angles > 90 degrees are up-going)
-- 'AIRS' - an interface to tabulated satellite data (not provided), extrapolated with MSIS00 at altitudes above 50km
-- 'Isothermal' - a simple isothermal model with scale height at 6.3 km
-- 'GeneralizedTarget' - a piece-wise homogeneous density (not exponential like the atmosphere)
+- 'MSIS21', 'MSIS21_IC', 'MSIS21_KM3NeT' - NRLMSIS 2.1 (Emmert et al. 2021),
+  pure-Python and vectorised. The default since v2.x; `_IC` is centered on
+  IceCube at the South Pole (upgoing supported up to 180°) and `_KM3NeT`
+  on ORCA / ARCA. Fork-safe — use `path_workers > 1` in :func:`MCEqRun.solve_fullsky`.
+- 'MSIS00' and 'MSIS00_IC' - the legacy NRLMSISE-00 backend (Fortran-via-C).
+  Kept for back-compat. Not fork-safe; `path_workers` must be 0.
+- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
+  (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
+- 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
+- 'Isothermal' - simple isothermal model with scale height 6.3 km.
+- 'GeneralizedTarget' - piece-wise homogeneous density.
 
 Refer for more info to :ref:`densities`.
 
 After changing the models, the spectra can be recomputed with a :func:`MCEq.core.MCEqRun.solve()`.
+
+Full-sky calculations with ``solve_fullsky``
+............................................
+
+To propagate one primary spectrum through every (zenith, azimuth) pixel
+of a sky grid in a single multi-RHS solve, use
+:func:`MCEq.core.MCEqRun.solve_fullsky` ::
+
+    sol, nsteps_per_col = mceq.solve_fullsky(
+        zenith_grid, azimuth_grid,
+        # carousel_K=None -> default min(K, 128); pipeline width for the
+        # Stage-5 LPT scheduler. The carousel is the only multi-RHS path
+        # and works on all four backends (numpy_etd2 / cuda_etd2 /
+        # mkl_etd2 / accelerate_etd2).
+        # path_workers=N -> N>1 forks a process pool for the path build
+        # (MSIS21 + CORSIKA only; MSIS00 is rejected as not fork-safe).
+        # geomagnetic_cutoff=None -> auto-detect from the atmosphere:
+        # on for MSIS-based and location-tagged CORSIKA atmospheres.
+    )
+
+When ``geomagnetic_cutoff`` is on, the first call builds the gtracr
+rigidity-cutoff map for the detector and caches it under
+``<MCEq.data_dir>/gtracr_cutoffs/``; subsequent runs at the same
+detector hit the cache. The toggle can also be set at the
+``MCEqRun`` constructor (``geomagnetic_cutoff=True/False/None``) or
+overridden per call.
+
+The ``Full_sky_carousel`` example notebook walks through the API:
+serial scan baseline, one-shot carousel, per-pixel ``phi0``, and
+auto-cutoff at a mid-latitude detector.
 
 Changing hadronic interaction models
 ....................................

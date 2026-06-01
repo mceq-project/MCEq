@@ -966,3 +966,24 @@ def test_set_zenith_azimuth_with_km3net(mceq_sib21):
     # Restore the session fixture to a neutral atmosphere so other tests are
     # not affected by the KM3NeT density model we set above.
     mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
+
+
+# ---------------------------------------------------------------------------
+# MSIS21 (NRLMSIS 2.1) opt-in atmosphere — smoke test
+# ---------------------------------------------------------------------------
+
+
+def test_msis21_atmosphere_smoke():
+    """MSIS21 is opt-in (needs the pure-Python 'nrlmsis' package).
+
+    Skips cleanly where nrlmsis isn't installed; in CI it is in the test group,
+    so this exercises the otherwise-default-off MSIS21 path: build the model and
+    check it returns a physically sane, monotonically decreasing density.
+    """
+    pytest.importorskip("nrlmsis")
+    atm = dprof.MSIS21Atmosphere("SouthPole", season="January")
+    rho_low = atm.get_density(2.0e5)   # 2 km in cm
+    rho_high = atm.get_density(3.0e6)  # 30 km in cm
+    assert rho_low > 0.0
+    assert rho_high > 0.0
+    assert rho_high < rho_low  # density falls with altitude

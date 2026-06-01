@@ -40,8 +40,17 @@ em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 #: 'total energy' else 'kinetic energy'
 return_as = "kinetic energy"
 #: Atmospheric model in the format: (model, (arguments))
+#: CORSIKA BK_USStd is the default — generic, location-free, and dependency-free.
+#: NRLMSIS 2.1 (whole-atmosphere refit with newer satellite data) is available
+#: opt-in but requires the external 'nrlmsis' package
+#: (pip install 'git+https://github.com/afedynitch/nrlmsis2.1').
 density_model = ("CORSIKA", ("BK_USStd", None))
-#: density_model = ('MSIS00_IC',('SouthPole','January'))
+#: Alternatives:
+#: density_model = ('MSIS21', ('SouthPole', 'January'))   # NRLMSIS 2.1 — needs 'nrlmsis' (opt-in)
+#: density_model = ('MSIS00', ('SouthPole', 'January'))  # MSISE-00 (Fortran-via-C, fork-unsafe)
+#: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
+#: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
+#: density_model = ('MSIS21_KM3NeT', ('ORCA', 'January'))      # detector-centered NRLMSIS 2.1 at ORCA
 #: density_model = ('GeneralizedTarget', None)
 
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
