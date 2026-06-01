@@ -36,7 +36,13 @@ dependencies = [
 cuda = ["cupy-cuda12x>=12.0.0"]
 
 [dependency-groups]
-test = ["pytest", "pytest-cov", "pytest-xdist"]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
+    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1",
+]
 docs = [
     # Core
     "sphinx>=8",

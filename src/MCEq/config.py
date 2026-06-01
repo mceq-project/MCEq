@@ -40,12 +40,13 @@ em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 #: 'total energy' else 'kinetic energy'
 return_as = "kinetic energy"
 #: Atmospheric model in the format: (model, (arguments))
-#: NRLMSIS 2.1 (whole-atmosphere refit with newer satellite data) is the
-#: default — pure-Python, vectorised, fork-safe. ~5 ms per spline build
-#: vs ~25 ms for the MSISE-00 C wrapper at the same grid density.
-density_model = ("MSIS21", ("SouthPole", "January"))
+#: CORSIKA BK_USStd is the default — generic, location-free, and dependency-free.
+#: NRLMSIS 2.1 (whole-atmosphere refit with newer satellite data) is available
+#: opt-in but requires the external 'nrlmsis' package
+#: (pip install 'git+https://github.com/afedynitch/nrlmsis2.1').
+density_model = ("CORSIKA", ("BK_USStd", None))
 #: Alternatives:
-#: density_model = ('CORSIKA', ('BK_USStd', None))       # legacy default — generic, no location
+#: density_model = ('MSIS21', ('SouthPole', 'January'))   # NRLMSIS 2.1 — needs 'nrlmsis' (opt-in)
 #: density_model = ('MSIS00', ('SouthPole', 'January'))  # MSISE-00 (Fortran-via-C, fork-unsafe)
 #: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
 #: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
