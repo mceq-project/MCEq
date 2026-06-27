@@ -1564,3 +1564,141 @@ def test_solve_fullsky_2d_phi0_shape_validation(mceq_sib21):
     # 3-D phi0 rejected
     with pytest.raises(ValueError, match="must be 1-D or 2-D"):
         mceq_sib21.solve_fullsky(zenith_grid, phi0=np.zeros((dim, 2, 1)))
+
+
+# ---------------------------------------------------------------------------
+# Cure B: EM-cascade adaptive step cap (config.em_adaptive_step). See the
+# wiki lesson ``mceq-loss-averaging-grid-fragility``: the legacy dX_max=20
+# over-integrates the stiff e±/γ cascade and biases the charged-shower X_max
+# deep (up to +57 g/cm² in homogeneous media). The cap keys off the spectral
+# radius of the EM off-diagonal block of int_m and refines the step
+# automatically; muon/hadron-only solves (no e± loaded) are never throttled.
+#
+# These tests are DB-free: they drive the unbound MCEqRun methods on a small
+# synthetic stub whose EM off-diagonal block has a known spectral radius, so
+# they exercise the exact code path without the gigabyte interaction DB.
+# ---------------------------------------------------------------------------
+
+from MCEq.core import MCEqRun  # noqa: E402
+
+
+class _StubParticle:
+    def __init__(self, is_em, lidx, uidx):
+        self.is_em, self.lidx, self.uidx = is_em, lidx, uidx
+
+
+class _StubPMan:
+    def __init__(self, particles):
+        self.all_particles = particles
+
+
+class _StubMCEq:
+    """Minimal MCEqRun-like object exposing exactly what the cure-B helpers
+    and _calculate_integration_path read: int_m, pman, density_model, and the
+    path-cache attributes. EM block (indices 0,1) is a symmetric off-diagonal
+    coupling [[0, r],[r, 0]] -> spectral radius == r_known."""
+
+    # Borrow the real methods under test (unbound) so the stub exercises the
+    # exact production code paths, including their internal self-calls.
+    _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
+    _em_cascade_dx_cap = MCEqRun._em_cascade_dx_cap
+    _calculate_integration_path = MCEqRun._calculate_integration_path
+
+    def __init__(self, r_known=0.5, density_model=None):
+        import scipy.sparse as sp
+
+        m = -1.0 * np.eye(5)  # benign diagonal (removed by the off-split)
+        m[0, 1] = m[1, 0] = r_known  # EM-EM off-diagonal block
+        self.int_m = sp.csr_matrix(m)
+        self.pman = _StubPMan(
+            [
+                _StubParticle(True, 0, 1),   # e- (EM)
+                _StubParticle(True, 1, 2),   # e+ (EM)
+                _StubParticle(False, 2, 3),  # hadron
+                _StubParticle(False, 3, 4),
+                _StubParticle(False, 4, 5),
+            ]
+        )
+        self.density_model = density_model
+        self.integration_path = None
+        self.int_grid = None
+        self.grid_var = None
+
+
+def _const_density_target(max_X=600.0, rho=1e-3):
+    """Homogeneous slab: zero density gradient, so the legacy schedule takes
+    dX_max everywhere and the EM cap is the only thing that can refine."""
+    from MCEq.geometry.density_profiles import GeneralizedTarget
+
+    return GeneralizedTarget(len_target=max_X / rho, env_density=rho, env_name="air")
+
+
+def test_em_cascade_step_scale_matches_spectral_radius():
+    stub = _StubMCEq(r_known=0.5)
+    r_em = MCEqRun._em_cascade_step_scale(stub)
+    assert r_em == pytest.approx(0.5, rel=1e-6)
+    # Cached on int_m identity.
+    assert MCEqRun._em_cascade_step_scale(stub) == r_em
+
+
+def test_em_cascade_dx_cap_gating():
+    stub = _StubMCEq(r_known=0.5)
+    config.em_adaptive_step = False
+    assert MCEqRun._em_cascade_dx_cap(stub) == np.inf
+
+    config.em_adaptive_step = True
+    config.em_step_safety = 0.04
+    assert MCEqRun._em_cascade_dx_cap(stub) == pytest.approx(0.04 / 0.5)
+
+
+def test_em_cascade_step_scale_zero_without_em():
+    """No e±/γ loaded -> r_EM is 0 and the cap is inf, so non-EM (hadronic /
+    muon) solves are never throttled even with the feature enabled."""
+    stub = _StubMCEq()
+    stub.pman = _StubPMan([_StubParticle(False, i, i + 1) for i in range(5)])
+    stub._em_step_scale_cache = None
+    assert MCEqRun._em_cascade_step_scale(stub) == 0.0
+
+    config.em_adaptive_step = True
+    assert MCEqRun._em_cascade_dx_cap(stub) == np.inf
+
+
+def test_em_adaptive_step_refines_path():
+    """In a homogeneous slab (zero density gradient) the cap is the only
+    refiner. Feature ON must increase the step count; OFF reproduces the
+    legacy schedule exactly."""
+    grid = np.arange(0.0, 600.0 + 0.1, 50.0)
+    dm = _const_density_target()
+
+    config.em_adaptive_step = False
+    stub_off = _StubMCEq(r_known=0.5, density_model=dm)
+    MCEqRun._calculate_integration_path(stub_off, grid, "X", X_start=0.0)
+    nsteps_off = stub_off.integration_path[0]
+
+    config.em_adaptive_step = True
+    config.em_step_safety = 0.04  # cap = 0.08 g/cm^2 << legacy dX_max=20
+    stub_on = _StubMCEq(r_known=0.5, density_model=dm)
+    MCEqRun._calculate_integration_path(stub_on, grid, "X", X_start=0.0)
+    nsteps_on = stub_on.integration_path[0]
+
+    assert nsteps_on > nsteps_off
+    # Effective steps must respect the cap (allowing the snapshot-truncation
+    # steps that land exactly on the coarse output grid).
+    dX_on = stub_on.integration_path[1]
+    assert dX_on.max() <= 0.08 + 1e-9
+
+
+def test_em_adaptive_step_off_matches_legacy():
+    """Feature OFF leaves the path identical to a build that never consulted
+    the cap (same nsteps and dX array on repeat)."""
+    grid = np.arange(0.0, 600.0 + 0.1, 50.0)
+    dm = _const_density_target()
+    config.em_adaptive_step = False
+
+    a = _StubMCEq(r_known=0.5, density_model=dm)
+    MCEqRun._calculate_integration_path(a, grid, "X", X_start=0.0)
+    b = _StubMCEq(r_known=0.5, density_model=dm)
+    MCEqRun._calculate_integration_path(b, grid, "X", X_start=0.0)
+
+    assert a.integration_path[0] == b.integration_path[0]
+    np.testing.assert_array_equal(a.integration_path[1], b.integration_path[1])

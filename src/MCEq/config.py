@@ -195,6 +195,35 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
+#: EM-cascade adaptive step cap (cure B). The ETD2 ``dX_max`` of 20 g/cm^2
+#: above is set by the off-diagonal stability/accuracy bound
+#: ``h * spec(int_off) < 2`` with ``spec(int_off) ~ 0.094`` for the *hadronic*
+#: matrix. The e+/-/gamma block of ``int_m`` is far stiffer (steep
+#: bremsstrahlung/pair multiplication, near-singular soft tail), so the same
+#: bound demands a much smaller step. When the density-gradient schedule does
+#: not refine on its own (homogeneous media, low-density shower start), the
+#: large legacy step over-integrates the EM cascade and biases the
+#: charged-shower X_max deep by ~8-12 g/cm^2 (muon/hadron profiles are
+#: unaffected: their off-diagonal block is ~200x less stiff). When True, the
+#: effective step is additionally capped at ``em_step_safety / r_EM``, where
+#: ``r_EM`` is the explicit-stepping stiffness scale of the e+/-/gamma block
+#: of ``int_m`` (spectral radius of its off-diagonal part, 1/(g/cm^2)).
+#: Default False preserves the legacy schedule exactly; enable for absolute
+#: EM-X_max work. Because r_EM tracks the operator, the cap also tightens
+#: automatically as the energy grid is refined.
+em_adaptive_step = False
+
+#: Dimensionless safety factor for ``em_adaptive_step``: effective cap
+#: ``dX = em_step_safety / r_EM`` [g/cm^2]. This is the per-step off-diagonal
+#: accuracy budget ``h * spec(int_off_EM)``; it is ~50x tighter than the 2.0
+#: stability cliff because the EM-X_max bias is an accuracy (not stability)
+#: effect. Calibrated against the gamma-X_max convergence on the v13 1-MeV air
+#: EM grid (r_EM ~ 0.13 1/(g/cm^2)): 0.04 -> auto-cap ~ 0.3 g/cm^2, which
+#: holds X_max to <0.1 g/cm^2 of the dX->0 limit (legacy 20 g/cm^2 steps bias
+#: it up to +57 g/cm^2 in homogeneous media). See the wiki lesson
+#: ``mceq-loss-averaging-grid-fragility``.
+em_step_safety = 0.04
+
 #: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
 #: or cross sections, nucleons can "drop through" without cascading
@@ -238,10 +267,22 @@ loss_step_for_average = 1e-1
 #:                 truncation error than plain FD on steep spectra.
 #:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
 #:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
+#:   "expfit_low_upwind" / "expfit_low_upwind2" -- expfit interior with the
+#:                 low-energy boundary layer replaced by monotone first-/
+#:                 second-order upwind rows. Diagnostic/stabilization option
+#:                 for the 1 MeV EM boundary cliff.
 #: All three options share the same one-sided polynomial-fit stencils on
 #: the boundary rows (0,1,2 and last-2,last-1,last); see
 #: ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
 loss_stencil_method = "expfit"
+
+#: Number of low-energy rows replaced when ``loss_stencil_method`` is
+#: ``"expfit_low_upwind"`` or ``"expfit_low_upwind2"``. At 10 bins/decade and
+#: a 1 MeV EM floor, the formal one-sided boundary rows (0..2) are not enough:
+#: the raw operator still develops enormous non-normal transients. Eight rows
+#: is the first stable setting in the realistic-screening 1 MeV/no-averaging
+#: diagnostic and leaves the expfit interior untouched above ~6 MeV.
+loss_stencil_low_upwind_rows = 8
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to
 #: be exact for f = exp(a u) at trial slopes a = -alpha0 + delta around

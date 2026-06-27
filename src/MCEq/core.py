@@ -2316,6 +2316,80 @@ class MCEqRun:
         self.close()
         return False
 
+    def _em_cascade_step_scale(self):
+        """Cure-B stiffness scale r_EM of the e+/-/gamma block of ``int_m``.
+
+        Returns ``spec(int_off_EM)``: the spectral radius of the *off-diagonal*
+        part of ``int_m`` restricted to the e+/-/gamma rows and columns, in
+        1/(g/cm^2). This is the same quantity (``spec(int_off)``) that fixes
+        the legacy ``config.etd2_path['dX_max']`` for the hadronic matrix
+        (~0.094), evaluated on the much stiffer EM block (~0.13). The spectral
+        radius — not a matrix norm — is the right scale: the EM off-diagonal is
+        a near-singular, highly non-normal difference+production operator whose
+        1-norm is dominated by the near-cancelling continuous-loss bands and is
+        meaningless as a step scale. ``int_m`` is X-constant, so r_EM is a
+        single global scalar; it is cached and invalidated when ``int_m`` is
+        rebuilt. Returns 0.0 when no e+/-/gamma are loaded (EM cascade inactive)
+        or the matrices are not yet built.
+        """
+        int_m = getattr(self, "int_m", None)
+        if int_m is None:
+            return 0.0
+        cache = getattr(self, "_em_step_scale_cache", None)
+        if cache is not None and cache[0] is int_m:
+            return cache[1]
+        col_ranges = [
+            np.arange(p.lidx, p.uidx)
+            for p in self.pman.all_particles
+            if getattr(p, "is_em", False)
+        ]
+        if not col_ranges:
+            self._em_step_scale_cache = (int_m, 0.0)
+            return 0.0
+        idx = np.concatenate(col_ranges)
+        diag = int_m.diagonal()
+        int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
+        block = int_off[idx][:, idx].tocsc().astype(np.float64)
+        try:
+            if block.shape[0] <= 32:
+                # ``eigs`` needs k < N-1; for a tiny EM block just go dense.
+                ev = np.linalg.eigvals(block.toarray())
+            else:
+                from scipy.sparse.linalg import eigs
+
+                ev = eigs(
+                    block, k=1, which="LM", return_eigenvectors=False, maxiter=10000
+                )
+            r_em = float(np.max(np.abs(ev)))
+        except Exception:
+            # Conservative fall-back: the spectral radius is bounded above by
+            # the geometric mean of the 1- and inf-norms; use the smaller of
+            # the two induced norms so we never under-cap on failure.
+            n1 = float(np.abs(block).sum(axis=0).max())
+            ninf = float(np.abs(block).sum(axis=1).max())
+            r_em = min(n1, ninf)
+        self._em_step_scale_cache = (int_m, r_em)
+        return r_em
+
+    def _em_cascade_dx_cap(self):
+        """Cure-B effective dX cap from the EM-cascade stiffness, or np.inf.
+
+        ``np.inf`` (no cap) when ``config.em_adaptive_step`` is off or the EM
+        cascade is inactive, so the legacy schedule is reproduced exactly.
+        """
+        if not config.em_adaptive_step:
+            return np.inf
+        r_em = self._em_cascade_step_scale()
+        if not (r_em > 0.0):
+            return np.inf
+        cap = config.em_step_safety / r_em
+        info(
+            2,
+            "EM-adaptive step (cure B): r_EM={:.4g} 1/(g/cm^2) "
+            "-> dX_max <= {:.4g} g/cm^2".format(r_em, cap),
+        )
+        return cap
+
     def _calculate_integration_path(
         self,
         int_grid,
@@ -2331,6 +2405,14 @@ class MCEqRun:
         # ETD2 is the only path builder. Step sizes follow the
         # atmosphere-aware non-uniform schedule keyed off the local
         # |d ln rho_inv / dX|; see ``MCEq.solvers.etd2_nonuniform_path``.
+        # Cure B: additionally cap dX_max by the explicit-stepping stiffness
+        # of the EM block of int_m (no-op when config.em_adaptive_step is
+        # off). int_m is X-constant, so this is a single global cap that the
+        # density-gradient schedule never relaxes above.
+        em_cap = self._em_cascade_dx_cap()
+        if np.isfinite(em_cap):
+            base_dX_max = dX_max if dX_max is not None else config.etd2_path["dX_max"]
+            dX_max = min(base_dX_max, em_cap)
         etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
         cached_etd2_params = getattr(self, "_cached_etd2_path_params", None)
 
@@ -2832,6 +2914,41 @@ class MatrixBuilder:
         # Interior stencil selection. All options are 7-point and span at
         # most [-3, +3], so the row range range(3, dim_e - 3) is uniform.
         method = getattr(config, "loss_stencil_method", "expfit")
+        low_boundary = None
+        if method in ("expfit_low_upwind", "expfit_low_upwind2"):
+            low_boundary = method.rsplit("_", 1)[-1]
+            method = "expfit"
+
+        # Simple monotone UPWIND stencils (full-matrix, no high-order boundary
+        # rows → avoids the expfit "boundary cliff"). Energy loss advects the
+        # spectrum toward lower E, so the upwind direction is toward HIGHER E
+        # (forward in u = ln E), matching the one-sided orientation of the
+        # low-E boundary row. Added for the fine-grid Nmax convergence study
+        # (runs/2026-06-06_em-grid-exact-nmax): unconditionally stable, diffusive
+        # at O(h) (upwind) / O(h²) (upwind2), converges as the grid refines.
+        if method in ("upwind", "upwind2"):
+            op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
+            if method == "upwind":  # 1st-order forward difference
+                for row in range(dim_e - 1):
+                    op_matrix[row, row] = -1.0 / h[row]
+                    op_matrix[row, row + 1] = 1.0 / h[row]
+                # top edge: 1st-order backward (forward out of range)
+                op_matrix[last, last - 1] = -1.0 / h[last - 1]
+                op_matrix[last, last] = 1.0 / h[last - 1]
+            else:  # "upwind2": 2nd-order forward-biased
+                for row in range(dim_e - 2):
+                    op_matrix[row, row] = -1.5 / h[row]
+                    op_matrix[row, row + 1] = 2.0 / h[row]
+                    op_matrix[row, row + 2] = -0.5 / h[row]
+                # top two edges: 2nd-order backward-biased
+                for row in (dim_e - 2, last):
+                    hh = h[row - 2]
+                    op_matrix[row, row - 2] = 0.5 / hh
+                    op_matrix[row, row - 1] = -2.0 / hh
+                    op_matrix[row, row] = 1.5 / hh
+            self.op_matrix = op_matrix
+            return
+
         if method == "biased":
             diags_int = np.asarray(diags_left_2)
             coeffs_int = np.asarray(coeffs_left_2, dtype=np.float64) / 60.0
@@ -2851,7 +2968,8 @@ class MatrixBuilder:
         else:
             raise ValueError(
                 f"Unknown loss_stencil_method: {method!r}. "
-                "Expected 'expfit', 'centered', or 'biased'."
+                "Expected 'expfit', 'centered', 'biased', 'upwind', 'upwind2', "
+                "'expfit_low_upwind', or 'expfit_low_upwind2'."
             )
 
         op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
@@ -2875,5 +2993,21 @@ class MatrixBuilder:
         ) / (denom_right_2 * h[last - 2])
         for row in range(3, dim_e - 3):
             op_matrix[row, row + diags_int] = coeffs_int / h[row]
+
+        if low_boundary is not None:
+            n_low = min(
+                max(3, int(getattr(config, "loss_stencil_low_upwind_rows", 8))),
+                dim_e - 2,
+            )
+            op_matrix[:n_low, :] = 0.0
+            if low_boundary == "upwind":
+                for row in range(n_low):
+                    op_matrix[row, row] = -1.0 / h[row]
+                    op_matrix[row, row + 1] = 1.0 / h[row]
+            elif low_boundary == "upwind2":
+                for row in range(n_low):
+                    op_matrix[row, row] = -1.5 / h[row]
+                    op_matrix[row, row + 1] = 2.0 / h[row]
+                    op_matrix[row, row + 2] = -0.5 / h[row]
 
         self.op_matrix = op_matrix

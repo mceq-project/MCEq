@@ -26,6 +26,8 @@ def _restore_global_config_state():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     saved_X_start = config.X_start
+    saved_em_adaptive = config.em_adaptive_step
+    saved_em_safety = config.em_step_safety
     try:
         yield
     finally:
@@ -34,6 +36,8 @@ def _restore_global_config_state():
         config.kernel_config = saved_kernel
         config.mceq_db_fname = saved_db
         config.X_start = saved_X_start
+        config.em_adaptive_step = saved_em_adaptive
+        config.em_step_safety = saved_em_safety
 
 
 @pytest.fixture(scope="session")

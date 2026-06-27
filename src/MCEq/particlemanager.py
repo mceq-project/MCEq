@@ -10,6 +10,10 @@ from MCEq.misc import average_A_target, getAZN, info, print_in_rows
 info(5, "Initialization of PYTHIAParticleData object")
 _pdata = PYTHIAParticleData()
 
+# Exact atomic mass constant in grams. Cross sections are converted to inverse
+# interaction lengths in g^-1 cm^2 through sigma / (A_target * m_u).
+ATOMIC_MASS_UNIT_G = 1.0 / 6.02214076e23
+
 backward_compatible_namestr = {
     "nu_mu": "numu",
     "nu_mubar": "antinumu",
@@ -399,7 +403,7 @@ class MCEqParticle:
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
         """
 
-        m_target = self.A_target * 1.672621 * 1e-24  # <A> * m_proton [g]
+        m_target = self.A_target * ATOMIC_MASS_UNIT_G  # <A> * m_u [g]
         return self.cs / m_target
 
     def _assign_hadr_dist(self, child, cmat):
