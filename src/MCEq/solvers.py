@@ -213,12 +213,17 @@ def _etd_off_to_bsr(off_csr, blocksize):
     Returns ``(off_bsr, n_padded)``. Pads to the next multiple of
     ``blocksize`` by extending ``indptr`` with copies of its tail (zero new
     entries); the trailing rows / cols are then zero. Empty input
-    (``nnz == 0``) is returned unchanged with the original dimension.
+    (``nnz == 0``) is returned as a zero BSR at the SAME padded dimension —
+    NOT at ``n_orig``: when one off-diagonal is empty and the other is not
+    (e.g. ``dec_off`` empty because all decays are disabled, as in a pure
+    e±/γ EM-cascade solve), an unpadded empty block mismatches the padded
+    ``int_off`` and state vector and crashes the per-step SpMV.
     """
     n_orig = off_csr.shape[0]
-    if off_csr.nnz == 0:
-        return off_csr, n_orig
     pad = (-n_orig) % blocksize
+    if off_csr.nnz == 0:
+        z = sp.csr_matrix((n_orig + pad, n_orig + pad))
+        return z.tobsr(blocksize=(blocksize, blocksize)), n_orig + pad
     if pad:
         indptr = np.concatenate(
             [

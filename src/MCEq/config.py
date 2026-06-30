@@ -215,14 +215,34 @@ em_adaptive_step = False
 
 #: Dimensionless safety factor for ``em_adaptive_step``: effective cap
 #: ``dX = em_step_safety / r_EM`` [g/cm^2]. This is the per-step off-diagonal
-#: accuracy budget ``h * spec(int_off_EM)``; it is ~50x tighter than the 2.0
-#: stability cliff because the EM-X_max bias is an accuracy (not stability)
-#: effect. Calibrated against the gamma-X_max convergence on the v13 1-MeV air
-#: EM grid (r_EM ~ 0.13 1/(g/cm^2)): 0.04 -> auto-cap ~ 0.3 g/cm^2, which
-#: holds X_max to <0.1 g/cm^2 of the dX->0 limit (legacy 20 g/cm^2 steps bias
-#: it up to +57 g/cm^2 in homogeneous media). See the wiki lesson
+#: accuracy budget ``h * spec(int_off_EM)``; the EM-X_max bias is an accuracy
+#: (not stability) effect, so this is far tighter than the explicit stability
+#: cliff. Re-calibrated 2026-06 against the gamma@100TeV charged-X_max
+#: convergence on the v13 1-MeV air EM grid AFTER the dense-r_EM fix
+#: (true spec(int_off_EM) = 0.5155 1/(g/cm^2); the previous ARPACK/norm
+#: estimate over-stated it and forced ~3x more steps). Convergence vs the
+#: dX->0 limit (e+- >=1 MeV, parabolic peak):
+#:   safety  cap[g/cm^2]  nsteps  dXmax[g/cm^2]  ground-spectrum max-rel
+#:    0.04      0.078       13448     +0.003           0.005%
+#:    0.12      0.233        4562     +0.030           0.046%   <- default
+#:    0.16      0.310        3528     +0.053           0.081%   (spec ceiling)
+#:    0.24      0.466        2290     +0.114           0.172%   (over tolerance)
+#: 0.12 holds X_max to <0.05 g/cm^2 and the ground spectrum to <0.05% of the
+#: dX->0 limit while cutting steps ~3x vs the old 0.04; 0.16 is the largest
+#: value still inside the <0.1 g/cm^2 / <0.1% tolerance. Nmax is
+#: step-independent to <0.001% throughout. (Legacy fixed 20 g/cm^2 steps bias
+#: X_max up to +57 g/cm^2 in homogeneous media.) See the wiki lesson
 #: ``mceq-loss-averaging-grid-fragility``.
-em_step_safety = 0.04
+em_step_safety = 0.12
+
+#: Max EM off-diagonal block dimension for which ``r_EM`` (the cure-B step
+#: scale) is computed with a dense ``np.linalg.eigvals``. The EM block is a
+#: small sub-system (a few e+/-/gamma species x dim_e) and strongly
+#: NON-NORMAL, on which sparse ``eigs(k=1)`` routinely fails to converge and
+#: silently degrades to a matrix-norm over-estimate. Dense eigvals is exact,
+#: deterministic and cheap at this size (~1-2 s at dim 2000, computed once per
+#: matrix build and cached). Above this guard, fall back to ARPACK then norm.
+em_step_dense_eig_max = 4000
 
 #: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
@@ -252,8 +272,12 @@ fallback_to_air_cs = True
 enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
-#: operator
-average_loss_operator = True
+#: operator. Default False: the canonical EM pipeline uses the raw
+#: ``expfit_low_upwind2`` loss stencil with NO averaging — averaging inflates
+#: the EM number Xmax ~+2.7 g/cm^2 / Nmax ~5.6% (see the wiki lesson
+#: ``low-e-upwind-beats-loss-averaging``). Set True only to reproduce
+#: pre-2026-06 historical numbers.
+average_loss_operator = False
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
@@ -298,8 +322,12 @@ excpt_on_missing_particle = False
 #: modification for neutrons and K0L/K0S
 use_isospin_sym = True
 
-#: Helicity dependent muons decays from analytical expressions
-muon_helicity_dependence = True
+#: Helicity dependent muons decays from analytical expressions. Default False:
+#: the helicity L/R variants add e±/μ semi-Lagrangian rows that have no
+#: diagonal damping and blow up in the EM cascade (the ``_EM_BLOWUP_CAVEAT``);
+#: disabled for now so the EM pipeline is stable. Re-enable for muon-flux work
+#: that needs the polarisation-dependent decay spectra.
+muon_helicity_dependence = False
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)

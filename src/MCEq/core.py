@@ -2350,9 +2350,19 @@ class MCEqRun:
         diag = int_m.diagonal()
         int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
         block = int_off[idx][:, idx].tocsc().astype(np.float64)
+        # Spectral radius of the EM off-diagonal. The block is a small
+        # sub-system (a few e+/-/gamma species x dim_e, typically < ~2000) and
+        # strongly NON-NORMAL (||A||_2 / rho ~ 3). Sparse ``eigs(k=1, 'LM')``
+        # routinely FAILS to converge on it (ARPACK DNAUPD finds no eigenvalue
+        # to tolerance), and the old except-branch then silently substituted a
+        # matrix norm — 2-3x larger than the true spectral radius AND
+        # nondeterministic — capping dX far tighter than this method's own
+        # docstring promises ("spectral radius, not a matrix norm"). Dense
+        # ``eigvals`` is exact, deterministic and cheap at this size; ARPACK +
+        # norm survive only as a fallback for an unexpectedly huge block.
+        n = block.shape[0]
         try:
-            if block.shape[0] <= 32:
-                # ``eigs`` needs k < N-1; for a tiny EM block just go dense.
+            if n <= int(getattr(config, "em_step_dense_eig_max", 4000)):
                 ev = np.linalg.eigvals(block.toarray())
             else:
                 from scipy.sparse.linalg import eigs
@@ -2362,9 +2372,9 @@ class MCEqRun:
                 )
             r_em = float(np.max(np.abs(ev)))
         except Exception:
-            # Conservative fall-back: the spectral radius is bounded above by
-            # the geometric mean of the 1- and inf-norms; use the smaller of
-            # the two induced norms so we never under-cap on failure.
+            # Last-resort fall-back (huge block + ARPACK failure): the spectral
+            # radius is bounded above by both induced norms; take the smaller
+            # so we never under-cap.
             n1 = float(np.abs(block).sum(axis=0).max())
             ninf = float(np.abs(block).sum(axis=1).max())
             r_em = min(n1, ninf)

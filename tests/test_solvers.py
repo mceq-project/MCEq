@@ -1056,6 +1056,40 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
 
 
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+def test_numpy_etd2_empty_dec_off_bsr_padding():
+    """Regression: a pure e±/γ EM-cascade solve disables all decays, so dec_m
+    has no off-diagonal. With BSR padding on (default blocksize), the empty
+    dec_off must pad to the SAME dimension as the non-empty int_off — otherwise
+    the per-step ``dec_off.dot(phc)`` crashes on a dim mismatch (N vs N+pad).
+    This is the bug that broke native ``solve()`` on the EM-cascade DB. See
+    ``_etd_off_to_bsr``.
+    """
+    import scipy.sparse as sp
+
+    from MCEq import config
+    from MCEq.solvers import solv_numpy_etd2
+
+    dim = 50  # 50 % 11 != 0 -> BSR padding is active at the default blocksize
+    rng = np.random.default_rng(0)
+    int_m = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.01)
+    int_m.setdiag(-0.5)
+    int_m = int_m.tocsr()
+    dec_m = sp.csr_matrix((dim, dim))  # all decays disabled -> empty off-diagonal
+
+    nsteps = 20
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.ones(nsteps)
+    phi = np.ones(dim)
+    saved = getattr(config, "numpy_bsr_blocksize", None)
+    config.numpy_bsr_blocksize = 11
+    try:
+        sol, _ = solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, [])
+    finally:
+        config.numpy_bsr_blocksize = saved
+    assert sol.shape == (dim,)
+    assert np.isfinite(sol).all()
+
+
 def test_mkl_bsr_handles_padding():
     """BSR with a dimension that's not a multiple of blocksize must round-trip.
 
@@ -1639,6 +1673,43 @@ def test_em_cascade_step_scale_matches_spectral_radius():
     assert r_em == pytest.approx(0.5, rel=1e-6)
     # Cached on int_m identity.
     assert MCEqRun._em_cascade_step_scale(stub) == r_em
+
+
+def test_em_cascade_step_scale_dense_for_large_nonnormal_block():
+    """Regression: a large NON-NORMAL EM off-diagonal block must be reduced
+    via the dense spectral radius, not sparse ``eigs``.
+
+    The real EM block is strongly non-normal and ARPACK ``eigs(k=1)`` fails to
+    converge on it; the old code then silently substituted ``min(||.||_1,
+    ||.||_inf)`` — a 2-3x over-estimate that capped dX far too tight and was
+    nondeterministic. Here the block is a big nilpotent forward-shift (spectral
+    radius 0, both induced norms = 1) blocked with a small symmetric 2-cycle
+    (spectral radius 0.3). True r_EM = 0.3; the norm fallback would return 1.0.
+    The block dim (184) is well above the old hard-coded dense cutoff (32), so
+    this exercises exactly the path that used to mis-fire.
+    """
+    import scipy.sparse as sp
+
+    n_nil, dim = 180, 184
+    A = -1.0 * np.eye(dim)  # benign diagonal, stripped by the off-split
+    for i in range(n_nil - 1):
+        A[i, i + 1] = 1.0  # nilpotent forward shift: rho 0, norms 1
+    A[n_nil, n_nil + 1] = A[n_nil + 1, n_nil] = 0.3  # symmetric 2-cycle: rho 0.3
+
+    stub = _StubMCEq.__new__(_StubMCEq)
+    stub.int_m = sp.csr_matrix(A)
+    stub.pman = _StubPMan(
+        [_StubParticle(True, i, i + 1) for i in range(n_nil + 2)]
+        + [_StubParticle(False, i, i + 1) for i in range(n_nil + 2, dim)]
+    )
+    stub._em_step_scale_cache = None
+
+    r_em = MCEqRun._em_cascade_step_scale(stub)
+    assert r_em == pytest.approx(0.3, abs=1e-6)  # dense spectral radius
+    assert r_em < 0.5  # NOT the norm fallback (which would be ~1.0)
+    # Deterministic across calls (ARPACK was not).
+    stub._em_step_scale_cache = None
+    assert MCEqRun._em_cascade_step_scale(stub) == pytest.approx(r_em, rel=1e-12)
 
 
 def test_em_cascade_dx_cap_gating():
