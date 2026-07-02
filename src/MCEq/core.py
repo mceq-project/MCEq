@@ -1576,8 +1576,8 @@ class MCEqRun:
         ``(i_zen, i_az)`` grid coordinates. Restores the active
         ``(zenith, azimuth)`` to whatever it was before the call.
 
-        Used by both :meth:`solve_fullsky` (single dispatch) and the
-        Stage-4 bucketed path (one dispatch per nsteps-bucket).
+        Used by :meth:`solve_fullsky`, which feeds the paths to the LPT
+        carousel scheduler (pipeline width ``carousel_K``).
         """
         zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
         if azimuth_grid is not None:
@@ -2884,14 +2884,19 @@ class MatrixBuilder:
         u = ln E on the (log-uniform) energy grid. The interior 7-point
         stencil is selected by :data:`MCEq.config.loss_stencil_method`:
 
-        - ``"expfit"`` (default): exponentially-fitted 7-point stencil anchored
+        - ``"expfit_low_upwind2"`` (default) / ``"expfit_low_upwind"``:
+          expfit interior with the low-energy boundary layer
+          (:data:`MCEq.config.loss_stencil_low_upwind_rows` rows) replaced
+          by monotone second-/first-order upwind rows — removes the
+          low-energy boundary cliff of the pure expfit operator.
+        - ``"expfit"``: exponentially-fitted 7-point stencil anchored
           at :data:`MCEq.config.loss_stencil_alpha0`. Near-exact for power-law
           spectra E^{-alpha} with alpha ~ alpha0 on a coarse log grid.
         - ``"centered"``: symmetric 6th-order centered FD.
         - ``"biased"``: legacy 7-point biased "6th-order" stencil.
 
-        All three options share the same one-sided polynomial-fit stencils
-        on the boundary rows (0, 1, 2 and last-2, last-1, last); see
+        The non-upwind options share the same one-sided polynomial-fit
+        stencils on the boundary rows (0, 1, 2 and last-2, last-1, last); see
         ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
         """
         # First rows of operator matrix (values are truncated at the edges
@@ -2923,7 +2928,7 @@ class MatrixBuilder:
 
         # Interior stencil selection. All options are 7-point and span at
         # most [-3, +3], so the row range range(3, dim_e - 3) is uniform.
-        method = getattr(config, "loss_stencil_method", "expfit")
+        method = getattr(config, "loss_stencil_method", "expfit_low_upwind2")
         low_boundary = None
         if method in ("expfit_low_upwind", "expfit_low_upwind2"):
             low_boundary = method.rsplit("_", 1)[-1]

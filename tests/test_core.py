@@ -36,14 +36,13 @@ def test_solve_other_grid_var(mceq_sib21):
         mceq_sib21.solve(grid_var="Y")
 
 
-@pytest.mark.parametrize(
-    ["int_grid", "grid_shape"],
-    [[None, (0,)], [[0, 1], (2, 2232)]],
-    ids=["no-grid", "with-grid"],
-)
-def test_solve_int_grid(mceq_sib21, int_grid, grid_shape):
+@pytest.mark.parametrize("int_grid", [None, [0, 1]], ids=["no-grid", "with-grid"])
+def test_solve_int_grid(mceq_sib21, int_grid):
     mceq_sib21.solve(int_grid)
-    assert mceq_sib21.grid_sol.shape == grid_shape
+    if int_grid is None:
+        assert mceq_sib21.grid_sol.shape == (0,)
+    else:
+        assert mceq_sib21.grid_sol.shape == (len(int_grid), mceq_sib21.dim_states)
 
 
 def test_integration_path_grid_idcs(mceq_sib21):
@@ -58,10 +57,13 @@ def test_integration_path_grid_idcs(mceq_sib21):
     assert grid_idcs[0] < grid_idcs[1]
 
 
+# Reference values recalibrated 2026-07 for the v2 release defaults
+# (loss_stencil_method="expfit_low_upwind2", average_loss_operator=False,
+# m_u mass-unit fix in inverse_interaction_length).
 testdata_theta = [
-    [0.0, 8.8312635576492481e-08],
-    [30.0, 9.9070776732966113e-08],
-    [60.0, 1.5039581700049055e-07],
+    [0.0, 8.842033420367954e-08],
+    [30.0, 9.921785885869646e-08],
+    [60.0, 1.5081234897714264e-07],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
@@ -134,10 +136,13 @@ def test_mceq_init_particles_list(particle_list, projectiles):
     )
 
 
+# Recalibrated 2026-07 for the v2 release defaults (see testdata_theta note).
+# NB the small negative nnue at 1e3 is a pre-existing low-energy boundary
+# artifact of the e+- continuous-loss operator, unchanged by the upwind rows.
 testdata_primary = [
-    [1e3, 1.1904680953281074e-05, 2.4098237699529783e-07, -4.401425991268454e-08],
-    [1e4, 0.09917221096682655, 0.024609349696095902, 0.001461068061597137],
-    [1e5, 0.9113822218370885, 0.2833603479604529, 0.02028732056926894],
+    [1e3, 1.2335658875616528e-05, 2.4099047525273686e-07, -4.401346024287965e-08],
+    [1e4, 0.09925131586127674, 0.024608917353680856, 0.0014611260410691052],
+    [1e5, 0.9116738781652185, 0.2833332859288423, 0.020286093102444572],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 

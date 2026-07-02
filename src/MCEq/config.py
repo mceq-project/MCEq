@@ -272,10 +272,10 @@ fallback_to_air_cs = True
 enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
-#: operator. Default False: the canonical EM pipeline uses the raw
-#: ``expfit_low_upwind2`` loss stencil with NO averaging — averaging inflates
-#: the EM number Xmax ~+2.7 g/cm^2 / Nmax ~5.6% (see the wiki lesson
-#: ``low-e-upwind-beats-loss-averaging``). Set True only to reproduce
+#: operator. Default False: the canonical configuration is the raw
+#: ``expfit_low_upwind2`` loss stencil (now the default, see
+#: ``loss_stencil_method``) with NO averaging — averaging inflates the EM
+#: number Xmax ~+2.7 g/cm^2 / Nmax ~5.6%. Set True only to reproduce
 #: pre-2026-06 historical numbers.
 average_loss_operator = False
 
@@ -284,28 +284,36 @@ loss_step_for_average = 1e-1
 
 #: Stencil for the continuous-loss differential operator on the
 #: log-uniform energy grid. Choices:
-#:   "expfit"   -- 7-point exponentially-fitted stencil anchored at
+#:   "expfit_low_upwind2" (default) -- exponentially-fitted 7-point interior
+#:                 stencil with the low-energy boundary layer
+#:                 (``loss_stencil_low_upwind_rows`` rows) replaced by
+#:                 monotone second-order upwind rows. This is the validated
+#:                 canonical configuration: it removes the low-energy
+#:                 boundary cliff of the pure "expfit" operator (essential
+#:                 for the 1 MeV EM grid, harmless on hadronic-only grids
+#:                 where it touches only the lowest rows).
+#:   "expfit_low_upwind" -- same with first-order upwind rows.
+#:   "expfit"   -- pure 7-point exponentially-fitted stencil anchored at
 #:                 ``loss_stencil_alpha0``. Designed to be near-exact for
 #:                 power-law spectra E^{-alpha} with alpha ~ alpha0 on the
 #:                 default 10 bins/decade grid; orders of magnitude smaller
-#:                 truncation error than plain FD on steep spectra.
+#:                 truncation error than plain FD on steep spectra. Uses
+#:                 one-sided polynomial-fit boundary rows that develop
+#:                 large non-normal transients at a low-energy grid floor
+#:                 (the "boundary cliff", see ``docs/mceq_v1.x_v2_diff.md``).
 #:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
-#:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
-#:   "expfit_low_upwind" / "expfit_low_upwind2" -- expfit interior with the
-#:                 low-energy boundary layer replaced by monotone first-/
-#:                 second-order upwind rows. Diagnostic/stabilization option
-#:                 for the 1 MeV EM boundary cliff.
-#: All three options share the same one-sided polynomial-fit stencils on
-#: the boundary rows (0,1,2 and last-2,last-1,last); see
-#: ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
-loss_stencil_method = "expfit"
+#:   "biased"   -- legacy 7-point biased "6th-order" stencil (v1 default).
+#: "expfit"/"centered"/"biased" share the same one-sided polynomial-fit
+#: stencils on the boundary rows (0,1,2 and last-2,last-1,last).
+loss_stencil_method = "expfit_low_upwind2"
 
 #: Number of low-energy rows replaced when ``loss_stencil_method`` is
-#: ``"expfit_low_upwind"`` or ``"expfit_low_upwind2"``. At 10 bins/decade and
-#: a 1 MeV EM floor, the formal one-sided boundary rows (0..2) are not enough:
-#: the raw operator still develops enormous non-normal transients. Eight rows
-#: is the first stable setting in the realistic-screening 1 MeV/no-averaging
-#: diagnostic and leaves the expfit interior untouched above ~6 MeV.
+#: ``"expfit_low_upwind"`` or ``"expfit_low_upwind2"`` (the default). At
+#: 10 bins/decade and a 1 MeV EM floor, the formal one-sided boundary rows
+#: (0..2) are not enough: the raw operator still develops enormous
+#: non-normal transients. Eight rows is the first stable setting in the
+#: realistic-screening 1 MeV/no-averaging diagnostic and leaves the expfit
+#: interior untouched above ~6 MeV.
 loss_stencil_low_upwind_rows = 8
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to

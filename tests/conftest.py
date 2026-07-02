@@ -48,9 +48,12 @@ def mceq_sib21():
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     # Tests are calibrated with the EM cascade (e±, helicity variants) in
     # the system; the production default disables electrons because of the
-    # ETD2 EM caveat. Re-enable here so the matrix shapes and reference
-    # values stay consistent with what the tests expect.
+    # ETD2 EM caveat and ships muon_helicity_dependence=False. Re-enable
+    # both here so the matrix shapes, particle counts, and reference values
+    # stay consistent with what the tests expect (and the helicity machinery
+    # keeps test coverage).
     config.adv_set["disabled_particles"] = []
+    config.muon_helicity_dependence = True
 
     if config.has_mkl:
         config.set_mkl_threads(2)
@@ -69,6 +72,7 @@ def mceq_qgs():
 
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     config.adv_set["disabled_particles"] = []
+    config.muon_helicity_dependence = True
 
     if config.has_mkl:
         config.set_mkl_threads(2)
