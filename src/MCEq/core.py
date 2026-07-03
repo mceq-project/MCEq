@@ -75,6 +75,16 @@ class MCEqRun:
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
         config.ensure_db_available()
+        if config.enable_em and config.muon_helicity_dependence:
+            # Helicity L/R muon variants add semi-Lagrangian rows without
+            # diagonal damping that destabilize the EM system
+            # (_EM_BLOWUP_CAVEAT). Forced off for enable_em runs.
+            info(
+                1,
+                "enable_em: forcing muon_helicity_dependence=False "
+                "(helicity rows destabilize the EM cascade).",
+            )
+            config.muon_helicity_dependence = False
         self.medium = kwargs.pop("medium", config.interaction_medium)
         self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
 

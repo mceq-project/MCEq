@@ -330,12 +330,19 @@ excpt_on_missing_particle = False
 #: modification for neutrons and K0L/K0S
 use_isospin_sym = True
 
-#: Helicity dependent muons decays from analytical expressions. Default False:
-#: the helicity L/R variants add e±/μ semi-Lagrangian rows that have no
-#: diagonal damping and blow up in the EM cascade (the ``_EM_BLOWUP_CAVEAT``);
-#: disabled for now so the EM pipeline is stable. Re-enable for muon-flux work
-#: that needs the polarisation-dependent decay spectra.
-muon_helicity_dependence = False
+#: Helicity dependent muon decays from analytical expressions. Default True.
+#: KEEP THIS ON for flux calculations: the alternative ``decays/unpolarized``
+#: DB dataset carries a construction defect (the inclusive K± -> mu nu entry
+#: was averaged with its 3-body duplicate, halving the dominant K_mu2
+#: channel), which suppresses conventional nu_mu by up to ~40% at TeV
+#: energies (all DBs up to and including v150; fix pending a DB rebuild).
+#: The EM cascade is the exception: the helicity L/R variants add e±/mu
+#: semi-Lagrangian rows without diagonal damping that blow up in the EM
+#: system (the ``_EM_BLOWUP_CAVEAT``), so ``enable_em`` runs force this
+#: flag off at MCEqRun construction (with a warning). EM shower-maximum
+#: observables do not involve kaon neutrinos and are unaffected by the
+#: dataset defect.
+muon_helicity_dependence = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
