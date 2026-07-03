@@ -1090,6 +1090,7 @@ def test_numpy_etd2_empty_dec_off_bsr_padding():
     assert np.isfinite(sol).all()
 
 
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 def test_mkl_bsr_handles_padding():
     """BSR with a dimension that's not a multiple of blocksize must round-trip.
 
