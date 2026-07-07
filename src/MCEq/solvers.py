@@ -2377,6 +2377,40 @@ def _build_cuda_etd2_kernels(cp):
         """,
         "mceq_etd2_phi_compute_multipath",
     )
+    # fp32-pipeline diag-factor kernel: float32 buffers in/out, double
+    # arithmetic inside. The phi1/phi2 cancellations ((e-1)/hd and
+    # (e-1-hd)/hd^2) lose 3-7 digits in fp32 around the Taylor-switch
+    # thresholds (which are calibrated for fp64 rounding: fp32 phi1 err
+    # up to ~8e-3, phi2 up to ~1e-1 on real MCEq diagonals); promoting
+    # the kernel-internal math to double brings all three factors to
+    # fp32 roundoff (~6e-8) for ~5% step cost on an RTX 3090 — the
+    # SpMMs dominate the step. Serves both the shared-path (scalar
+    # h/ri) and the carousel ((1, K) row) call sites via broadcasting.
+    phi_compute_multipath_f64diag = cp.ElementwiseKernel(
+        "float32 d_int, float32 d_dec, float32 h, float32 ri",
+        "float32 eD, float32 phi1, float32 phi2",
+        f"""
+        double D = (double)d_int + (double)ri * (double)d_dec;
+        double hd = (double)h * D;
+        double e = exp(hd);
+        eD = (float)e;
+        double abs_hd = (hd >= 0.0) ? hd : -hd;
+        double p1, p2;
+        if (abs_hd > {_PHI1_SMALL!r}) {{
+            p1 = (e - 1.0) / hd;
+        }} else {{
+            p1 = 1.0 + hd * (0.5 + hd * {_INV_6!r});
+        }}
+        if (abs_hd > {_PHI2_SMALL!r}) {{
+            p2 = (e - 1.0 - hd) / (hd * hd);
+        }} else {{
+            p2 = 0.5 + hd * ({_INV_6!r} + hd * {_INV_24!r});
+        }}
+        phi1 = (float)p1;
+        phi2 = (float)p2;
+        """,
+        "mceq_etd2_phi_compute_multipath_f64diag",
+    )
     post_apply1 = cp.ElementwiseKernel(
         "T eD, T state, T phi1, T F_phi, T h",
         "T a",
@@ -2392,6 +2426,7 @@ def _build_cuda_etd2_kernels(cp):
     return SimpleNamespace(
         phi_compute=phi_compute,
         phi_compute_multipath=phi_compute_multipath,
+        phi_compute_multipath_f64diag=phi_compute_multipath_f64diag,
         post_apply1=post_apply1,
         post_apply2=post_apply2,
     )
@@ -2600,13 +2635,22 @@ def solv_cuda_etd2_multirhs(
         h = fl_pr(dX[k])
         ri = fl_pr(rho_inv[k])
 
-        # D = d_int + ri * d_dec  (dim,)
-        cp.multiply(ctx.cu_d_dec, ri, out=cu_D)
-        cp.add(cu_D, ctx.cu_d_int, out=cu_D)
-        # hD = h * D ; eD = exp(hD) ; then phi1/phi2 via fused kernel.
-        cp.multiply(cu_D, h, out=cu_hD)
-        cp.exp(cu_hD, out=cu_eD)
-        K_set.phi_compute(cu_hD, cu_eD, cu_eD, cu_phi1, cu_phi2)
+        if fl_pr is cp.float32:
+            # fp32 pipeline: diag factors computed in fp64 inside the
+            # fused kernel (fp32 phi1/phi2 cancellation costs 3-7
+            # digits), cast to fp32 on write. Scalars h/ri broadcast
+            # over the (dim,) diagonals.
+            K_set.phi_compute_multipath_f64diag(
+                ctx.cu_d_int, ctx.cu_d_dec, h, ri, cu_eD, cu_phi1, cu_phi2
+            )
+        else:
+            # D = d_int + ri * d_dec  (dim,)
+            cp.multiply(ctx.cu_d_dec, ri, out=cu_D)
+            cp.add(cu_D, ctx.cu_d_int, out=cu_D)
+            # hD = h * D ; eD = exp(hD) ; then phi1/phi2 via fused kernel.
+            cp.multiply(cu_D, h, out=cu_hD)
+            cp.exp(cu_hD, out=cu_eD)
+            K_set.phi_compute(cu_hD, cu_eD, cu_eD, cu_phi1, cu_phi2)
 
         # F_phi = int_off @ phc + ri * (dec_off @ phc)
         if not int_off_empty:
@@ -2753,6 +2797,15 @@ def solv_cuda_etd2_carousel(
     d_int_col = ctx.cu_d_int.reshape(dim, 1)
     d_dec_col = ctx.cu_d_dec.reshape(dim, 1)
 
+    # fp32 pipeline: diag factors computed in fp64 inside the fused
+    # kernel (fp32 phi1/phi2 cancellation costs 3-7 digits; ~5% step
+    # cost, see kernel comment).
+    phi_kernel = (
+        Kset.phi_compute_multipath_f64diag
+        if fl_pr is cp.float32
+        else Kset.phi_compute_multipath
+    )
+
     from time import time
 
     start = time()
@@ -2761,7 +2814,7 @@ def solv_cuda_etd2_carousel(
         h_row = dX_d[step : step + 1]    # (1, K) device view
         ri_row = rho_inv_d[step : step + 1]
 
-        Kset.phi_compute_multipath(
+        phi_kernel(
             d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2
         )
 

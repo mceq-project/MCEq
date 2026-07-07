@@ -2114,3 +2114,57 @@ def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
             mceq_sib21.solve_multirhs(phi0_base)
     finally:
         config.kernel_config = saved_kernel
+
+
+# ---------------------------------------------------------------------------
+# cuda fp32 pipeline — fp64-internal diagonal factors
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_cuda_phi_compute_f64diag_accuracy():
+    """The fp32-pipeline diag-factor kernel (fp32 buffers, fp64-internal
+    arithmetic) must reproduce the fp64 phi factors to fp32 roundoff.
+
+    The pure-fp32 phi1/phi2 cancellations ((e-1)/hd, (e-1-hd)/hd^2)
+    lose 3-7 digits around the Taylor-switch thresholds; this test locks
+    in the fp64-internal fix so a regression to fp32 arithmetic (or a
+    threshold recalibration that reopens the cancellation band) fails
+    loudly.
+    """
+    import cupy as cp
+
+    from MCEq.solvers import _cuda_etd2_kernels
+
+    Kset = _cuda_etd2_kernels()
+    rng = np.random.default_rng(11)
+    dim, K = 4096, 8
+    # Diagonal rates and step sizes spanning the cancellation band
+    # |hd| ~ 1e-6 .. 1e2, both signs, including near-threshold values.
+    d_int = -np.abs(rng.lognormal(mean=-3.0, sigma=3.0, size=dim))
+    d_dec = -np.abs(rng.lognormal(mean=-8.0, sigma=3.0, size=dim))
+    h = rng.uniform(0.05, 15.0, (1, K))
+    ri = rng.lognormal(mean=8.0, sigma=2.0, size=(1, K))
+
+    args32 = [
+        cp.asarray(a, dtype=cp.float32)
+        for a in (d_int.reshape(dim, 1), d_dec.reshape(dim, 1), h, ri)
+    ]
+    outs_mixed = [cp.empty((dim, K), cp.float32) for _ in range(3)]
+    Kset.phi_compute_multipath_f64diag(*args32, *outs_mixed)
+
+    # fp64 reference from the same (fp32-quantised) inputs, so the
+    # comparison isolates kernel arithmetic from input quantisation.
+    args64 = [a.astype(cp.float64) for a in args32]
+    outs64 = [cp.empty((dim, K), cp.float64) for _ in range(3)]
+    Kset.phi_compute_multipath(*args64, *outs64)
+
+    for name, mixed, ref in zip(
+        ("eD", "phi1", "phi2"), outs_mixed, outs64
+    ):
+        m = cp.asnumpy(mixed).astype(np.float64)
+        r = cp.asnumpy(ref)
+        mask = np.abs(r) > 1e-15 * np.abs(r).max()
+        rel = np.abs(m[mask] - r[mask]) / np.abs(r[mask])
+        assert rel.max() < 5e-7, (
+            f"{name}: fp64-internal diag kernel rel err {rel.max():.2e} "
+            f"exceeds fp32-roundoff budget 5e-7"
+        )

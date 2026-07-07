@@ -1921,11 +1921,12 @@ class MCEqRun:
           grid_var (str): only ``"X"`` is supported.
           dtype (np.float32 | np.float64): precision of the state
             buffers. fp32 is wired for ``accelerate_etd2`` /
-            ``cuda_etd2`` / ``mkl_etd2`` shared-path batches (relative
-            error vs fp64 ≤ 1e-4 for the production particle set — the
-            diagonal-factor pipeline stays fp64) and for the
-            ``cuda_etd2`` carousel (fully fp32 including the per-column
-            diagonal factors; worst significant cells ~1e-3).
+            ``cuda_etd2`` / ``mkl_etd2`` shared-path batches and the
+            ``cuda_etd2`` carousel; the diagonal-factor pipeline
+            (``exp(h·D)``, φ₁, φ₂) is always computed in fp64 on every
+            backend (fp32 φ-functions suffer catastrophic
+            cancellation), so relative error vs fp64 is ≤ 1e-4 for the
+            production particle set on all fp32 routes.
           carousel_K (int | None): pipeline width for the LPT scheduler
             (heterogeneous batches only). ``None`` → ``min(K, 128)``.
           path_workers (int): fork-pool size for a parallel path build
