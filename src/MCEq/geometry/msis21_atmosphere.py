@@ -293,6 +293,10 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
     _preserve_max_theta: bool = True
 
+    #: Density profile depends on azimuth (impact point bound to the
+    #: detector location); ``set_theta`` accepts ``azimuth_deg``.
+    depends_on_azimuth: bool = True
+
     def __init__(
         self,
         detector_coord,

@@ -38,6 +38,267 @@ def _path_worker_one(args):
     return flat_idx, _PATH_WORKER_MCEQ.integration_path
 
 
+class MCEqBatchResult:
+    """Result of a batched (multi-RHS) solve.
+
+    Returned by :meth:`MCEqRun.solve_batch` and
+    :meth:`MCEqRun.solve_fullsky`. Wraps the raw ``(dim_states, K)``
+    final-state matrix together with the batch metadata and provides
+    named per-column spectrum extraction through :meth:`get_solution`,
+    with exactly the same particle-name semantics as
+    :meth:`MCEqRun.get_solution`.
+
+    For backwards compatibility the object also unpacks like the legacy
+    return tuple of the method that produced it, e.g.::
+
+        sol, nsteps_per_col = mceq.solve_fullsky(zen_grid, az_grid)
+        sol, grid_sol = mceq.solve_batch(phi0_matrix)
+
+    Attributes:
+      sol (np.ndarray[dim_states, K]): final state, one column per batch
+        member.
+      grid_sol (np.ndarray[len(int_grid), dim_states, K] | None): stacked
+        snapshots when ``int_grid`` was requested (shared-path batches
+        only), else ``None``.
+      nsteps_per_col (np.ndarray[K] | None): integration steps per column.
+      conditions (list | None): the per-column conditions passed to
+        :meth:`MCEqRun.solve_batch`, if any.
+      pixel_index (np.ndarray[K, 2] | None): ``(i_zen, i_az)`` per column
+        for :meth:`MCEqRun.solve_fullsky` results.
+      zenith_grid, azimuth_grid (np.ndarray | None): the sky grid for
+        :meth:`MCEqRun.solve_fullsky` results (azimuth is the inner axis
+        of the column order).
+
+    Note:
+      The result holds a reference to the producing :class:`MCEqRun`
+      instance for particle-name lookups. Changing that instance's
+      interaction model or particle list after the solve invalidates
+      :meth:`get_solution` on this result.
+    """
+
+    def __init__(
+        self,
+        mceq,
+        sol,
+        grid_sol=None,
+        int_grid=None,
+        nsteps_per_col=None,
+        conditions=None,
+        pixel_index=None,
+        zenith_grid=None,
+        azimuth_grid=None,
+        legacy_tuple=None,
+    ):
+        self._mceq = mceq
+        self.sol = sol
+        self.grid_sol = grid_sol
+        self.int_grid = int_grid
+        self.nsteps_per_col = nsteps_per_col
+        self.conditions = conditions
+        self.pixel_index = pixel_index
+        self.zenith_grid = zenith_grid
+        self.azimuth_grid = azimuth_grid
+        self._legacy = tuple(legacy_tuple) if legacy_tuple is not None else (sol,)
+
+    @property
+    def K(self):
+        """Number of batch members (columns)."""
+        return self.sol.shape[1]
+
+    @property
+    def n_azimuth(self):
+        """Length of the azimuth (inner) axis of the column order."""
+        return self.azimuth_grid.size if self.azimuth_grid is not None else 1
+
+    def column_index(self, k=None, pixel=None, zenith=None, azimuth=None):
+        """Resolve a batch member to its column index.
+
+        Exactly one selector should be provided: ``k`` (direct column
+        index), ``pixel`` (``(i_zen, i_az)`` grid coordinates, sky-grid
+        results only) or ``zenith`` (+ optional ``azimuth``) in degrees,
+        matched against the sky grid with ``np.isclose``. With ``K == 1``
+        all selectors may be omitted.
+        """
+        n_selected = sum(x is not None for x in (k, pixel, zenith))
+        if n_selected > 1:
+            raise ValueError(
+                "column_index: provide only one of k, pixel, or zenith"
+            )
+        if k is not None:
+            k = int(k)
+            if not -self.K <= k < self.K:
+                raise IndexError(
+                    f"column_index: k={k} out of range for K={self.K}"
+                )
+            return k % self.K
+
+        if pixel is not None or zenith is not None:
+            if self.zenith_grid is None:
+                raise ValueError(
+                    "column_index: pixel/zenith selection requires a "
+                    "solve_fullsky result (no sky grid attached)"
+                )
+        if pixel is not None:
+            i_zen, i_az = pixel
+            n_zen = self.zenith_grid.size
+            if not (0 <= i_zen < n_zen and 0 <= i_az < self.n_azimuth):
+                raise IndexError(
+                    f"column_index: pixel {pixel} outside grid "
+                    f"({n_zen} x {self.n_azimuth})"
+                )
+            return int(i_zen) * self.n_azimuth + int(i_az)
+        if zenith is not None:
+            match = np.flatnonzero(np.isclose(self.zenith_grid, zenith))
+            if match.size == 0:
+                raise ValueError(
+                    f"column_index: zenith {zenith} not in grid "
+                    f"{self.zenith_grid}"
+                )
+            i_zen = int(match[0])
+            if azimuth is None:
+                if self.n_azimuth > 1:
+                    raise ValueError(
+                        "column_index: azimuth required (grid has "
+                        f"{self.n_azimuth} azimuth pixels)"
+                    )
+                i_az = 0
+            else:
+                match_az = np.flatnonzero(np.isclose(self.azimuth_grid, azimuth))
+                if match_az.size == 0:
+                    raise ValueError(
+                        f"column_index: azimuth {azimuth} not in grid "
+                        f"{self.azimuth_grid}"
+                    )
+                i_az = int(match_az[0])
+            return i_zen * self.n_azimuth + i_az
+
+        if self.K == 1:
+            return 0
+        raise ValueError(
+            f"column_index: batch has K={self.K} members - select one "
+            "with k=, pixel=, or zenith="
+        )
+
+    def get_solution(
+        self,
+        particle_name,
+        k=None,
+        *,
+        pixel=None,
+        zenith=None,
+        azimuth=None,
+        mag=0.0,
+        grid_idx=None,
+        integrate=False,
+        return_as=None,
+        dont_sum_helicities=False,
+    ):
+        """Retrieve a named spectrum for one batch member.
+
+        Same ``particle_name`` semantics, helicity summation, ``mag``,
+        ``integrate`` and ``return_as`` behaviour as
+        :meth:`MCEqRun.get_solution`; the column is selected with ``k``,
+        ``pixel`` or ``zenith``/``azimuth`` (see :meth:`column_index`).
+
+        Args:
+          particle_name (str): e.g. ``conv_numu``, ``total_mu+``.
+          k (int, optional): column index.
+          pixel (tuple, optional): ``(i_zen, i_az)`` sky-grid coordinates.
+          zenith, azimuth (float, optional): angles in degrees, matched
+            against the sky grid.
+          grid_idx (int, optional): snapshot index when the batch was
+            solved with ``int_grid`` (shared-path batches only).
+          mag, integrate, return_as, dont_sum_helicities: see
+            :meth:`MCEqRun.get_solution`.
+
+        Returns:
+          (np.ndarray): flux on the energy grid.
+        """
+        col = self.column_index(k=k, pixel=pixel, zenith=zenith, azimuth=azimuth)
+        if grid_idx is None:
+            state = self.sol[:, col]
+        else:
+            if self.grid_sol is None or len(self.grid_sol) == 0:
+                raise Exception(
+                    "Solution has not been computed on a grid. "
+                    "Re-run with int_grid."
+                )
+            if grid_idx >= len(self.grid_sol):
+                state = self.grid_sol[-1][:, col]
+            else:
+                state = self.grid_sol[grid_idx][:, col]
+        return self._mceq._get_solution_from_state(
+            state,
+            particle_name,
+            mag=mag,
+            integrate=integrate,
+            return_as=return_as,
+            dont_sum_helicities=dont_sum_helicities,
+        )
+
+    def skymap(self, particle_name, kin_energy, mag=0.0):
+        """Return the ``(n_zen, n_az)`` flux map at one kinetic energy.
+
+        Extracts ``particle_name`` for every pixel and interpolates
+        linearly in log(E_kin) between the two bracketing grid points.
+        Only available on :meth:`MCEqRun.solve_fullsky` results.
+
+        Args:
+          particle_name (str): see :meth:`get_solution`.
+          kin_energy (float): kinetic energy in GeV; must lie within the
+            energy grid.
+          mag (float): energy magnification exponent, as in
+            :meth:`get_solution`.
+
+        Returns:
+          (np.ndarray[n_zen, n_az]): flux map, kinetic-energy units.
+        """
+        if self.zenith_grid is None:
+            raise ValueError(
+                "skymap() is only available on solve_fullsky results"
+            )
+        e_grid = self._mceq.e_grid
+        if not e_grid[0] <= kin_energy <= e_grid[-1]:
+            raise ValueError(
+                f"skymap: kin_energy {kin_energy} outside energy grid "
+                f"[{e_grid[0]:.3g}, {e_grid[-1]:.3g}] GeV"
+            )
+        i_hi = int(np.clip(np.searchsorted(e_grid, kin_energy), 1, e_grid.size - 1))
+        i_lo = i_hi - 1
+        w = (np.log(kin_energy) - np.log(e_grid[i_lo])) / (
+            np.log(e_grid[i_hi]) - np.log(e_grid[i_lo])
+        )
+        n_zen = self.zenith_grid.size
+        flux = np.empty((n_zen, self.n_azimuth))
+        for k in range(self.K):
+            f = self.get_solution(
+                particle_name, k=k, mag=mag, return_as="kinetic energy"
+            )
+            i_zen, i_az = divmod(k, self.n_azimuth)
+            flux[i_zen, i_az] = (1.0 - w) * f[i_lo] + w * f[i_hi]
+        return flux
+
+    # Legacy tuple compatibility -------------------------------------
+    def __iter__(self):
+        return iter(self._legacy)
+
+    def __len__(self):
+        return len(self._legacy)
+
+    def __getitem__(self, item):
+        return self._legacy[item]
+
+    def __repr__(self):
+        parts = [f"K={self.sol.shape[1]}"]
+        if self.zenith_grid is not None:
+            parts.append(
+                f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}"
+            )
+        if self.grid_sol is not None and len(self.grid_sol):
+            parts.append(f"n_snapshots={len(self.grid_sol)}")
+        return f"MCEqBatchResult({', '.join(parts)})"
+
+
 class MCEqRun:
     """Main class for handling the calculation.
 
@@ -325,9 +586,6 @@ class MCEqRun:
           (:func: numpy.array): flux of particles on energy grid :attr:`e_grid`
         """
 
-        res = np.zeros(self._energy_grid.d)
-        ref = self.pman.pname2pref
-        sol = None
         if grid_idx is not None and len(self.grid_sol) == 0:
             raise Exception("Solution not has not been computed on grid. Check input.")
         if grid_idx is None:
@@ -336,6 +594,49 @@ class MCEqRun:
             sol = self.grid_sol[-1, :]
         else:
             sol = self.grid_sol[grid_idx, :]
+
+        return self._get_solution_from_state(
+            sol,
+            particle_name,
+            mag=mag,
+            integrate=integrate,
+            return_as=return_as,
+            dont_sum_helicities=dont_sum_helicities,
+        )
+
+    def _get_solution_from_state(
+        self,
+        sol,
+        particle_name,
+        mag=0.0,
+        integrate=False,
+        return_as=None,
+        dont_sum_helicities=False,
+    ):
+        """Extract a named spectrum from an explicit state vector.
+
+        Same particle-name/prefix semantics, helicity summation and
+        ``return_as`` conversions as :meth:`get_solution`, but operates
+        on the state vector ``sol`` passed by the caller instead of
+        ``self._solution``. This is the shared extraction backend for
+        :meth:`get_solution` and :meth:`MCEqBatchResult.get_solution`
+        (per-column retrieval from multi-RHS solves).
+
+        Args:
+          sol (np.ndarray[dim_states]): state vector to extract from.
+          particle_name (str): see :meth:`get_solution`.
+          mag, integrate, return_as, dont_sum_helicities: see
+            :meth:`get_solution`. ``return_as=None`` resolves to
+            ``config.return_as``.
+
+        Returns:
+          (np.ndarray): flux of particles on energy grid :attr:`e_grid`
+        """
+        if return_as is None:
+            return_as = config.return_as
+
+        res = np.zeros(self._energy_grid.d)
+        ref = self.pman.pname2pref
 
         def sum_lr(lep_str, prefix):
             result = np.zeros(self.dim)
@@ -391,16 +692,16 @@ class MCEqRun:
         elif particle_name.startswith("conv_"):
             # Note: This changed from previous MCEq versions,
             # conventional is defined as total - prompt
-            res = self.get_solution(
+            res = self._get_solution_from_state(
+                sol,
                 "total_" + lep_str,
                 mag=0,
-                grid_idx=grid_idx,
                 integrate=False,
                 return_as="kinetic energy",
-            ) - self.get_solution(
+            ) - self._get_solution_from_state(
+                sol,
                 "pr_" + lep_str,
                 mag=0,
-                grid_idx=grid_idx,
                 integrate=False,
                 return_as="kinetic energy",
             )
@@ -866,6 +1167,92 @@ class MCEqRun:
 
         self._phi0[self.pman[pdg_id].lidx : self.pman[pdg_id].uidx] += spectrum
 
+    def get_initial_state(self):
+        """Return a copy of the current initial-condition vector ``phi0``.
+
+        This is the state vector composed by the most recent
+        :meth:`set_primary_model` / :meth:`set_single_primary_particle` /
+        :meth:`set_initial_spectrum` calls — the same vector
+        :meth:`solve` propagates. Use it to assemble columns for
+        :meth:`solve_batch` without touching private attributes.
+
+        Returns:
+          (np.ndarray[dim_states]): copy of the initial state vector.
+        """
+        return self._phi0.copy()
+
+    def initial_state(self, components):
+        """Compose and return an initial-state column without mutating
+        the instance.
+
+        Builds a ``(dim_states,)`` vector from one or more components
+        using the same machinery as :meth:`set_single_primary_particle`
+        and :meth:`set_initial_spectrum`, then restores the previous
+        initial condition. The intended use is assembling the columns of
+        a :meth:`solve_batch` initial-state matrix::
+
+            # response matrix: one column per primary energy
+            phi0 = np.stack(
+                [mceq.initial_state({"E": E, "pdg_id": 2212})
+                 for E in E_primaries],
+                axis=1,
+            )
+            res = mceq.solve_batch(phi0)
+
+        Args:
+          components (dict | list[dict]): one component dict or a list of
+            component dicts (summed). Each component is either
+
+            - a single primary: ``{"E": <GeV>, "corsika_id": <A*100+Z>}``
+              or ``{"E": <GeV>, "pdg_id": <PDG>}`` (forwarded to
+              :meth:`set_single_primary_particle`), or
+            - a user spectrum: ``{"spectrum": <array dN/dptot>,
+              "pdg_id": <PDG>}`` (forwarded to
+              :meth:`set_initial_spectrum`).
+
+        Returns:
+          (np.ndarray[dim_states]): the composed initial-state column.
+        """
+        if isinstance(components, dict):
+            components = [components]
+        if not components:
+            raise ValueError("initial_state: components must not be empty")
+
+        saved_phi0 = self._phi0.copy()
+        saved_restore = list(self._restore_initial_condition)
+        try:
+            for i, comp in enumerate(components):
+                comp = dict(comp)
+                append = i > 0
+                if "spectrum" in comp:
+                    spectrum = comp.pop("spectrum")
+                    pdg_id = comp.pop("pdg_id")
+                    if comp:
+                        raise ValueError(
+                            f"initial_state: unknown keys {sorted(comp)} in "
+                            f"spectrum component"
+                        )
+                    self.set_initial_spectrum(spectrum, pdg_id, append=append)
+                elif "E" in comp:
+                    E = comp.pop("E")
+                    unknown = set(comp) - {"corsika_id", "pdg_id"}
+                    if unknown:
+                        raise ValueError(
+                            f"initial_state: unknown keys {sorted(unknown)} in "
+                            f"single-primary component"
+                        )
+                    self.set_single_primary_particle(E, append=append, **comp)
+                else:
+                    raise ValueError(
+                        "initial_state: each component needs either 'E' "
+                        "(single primary) or 'spectrum' + 'pdg_id' "
+                        f"(user spectrum); got keys {sorted(comp)}"
+                    )
+            return self._phi0.copy()
+        finally:
+            self._phi0 = saved_phi0
+            self._restore_initial_condition = saved_restore
+
     def set_density_model(self, density_model_or_config):
         """Sets model of the atmosphere.
 
@@ -1004,15 +1391,10 @@ class MCEqRun:
             return
 
         # Dispatch to set_theta with or without azimuth_deg depending on
-        # the density model's set_theta signature. Both
+        # the density model's ``depends_on_azimuth`` attribute. Both
         # MSIS00LocationCentered and MSIS21LocationCentered accept the
         # extra azimuth_deg argument; everything else ignores azimuth.
-        import inspect as _inspect
-
-        _az_aware = "azimuth_deg" in _inspect.signature(
-            self.density_model.set_theta
-        ).parameters
-        if _az_aware:
+        if getattr(self.density_model, "depends_on_azimuth", False):
             self.density_model.set_theta(zenith_deg, azimuth_deg=azimuth_deg)
         else:
             self.density_model.set_theta(zenith_deg)
@@ -1398,6 +1780,308 @@ class MCEqRun:
             grid_idcs,
         )
 
+    def _dispatch_shared_path_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+        """Route a shared-path multi-RHS solve to the ``kernel_config``
+        backend.
+
+        All K columns share one integration path, so per-step work that
+        depends only on ``(X, ρ⁻¹(X))`` — the diagonal split,
+        ``exp(h·D)``, ``φ₁(h·D)``, ``φ₂(h·D)`` — is computed once per
+        step and broadcast over the K column axis. This is the fast
+        route :meth:`solve_batch` picks automatically whenever all batch
+        members resolve to the same path.
+
+        Supports all four backends (``numpy_etd2``, ``accelerate_etd2``,
+        ``cuda_etd2``, ``mkl_etd2``), ``int_grid`` snapshots, fp32 state
+        buffers (except on ``numpy_etd2``) and the EM ρ-stack
+        (``numpy_etd2`` only).
+        """
+        import MCEq.solvers
+
+        kc = config.kernel_config.lower()
+
+        if kc == "numpy_etd2":
+            if dtype == np.float32:
+                raise NotImplementedError(
+                    "solve_batch(dtype=float32) is currently wired only for "
+                    "kernel_config in {'accelerate_etd2', 'cuda_etd2', "
+                    "'mkl_etd2'}. A scipy fp32 path would need fp32 versions "
+                    "of int_m / dec_m and the numpy multirhs kernel — defer "
+                    "until needed."
+                )
+            # If a ρ-stack has been built (via enable_em_density_interpolation),
+            # route to the ρ-aware multi-RHS kernel so per-step log-linear
+            # blending of the air block kicks in for all K columns.
+            int_m_stack = getattr(self, "_int_m_stack", None)
+            em_rho_grid = getattr(self, "_em_rho_grid", None)
+            if int_m_stack is not None and em_rho_grid is not None:
+                return MCEq.solvers.solv_numpy_etd2_rho_stack_multirhs(
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    int_m_stack,
+                    em_rho_grid,
+                    self.dec_m,
+                    phi0,
+                    grid_idcs,
+                )
+            return MCEq.solvers.solv_numpy_etd2_multirhs(
+                nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
+            )
+        if kc == "accelerate_etd2":
+            return self._dispatch_spacc_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+            )
+        if kc == "cuda_etd2":
+            return self._dispatch_cuda_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+            )
+        if kc == "mkl_etd2":
+            return self._dispatch_mkl_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+            )
+        raise NotImplementedError(
+            f"solve_batch is not yet wired for kernel_config={kc!r}. "
+            f"Supported: 'numpy_etd2', 'accelerate_etd2', 'cuda_etd2', "
+            f"'mkl_etd2'."
+        )
+
+    def solve_batch(
+        self,
+        phi0=None,
+        conditions=None,
+        int_grid=None,
+        grid_var="X",
+        *,
+        dtype=np.float64,
+        carousel_K=None,
+        path_workers=0,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+    ):
+        """Solve K independent cascade problems in one batched call.
+
+        This is the general entry point for anything that would
+        otherwise be a loop of :meth:`solve` calls with a shared
+        operator: many primary spectra or single-primary energies at one
+        direction, many zenith/azimuth directions, atmospheres for
+        different days/seasons — or any mix of these. The batch members
+        are defined by the columns of ``phi0`` and/or the entries of
+        ``conditions``:
+
+        * ``conditions=None`` (default): all columns share the current
+          ``(zenith, atmosphere)``. K is the number of ``phi0`` columns.
+          Supports ``int_grid`` snapshots, fp32 (non-numpy backends) and
+          the EM ρ-stack.
+        * ``conditions=[...]``: one dict per batch member with optional
+          keys ``zenith_deg``, ``azimuth_deg`` and ``density_model``
+          (config tuple or instance); missing keys fall back to the
+          instance's current setting. One integration path is built per
+          *distinct* condition (duplicates — including azimuth pixels of
+          azimuth-independent atmospheres — share a path), and the batch
+          runs on the LPT carousel so total kernel work is
+          ``Σ nsteps × ms/RHS`` rather than ``max(nsteps) × K``. If all
+          conditions resolve to the same path, the shared-path fast
+          route is used automatically.
+
+        Does NOT mutate ``self._phi0`` / ``self._solution`` /
+        ``self.grid_sol``; the active density model and angles are
+        restored after the path build.
+
+        Examples::
+
+            # K single primaries (response matrix) at the current angle
+            phi0 = np.stack(
+                [mceq.initial_state({"E": E, "pdg_id": 2212})
+                 for E in E_primaries], axis=1)
+            res = mceq.solve_batch(phi0)
+
+            # one spectrum through 12 months x 3 zeniths
+            conditions = [
+                {"zenith_deg": z,
+                 "density_model": ("MSIS21", ("SouthPole", month))}
+                for month in months for z in (0.0, 30.0, 60.0)]
+            res = mceq.solve_batch(conditions=conditions)
+            res.get_solution("conv_numu", k=5, mag=3)
+
+        Args:
+          phi0 (np.ndarray | None): initial state. ``None`` uses the
+            instance initial condition (from ``set_primary_model`` etc.);
+            1-D ``(dim_states,)`` is broadcast to all batch members; 2-D
+            ``(dim_states, K)`` carries one column per member (compose
+            columns with :meth:`initial_state` /
+            :meth:`get_initial_state`).
+          conditions (list[dict] | None): per-member direction and
+            atmosphere, see above.
+          int_grid (list | None): X values at which to record snapshots.
+            Only supported for shared-path batches (``conditions=None``).
+          grid_var (str): only ``"X"`` is supported.
+          dtype (np.float32 | np.float64): precision of the state
+            buffers. fp32 is wired for ``accelerate_etd2`` /
+            ``cuda_etd2`` / ``mkl_etd2`` shared-path batches (relative
+            error vs fp64 ≤ 1e-4 for the production particle set — the
+            diagonal-factor pipeline stays fp64) and for the
+            ``cuda_etd2`` carousel (fully fp32 including the per-column
+            diagonal factors; worst significant cells ~1e-3).
+          carousel_K (int | None): pipeline width for the LPT scheduler
+            (heterogeneous batches only). ``None`` → ``min(K, 128)``.
+          path_workers (int): fork-pool size for a parallel path build
+            (heterogeneous batches only). Must be 0 with MSIS00-based
+            atmospheres (not fork-safe) and with ``density_model``
+            overrides; fine with MSIS21/CORSIKA zenith/azimuth batches.
+          X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
+            non-uniform path knobs forwarded to
+            :meth:`_calculate_integration_path`; same semantics as
+            :meth:`solve`.
+
+        Returns:
+          :class:`MCEqBatchResult`: final states plus per-column
+          named-spectrum extraction. Also unpacks as the legacy
+          ``(sol, grid_sol)`` pair.
+        """
+        dtype = np.dtype(dtype)
+        if dtype not in (np.float32, np.float64):
+            raise ValueError(
+                f"solve_batch: dtype must be float32 or float64, got {dtype}"
+            )
+
+        # --- resolve phi0 ------------------------------------------------
+        if phi0 is None:
+            phi0_arr = self._phi0.copy()
+        else:
+            phi0_arr = np.asarray(phi0, dtype=np.float64)
+        if phi0_arr.ndim == 1:
+            if phi0_arr.size != self.dim_states:
+                raise ValueError(
+                    f"solve_batch: phi0 has length {phi0_arr.size}, "
+                    f"expected first axis = dim_states = {self.dim_states}"
+                )
+            n_cols = None
+        elif phi0_arr.ndim == 2:
+            if phi0_arr.shape[0] != self.dim_states:
+                raise ValueError(
+                    f"solve_batch: phi0 has shape {phi0_arr.shape}, "
+                    f"expected first axis = dim_states = {self.dim_states}"
+                )
+            n_cols = phi0_arr.shape[1]
+        else:
+            raise ValueError(
+                f"solve_batch: phi0 must be 1-D or 2-D, "
+                f"got shape {phi0_arr.shape}"
+            )
+
+        if conditions is not None:
+            K = len(conditions)
+            if K < 1:
+                raise ValueError("solve_batch: conditions must not be empty")
+            if n_cols is not None and n_cols != K:
+                raise ValueError(
+                    f"solve_batch: phi0 has shape {phi0_arr.shape}, expected "
+                    f"second axis = K = {K} (len(conditions))"
+                )
+        else:
+            K = n_cols if n_cols is not None else 1
+
+        if phi0_arr.ndim == 1:
+            phi0_mat = np.ascontiguousarray(
+                np.broadcast_to(phi0_arr[:, None], (self.dim_states, K))
+            )
+        else:
+            phi0_mat = np.ascontiguousarray(phi0_arr)
+
+        # --- build integration paths -------------------------------------
+        path_kwargs = dict(
+            X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
+        )
+        if conditions is None:
+            if int_grid is not None and np.any(np.diff(int_grid) < 0):
+                raise Exception(
+                    "The X values in int_grid are required to be "
+                    "strictly increasing."
+                )
+            self._calculate_integration_path(int_grid, grid_var, **path_kwargs)
+            paths = [self.integration_path] * K
+        else:
+            if int_grid is not None:
+                raise NotImplementedError(
+                    "solve_batch: int_grid snapshots are only supported for "
+                    "shared-path batches (conditions=None). Set the "
+                    "direction/atmosphere on the instance and vary only "
+                    "phi0 columns to record snapshots."
+                )
+            if grid_var != "X":
+                raise NotImplementedError(
+                    "solve_batch: only grid_var='X' is supported."
+                )
+            paths = self._build_condition_paths(
+                conditions, path_workers=path_workers, **path_kwargs
+            )
+
+        nsteps_per_col = np.array([p[0] for p in paths], dtype=np.int32)
+        shared = all(p is paths[0] for p in paths)
+
+        start = time()
+        if shared:
+            nsteps, dX, rho_inv, grid_idcs = paths[0]
+            info(
+                2,
+                f"solve_batch: shared-path multi-RHS route, K={K}, "
+                f"kernel={config.kernel_config}, nsteps={nsteps}",
+            )
+            # ``dtype`` controls the state-buffer precision; the diagonals
+            # ``d_int`` / ``d_dec`` remain fp64 in the diag-factor pipeline
+            # for the fp32 path (exp(h·D) saturates fp32 fast at high
+            # zenith).
+            phi0_typed = phi0_mat.astype(dtype, copy=True)
+            sol, grid_sol = self._dispatch_shared_path_multirhs(
+                nsteps, dX, rho_inv, grid_idcs, phi0_typed, dtype
+            )
+            legacy = (sol, grid_sol)
+        else:
+            if getattr(self, "_int_m_stack", None) is not None:
+                raise NotImplementedError(
+                    "solve_batch: the EM ρ-stack "
+                    "(enable_em_density_interpolation) is not wired for "
+                    "heterogeneous-path (carousel) batches yet. Disable it "
+                    "or use a shared-path batch."
+                )
+            from MCEq.solvers import compile_carousel_schedule, schedule_lpt
+
+            if carousel_K is None:
+                carousel_K = min(K, 128)
+            K_pipe = max(1, min(int(carousel_K), K))
+            slots, T = schedule_lpt(nsteps_per_col, K_pipe)
+            dX_c, ri_c, phi_init, sched = compile_carousel_schedule(
+                paths, slots, T, self.dim_states, phi0_mat
+            )
+            sum_ns = int(nsteps_per_col.sum())
+            waste = 1.0 - sum_ns / float(T * K_pipe) if (T * K_pipe) else 0.0
+            info(
+                2,
+                f"solve_batch: carousel route K={K} K_pipe={K_pipe} T={T} "
+                f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
+            )
+            sol = self._dispatch_carousel(
+                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype
+            )
+            grid_sol = None
+            legacy = (sol, nsteps_per_col)
+
+        info(2, f"solve_batch: total wall {time() - start:.2f}s")
+
+        return MCEqBatchResult(
+            self,
+            sol,
+            grid_sol=grid_sol,
+            int_grid=int_grid,
+            nsteps_per_col=nsteps_per_col,
+            conditions=conditions,
+            legacy_tuple=legacy,
+        )
+
     def solve_multirhs(
         self,
         phi0_matrix,
@@ -1414,156 +2098,228 @@ class MCEqRun:
         """Propagate K independent initial conditions through one shared
         ETD2 operator.
 
-        Mirrors :meth:`solve` but operates on a ``(dim_states, K)`` initial
-        state matrix instead of the single-RHS ``self._phi0``. Each
-        column ``phi0_matrix[:, k]`` is an independent initial spectrum,
-        layout identical to ``self._phi0`` (i.e. composed in the same way
-        you would prepare ``set_initial_spectrum`` / ``set_single_primary_particle``
-        calls). Per-step work that depends only on ``(X, ρ⁻¹(X))`` —
-        the diagonal split, ``exp(h·D)``, ``φ₁(h·D)``, ``φ₂(h·D)`` — is
-        computed once per step and broadcast over the K column axis.
-
-        Selection rules:
-
-        * ``kernel_config == "numpy_etd2"`` →
-          :func:`MCEq.solvers.solv_numpy_etd2_multirhs` (CSR-SpMM through
-          scipy ``@`` on a 2-D RHS).
-        * ``kernel_config == "accelerate_etd2"`` →
-          :func:`MCEq.solvers.solv_spacc_etd2_multirhs`
-          (Accelerate Sparse BLAS ``sparse_matrix_product_dense_double``).
-        * Other kernels raise ``NotImplementedError`` (MKL Sparse BLAS
-          and cuSPARSE multi-RHS variants are not yet wired).
-
-        Does NOT mutate ``self._phi0`` / ``self._solution`` /
-        ``self.grid_sol``. The returned arrays are the entire state of
-        the multi-RHS solve; the caller indexes columns to retrieve
-        per-RHS final spectra or grid snapshots.
+        .. deprecated::
+            Thin wrapper around :meth:`solve_batch` with
+            ``conditions=None``. Prefer :meth:`solve_batch`, which
+            additionally handles per-column directions/atmospheres and
+            returns an :class:`MCEqBatchResult` with named-spectrum
+            extraction. Kept for backwards compatibility.
 
         Args:
           phi0_matrix (np.ndarray[dim_states, K]): initial state matrix.
             Each column carries one independent initial spectrum.
-          int_grid (list | None): X values at which to record snapshots,
-            shared across all K columns. Same semantics as :meth:`solve`.
-          grid_var (str): currently only ``"X"`` is supported.
-          dtype (np.float32 | np.float64): precision of the state buffers
-            and the SpMM. Default ``np.float64``. When ``np.float32`` and
-            ``kernel_config == "accelerate_etd2"``, the solver dispatches
-            to :func:`MCEq.solvers.solv_spacc_etd2_multirhs_f32` with a
-            cached :class:`MCEq.spacc.SpaccMatrixF32` handle; ~1.10–1.14×
-            faster per-RHS on Mac M3 Pro at K ≥ 64, with per-particle
-            relative error ≤ 1e-5 vs the fp64 reference (verified by
-            ``runs/2026-05-21_multi-rhs-etd2-prototype/inputs/test_etd2_fp32.py``).
-            ``np.float32`` is not yet wired for ``numpy_etd2`` — the
-            scipy CSR @ X path would need fp32 versions of
-            ``int_m``/``dec_m`` and the numpy kernel; defer until needed.
-          X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
-            non-uniform path knobs forwarded to
-            :meth:`_calculate_integration_path`; same semantics as
-            :meth:`solve`.
+          int_grid, grid_var, dtype, X_start, eps, dX_max, dX_min,
+          fd_span: see :meth:`solve_batch`.
 
         Returns:
           (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
-          final state matrix and stacked snapshots. The trailing K axis
-          is preserved; index by column for per-RHS retrieval. The
-          ``sol`` dtype matches the ``dtype`` argument.
+          final state matrix and stacked snapshots.
         """
-        import MCEq.solvers
-
+        phi0_matrix = np.asarray(phi0_matrix)
         if phi0_matrix.ndim != 2:
             raise ValueError(
                 f"solve_multirhs: phi0_matrix must be 2-D (dim_states, K), "
                 f"got shape {phi0_matrix.shape}"
             )
-        if phi0_matrix.shape[0] != self.dim_states:
-            raise ValueError(
-                f"solve_multirhs: phi0_matrix.shape[0] ({phi0_matrix.shape[0]}) "
-                f"must equal self.dim_states ({self.dim_states})"
-            )
-
-        info(
-            2,
-            f"Launching {config.kernel_config} multi-RHS solver "
-            f"(K={phi0_matrix.shape[1]})",
-        )
-
-        if int_grid is not None and np.any(np.diff(int_grid) < 0):
-            raise Exception(
-                "The X values in int_grid are required to be strictly increasing."
-            )
-        self._calculate_integration_path(
+        res = self.solve_batch(
+            phi0_matrix,
+            None,
             int_grid,
             grid_var,
+            dtype=dtype,
             X_start=X_start,
             eps=eps,
             dX_max=dX_max,
             dX_min=dX_min,
             fd_span=fd_span,
         )
-        nsteps, dX, rho_inv, grid_idcs = self.integration_path
+        return res.sol, res.grid_sol
 
-        kc = config.kernel_config.lower()
-        # ``dtype`` controls the state-buffer precision; the diagonals
-        # ``d_int`` / ``d_dec`` remain fp64 in the diag-factor pipeline
-        # for the fp32 path (exp(h·D) saturates fp32 fast at high zenith).
-        dtype = np.dtype(dtype)
-        if dtype not in (np.float32, np.float64):
-            raise ValueError(
-                f"solve_multirhs: dtype must be float32 or float64, got {dtype}"
-            )
-        phi0 = np.asarray(phi0_matrix, dtype=dtype).copy()
+    def _build_condition_paths(
+        self,
+        conditions,
+        *,
+        X_start=None,
+        eps=None,
+        dX_max=None,
+        dX_min=None,
+        fd_span=None,
+        path_workers=0,
+    ):
+        """Build one ETD2 integration path per batch condition.
 
-        start = time()
+        Each condition is a dict with optional keys ``zenith_deg``,
+        ``azimuth_deg`` and ``density_model`` (config tuple or density-
+        model instance); missing keys fall back to the instance's current
+        setting. Conditions that resolve to the same physical path — the
+        same density model and zenith, and the same azimuth when the
+        model's ``depends_on_azimuth`` is True — share one path tuple, so
+        duplicates (e.g. azimuth pixels of an azimuth-independent
+        atmosphere) cost nothing. Restores the active density model and
+        angles before returning.
 
-        if kc == "numpy_etd2":
-            if dtype == np.float32:
-                raise NotImplementedError(
-                    "solve_multirhs(dtype=float32) is currently wired only for "
-                    "kernel_config in {'accelerate_etd2', 'cuda_etd2', "
-                    "'mkl_etd2'}. A scipy fp32 path would need fp32 versions "
-                    "of int_m / dec_m and the numpy multirhs kernel — defer "
-                    "until needed."
+        Args:
+          conditions (list[dict]): one dict per batch member.
+          X_start, eps, dX_max, dX_min, fd_span: ETD2 path knobs, see
+            :meth:`solve`.
+          path_workers (int): fork-pool size for a parallel path build.
+            Only allowed without ``density_model`` overrides and with a
+            fork-safe atmosphere (MSIS00 is rejected — the nrlmsise-00
+            Fortran library has SAVE state that drifts ~1e-7 relative
+            under fork CoW; the pure-Python MSIS21 tree is fork-safe and
+            is the production user of this pool, see
+            results/allsky-orca-msis21.md).
+
+        Returns:
+          list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
+          condition (duplicate conditions share the same tuple object —
+          callers can detect a fully shared batch with ``is``).
+        """
+        allowed_keys = {"zenith_deg", "azimuth_deg", "density_model"}
+        norm = []
+        for i, c in enumerate(conditions):
+            if c is None:
+                c = {}
+            if not isinstance(c, dict):
+                raise TypeError(
+                    f"_build_condition_paths: condition {i} must be a dict "
+                    f"with keys in {sorted(allowed_keys)}, got "
+                    f"{type(c).__name__}"
                 )
-            # If a ρ-stack has been built (via enable_em_density_interpolation),
-            # route to the ρ-aware multi-RHS kernel so per-step log-linear
-            # blending of the air block kicks in for all K columns.
-            int_m_stack = getattr(self, "_int_m_stack", None)
-            em_rho_grid = getattr(self, "_em_rho_grid", None)
-            if int_m_stack is not None and em_rho_grid is not None:
-                sol, grid_sol = MCEq.solvers.solv_numpy_etd2_rho_stack_multirhs(
-                    nsteps,
-                    dX,
-                    rho_inv,
-                    int_m_stack,
-                    em_rho_grid,
-                    self.dec_m,
-                    phi0,
-                    grid_idcs,
+            unknown = set(c) - allowed_keys
+            if unknown:
+                raise ValueError(
+                    f"_build_condition_paths: condition {i} has unknown "
+                    f"keys {sorted(unknown)}; allowed: {sorted(allowed_keys)}"
                 )
+            norm.append(dict(c))
+
+        has_dm_override = any(c.get("density_model") is not None for c in norm)
+        n_workers = int(path_workers) if path_workers else 0
+        if n_workers > 1:
+            if has_dm_override:
+                raise ValueError(
+                    "path_workers > 1 supports only zenith/azimuth batches "
+                    "on the active atmosphere; build density_model "
+                    "overrides serially (path_workers=0)."
+                )
+            from MCEq.geometry.density_profiles import MSIS00Atmosphere
+
+            if isinstance(self.density_model, MSIS00Atmosphere):
+                raise ValueError(
+                    "path_workers > 1 is not safe with MSIS-based "
+                    "atmospheres (nrlmsise-00 is not fork-safe; "
+                    "paths drift by ~1e-7 relative and are not "
+                    "reproducible). Use path_workers=0 for MSIS."
+                )
+
+        def dm_key_of(c):
+            dm_spec = c.get("density_model")
+            if dm_spec is None:
+                return ("current",)
+            if isinstance(dm_spec, (tuple, list)):
+                return ("cfg", repr(tuple(dm_spec)))
+            return ("obj", id(dm_spec))
+
+        # Save the *current* direction from the density model — the
+        # MCEqRun-level ``theta_deg`` attribute only reflects the
+        # constructor argument and is not updated by set_zenith_azimuth.
+        saved_dm = self.density_model
+        saved_zen = getattr(saved_dm, "theta_deg", None)
+        saved_az = getattr(saved_dm, "_current_azimuth_deg", None)
+
+        kwargs = dict(
+            X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
+        )
+        try:
+            # Pass 1: resolve unique density models (instantiate config
+            # tuples exactly once).
+            dm_instances = {}
+            for c in norm:
+                key = dm_key_of(c)
+                if key in dm_instances:
+                    continue
+                dm_spec = c.get("density_model")
+                if dm_spec is None:
+                    dm_instances[key] = saved_dm
+                elif isinstance(dm_spec, (tuple, list)):
+                    self.set_density_model(tuple(dm_spec))
+                    dm_instances[key] = self.density_model
+                else:
+                    dm_instances[key] = dm_spec
+
+            # Pass 2: dedup conditions into unique path-build jobs. The
+            # azimuth only enters the key when the density model actually
+            # depends on it, so azimuth pixels of symmetric atmospheres
+            # collapse onto one job per zenith.
+            job_of_key = {}
+            cond_keys = []
+            for c in norm:
+                dm_key = dm_key_of(c)
+                dm = dm_instances[dm_key]
+                zen = c.get("zenith_deg")
+                if zen is None:
+                    zen = saved_zen
+                if zen is None:
+                    raise ValueError(
+                        "_build_condition_paths: condition without "
+                        "'zenith_deg' and no zenith set on the instance"
+                    )
+                zen = float(zen)
+                az = c.get("azimuth_deg")
+                az_dep = getattr(dm, "depends_on_azimuth", False)
+                az_eff = float(az) if (az is not None and az_dep) else None
+                pkey = (dm_key, zen, az_eff)
+                cond_keys.append(pkey)
+                if pkey not in job_of_key:
+                    job_of_key[pkey] = (dm_key, zen, az_eff)
+
+            # Group jobs by density model so per-model state (splines,
+            # caches) is not rebuilt more often than necessary.
+            jobs = sorted(job_of_key.items(), key=lambda item: repr(item[0]))
+            unique_paths = {}
+            if n_workers > 1 and len(jobs) > 1:
+                # Fork-based worker pool. Pickling MCEqRun would be
+                # fragile; instead set a module-level global and rely on
+                # fork() to share via CoW. Only zenith/azimuth vary here
+                # (density_model overrides were rejected above).
+                import multiprocessing as _mp
+
+                global _PATH_WORKER_MCEQ
+                _PATH_WORKER_MCEQ = self  # inherited by forked children
+                try:
+                    ctx = _mp.get_context("fork")
+                    worker_args = [
+                        (idx, job[1], job[2], kwargs)
+                        for idx, (_, job) in enumerate(jobs)
+                    ]
+                    chunksize = max(1, len(jobs) // (n_workers * 8))
+                    with ctx.Pool(n_workers) as pool:
+                        for flat_idx, path in pool.imap_unordered(
+                            _path_worker_one, worker_args, chunksize=chunksize
+                        ):
+                            unique_paths[jobs[flat_idx][0]] = path
+                finally:
+                    _PATH_WORKER_MCEQ = None
             else:
-                sol, grid_sol = MCEq.solvers.solv_numpy_etd2_multirhs(
-                    nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
-                )
-        elif kc == "accelerate_etd2":
-            sol, grid_sol = self._dispatch_spacc_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
-            )
-        elif kc == "cuda_etd2":
-            sol, grid_sol = self._dispatch_cuda_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
-            )
-        elif kc == "mkl_etd2":
-            sol, grid_sol = self._dispatch_mkl_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
-            )
-        else:
-            raise NotImplementedError(
-                f"solve_multirhs is not yet wired for kernel_config={kc!r}. "
-                f"Supported: 'numpy_etd2', 'accelerate_etd2', 'cuda_etd2', "
-                f"'mkl_etd2'."
-            )
+                for pkey, (dm_key, zen, az_eff) in jobs:
+                    dm = dm_instances[dm_key]
+                    if self.density_model is not dm:
+                        self.set_density_model(dm)
+                    if az_eff is None:
+                        self.set_zenith_azimuth(zen)
+                    else:
+                        self.set_zenith_azimuth(zen, az_eff)
+                    self._calculate_integration_path(None, "X", **kwargs)
+                    unique_paths[pkey] = self.integration_path
 
-        info(2, f"time elapsed during multi-RHS integration: {time() - start:5.2f}sec")
-        return sol, grid_sol
+            return [unique_paths[k] for k in cond_keys]
+        finally:
+            if self.density_model is not saved_dm:
+                self.set_density_model(saved_dm)
+            if saved_zen is not None:
+                self.set_zenith_azimuth(saved_zen, saved_az)
+            self.integration_path = None
 
     def _build_pixel_paths(
         self,
@@ -1579,15 +2335,16 @@ class MCEqRun:
     ):
         """Build per-pixel ETD2 integration paths for a (zenith × azimuth) grid.
 
-        Returns ``(paths, pixel_index, K)`` where ``paths`` is a list of
-        ``(nsteps, dX, rho_inv, grid_idcs)`` tuples (one per pixel,
-        flattened with azimuth as the inner axis) and ``pixel_index`` is
-        a ``(K, 2)`` int array mapping each column back to its
-        ``(i_zen, i_az)`` grid coordinates. Restores the active
-        ``(zenith, azimuth)`` to whatever it was before the call.
+        Thin wrapper around :meth:`_build_condition_paths`: flattens the
+        grid into per-pixel conditions with azimuth as the inner axis.
+        Azimuth-independent atmospheres (``density_model.depends_on_azimuth``
+        False) automatically share one path per zenith through the
+        condition dedup.
 
-        Used by :meth:`solve_fullsky`, which feeds the paths to the LPT
-        carousel scheduler (pipeline width ``carousel_K``).
+        Returns ``(paths, pixel_index, K)`` where ``paths`` is a list of
+        ``(nsteps, dX, rho_inv, grid_idcs)`` tuples (one per pixel) and
+        ``pixel_index`` is a ``(K, 2)`` int array mapping each column
+        back to its ``(i_zen, i_az)`` grid coordinates.
         """
         zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
         if azimuth_grid is not None:
@@ -1598,122 +2355,27 @@ class MCEqRun:
         if K < 1:
             raise ValueError("_build_pixel_paths: empty (zenith, azimuth) grid")
 
-        # Auto-detect azimuth symmetry from the density model. Only
-        # ``MSIS00LocationCentered`` and subclasses bind the impact point
-        # to (zenith, azimuth) — their ``set_theta`` accepts ``azimuth_deg``.
-        # Every other atmosphere (CORSIKA, Isothermal, plain MSIS00,
-        # AIRS) ignores azimuth, so the path at fixed zenith is identical
-        # across all azimuth pixels and only needs to be built once.
-        import inspect as _inspect
-        az_symmetric = (
-            "azimuth_deg" not in _inspect.signature(
-                self.density_model.set_theta
-            ).parameters
-        )
-
-        saved_zen = getattr(self, "theta_deg", None)
-        saved_az = getattr(self, "azimuth_deg", None)
-        paths = []
+        conditions = []
         pixel_index = np.empty((K, 2), dtype=np.int32)
-        try:
-            if az_symmetric and azimuth_grid is not None and n_az > 1:
-                # Build one path per unique zenith, then duplicate the
-                # tuple ``n_az`` times — same (nsteps, dX, rho_inv, grid_idcs)
-                # for every azimuth at that zenith.
-                k = 0
-                for i_zen, zen in enumerate(zenith_grid):
-                    self.set_zenith_azimuth(float(zen))
-                    self._calculate_integration_path(
-                        None, "X",
-                        X_start=X_start, eps=eps,
-                        dX_max=dX_max, dX_min=dX_min, fd_span=fd_span,
-                    )
-                    shared_path = self.integration_path
-                    for i_az in range(n_az):
-                        paths.append(shared_path)
-                        pixel_index[k] = (i_zen, i_az)
-                        k += 1
-            else:
-                # Per-pixel paths. Optional fork-based worker pool —
-                # used only for atmospheres where each (zen, az) is
-                # distinct (MSIS location-centered). Pickling MCEqRun
-                # would be fragile; instead set a module-level global
-                # and rely on fork() to share via CoW.
-                jobs = []
-                k = 0
-                for i_zen, zen in enumerate(zenith_grid):
-                    for i_az in range(n_az):
-                        az = (
-                            float(azimuth_grid[i_az])
-                            if azimuth_grid is not None
-                            else None
-                        )
-                        jobs.append((k, float(zen), az, i_zen, i_az))
-                        k += 1
-                paths = [None] * K
-                kwargs = dict(
-                    X_start=X_start, eps=eps,
-                    dX_max=dX_max, dX_min=dX_min, fd_span=fd_span,
-                )
-                if path_workers and int(path_workers) > 1:
-                    import multiprocessing as _mp
+        k = 0
+        for i_zen, zen in enumerate(zenith_grid):
+            for i_az in range(n_az):
+                cond = {"zenith_deg": float(zen)}
+                if azimuth_grid is not None:
+                    cond["azimuth_deg"] = float(azimuth_grid[i_az])
+                conditions.append(cond)
+                pixel_index[k] = (i_zen, i_az)
+                k += 1
 
-                    # MSIS00 is not fork-safe: the underlying nrlmsise-00
-                    # Fortran library has SAVE state that does not properly
-                    # isolate via fork CoW — paths drift by ~1e-7 rel,
-                    # small but non-reproducible. Reject path_workers > 1
-                    # for MSIS00 rather than silently producing non-bit-
-                    # exact runs.
-                    #
-                    # The pure-Python MSIS21*Atmosphere tree (added on
-                    # 2026-05-24) is fork-safe and IS the production user
-                    # of this worker pool — see results/allsky-orca-msis21.md.
-                    from MCEq.geometry.density_profiles import (
-                        MSIS00Atmosphere,
-                    )
-
-                    if isinstance(self.density_model, MSIS00Atmosphere):
-                        raise ValueError(
-                            "path_workers > 1 is not safe with MSIS-based "
-                            "atmospheres (nrlmsise-00 is not fork-safe; "
-                            "paths drift by ~1e-7 relative and are not "
-                            "reproducible). Use path_workers=0 for MSIS."
-                        )
-
-                    global _PATH_WORKER_MCEQ
-                    n_workers = int(path_workers)
-                    _PATH_WORKER_MCEQ = self  # inherited by forked children
-                    try:
-                        ctx = _mp.get_context("fork")
-                        worker_args = [
-                            (j[0], j[1], j[2], kwargs) for j in jobs
-                        ]
-                        chunksize = max(1, K // (n_workers * 8))
-                        with ctx.Pool(n_workers) as pool:
-                            for flat_idx, path in pool.imap_unordered(
-                                _path_worker_one, worker_args, chunksize=chunksize
-                            ):
-                                paths[flat_idx] = path
-                    finally:
-                        _PATH_WORKER_MCEQ = None
-                    for j in jobs:
-                        pixel_index[j[0]] = (j[3], j[4])
-                else:
-                    for j in jobs:
-                        flat_idx, zen, az, i_zen, i_az = j
-                        if az is None:
-                            self.set_zenith_azimuth(zen)
-                        else:
-                            self.set_zenith_azimuth(zen, az)
-                        self._calculate_integration_path(
-                            None, "X", **kwargs
-                        )
-                        paths[flat_idx] = self.integration_path
-                        pixel_index[flat_idx] = (i_zen, i_az)
-        finally:
-            if saved_zen is not None:
-                self.set_zenith_azimuth(saved_zen, saved_az)
-            self.integration_path = None
+        paths = self._build_condition_paths(
+            conditions,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+            path_workers=path_workers,
+        )
         return paths, pixel_index, K
 
     def _dispatch_carousel(
@@ -1725,9 +2387,9 @@ class MCEqRun:
         phi0_per_pixel,
         dtype=np.float64,
     ):
-        """Dispatch one carousel solve. Currently wired for numpy_etd2 only;
-        cuda_etd2 lift is next. Returns ``(dim, K_total)`` pixel-order final
-        states.
+        """Dispatch one carousel solve to the ``kernel_config`` backend
+        (all four backends are wired: numpy/cuda/mkl/accelerate ETD2).
+        Returns ``(dim, K_total)`` pixel-order final states.
         """
         import MCEq.solvers
 
@@ -1938,8 +2600,11 @@ class MCEqRun:
                 (e.g. ``{"iter_num": 30000, "bfield_type": "igrf"}``).
 
         Returns:
-            ``(sol, nsteps_per_col[, pixel_index])`` — final state per
-            pixel ``(dim_states, K)`` plus the per-pixel ``nsteps``.
+            :class:`MCEqBatchResult` — final state per pixel
+            ``(dim_states, K)`` plus the sky grid, with per-pixel
+            named-spectrum extraction (:meth:`MCEqBatchResult.get_solution`,
+            :meth:`MCEqBatchResult.skymap`). Also unpacks as the legacy
+            ``(sol, nsteps_per_col[, pixel_index])`` tuple.
         """
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
         start = time()
@@ -1952,6 +2617,15 @@ class MCEqRun:
             cutoff_flag = self.geomagnetic_cutoff
         if cutoff_flag is None:
             cutoff_flag = self._is_geomag_eligible_atmosphere()
+
+        zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
+        if azimuth_grid is not None:
+            azimuth_grid = np.asarray(azimuth_grid, dtype=np.float64).reshape(-1)
+        n_zen = zenith_grid.size
+        n_az = azimuth_grid.size if azimuth_grid is not None else 1
+        K = n_zen * n_az
+        if K < 1:
+            raise ValueError("solve_fullsky: empty (zenith, azimuth) grid")
 
         if phi0 is None:
             phi0_arr = self._phi0.copy()
@@ -1978,20 +2652,6 @@ class MCEqRun:
                     f"got shape {phi0_arr.shape}"
                 )
 
-        paths, pixel_index, K = self._build_pixel_paths(
-            zenith_grid, azimuth_grid,
-            X_start=X_start, eps=eps,
-            dX_max=dX_max, dX_min=dX_min, fd_span=fd_span,
-            path_workers=path_workers,
-        )
-        nsteps_per_col = np.array([p[0] for p in paths], dtype=np.int32)
-        info(
-            2,
-            f"solve_fullsky: K={K}, nsteps range "
-            f"[{int(nsteps_per_col.min())}, {int(nsteps_per_col.max())}], "
-            f"mean={float(nsteps_per_col.mean()):.1f}",
-        )
-
         if phi0_is_2d and phi0_arr.shape[1] != K:
             raise ValueError(
                 f"solve_fullsky: phi0 has shape {phi0_arr.shape}, expected "
@@ -2000,17 +2660,30 @@ class MCEqRun:
 
         # Apply geomagnetic rigidity cutoff per pixel if requested. Skip
         # when phi0 was already supplied as 2-D (caller is in charge of
-        # the per-pixel primary spectrum then).
-        applied_cutoff = False
+        # the per-pixel primary spectrum then) — warn if the cutoff was
+        # requested explicitly in that case, since silently combining
+        # both would double-apply per-pixel physics.
+        if phi0_is_2d and (
+            geomagnetic_cutoff is True
+            or (geomagnetic_cutoff is None and self.geomagnetic_cutoff is True)
+        ):
+            import warnings
+
+            warnings.warn(
+                "solve_fullsky: 2-D phi0 supplied — the geomagnetic cutoff "
+                "is NOT applied on top (the caller owns the per-pixel "
+                "primary spectrum). Bake the cutoff into phi0 with "
+                "MCEq.geometry.gtracr_cutoff.build_phi0_with_cutoff, or "
+                "pass geomagnetic_cutoff=False to silence this warning.",
+                stacklevel=2,
+            )
         if cutoff_flag and not phi0_is_2d:
             from MCEq.geometry.gtracr_cutoff import (
                 build_phi0_with_cutoff, get_cutoff_map,
             )
-            zen_centres = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
-            if azimuth_grid is None:
-                az_centres = np.array([0.0])
-            else:
-                az_centres = np.asarray(azimuth_grid, dtype=np.float64).reshape(-1)
+            az_centres = (
+                azimuth_grid if azimuth_grid is not None else np.array([0.0])
+            )
             primary = getattr(self, "pmodel", None)
             if primary is None:
                 info(
@@ -2021,7 +2694,7 @@ class MCEqRun:
             else:
                 ck = dict(cutoff_kwargs or {})
                 rc_grid = get_cutoff_map(
-                    self.density_model, zen_centres, az_centres, **ck,
+                    self.density_model, zenith_grid, az_centres, **ck,
                 )
                 # Pixel order: (i_zen, i_az) flattened with az inner.
                 rc_flat = rc_grid.flatten(order="C")
@@ -2032,44 +2705,51 @@ class MCEqRun:
                     )
                 phi0_arr = build_phi0_with_cutoff(self, primary, rc_flat)
                 phi0_is_2d = True
-                applied_cutoff = True
                 info(
                     2,
                     f"solve_fullsky: applied per-pixel R_c cutoff "
                     f"(R_c range [{rc_grid.min():.2f}, {rc_grid.max():.2f}] GV)",
                 )
 
-        if phi0_is_2d:
-            phi0_per_pixel = np.ascontiguousarray(phi0_arr)
-        else:
-            phi0_per_pixel = np.broadcast_to(
-                phi0_arr[:, None], (self.dim_states, K)
-            ).copy()
+        # Expand the sky grid into per-pixel batch conditions (azimuth
+        # as the inner axis) and delegate to the general batched solver.
+        conditions = []
+        pixel_index = np.empty((K, 2), dtype=np.int32)
+        k = 0
+        for i_zen, zen in enumerate(zenith_grid):
+            for i_az in range(n_az):
+                cond = {"zenith_deg": float(zen)}
+                if azimuth_grid is not None:
+                    cond["azimuth_deg"] = float(azimuth_grid[i_az])
+                conditions.append(cond)
+                pixel_index[k] = (i_zen, i_az)
+                k += 1
 
-        # Stage-5 LPT carousel — the only multi-RHS path.
-        from MCEq.solvers import schedule_lpt, compile_carousel_schedule
+        res = self.solve_batch(
+            phi0_arr,
+            conditions,
+            dtype=dtype,
+            carousel_K=carousel_K,
+            path_workers=path_workers,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+        )
 
-        if carousel_K is None:
-            carousel_K = min(K, 128)
-        K_pipe = max(1, min(int(carousel_K), K))
-        slots, T = schedule_lpt(nsteps_per_col, K_pipe)
-        dX_c, ri_c, phi_init, sched = compile_carousel_schedule(
-            paths, slots, T, self.dim_states, phi0_per_pixel
-        )
-        sum_ns = int(nsteps_per_col.sum())
-        waste = 1.0 - sum_ns / float(T * K_pipe) if (T * K_pipe) else 0.0
-        info(
-            2,
-            f"solve_fullsky: carousel K_pipe={K_pipe} T={T} "
-            f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
-        )
-        sol = self._dispatch_carousel(
-            dX_c, ri_c, phi_init, sched, phi0_per_pixel, dtype=dtype
-        )
-        info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
+        # Decorate the batch result with the sky-grid metadata and the
+        # legacy solve_fullsky return tuple.
+        res.pixel_index = pixel_index
+        res.zenith_grid = zenith_grid
+        res.azimuth_grid = azimuth_grid
         if return_pixel_index:
-            return sol, nsteps_per_col, pixel_index
-        return sol, nsteps_per_col
+            res._legacy = (res.sol, res.nsteps_per_col, pixel_index)
+        else:
+            res._legacy = (res.sol, res.nsteps_per_col)
+
+        info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
+        return res
 
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.

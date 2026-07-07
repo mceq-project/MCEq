@@ -1774,3 +1774,343 @@ def test_em_adaptive_step_off_matches_legacy():
 
     assert a.integration_path[0] == b.integration_path[0]
     np.testing.assert_array_equal(a.integration_path[1], b.integration_path[1])
+
+
+# ---------------------------------------------------------------------------
+# solve_batch — unified batched entry point (shared-path + carousel routes)
+# ---------------------------------------------------------------------------
+def test_solve_batch_shared_matches_solve(mceq_sib21):
+    """solve_batch(conditions=None) must reproduce K back-to-back solve()
+    calls bit-for-bit (the shared-path multi-RHS kernel is bit-exact vs
+    the single-RHS kernel on the CSR path — BSR reorders the SpMV
+    partial sums, so it is disabled here), including int_grid snapshots,
+    and must not mutate the instance solution state.
+    """
+    saved_kernel = config.kernel_config
+    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
+
+    def _clear_split_cache():
+        for m in (mceq_sib21.int_m, mceq_sib21.dec_m):
+            try:
+                delattr(m, "_etd_split_cache_v2")
+            except AttributeError:
+                pass
+
+    try:
+        config.kernel_config = "numpy_etd2"
+        config.numpy_bsr_blocksize = None
+        _clear_split_cache()
+        mceq_sib21.set_zenith_azimuth(30.0)
+        int_grid = [100.0, 400.0, 900.0]
+        phi0_base = mceq_sib21.get_initial_state()
+        scales = [0.5, 1.0, 2.0]
+        phi0_multi = np.stack([s * phi0_base for s in scales], axis=1)
+
+        res = mceq_sib21.solve_batch(phi0_multi, int_grid=int_grid)
+
+        # Legacy tuple unpacking
+        sol, grid_sol = res
+        assert sol is res.sol
+        assert grid_sol is res.grid_sol
+        assert sol.shape == (mceq_sib21.dim_states, 3)
+        assert grid_sol.shape == (len(int_grid), mceq_sib21.dim_states, 3)
+        assert np.all(res.nsteps_per_col == res.nsteps_per_col[0])
+
+        saved_phi0 = mceq_sib21._phi0.copy()
+        for k, s in enumerate(scales):
+            mceq_sib21._phi0[:] = s * phi0_base
+            mceq_sib21.solve(int_grid=int_grid)
+            assert np.array_equal(res.sol[:, k], mceq_sib21._solution), (
+                f"column {k} of solve_batch diverges from solve()"
+            )
+            assert np.array_equal(res.grid_sol[:, :, k], mceq_sib21.grid_sol), (
+                f"column {k} snapshots diverge from solve()"
+            )
+        mceq_sib21._phi0[:] = saved_phi0
+    finally:
+        config.kernel_config = saved_kernel
+        config.numpy_bsr_blocksize = saved_bs
+        _clear_split_cache()
+        mceq_sib21.set_zenith_azimuth(0.0)
+
+
+def test_solve_batch_conditions_matches_fullsky(mceq_sib21):
+    """A zenith-grid batch through explicit conditions must match
+    solve_fullsky over the same grid (both run the LPT carousel on the
+    same per-pixel paths).
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([0.0, 30.0, 60.0])
+        conditions = [{"zenith_deg": float(z)} for z in zenith_grid]
+
+        res_batch = mceq_sib21.solve_batch(conditions=conditions)
+        res_sky, _ = mceq_sib21.solve_fullsky(zenith_grid)
+
+        np.testing.assert_allclose(res_batch.sol, res_sky, rtol=0, atol=0)
+        np.testing.assert_array_equal(
+            res_batch.nsteps_per_col, res_batch.nsteps_per_col
+        )
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_batch_duplicate_conditions_use_shared_route(mceq_sib21):
+    """Conditions that dedup to a single path must take the shared-path
+    multi-RHS route and match the conditions=None result bit-for-bit
+    (including grid snapshots being available... they are not requested
+    here; final state only).
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        phi0_base = mceq_sib21.get_initial_state()
+        phi0_multi = np.stack([phi0_base, 2.0 * phi0_base], axis=1)
+
+        mceq_sib21.set_zenith_azimuth(45.0)
+        res_none = mceq_sib21.solve_batch(phi0_multi)
+        res_dup = mceq_sib21.solve_batch(
+            phi0_multi,
+            conditions=[{"zenith_deg": 45.0}, {"zenith_deg": 45.0}],
+        )
+        assert np.array_equal(res_none.sol, res_dup.sol)
+        # Shared route is detectable through the legacy tuple layout:
+        # (sol, grid_sol) instead of (sol, nsteps_per_col).
+        assert res_dup._legacy[1] is res_dup.grid_sol
+    finally:
+        config.kernel_config = saved_kernel
+        mceq_sib21.set_zenith_azimuth(0.0)
+
+
+def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
+    """Per-condition density_model overrides must match serial
+    set_density_model + solve() runs, and the instance's density model
+    and angle must be restored afterwards.
+    """
+    saved_kernel = config.kernel_config
+    dm_before = mceq_sib21.density_model
+    try:
+        config.kernel_config = "numpy_etd2"
+        mceq_sib21.set_zenith_azimuth(20.0)
+        theta_before = mceq_sib21.density_model.theta_deg
+
+        seasons = [("CORSIKA", ("BK_USStd", None)),
+                   ("CORSIKA", ("PL_SouthPole", "January"))]
+        conditions = [
+            {"zenith_deg": 60.0, "density_model": dm} for dm in seasons
+        ]
+        res = mceq_sib21.solve_batch(conditions=conditions)
+
+        assert mceq_sib21.density_model is dm_before, (
+            "density model not restored after solve_batch"
+        )
+        assert mceq_sib21.density_model.theta_deg == theta_before, (
+            "zenith angle not restored after solve_batch"
+        )
+
+        saved_phi0 = mceq_sib21._phi0.copy()
+        for k, dm in enumerate(seasons):
+            mceq_sib21.set_density_model(dm)
+            mceq_sib21.set_zenith_azimuth(60.0)
+            mceq_sib21.solve()
+            # rtol allows for BSR-vs-CSR partial-sum reordering between
+            # the single-RHS solve() and the carousel SpMM (~1e-12 on
+            # the e± blowup rows this fixture keeps enabled).
+            np.testing.assert_allclose(
+                res.sol[:, k], mceq_sib21._solution, rtol=1e-10, atol=0
+            )
+        mceq_sib21._phi0[:] = saved_phi0
+    finally:
+        config.kernel_config = saved_kernel
+        mceq_sib21.set_density_model(dm_before)
+        mceq_sib21.set_zenith_azimuth(0.0)
+
+
+def test_solve_batch_int_grid_heterogeneous_raises(mceq_sib21):
+    """int_grid snapshots are only supported on the shared-path route."""
+    with pytest.raises(NotImplementedError, match="shared-path"):
+        mceq_sib21.solve_batch(
+            conditions=[{"zenith_deg": 0.0}, {"zenith_deg": 60.0}],
+            int_grid=[100.0, 500.0],
+        )
+
+
+def test_solve_batch_phi0_shape_validation(mceq_sib21):
+    """Shape errors carry the same phrasing as the solve_fullsky ones."""
+    dim = mceq_sib21.dim_states
+    with pytest.raises(ValueError, match="first axis"):
+        mceq_sib21.solve_batch(np.zeros((dim - 1, 2)))
+    with pytest.raises(ValueError, match="second axis"):
+        mceq_sib21.solve_batch(
+            np.zeros((dim, 3)), conditions=[{"zenith_deg": 0.0}] * 2
+        )
+    with pytest.raises(ValueError, match="must be 1-D or 2-D"):
+        mceq_sib21.solve_batch(np.zeros((dim, 2, 2)))
+    with pytest.raises(ValueError, match="unknown keys"):
+        mceq_sib21.solve_batch(conditions=[{"zenith": 0.0}])
+
+
+def test_initial_state_builder(mceq_sib21):
+    """initial_state() must reproduce the set_single_primary_particle /
+    set_initial_spectrum vectors and leave the instance state untouched.
+    """
+    phi0_before = mceq_sib21.get_initial_state()
+    restore_before = list(mceq_sib21._restore_initial_condition)
+
+    # Single primary (proton, superposition path for a nucleus)
+    col_p = mceq_sib21.initial_state({"E": 1e5, "pdg_id": 2212})
+    col_fe = mceq_sib21.initial_state({"E": 1e6, "corsika_id": 5626})
+    assert np.array_equal(mceq_sib21.get_initial_state(), phi0_before), (
+        "initial_state mutated the instance phi0"
+    )
+    assert mceq_sib21._restore_initial_condition == restore_before
+
+    mceq_sib21.set_single_primary_particle(1e5, pdg_id=2212)
+    assert np.array_equal(col_p, mceq_sib21._phi0)
+    mceq_sib21.set_single_primary_particle(1e6, corsika_id=5626)
+    assert np.array_equal(col_fe, mceq_sib21._phi0)
+
+    # Composition: two components == append chain
+    col_both = mceq_sib21.initial_state(
+        [{"E": 1e5, "pdg_id": 2212}, {"E": 1e6, "corsika_id": 5626}]
+    )
+    assert np.array_equal(col_both, col_p + col_fe)
+
+    # Spectrum component
+    spec = np.ones(mceq_sib21.dim) * 1e-8
+    col_spec = mceq_sib21.initial_state({"spectrum": spec, "pdg_id": 2212})
+    mceq_sib21.set_initial_spectrum(spec, pdg_id=2212)
+    assert np.array_equal(col_spec, mceq_sib21._phi0)
+
+    # Error cases
+    with pytest.raises(ValueError, match="components must not be empty"):
+        mceq_sib21.initial_state([])
+    with pytest.raises(ValueError, match="unknown keys"):
+        mceq_sib21.initial_state({"E": 1e5, "pdg": 2212})
+    with pytest.raises(ValueError, match="each component needs"):
+        mceq_sib21.initial_state({"corsika_id": 5626})
+
+    # Restore the fixture's initial condition (H3a primary model)
+    mceq_sib21._phi0[:] = phi0_before
+    mceq_sib21._restore_initial_condition = restore_before
+
+
+def test_batch_result_get_solution_matches_serial(mceq_sib21):
+    """MCEqBatchResult.get_solution must agree with MCEqRun.get_solution
+    after an equivalent serial solve, for plain, tracking-prefixed and
+    magnified spectra, and for the zenith=/pixel= selectors.
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([15.0, 55.0])
+        res = mceq_sib21.solve_fullsky(zenith_grid)
+
+        for k, zen in enumerate(zenith_grid):
+            mceq_sib21.set_zenith_azimuth(float(zen))
+            mceq_sib21.solve()
+            for pname, mag in [
+                ("total_mu+", 0), ("conv_numu", 3), ("pr_antinumu", 0),
+            ]:
+                ref = mceq_sib21.get_solution(pname, mag=mag)
+                got_k = res.get_solution(pname, k=k, mag=mag)
+                got_zen = res.get_solution(pname, zenith=float(zen), mag=mag)
+                got_pix = res.get_solution(pname, pixel=(k, 0), mag=mag)
+                np.testing.assert_allclose(got_k, ref, rtol=1e-12, atol=0)
+                np.testing.assert_array_equal(got_k, got_zen)
+                np.testing.assert_array_equal(got_k, got_pix)
+
+        # integrate= and return_as= passthrough
+        mceq_sib21.set_zenith_azimuth(float(zenith_grid[-1]))
+        mceq_sib21.solve()
+        ref_int = mceq_sib21.get_solution("total_mu-", integrate=True)
+        np.testing.assert_allclose(
+            res.get_solution("total_mu-", k=1, integrate=True),
+            ref_int, rtol=1e-12, atol=0,
+        )
+
+        # Selector errors
+        with pytest.raises(ValueError, match="select one"):
+            res.get_solution("total_mu+")
+        with pytest.raises(ValueError, match="not in grid"):
+            res.get_solution("total_mu+", zenith=33.0)
+        with pytest.raises(IndexError):
+            res.get_solution("total_mu+", k=5)
+    finally:
+        config.kernel_config = saved_kernel
+        mceq_sib21.set_zenith_azimuth(0.0)
+
+
+def test_batch_result_skymap(mceq_sib21):
+    """skymap() at an exact grid energy equals the per-pixel extraction
+    at that bin, with the (n_zen, n_az) layout.
+    """
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([0.0, 45.0])
+        azimuth_grid = np.array([0.0, 180.0])
+        res = mceq_sib21.solve_fullsky(zenith_grid, azimuth_grid)
+
+        e_idx = 30
+        e_target = mceq_sib21.e_grid[e_idx]
+        smap = res.skymap("total_numu", e_target)
+        assert smap.shape == (2, 2)
+        for i_zen in range(2):
+            for i_az in range(2):
+                ref = res.get_solution(
+                    "total_numu", pixel=(i_zen, i_az),
+                    return_as="kinetic energy",
+                )[e_idx]
+                np.testing.assert_allclose(
+                    smap[i_zen, i_az], ref, rtol=1e-12, atol=0
+                )
+
+        # skymap on a non-fullsky result raises
+        res_batch = mceq_sib21.solve_batch(
+            conditions=[{"zenith_deg": 0.0}, {"zenith_deg": 45.0}]
+        )
+        with pytest.raises(ValueError, match="solve_fullsky results"):
+            res_batch.skymap("total_numu", e_target)
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_fullsky_2d_phi0_explicit_cutoff_warns(mceq_sib21):
+    """Explicitly requesting the geomagnetic cutoff together with a 2-D
+    phi0 must emit a warning (the cutoff is not applied on top)."""
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        zenith_grid = np.array([0.0, 30.0])
+        phi0_2d = np.broadcast_to(
+            mceq_sib21.get_initial_state()[:, None],
+            (mceq_sib21.dim_states, 2),
+        ).copy()
+        with pytest.warns(UserWarning, match="NOT applied"):
+            mceq_sib21.solve_fullsky(
+                zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True
+            )
+    finally:
+        config.kernel_config = saved_kernel
+
+
+def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
+    """The deprecated solve_multirhs wrapper returns the raw
+    (sol, grid_sol) pair of the equivalent solve_batch call."""
+    saved_kernel = config.kernel_config
+    try:
+        config.kernel_config = "numpy_etd2"
+        phi0_base = mceq_sib21.get_initial_state()
+        phi0_multi = np.stack([phi0_base, 0.5 * phi0_base], axis=1)
+
+        sol_a, grid_a = mceq_sib21.solve_multirhs(phi0_multi)
+        res = mceq_sib21.solve_batch(phi0_multi)
+        assert isinstance(sol_a, np.ndarray)
+        assert np.array_equal(sol_a, res.sol)
+
+        with pytest.raises(ValueError, match="must be 2-D"):
+            mceq_sib21.solve_multirhs(phi0_base)
+    finally:
+        config.kernel_config = saved_kernel

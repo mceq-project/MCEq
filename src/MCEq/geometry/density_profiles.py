@@ -39,6 +39,13 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
     #: not silently reset the allowed zenith-angle range.
     _preserve_max_theta: bool = False
 
+    #: If True, the density profile depends on the azimuth angle and
+    #: :meth:`set_theta` accepts an ``azimuth_deg`` argument (detector-
+    #: centred models that bind the shower impact point to a geographic
+    #: location).  Batched solvers use this flag to share integration
+    #: paths across azimuth pixels at fixed zenith when it is False.
+    depends_on_azimuth: bool = False
+
     def __init__(self, *args, **kwargs):
         from MCEq.geometry.geometry import EarthGeometry
 
@@ -714,6 +721,10 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
     #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
     _preserve_max_theta: bool = True
+
+    #: Density profile depends on azimuth (impact point bound to the
+    #: detector location); ``set_theta`` accepts ``azimuth_deg``.
+    depends_on_azimuth: bool = True
 
     def __init__(
         self,
