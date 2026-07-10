@@ -146,16 +146,26 @@ def etd2_nonuniform_path(
             # Cap at the model's max depth (numerical drift on the last step).
             X_max = min(X_max, float(max_X))
             if X_max > X_min:
-                # Concentrated log-sample for the saturated top, dense
-                # linear sample for the bulk. ~8e3 total points is enough
-                # to hit ~1e-6 rel error against quad on SIBYLL21 paths.
+                # Concentrated log-sample plus a dense linear sample for
+                # the bulk. The log part must span the WHOLE domain, not
+                # stop at X = 1: on near-horizontal trajectories
+                # (max_X ~ 3e4) the interval X = 1..50 g/cm^2 still sits
+                # at 80..35 km altitude where 1/rho varies over decades,
+                # and a linear bulk sample alone (max_X/4000 ~ 7 g/cm^2
+                # per point) under-resolves it. The mis-integrated
+                # per-step means (x0.4..x1.6) imprinted a coherent
+                # 10-25% bump-dip on ALL species at X ~ 5-40 g/cm^2 for
+                # theta >~ 85 deg (found via nu3d q-table wiggles at
+                # ~40 km altitude, 2026-07-10). Log sampling costs
+                # nothing in the bulk, where 1/rho is flat per log-X;
+                # the linear sample is kept so vertical-path accuracy
+                # is unchanged.
                 X_log_lo = max(1e-7, X_min if X_min > 0 else 1e-7)
-                X_log_hi = min(1.0, X_max)
-                if X_log_hi > X_log_lo:
-                    X_top = np.geomspace(X_log_lo, X_log_hi, 4001)
+                if X_max > X_log_lo:
+                    X_top = np.geomspace(X_log_lo, X_max, 6001)
                 else:
                     X_top = np.empty(0)
-                X_bulk = np.linspace(max(X_log_hi, X_min), X_max, 4001)
+                X_bulk = np.linspace(max(X_log_lo, X_min), X_max, 4001)
                 sample_X = np.unique(np.r_[X_min, X_top, X_bulk])
                 sample_X.sort()
                 sample_ri = np.asarray(ri(sample_X), dtype=np.float64)
