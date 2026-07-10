@@ -367,11 +367,20 @@ class MCEqParticle:
         particle is stable), where the air density :math:`\rho` is
         factorized out.
 
+        The physical decay rate per unit path length is
+        :math:`1/\lambda_{dec} = m/(c\tau\,p)`, with :math:`p` the lab
+        momentum (:math:`p = \beta\gamma m c`). Using the total energy
+        :math:`E = E_{kin} + m` in place of :math:`p` drops the factor
+        :math:`1/\beta` and understates decay of slow (:math:`\beta<1`)
+        particles; the momentum form is exact at all energies.
+
         Returns:
           (float): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm
         """
         try:
-            return self.mass / self.ctau / (self._energy_grid.c + self.mass)
+            e_tot = self._energy_grid.c + self.mass
+            p_lab = np.sqrt(e_tot**2 - self.mass**2)
+            return self.mass / self.ctau / p_lab
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.d) * np.inf
 
