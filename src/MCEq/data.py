@@ -197,7 +197,13 @@ class HDF5Backend:
     and it will change infrequently.
     """
 
-    def __init__(self, medium=config.interaction_medium):
+    def __init__(
+        self,
+        medium=config.interaction_medium,
+        low_energy_model=None,
+        he_le_transition=80.0,
+        he_le_trwidth=0.3,
+    ):
         info(2, "Opening HDF5 file", config.mceq_db_fname)
         self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
@@ -244,6 +250,17 @@ class HDF5Backend:
             self.dim_full = int(ca["e_dim"])
 
         self.medium = medium
+        self.low_energy_model = (
+            normalize_hadronic_model_name(low_energy_model)
+            if low_energy_model is not None
+            else None
+        )
+        self.he_le_transition = float(he_le_transition)
+        self.he_le_trwidth = float(he_le_trwidth)
+        if self.he_le_transition <= 0.0:
+            raise ValueError("he_le_transition must be positive")
+        if self.he_le_trwidth < 0.0:
+            raise ValueError("he_le_trwidth must be non-negative")
 
     @property
     def energy_grid(self):
@@ -381,7 +398,69 @@ class HDF5Backend:
             info(0, "Choose from:\n", "\n".join(available_models))
             raise Exception("Unknown selections.")
 
+    def _he_le_weight(self):
+        """High-energy model weight on the active kinetic-energy grid."""
+        energy = np.asarray(self._energy_grid.c, dtype=float)
+        if self.he_le_trwidth == 0.0:
+            return (energy >= self.he_le_transition).astype(config.floatlen)
+        # Define trwidth as the full 10--90% width in log10 energy.
+        arg = (
+            2.0
+            * np.log(9.0)
+            * np.log10(energy / self.he_le_transition)
+            / self.he_le_trwidth
+        )
+        arg = np.clip(arg, -700.0, 700.0)
+        return np.asarray(1.0 / (1.0 + np.exp(-arg)), dtype=config.floatlen)
+
+    def _blend_interaction_dbs(self, he_index, le_index, he_name, le_name):
+        """Blend yield matrices column-wise, preserving historical semantics.
+
+        The HE model defines the channel set. Channels absent from the LE
+        model remain unchanged, matching the former compiled low-energy
+        extension. Model-specific projectile equivalences have already been
+        applied by ``_gen_db_dictionary`` before this step.
+        """
+        w_he = self._he_le_weight()[np.newaxis, :]
+        w_le = 1.0 - w_he
+        he_yields = he_index["index_d"]
+        le_yields = le_index["index_d"]
+        blended = {}
+        for channel, he_matrix in he_yields.items():
+            if channel in le_yields:
+                blended[channel] = he_matrix * w_he + le_yields[channel] * w_le
+            else:
+                blended[channel] = he_matrix
+
+        relations = defaultdict(list)
+        particles = set()
+        for parent, child in blended:
+            relations[parent].append(child)
+            particles.add(parent)
+            particles.add(child)
+        return {
+            "parents": sorted(relations),
+            "particles": sorted(particles),
+            "relations": dict(relations),
+            "index_d": blended,
+            "description": (
+                f"Runtime HE/LE blend: {he_name} + {le_name}; "
+                f"transition={self.he_le_transition:g} GeV, "
+                f"10-90 width={self.he_le_trwidth:g} decades"
+            ),
+        }
+
     def interaction_db(self, interaction_model_name):
+        mname = normalize_hadronic_model_name(interaction_model_name)
+        if self.low_energy_model is None or mname == self.low_energy_model:
+            return self._interaction_db_single(mname)
+        he_index = self._interaction_db_single(mname)
+        le_index = self._interaction_db_single(self.low_energy_model)
+        return self._blend_interaction_dbs(
+            he_index, le_index, mname, self.low_energy_model
+        )
+
+    def _interaction_db_single(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, f"Generating interaction db. mname={mname}")
         with h5py.File(self.had_fname, "r") as mceq_db:
@@ -546,16 +625,78 @@ class HDF5Backend:
             dec_index["particles"] = sorted(list(set(dec_index["particles"])))
         return dec_index
 
+    def _mapped_cross_section(self, index_d, projectile, model_name):
+        """Return a model cross section using the established equivalences."""
+        candidates = [projectile, abs(projectile)]
+        model_eqv = None
+        for family, mapping in equivalences.items():
+            if family in model_name:
+                model_eqv = mapping
+                break
+        if model_eqv is not None:
+            mapped = model_eqv.get(projectile, model_eqv.get(abs(projectile)))
+            if mapped is not None:
+                candidates.extend([mapped, abs(mapped)])
+
+        apid = abs(projectile)
+        if apid in (130, 310, 311) or 300 < apid < 1000:
+            candidates.append(321)
+        elif 100 < apid < 300:
+            candidates.append(211)
+        elif 1000 < apid < 5000:
+            candidates.append(2212)
+
+        for candidate in candidates:
+            if candidate in index_d:
+                return index_d[candidate]
+        return None
+
     def cs_db(self, interaction_model_name):
+        mname = normalize_hadronic_model_name(interaction_model_name)
+        if self.low_energy_model is None or mname == self.low_energy_model:
+            return self._cs_db_single(mname)
+
+        he_index = self._cs_db_single(mname)
+        le_index = self._cs_db_single(self.low_energy_model)
+        w_he = self._he_le_weight()
+        w_le = 1.0 - w_he
+        blended = {}
+        for projectile, he_cs in he_index["index_d"].items():
+            le_cs = self._mapped_cross_section(
+                le_index["index_d"], projectile, self.low_energy_model
+            )
+            # Historical behaviour: an HE-only projectile remains unchanged.
+            blended[projectile] = (
+                he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
+            )
+        return {"parents": list(he_index["parents"]), "index_d": blended}
+
+    def _cs_db_single(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
         medium = self.medium
         if "SIBYLL23C" in mname or "SIBYLL23DSTAR" in mname:
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
+        # Modern databases carry native FLUKA cross sections. Preserve the
+        # historical DPMJET fallback only for older files that do not.
         if "FLUKA" in mname:
-            info(5, f"{mname} cross sections replaced by DPMIII191.")
-            mname = "DPMJETIII191"
+            with h5py.File(self.had_fname, "r") as mceq_db:
+                cs_root = mceq_db["cross_sections"]
+                direct_medium = medium if medium in cs_root else None
+                direct = (
+                    direct_medium is not None and mname in cs_root[direct_medium]
+                )
+                if not direct and config.fallback_to_air_cs and "air" in cs_root:
+                    if mname in cs_root["air"]:
+                        medium = "air"
+                        direct = True
+                if not direct:
+                    for fallback in ("DPMJETIII191", "DPMJETIII193"):
+                        if direct_medium is not None and fallback in cs_root[direct_medium]:
+                            info(5, f"{mname} cross sections replaced by {fallback}.")
+                            mname = fallback
+                            break
 
         if config.adv_set["forced_int_cs"] is not None:
             mname = config.adv_set["forced_int_cs"]

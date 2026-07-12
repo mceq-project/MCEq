@@ -347,7 +347,20 @@ class MCEqRun:
             )
             config.muon_helicity_dependence = False
         self.medium = kwargs.pop("medium", config.interaction_medium)
-        self._mceq_db = MCEq.data.HDF5Backend(medium=self.medium)
+        le_config = config.low_energy_extension
+        low_energy_model = kwargs.pop("low_energy_model", le_config.get("model"))
+        he_le_transition = kwargs.pop(
+            "he_le_transition", le_config.get("he_le_transition", 80.0)
+        )
+        he_le_trwidth = kwargs.pop(
+            "he_le_trwidth", le_config.get("he_le_trwidth", 0.3)
+        )
+        self._mceq_db = MCEq.data.HDF5Backend(
+            medium=self.medium,
+            low_energy_model=low_energy_model,
+            he_le_transition=he_le_transition,
+            he_le_trwidth=he_le_trwidth,
+        )
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
 

@@ -348,11 +348,14 @@ muon_helicity_dependence = True
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
 
-#: This is not used in the code as before, instead the low energy
-#: extension is compiled into the HDF backend files.
+#: Optional run-time low-energy model blending in the HDF5 backend.  When
+#: ``model`` is None (default), the selected interaction model is loaded
+#: unchanged.  ``he_le_trwidth`` is the 10--90% sigmoid width in log10(E/GeV)
+#: decades; zero selects a hard switch at ``he_le_transition``.
 low_energy_extension = {
+    "model": None,
     "he_le_transition": 80,  # GeV
-    "nbins_interp": 3,
+    "he_le_trwidth": 0.3,  # decades (10--90% width)
     "use_unknown_cs": True,
 }
 
