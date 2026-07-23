@@ -422,7 +422,8 @@ def test_base_class_impact_properties_return_none():
 def test_icecube_latitude_wrapper():
     """MSIS00IceCubeCentered._latitude backward-compat wrapper returns correct values."""
     atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
-    r = atm.geom.r_E / 1e2
+    # Detector is 1948 m below the glacier top at 2835 m elevation
+    r = atm.geom.r_E / 1e2 + 2835.0
     d = 1948.0
     for theta_deg in [0.0, 30.0, 60.0, 90.0]:
         lat_wrapper = atm._latitude(theta_deg)
@@ -439,3 +440,77 @@ def test_icecube_latitude_wrapper():
         assert np.isclose(lat_wrapper, lat_ref, atol=1e-6), (
             f"theta={theta_deg}: _latitude={lat_wrapper:.6f}, ref={lat_ref:.6f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Detector-depth zenith correction and far-side geometry
+# ---------------------------------------------------------------------------
+
+
+def test_local_zenith_correction():
+    """The column angle is the local zenith at the surface crossing:
+    sin(theta_s) = (r_det/r_surf) sin(theta_det)."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    r_det = atm.geom.r_E + (2835.0 - 1948.0) * 1e2
+
+    # Negligible at small angles
+    atm.set_theta(30.0)
+    assert np.isclose(np.rad2deg(atm.thrad), 30.0, atol=0.02)
+
+    # Exact impact-parameter formula at the horizon: ~1.4 deg correction
+    atm.set_theta(90.0)
+    expected = np.rad2deg(np.arcsin(r_det / atm.geom.r_obs))
+    assert np.isclose(np.rad2deg(atm.thrad), expected, atol=1e-9)
+    assert np.rad2deg(atm.thrad) < 88.7  # ~88.58 for 1948 m below the surface
+
+
+def test_icecube_observation_level_follows_surface():
+    """Downgoing/grazing columns end at the glacier top (2835 m), upgoing
+    columns at sea level (far side is the ocean)."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    atm.set_theta(0.0)
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+    # Vertical column above 2835 m is much thinner than to sea level
+    assert atm.max_X < 800.0
+
+    atm.set_theta(180.0)
+    assert np.isclose(atm.geom.h_obs, 0.0)
+    assert atm.max_X > 950.0  # full sea-level column on the far side
+
+    # switching back restores the surface level
+    atm.set_theta(45.0)
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+
+
+def test_grazing_window_is_near_side():
+    """Angles in (90, 90 + dip] exit through the near-side surface and are
+    treated as downgoing grazing columns, not far-side upgoing ones."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    atm.set_theta(91.0, azimuth_deg=0.0)
+    # Impact point is a few hundred km from the pole, not on the far side
+    assert atm.current_impact_latitude < -85.0
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+    assert np.rad2deg(atm.thrad) < 90.0
+
+
+def test_upgoing_impact_point_is_far_side():
+    """For upgoing angles the MSIS anchor is the far-side surface crossing,
+    where the shower actually developed."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+
+    atm.set_theta(180.0, azimuth_deg=0.0)
+    assert atm.current_impact_latitude > 89.9  # North Pole, not South
+
+    atm.set_theta(120.0, azimuth_deg=0.0)
+    # Chord from the South Pole at 120 deg exits near latitude -30
+    assert np.isclose(atm.current_impact_latitude, -30.0, atol=0.1)
+    # Local zenith at the far-side crossing is ~(180 - 120) deg
+    assert np.isclose(np.rad2deg(atm.thrad), 60.0, atol=0.1)
+
+
+def test_arca_site_coordinates():
+    """ARCA (KM3NeT-It) is offshore Capo Passero at 36deg16'N 16deg06'E."""
+    atm = dp.MSIS00KM3NeTCentered("ARCA", season="January")
+    lat, lon = atm._impact_point(0.0, 0.0)
+    assert np.isclose(lat, 36.267, atol=1e-3)
+    assert np.isclose(lon, 16.100, atol=1e-3)
