@@ -20,3 +20,4 @@ MCEq/data/CarbonTargetFits_inclna49K_pp2pC4.npy
 docs/examples/H3a_theta_60_sib23c.txt
 .venv_*
 .claude/
+src/MCEq/data/gtracr_cutoffs/
