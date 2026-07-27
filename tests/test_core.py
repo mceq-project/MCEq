@@ -59,11 +59,13 @@ def test_integration_path_grid_idcs(mceq_sib21):
 
 # Reference values recalibrated 2026-07 for the v2 release defaults
 # (loss_stencil_method="expfit_low_upwind2", average_loss_operator=False,
-# m_u mass-unit fix in inverse_interaction_length).
+# generic_losses_all_charged=True, m_u mass-unit fix in
+# inverse_interaction_length). Enabling the charged-hadron stopping power
+# lowers all muon/neutrino yields by <0.1% here.
 testdata_theta = [
-    [0.0, 8.842033420367954e-08],
-    [30.0, 9.921785885869646e-08],
-    [60.0, 1.5081234897714264e-07],
+    [0.0, 8.836533799620236e-08],
+    [30.0, 9.915573533441199e-08],
+    [60.0, 1.50709235583021e-07],
 ]
 
 ids_theta = [f"{th[0]}" for th in testdata_theta]
@@ -139,10 +141,13 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # Recalibrated 2026-07 for the v2 release defaults (see testdata_theta note).
 # NB the small negative nnue at 1e3 is a pre-existing low-energy boundary
 # artifact of the e+- continuous-loss operator, unchanged by the upwind rows.
+# The 1e3 primary sits closest to the grid floor and so is the most sensitive
+# to generic_losses_all_charged=True (nmu -0.6%, nnumu -2.6%); the 1e4/1e5
+# primaries move by <0.06%.
 testdata_primary = [
-    [1e3, 1.2335658875616528e-05, 2.4099047525273686e-07, -4.401346024287965e-08],
-    [1e4, 0.09925131586127674, 0.024608917353680856, 0.0014611260410691052],
-    [1e5, 0.9116738781652185, 0.2833332859288423, 0.020286093102444572],
+    [1e3, 1.2263006596230545e-05, 2.3468347087477152e-07, -4.393840454489053e-08],
+    [1e4, 0.09919964595464914, 0.024600024310737535, 0.001460721937230645],
+    [1e5, 0.9112967205413417, 0.28325496449179144, 0.020282423131684792],
 ]
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 

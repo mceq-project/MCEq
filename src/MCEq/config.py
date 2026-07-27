@@ -258,8 +258,17 @@ enable_default_tracking = True
 #: Ionization and radiative losses according to stopping power tables (PDG)
 enable_energy_loss = True
 
-#: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
-generic_losses_all_charged = False
+#: Apply stopping power to all charged hadrons (the muon dEdX is used and is
+#: ~ok). Default True: without it sub-4-GeV protons and charged hadrons never
+#: range out (~2 MeV/g/cm^2 x 2000 g/cm^2 ~ 4 GeV of ionization loss across a
+#: slant column) and pile up unphysically at the low-energy end of
+#: deep-atmosphere spectra. Requires the monotone low-energy boundary layer of
+#: ``loss_stencil_method = "expfit_low_upwind2"`` (the default): with the pure
+#: ``"expfit"`` operator the extra hadronic loss rows excite the low-energy
+#: boundary cliff and deep-slant solves diverge outright. Set False to
+#: reproduce the v1.x behaviour where only muons (and e+-, see
+#: ``enable_em_ion``) carried continuous losses.
+generic_losses_all_charged = True
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
