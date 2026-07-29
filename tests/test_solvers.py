@@ -770,67 +770,106 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
     return phi
 
 
-def test_solv_numpy_etd2_second_order_convergence(mceq_sib21):
-    """ETD2 should exhibit observed convergence order ~2 under h-refinement.
+def test_solv_numpy_etd2_second_order_convergence():
+    """ETD2 must exhibit observed convergence order ~2 under h-refinement.
 
-    Build the reference via ETD2 at high oversample (rather than oversampled
-    Euler). Using the same scheme for truth keeps the truth's residual
-    error a factor of ~16 below the test points (since ETD2 is second-order
-    and we refine by 8x), so the measured ratio reflects ETD2's own
-    asymptotic constant rather than the truth's first-order leftover.
+    The order is measured on the production matrices but with a *uniform*
+    step size and a *frozen* rho_inv, i.e. on the autonomous problem the
+    ETD2RK order is defined for.  This matters: ``_etd2_oversampled``
+    refines within each native step while holding that step's dX and
+    rho_inv piecewise-constant, so the coefficient jumps between native
+    steps reduce the observed order to ~1 no matter what the scheme's
+    formal order is.  Measured on this fixture (2026-07-29):
 
-    A floor of 1.8 catches regressions while tolerating constant noise in
-    the asymptotic regime.
+        constant rho_inv, uniform dX  -> 1.87 .. 1.96   (this test)
+        constant rho_inv, varying dX  -> 1.07 .. 1.08
+        varying rho_inv, uniform dX   -> 1.05 .. 1.10
+        production path (both vary)   -> 0.89 .. 1.02
+
+    On the production path dX spans 0.01–20 g/cm^2 and rho_inv spans a
+    factor 3.8e5, so an aggregate error ratio there is not an order
+    measurement at all — which is why this test used to run on it and
+    assert nothing meaningful (see the stability guard below).
+
+    e+/e- are disabled for the same reason as
+    :func:`test_solv_numpy_etd2_stable_at_high_zenith`: their
+    semi-Lagrangian rows have no diagonal damping, so the coarsest solve
+    diverges and the error ratio becomes meaningless.  That divergence is
+    round-off sensitive, and it is exactly how this test passed for the
+    wrong reason before: with e+/e- enabled the oversample=1 solve blew up
+    to err ~1e8 on most platforms, making log2(err_h/err_h2) ~33 and the
+    ``>= 1.8`` floor vacuous, while on macos-15-intel/3.14 the same solve
+    stayed finite and exposed the true ~1.04.  The explicit stability
+    bound below now fails loudly instead of reading a blowup as high order.
     """
-    mceq_sib21.set_theta_deg(0.0)
-
+    saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_kernel = config.kernel_config
-    config.kernel_config = "numpy_etd2"
+    saved_db = config.mceq_db_fname
+    config.adv_set["disabled_particles"] = [11, -11]
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     try:
-        mceq_sib21.integration_path = None
-        mceq_sib21._calculate_integration_path(int_grid=None, grid_var="X")
-        _, dX_full, rho_inv_full, _ = mceq_sib21.integration_path
+        import crflux.models as pm
+
+        from MCEq.core import MCEqRun
+
+        mceq = MCEqRun(
+            interaction_model="SIBYLL21",
+            theta_deg=0.0,
+            primary_model=(pm.HillasGaisser2012, "H3a"),
+        )
+
+        config.kernel_config = "numpy_etd2"
+        mceq.integration_path = None
+        mceq._calculate_integration_path(int_grid=None, grid_var="X")
+        _, dX_path, rho_inv_path, _ = mceq.integration_path
+
+        int_m = mceq.int_m.tocsr()
+        dec_m = mceq.dec_m.tocsr()
+        phi0 = mceq._phi0.copy()
+
+        # Autonomous problem: uniform step, single rho_inv from mid-path.
+        dX = np.full_like(dX_path, dX_path.mean())
+        rho_inv = np.full_like(rho_inv_path, rho_inv_path[len(rho_inv_path) // 2])
+
+        # Reference at oversample=32 — a 8x refinement beyond the coarsest
+        # test point, so its own O(h^2) residual sits ~64x below it.
+        phi_truth = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=32)
+        norm_truth = np.linalg.norm(phi_truth)
+        assert norm_truth > 0
+
+        errs = {}
+        for os_ in (1, 2, 4):
+            phi = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=os_)
+            errs[os_] = np.linalg.norm(phi - phi_truth) / norm_truth
+
+        # Stability guard: the coarsest solve must be a small perturbation of
+        # the reference, not a divergence.  Without this a blowup inflates
+        # the error ratio and masquerades as high order.
+        assert np.isfinite(errs[1]) and errs[1] < 1e-1, (
+            f"ETD2 at oversample=1 is not in a perturbative regime "
+            f"(err={errs[1]:.3e}) — order ratios below are meaningless"
+        )
+        assert errs[1] > 1e-10, (
+            f"ETD2 error {errs[1]:.3e} too small to measure order — "
+            "test is in floating-point-noise regime"
+        )
+        assert errs[4] < errs[2] < errs[1], (
+            "ETD2 error did not decrease monotonically under h-refinement: "
+            f"{errs[1]:.3e} -> {errs[2]:.3e} -> {errs[4]:.3e}"
+        )
+
+        # Assert on the most asymptotic pair available (2->4 measures 1.91;
+        # 1->2 sits at 1.87, too close to the floor to be robust across
+        # BLAS implementations).
+        order = np.log2(errs[2] / errs[4])
+        assert order >= 1.8, (
+            f"ETD2 observed order {order:.2f} below 1.8 "
+            f"(err(h/2)={errs[2]:.3e}, err(h/4)={errs[4]:.3e})"
+        )
     finally:
+        config.adv_set["disabled_particles"] = saved_disabled
         config.kernel_config = saved_kernel
-
-    # Use the full ETD2 path. It is much coarser than the old Euler native
-    # grid, but the convergence ratio measurement only depends on whether
-    # the cumulative dynamics are large enough to lift `phi_h` above the
-    # round-off floor — which the assertion below guards.
-    dX = dX_full
-    rho_inv = rho_inv_full
-
-    int_m = mceq_sib21.int_m.tocsr()
-    dec_m = mceq_sib21.dec_m.tocsr()
-    phi0 = mceq_sib21._phi0.copy()
-
-    # ETD2 truth at oversample=16. Using ETD2 (rather than Euler) for the
-    # reference means the truth's own residual is O((h/16)^2) — far below
-    # ETD2 at os=1 or os=2, so it doesn't pollute the order estimate.
-    phi_truth = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=16)
-    norm_truth = np.linalg.norm(phi_truth)
-    assert norm_truth > 0
-
-    phi_h = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=1)
-    phi_h2 = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=2)
-
-    err_h = np.linalg.norm(phi_h - phi_truth) / norm_truth
-    err_h2 = np.linalg.norm(phi_h2 - phi_truth) / norm_truth
-
-    assert err_h > 1e-10, (
-        f"ETD2 native-grid error {err_h:.3e} too small to measure order — "
-        "test is in floating-point-noise regime"
-    )
-    assert err_h2 < err_h, (
-        f"ETD2 error did not decrease under h-refinement: "
-        f"err(h)={err_h:.3e} err(h/2)={err_h2:.3e}"
-    )
-
-    order = np.log2(err_h / err_h2)
-    assert order >= 1.8, (
-        f"ETD2 observed order {order:.2f} below 1.8 "
-        f"(err(h)={err_h:.3e}, err(h/2)={err_h2:.3e})"
-    )
+        config.mceq_db_fname = saved_db
 
 
 # ---------------------------------------------------------------------------
