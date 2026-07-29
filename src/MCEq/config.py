@@ -73,7 +73,7 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6391.0e3  # Earth radius in m
+r_E = 6371.315e3  # Earth radius in m (as in CORSIKA; was 6391 km < v2.0, a typo)
 h_obs = 0.0  # observation level in m
 h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2

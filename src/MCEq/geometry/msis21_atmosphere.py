@@ -33,18 +33,15 @@ from MCEq.geometry.atmosphere_parameters import (
     LOCATIONS,
     MONTH_TO_DAY_OF_YEAR,
 )
-from MCEq.geometry.density_profiles import EarthsAtmosphere
+from MCEq.geometry.density_profiles import _KM3NET_DETECTORS, EarthsAtmosphere
 from MCEq.misc import info
 
 # Cached top-of-atmosphere constant in km (h_atm in geometry.py is 112.8 km).
 # NRLMSIS 2.1 is valid 0–2000 km; we never query above ~113 km.
 
-_KM3NET_DETECTORS = {
-    # ORCA: offshore Toulon (France)
-    "ORCA": {"longitude": 6.033, "latitude": 42.803, "depth_m": 2450.0},
-    # ARCA: offshore Capo Passero (Sicily, Italy)
-    "ARCA": {"longitude": 15.4, "latitude": 36.264, "depth_m": 3500.0},
-}
+# Site coordinates are shared with the MSIS00 hierarchy via
+# ``_KM3NET_DETECTORS`` above — do not duplicate them here, the two
+# families must always describe the same detectors.
 
 
 class MSIS21Atmosphere(EarthsAtmosphere):
@@ -283,12 +280,16 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
     Args:
         detector_coord (tuple): ``(longitude, latitude)`` of the detector
             in degrees.
-        depth_m (float): Detector depth below the surface in metres.
+        depth_m (float): Detector depth below the local surface in metres.
         season (str, optional): Month name.
         doy (int, optional): Day of year (1–365).
         n_azimuth (int): Azimuth samples for averaging mode (default 36).
         max_theta (float): Max zenith in degrees (90 = downgoing only,
-            180 = also upgoing).
+            180 = also grazing and upgoing).
+        surface_elevation_m (float): Elevation of the local surface above
+            sea level in metres (default 0).  See
+            :class:`MCEq.geometry.density_profiles.MSIS00LocationCentered`
+            for the depth/elevation and local-zenith conventions.
     """
 
     _preserve_max_theta: bool = True
@@ -305,6 +306,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         doy=None,
         n_azimuth=36,
         max_theta=90.0,
+        surface_elevation_m=0.0,
     ):
         try:
             from nrlmsis import NRLMSIS21
@@ -338,6 +340,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         self._detector_longitude = longitude
         self._detector_latitude = latitude
         self._detector_depth_m = depth_m
+        self._surface_elevation_m = surface_elevation_m
         self._n_azimuth = n_azimuth
         self._azimuth_averaging = False
         self._effective_theta_deg = 0.0
@@ -348,6 +351,8 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         self.theta_deg = None
 
         EarthsAtmosphere.__init__(self)
+        if surface_elevation_m != 0.0:
+            self.geom.set_h_obs(surface_elevation_m * 1e2)
         self.max_theta = max_theta
         self.location = f"({longitude:.3f}°E, {latitude:.3f}°N)"
         self.season = season
@@ -361,11 +366,12 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
         Uses 3-D ECEF geometry, transparent-Earth convention for upgoing
         zeniths (passes the antipodal-hemisphere crossing for theta > 90°).
-        Azimuth: 0° = North, 90° = East.
+        Azimuth: 0° = North, 90° = East.  The surface sphere is taken at
+        the current observation level (``geom.r_obs``), so the detector may
+        sit below or above it.
         """
-        r = self.geom.r_E / 1e2  # cm → m
-        d = self._detector_depth_m
-        r_det = r - d
+        r = self.geom.r_obs / 1e2  # cm → m
+        r_det = self.geom.r_E / 1e2 + self._surface_elevation_m - self._detector_depth_m
 
         theta = np.deg2rad(zenith_deg)
         alpha = np.deg2rad(azimuth_deg)
@@ -389,8 +395,11 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         ])
         d_ECEF = T @ d_ENU
 
+        # Larger root = surface crossing on the source side; valid for
+        # detectors below (r_det < r) and above (r_det > r) the sphere and
+        # for the full zenith range 0°–180°.
         A = np.dot(d_ECEF, P_det)
-        x = -A + np.sqrt(A * A + d * (2.0 * r - d))   # positive root
+        x = -A + np.sqrt(A * A + (r**2 - r_det**2))
         P_imp = P_det + x * d_ECEF
         lat_imp = np.rad2deg(np.arcsin(np.clip(P_imp[2] / r, -1.0, 1.0)))
         lon_imp = np.rad2deg(np.arctan2(P_imp[1], P_imp[0]))
@@ -498,15 +507,36 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
     def set_theta(self, theta_deg, azimuth_deg=None):
         """Configure zenith and optional azimuth; rebuild density spline.
 
-        Mirrors :meth:`MSIS00LocationCentered.set_theta` exactly — see
-        that method for the transparent-Earth upgoing convention.
+        Mirrors :meth:`MSIS00LocationCentered.set_theta` exactly — see that
+        method for the detector-frame zenith, local-zenith correction,
+        grazing window and far-side conventions.
         """
         if theta_deg < 0.0 or theta_deg > self.max_theta:
             raise ValueError(
                 f"Zenith angle {theta_deg} not in [0, {self.max_theta}]."
             )
 
-        effective_theta = theta_deg if theta_deg <= 90.0 else 180.0 - theta_deg
+        # Below-horizon dip of the local surface seen from the detector:
+        # rays with theta <= 90 + dip still exit through the near-side
+        # surface (grazing); larger angles traverse the Earth (upgoing).
+        r_E = self.geom.r_E  # cm
+        elev_cm = self._surface_elevation_m * 1e2
+        r_det = r_E + elev_cm - self._detector_depth_m * 1e2
+        dip_deg = np.rad2deg(np.arccos(min(r_det / (r_E + elev_cm), 1.0)))
+        far_side = theta_deg > 90.0 + dip_deg
+
+        # Near side: column ends at the local surface elevation.
+        # Far side: column ends at sea level (generic far-side surface).
+        h_obs_cm = 0.0 if far_side else elev_cm
+        if self.geom.h_obs != h_obs_cm:
+            self.geom.set_h_obs(h_obs_cm)
+
+        # Local zenith angle of the shower axis at the surface crossing
+        # (the impact parameter r*sin(theta) is conserved along the axis).
+        sin_loc = np.clip(
+            r_det / self.geom.r_obs * np.sin(np.deg2rad(theta_deg)), 0.0, 1.0
+        )
+        effective_theta = np.rad2deg(np.arcsin(sin_loc))
 
         if azimuth_deg is not None:
             lat, lon = self._impact_point(theta_deg, azimuth_deg)
@@ -565,6 +595,7 @@ class MSIS21IceCubeCentered(MSIS21LocationCentered):
             depth_m=1948.0,
             season=season,
             max_theta=180.0,
+            surface_elevation_m=2835.0,
         )
 
     def _latitude(self, det_zenith_deg):
