@@ -1915,10 +1915,12 @@ def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
             mceq_sib21.set_zenith_azimuth(60.0)
             mceq_sib21.solve()
             # rtol allows for BSR-vs-CSR partial-sum reordering between
-            # the single-RHS solve() and the carousel SpMM (~1e-12 on
-            # the e± blowup rows this fixture keeps enabled).
+            # the single-RHS solve() and the carousel SpMM. Typically
+            # ~1e-12 on the e± blowup rows this fixture keeps enabled,
+            # but the reordering is BLAS-dependent: macOS-Intel CI hit
+            # 1.7e-10 on a single row, so keep two decades of headroom.
             np.testing.assert_allclose(
-                res.sol[:, k], mceq_sib21._solution, rtol=1e-10, atol=0
+                res.sol[:, k], mceq_sib21._solution, rtol=1e-8, atol=0
             )
         mceq_sib21._phi0[:] = saved_phi0
     finally:
