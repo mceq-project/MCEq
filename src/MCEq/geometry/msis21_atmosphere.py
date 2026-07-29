@@ -60,9 +60,13 @@ class MSIS21Atmosphere(EarthsAtmosphere):
             :data:`MONTH_TO_DAY_OF_YEAR`.
         doy (int, optional): Day of year [1, 365].  Takes precedence over
             ``season`` if both are supplied.
+        use_loc_altitudes (bool): Use the named location's surface altitude
+            from :data:`LOCATIONS` as the observation level.  Mirrors the
+            argument of :class:`MSIS00Atmosphere` -- the two families are
+            separate class trees but expose the same interface.
     """
 
-    def __init__(self, location, season=None, doy=None):
+    def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
         try:
             from nrlmsis import NRLMSIS21
         except ImportError as e:
@@ -73,23 +77,29 @@ class MSIS21Atmosphere(EarthsAtmosphere):
             ) from e
 
         self._model = NRLMSIS21()
-        self.init_parameters(location, season, doy)
+        # Base class first: it creates self.geom, which init_parameters needs
+        # when ``use_loc_altitudes`` moves the observation level.
         EarthsAtmosphere.__init__(self)
+        self.init_parameters(location, season, doy, use_loc_altitudes)
 
     # ------------------------------------------------------------------
     # Parameter management
     # ------------------------------------------------------------------
 
-    def init_parameters(self, location, season, doy):
+    def init_parameters(self, location, season, doy, use_loc_altitudes=False):
         """Set location, day-of-year, and default geophysical parameters."""
         if location not in LOCATIONS:
             raise ValueError(
                 f"Location '{location}' not in MCEq's LOCATIONS table. "
                 f"Available: {list(LOCATIONS.keys())}"
             )
-        lon, lat, _alt_cm = LOCATIONS[location]
+        lon, lat, alt_cm = LOCATIONS[location]
         self._lon = float(lon)
         self._lat = float(lat)
+
+        if use_loc_altitudes:
+            info(0, "Using loc altitude", alt_cm, "cm")
+            self.geom.set_h_obs(alt_cm)
 
         if doy is not None:
             self._doy = int(doy)

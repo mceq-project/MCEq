@@ -548,9 +548,12 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         self._msis = cNRLMSISE00()
 
-        self.init_parameters(location, season, doy, use_loc_altitudes)
-
+        # Base class first: it creates self.geom, which init_parameters needs
+        # when ``use_loc_altitudes`` moves the observation level.  Calling it
+        # afterwards made ``use_loc_altitudes=True`` raise AttributeError.
         EarthsAtmosphere.__init__(self)
+
+        self.init_parameters(location, season, doy, use_loc_altitudes)
 
     def init_parameters(self, location, season, doy, use_loc_altitudes):
         """Sets location and season in :class:`NRLMSISE-00`.
@@ -573,7 +576,9 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         self.theta_deg = None
         if use_loc_altitudes:
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
-            self.geom.h_obs = self._msis.alt_surface
+            # set_h_obs, not a bare attribute write: the geometry caches
+            # r_obs and the maximal zenith angle off the observation level.
+            self.geom.set_h_obs(self._msis.alt_surface)
 
     def _clear_cache(self):
         """Clears the density model cache so that density profiles can be recalculated

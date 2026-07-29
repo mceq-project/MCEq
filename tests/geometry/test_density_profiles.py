@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 import pytest
 
@@ -519,19 +521,68 @@ def test_arca_site_coordinates():
 # ---------------------------------------------------------------------------
 # MSIS21 <-> MSIS00 geometry parity
 #
-# MSIS21LocationCentered hand-copies the MSIS00LocationCentered geometry
-# (impact-point projection, local-zenith correction, grazing window,
-# far-side anchor, site coordinates).  Two copies of the same maths can
-# drift silently -- git cannot report a conflict across two files, and that
-# is exactly what happened once: the PR #164 geometry review updated
-# MSIS00 while the MSIS21 copy kept the pre-review version.  These tests
-# assert the two families agree exactly, so any future fix applied to one
-# and not the other fails here.
+# MSIS21 is deliberately a **separate class tree** from MSIS00 -- not a
+# subclass hierarchy and not a shared implementation -- but it must expose
+# the **same interface** and, where the maths is the same, produce the same
+# numbers.  That design decision is what these tests enforce.
 #
-# Requires the optional 'nrlmsis' package (MSIS21 is opt-in), so they skip
-# where it is absent -- including CI.  Collapsing the duplication into one
-# shared implementation would remove the need for them entirely.
+# The risk it guards: MSIS21LocationCentered re-implements the
+# MSIS00LocationCentered geometry (impact-point projection, local-zenith
+# correction, grazing window, far-side anchor, site coordinates), and two
+# copies of the same maths drift silently -- git cannot report a conflict
+# across two files.  That has already happened once: the PR #164 geometry
+# review updated MSIS00 while the MSIS21 copy kept the pre-review version.
+#
+# Two layers, deliberately split by what they need:
+#   * interface conformance -- pure class introspection, no backend, so it
+#     runs everywhere including CI;
+#   * numerical parity -- needs the optional 'nrlmsis' package (MSIS21 is
+#     opt-in), so it skips where that is absent, including CI.
 # ---------------------------------------------------------------------------
+
+MSIS_TREE_PAIRS = [
+    ("MSIS00Atmosphere", "MSIS21Atmosphere"),
+    ("MSIS00LocationCentered", "MSIS21LocationCentered"),
+    ("MSIS00IceCubeCentered", "MSIS21IceCubeCentered"),
+    ("MSIS00KM3NeTCentered", "MSIS21KM3NeTCentered"),
+]
+
+
+@pytest.mark.parametrize("name00,name21", MSIS_TREE_PAIRS)
+def test_msis21_public_interface_matches_msis00(name00, name21):
+    """Each MSIS21 class must be interface-compatible with its MSIS00 peer.
+
+    Introspection only -- no atmosphere is instantiated, so this needs
+    neither 'nrlmsis' nor any MSIS backend and therefore runs in CI, which
+    the numerical parity tests cannot.  MSIS21 may *add* public API; it may
+    not drop or rename anything MSIS00 exposes, and shared keyword
+    arguments must keep the same defaults so the two are drop-in
+    substitutable.
+    """
+    cls00, cls21 = getattr(dp, name00), getattr(dp, name21)
+
+    public00 = {n for n in dir(cls00) if not n.startswith("_")}
+    public21 = {n for n in dir(cls21) if not n.startswith("_")}
+    missing = sorted(public00 - public21)
+    assert not missing, (
+        f"{name21} is missing public API that {name00} exposes: {missing}"
+    )
+
+    params00 = inspect.signature(cls00.__init__).parameters
+    params21 = inspect.signature(cls21.__init__).parameters
+    missing_args = [n for n in params00 if n not in params21]
+    assert not missing_args, (
+        f"{name21}.__init__ does not accept {missing_args}, which "
+        f"{name00}.__init__ does -- the two are not drop-in substitutable"
+    )
+
+    for name, p00 in params00.items():
+        if p00.default is inspect.Parameter.empty:
+            continue
+        assert params21[name].default == p00.default, (
+            f"{name21}.__init__ default for '{name}' is "
+            f"{params21[name].default!r}, but {name00} uses {p00.default!r}"
+        )
 
 MSIS21_PAIRS = [
     ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
