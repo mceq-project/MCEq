@@ -771,36 +771,39 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
 
 
 def test_solv_numpy_etd2_second_order_convergence():
-    """ETD2 must exhibit observed convergence order ~2 under h-refinement.
+    """ETD2 must show observed convergence order ~2 on the production path.
 
-    The order is measured on the production matrices but with a *uniform*
-    step size and a *frozen* rho_inv, i.e. on the autonomous problem the
-    ETD2RK order is defined for.  This matters: ``_etd2_oversampled``
-    refines within each native step while holding that step's dX and
-    rho_inv piecewise-constant, so the coefficient jumps between native
-    steps reduce the observed order to ~1 no matter what the scheme's
-    formal order is.  Measured on this fixture (2026-07-29):
+    Refinement is done the way production accuracy actually depends on it:
+    the non-uniform path is *rebuilt* at successively smaller ``dX_max`` and
+    ``eps``, so ``rho_inv`` is re-derived (integral mean per step) at every
+    refinement level.  Refining inside frozen native steps instead — what
+    ``_etd2_oversampled`` does — is a strictly weaker check.
 
-        constant rho_inv, uniform dX  -> 1.87 .. 1.96   (this test)
-        constant rho_inv, varying dX  -> 1.07 .. 1.08
-        varying rho_inv, uniform dX   -> 1.05 .. 1.10
-        production path (both vary)   -> 0.89 .. 1.02
+    The error norm excludes the EM rows (gamma, e+/e-), and that exclusion
+    is the whole point of this test.  Measured on this fixture 2026-07-29,
+    production path, reference at 128x refinement:
 
-    On the production path dX spans 0.01–20 g/cm^2 and rho_inv spans a
-    factor 3.8e5, so an aggregate error ratio there is not an order
-    measurement at all — which is why this test used to run on it and
-    assert nothing meaningful (see the stability guard below).
+        rows            err @ default     order (1->2, 2->4, 4->8)
+        all             2.26e-02          0.708  0.877  0.979
+        EM only         2.27e-02          0.708  0.877  0.979
+        non-EM          5.95e-03          2.065  2.121  2.030
 
-    e+/e- are disabled for the same reason as
-    :func:`test_solv_numpy_etd2_stable_at_high_zenith`: their
-    semi-Lagrangian rows have no diagonal damping, so the coarsest solve
-    diverges and the error ratio becomes meaningless.  That divergence is
-    round-off sensitive, and it is exactly how this test passed for the
-    wrong reason before: with e+/e- enabled the oversample=1 solve blew up
-    to err ~1e8 on most platforms, making log2(err_h/err_h2) ~33 and the
-    ``>= 1.8`` floor vacuous, while on macos-15-intel/3.14 the same solve
-    stayed finite and exposed the true ~1.04.  The explicit stability
-    bound below now fails loudly instead of reading a blowup as high order.
+    i.e. the hadronic/leptonic system is cleanly second order (confirmed at
+    theta = 0, 60 and 89 deg; muon, numu and proton fluxes converge at
+    1.87-1.93 in relative terms), while the EM rows converge at first order
+    and carry essentially the *entire* whole-state error.  That is the
+    documented ETD2 EM caveat — the semi-Lagrangian e+/e- and gamma rows
+    have no diagonal damping (see docs/mceq_v1.x_v2_diff.md).  Any all-rows
+    norm therefore reads order ~1 regardless of the scheme, which is why
+    this assertion must be taken over the non-EM block.
+
+    History: this test used to measure an all-rows norm on the production
+    path with the ``mceq_sib21`` fixture, which re-enables e+/e-.  The
+    coarsest solve then *diverged* (err ~1e8), so log2(err_h/err_h2) came
+    out ~33 and the ``>= 1.8`` floor was vacuous.  Whether it diverged was
+    round-off sensitive: on macos-15-intel/3.14 it stayed finite and the
+    honest all-rows ratio (1.04) surfaced as a CI failure.  The stability
+    bound below now rejects a divergence instead of reading it as high order.
     """
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_kernel = config.kernel_config
@@ -811,43 +814,64 @@ def test_solv_numpy_etd2_second_order_convergence():
         import crflux.models as pm
 
         from MCEq.core import MCEqRun
+        from MCEq.solvers import solv_numpy_etd2
 
+        config.kernel_config = "numpy_etd2"
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
             theta_deg=0.0,
             primary_model=(pm.HillasGaisser2012, "H3a"),
         )
 
-        config.kernel_config = "numpy_etd2"
-        mceq.integration_path = None
-        mceq._calculate_integration_path(int_grid=None, grid_var="X")
-        _, dX_path, rho_inv_path, _ = mceq.integration_path
-
+        dX_max_0 = config.etd2_path["dX_max"]
+        eps_0 = config.etd2_path["eps"]
         int_m = mceq.int_m.tocsr()
         dec_m = mceq.dec_m.tocsr()
-        phi0 = mceq._phi0.copy()
 
-        # Autonomous problem: uniform step, single rho_inv from mid-path.
-        dX = np.full_like(dX_path, dX_path.mean())
-        rho_inv = np.full_like(rho_inv_path, rho_inv_path[len(rho_inv_path) // 2])
+        def solve_refined(refine):
+            """Production solve on a path refined by `refine` in dX and eps."""
+            mceq._calculate_integration_path(
+                None,
+                "X",
+                force=True,
+                dX_max=dX_max_0 / refine,
+                eps=eps_0 / refine,
+                dX_min=1e-10,
+            )
+            nsteps, dX, rho_inv, _ = mceq.integration_path
+            phi, _ = solv_numpy_etd2(
+                nsteps, dX, rho_inv, int_m, dec_m, mceq._phi0.copy(), []
+            )
+            return phi
 
-        # Reference at oversample=32 — a 8x refinement beyond the coarsest
-        # test point, so its own O(h^2) residual sits ~64x below it.
-        phi_truth = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=32)
-        norm_truth = np.linalg.norm(phi_truth)
+        # Mask the EM block out of the error norm (see docstring).
+        em_rows = np.zeros(mceq.dim_states, dtype=bool)
+        for pdg in (22, 11, -11):
+            try:
+                part = mceq.pman[pdg]
+            except (KeyError, AttributeError):
+                continue
+            em_rows[part.lidx : part.uidx] = True
+        assert em_rows.any(), "expected gamma/e+- rows in the state vector"
+        keep = ~em_rows
+
+        # Reference at 32x refinement: 8x beyond the finest test point, so
+        # its own O(h^2) residual sits ~64x below it.
+        phi_truth = solve_refined(32)
+        norm_truth = np.linalg.norm(phi_truth[keep])
         assert norm_truth > 0
 
         errs = {}
-        for os_ in (1, 2, 4):
-            phi = _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample=os_)
-            errs[os_] = np.linalg.norm(phi - phi_truth) / norm_truth
+        for refine in (1, 2, 4):
+            phi = solve_refined(refine)
+            errs[refine] = np.linalg.norm((phi - phi_truth)[keep]) / norm_truth
 
         # Stability guard: the coarsest solve must be a small perturbation of
-        # the reference, not a divergence.  Without this a blowup inflates
-        # the error ratio and masquerades as high order.
+        # the reference, not a divergence. Without this a blowup inflates the
+        # error ratio and masquerades as high order.
         assert np.isfinite(errs[1]) and errs[1] < 1e-1, (
-            f"ETD2 at oversample=1 is not in a perturbative regime "
-            f"(err={errs[1]:.3e}) — order ratios below are meaningless"
+            f"ETD2 at the default path is not in a perturbative regime "
+            f"(err={errs[1]:.3e}) — the order ratios below would be meaningless"
         )
         assert errs[1] > 1e-10, (
             f"ETD2 error {errs[1]:.3e} too small to measure order — "
@@ -858,14 +882,14 @@ def test_solv_numpy_etd2_second_order_convergence():
             f"{errs[1]:.3e} -> {errs[2]:.3e} -> {errs[4]:.3e}"
         )
 
-        # Assert on the most asymptotic pair available (2->4 measures 1.91;
-        # 1->2 sits at 1.87, too close to the floor to be robust across
-        # BLAS implementations).
-        order = np.log2(errs[2] / errs[4])
-        assert order >= 1.8, (
-            f"ETD2 observed order {order:.2f} below 1.8 "
-            f"(err(h/2)={errs[2]:.3e}, err(h/4)={errs[4]:.3e})"
-        )
+        # Measures 2.07 and 2.14 on this fixture.
+        for coarse, fine in ((1, 2), (2, 4)):
+            order = np.log2(errs[coarse] / errs[fine])
+            assert order >= 1.8, (
+                f"ETD2 observed order {order:.2f} below 1.8 between refine="
+                f"{coarse} and refine={fine} (err={errs[coarse]:.3e} -> "
+                f"{errs[fine]:.3e})"
+            )
     finally:
         config.adv_set["disabled_particles"] = saved_disabled
         config.kernel_config = saved_kernel
