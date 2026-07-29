@@ -74,9 +74,10 @@ class MCEqParticle:
         self.name = None
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(pdg_id)
-        #: (bool) particle has both, hadron and resonance properties
-        self.is_mixed = False
-        #: (bool) if particle has just resonance behavior
+        #: (bool) if True, this particle is folded into other particles'
+        #: matrices at build time and does not get its own state-vector slot.
+        #: Set by ``adv_set["force_resonance"]``; default ``False`` (full
+        #: propagation for everything).
         self.is_resonance = False
         #: (bool) particle is interacting projectile
         self.is_projectile = False
@@ -99,12 +100,6 @@ class MCEqParticle:
         #: (int) MCEq ID
         self.mceqidx = -1
 
-        #: (float) mixing energy, transition between hadron and
-        # resonance behavior
-        self.E_mix = 0
-        #: (int) energy grid index, where transition between
-        # hadron and resonance occurs
-        self.mix_idx = 0
         #: (float) interaction threshold (idx where cs>0)
         self.int_idx = 0
         #: (float) critical energy in air at the surface
@@ -200,7 +195,7 @@ class MCEqParticle:
             self.can_interact = False
 
         self._critical_energy()
-        self._calculate_mixing_energy()
+        self._apply_force_resonance()
 
     def set_hadronic_channels(self, hadronic_db, pmanager):
         """Changes the hadronic interaction model.
@@ -346,24 +341,6 @@ class MCEqParticle:
         return particle_ref in self.children
 
     @property
-    def hadridx(self):
-        """Returns index range where particle behaves as hadron.
-
-        Returns:
-          :func:`tuple` (int,int): range on energy grid
-        """
-        return (self.mix_idx, self._energy_grid.d)
-
-    @property
-    def residx(self):
-        """Returns index range where particle behaves as resonance.
-
-        Returns:
-          :func:`tuple` (int,int): range on energy grid
-        """
-        return (0, self.mix_idx)
-
-    @property
     def lidx(self):
         """Returns lower index of particle range in state vector.
 
@@ -381,26 +358,16 @@ class MCEqParticle:
         """
         return (self.mceqidx + 1) * self._energy_grid.d
 
-    def inverse_decay_length(self, cut=True):
+    def inverse_decay_length(self):
         r"""Returns inverse decay length (or infinity (np.inf), if
         particle is stable), where the air density :math:`\rho` is
         factorized out.
 
-        Args:
-          E (float) : energy in laboratory system in GeV
-          cut (bool): set to zero in 'resonance' regime
         Returns:
           (float): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm
         """
         try:
-            dlen = self.mass / self.ctau / (self._energy_grid.c + self.mass)
-            if cut:
-                dlen[0 : self.mix_idx] = 0.0
-            # Correction for bin average, since dec. length is a steep falling
-            # function. This factor averages the value over bin length for
-            # 10 bins per decade.
-            # return 0.989 * dlen
-            return dlen
+            return self.mass / self.ctau / (self._energy_grid.c + self.mass)
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.d) * np.inf
 
@@ -435,37 +402,23 @@ class MCEqParticle:
         m_target = self.A_target * 1.672621 * 1e-24  # <A> * m_proton [g]
         return self.cs / m_target
 
-    def _assign_hadr_dist_idx(self, child, projidx, chidx, cmat):
-        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
-        from the ``hadr_yields`` into ``cmat``
+    def _assign_hadr_dist(self, child, cmat):
+        """Copies the full ``hadr_yields[child]`` matrix into ``cmat``.
 
         Args:
-          child (int): PDG ID of final state child/secondary particle
-          projidx (int,int): tuple containing index range relative
-                             to the projectile's energy grid
-          dtridx (int,int): tuple containing index range relative
-                            to the child's energy grid
-          cmat (:func:`numpy.array`): array reference to the interaction matrix
+          child (MCEqParticle): final-state secondary particle.
+          cmat (np.ndarray): destination interaction-matrix block.
         """
-        cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.hadr_yields[child][
-            chidx[0] : chidx[1], projidx[0] : projidx[1]
-        ]
+        cmat[:, :] = self.hadr_yields[child][:, :]
 
-    def _assign_decay_idx(self, child, projidx, chidx, cmat):
-        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
-        from the ``hadr_yields`` into ``cmat``
+    def _assign_decay_dist(self, child, cmat):
+        """Copies the full ``decay_dists[child]`` matrix into ``cmat``.
 
         Args:
-          child (int): PDG ID of final state child/secondary particle
-          projidx (int,int): tuple containing index range relative
-                             to the projectile's energy grid
-          dtridx (int,int): tuple containing index range relative
-                            to the child's energy grid
-          cmat (:func:`numpy.array`): array reference to the interaction matrix
+          child (MCEqParticle): decay product.
+          cmat (np.ndarray): destination decay-matrix block.
         """
-        cmat[chidx[0] : chidx[1], projidx[0] : projidx[1]] = self.decay_dists[child][
-            chidx[0] : chidx[1], projidx[0] : projidx[1]
-        ]
+        cmat[:, :] = self.decay_dists[child][:, :]
 
     def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
@@ -679,82 +632,21 @@ class MCEqParticle:
         else:
             self.int_idx = 0
 
-    def _calculate_mixing_energy(self):
-        """Calculates interaction/decay length in Air and decides if
-        the particle has resonance and/or hadron behavior.
+    def _apply_force_resonance(self):
+        """Flag this particle as a resonance if it appears in
+        ``config.adv_set["force_resonance"]`` and is not in
+        ``config.standard_particles``.
 
-        Class attributes :attr:`is_mixed`, :attr:`E_mix`, :attr:`mix_idx`,
-        :attr:`is_resonance` are calculated here. If the option `no_mixing`
-        is set in config.adv_config particle is forced to be a resonance
-        or hadron behavior.
-
-        Args:
-          e_grid (:func:`numpy.array`): energy grid of size :attr:`d`
-          max_density (float): maximum density on the integration path (largest
-                               decay length)
+        A resonance particle is folded into other particles' interaction /
+        decay matrices at build time (via ``MatrixBuilder._follow_chains``)
+        and never gets its own state-vector slot. Default
+        ``force_resonance = []`` means full propagation for everything.
         """
-
-        info(10, "Calculating mixing energy for", self.name)
-        cross_over = config.hybrid_crossover
-        max_density = config.max_density
-
-        d = self._energy_grid.d
-        inv_intlen = self.inverse_interaction_length()
-
-        inv_declen = self.inverse_decay_length()
-        # If particle is stable, no "mixing" necessary
-        if (
-            not np.any(np.nan_to_num(inv_declen) > 0.0)
-            or abs(self.pdg_id[0]) in config.adv_set["exclude_from_mixing"]
-            or config.adv_set["no_mixing"]
-            or self.pdg_id[0] in config.adv_set["disable_decays"]
-        ) and self.is_mixed is not True:
-            self.mix_idx = 0
-            self.is_mixed = False
-            self.is_resonance = False
-            return
-
-        # If particle is forced to be a "resonance" or is not in standard_particles
-        pid = np.abs(self.pdg_id[0])
-        if (
+        pid = abs(self.pdg_id[0])
+        self.is_resonance = (
             pid in config.adv_set["force_resonance"]
             and pid not in config.standard_particles
-        ):
-            self.mix_idx = d
-            self.E_mix = self._energy_grid.c[self.mix_idx - 1]
-            self.is_mixed = False
-            self.is_resonance = True
-        # Particle can interact and decay
-        elif self.can_interact and not self.is_stable:
-            # This is lambda_dec / lambda_int
-            threshold = np.zeros_like(inv_intlen)
-            mask = inv_declen != 0.0
-            threshold[mask] = inv_intlen[mask] * max_density / inv_declen[mask]
-            del mask
-            mix_idx_check = np.where(threshold >= cross_over)[0]
-            if len(mix_idx_check) != 0:
-                self.mix_idx = mix_idx_check[0]
-                self.E_mix = self._energy_grid.c[self.mix_idx]
-            else:
-                self.mix_idx = np.where(threshold < cross_over)[0][-1] + 1
-                self.E_mix = self._energy_grid.c[self.mix_idx - 1]
-            if self.mix_idx != 0:
-                self.is_mixed = True
-            self.is_resonance = False
-        # These particles don't interact but can decay (e.g. tau leptons)
-        elif not self.can_interact and not self.is_stable:
-            mask = inv_declen != 0.0
-            self.mix_idx = np.where(max_density / inv_declen > config.dXmax)[0][0]
-            self.E_mix = self._energy_grid.c[self.mix_idx]
-            self.is_mixed = True
-            self.is_resonance = False
-        # Particle is stable but that should be handled above
-        else:
-            info(0, "This case shouldn't occur. Particle =", self.name)
-            threshold = np.inf
-            self.mix_idx = 0
-            self.is_mixed = False
-            self.is_resonance = False
+        )
 
     def __eq__(self, other):
         """Checks name for equality"""
@@ -779,12 +671,10 @@ class MCEqParticle:
         is_lepton     : {self.is_lepton}
         is_nucleus    : {self.is_nucleus}
         is_stable     : {self.is_stable}
-        is_mixed      : {self.is_mixed}
         is_resonance  : {self.is_resonance}
         is_tracking   : {self.is_tracking}
         is_projectile : {self.is_projectile}
-        mceqidx       : {self.mceqidx}
-        E_mix         : {self.E_mix:2.1e} GeV\n"""
+        mceqidx       : {self.mceqidx}\n"""
         return a_string
 
 
@@ -1330,15 +1220,8 @@ class ParticleManager:
         info(min_dbg_lev, "Hadrons and stable particles:", no_caller=True)
         print_in_rows(
             min_dbg_lev,
-            [
-                p.name
-                for p in self.all_particles
-                if p.is_hadron and not p.is_resonance and not p.is_mixed
-            ],
+            [p.name for p in self.all_particles if p.is_hadron and not p.is_resonance],
         )
-
-        info(min_dbg_lev, "\nMixed:", no_caller=True)
-        print_in_rows(min_dbg_lev, [p.name for p in self.all_particles if p.is_mixed])
 
         info(min_dbg_lev, "\nResonances:", no_caller=True)
         print_in_rows(

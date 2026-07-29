@@ -61,17 +61,11 @@ Hadronic interaction models
     | F. Riehn, R. Engel, A. Fedynitch, T. K. Gaisser, T. Stanev
     | Phys.Rev.D 102 (2020) 6, 063002
     | `arXiv:1912.03300 <http://arxiv.org/abs/1912.03300>`_
-    
-* `SIBYLL-2.3c <https://inspirehep.net/literature/1677505>`_:
+    |    
     | *Hadronic interaction model sibyll 2.3c and inclusive lepton fluxes*
     | A. Fedynitch, F. Riehn, R. Engel, T. K. Gaisser, T. Stanev
     | Phys.Rev.D 100 (2019) 10, 103018
     | `arXiv:1806.04140 <http://arxiv.org/abs/1806.04140>`_
-
-* `SIBYLL-2.3 <http://inspirehep.net/record/1395980>`_:
-    | *A new version of the event generator Sibyll*
-    | F. Riehn, R. Engel, A. Fedynitch, T. K. Gaisser, T. Stanev
-    | PoS ICRC2015 (2016) 558
 
 * `SIBYLL-2.1 <http://inspirehep.net/record/823839>`_:
     | *Cosmic ray interaction event generator SIBYLL 2.1*
@@ -110,7 +104,7 @@ Hadronic interaction models
     | S. Roesler, R. Engel, J. Ranft
     | Advanced Monte Carlo for radiation physics, particle transport simulation and applications. Proceedings, Conference, MC2000, Lisbon, Portugal, October 23-26, 2000
 
-* `DPMJET-III-19.1 <http://inspirehep.net/record/1503512>`_:
+* `DPMJET-III-19.3 <http://inspirehep.net/record/1503512>`_:
     | *Cascade equations and hadronic interactions at very high energies*
     | A. Fedynitch
     | CERN-THESIS-2015-371

@@ -29,11 +29,11 @@ mceq = MCEqRun(
 mceq.solve()
 """
 
-# Variant that forces the accelerate (spacc) kernel explicitly.
+# Variant that forces the accelerate ETD2 (spacc) kernel explicitly.
 _SCRIPT_ACCELERATE = """
 import MCEq.config as config
 config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
-config.kernel_config = "accelerate"
+config.kernel_config = "accelerate_etd2"
 
 import crflux.models as pm
 from MCEq.core import MCEqRun
@@ -51,7 +51,7 @@ mceq.solve()
 _SCRIPT_MULTI_SOLVE = """
 import MCEq.config as config
 config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
-config.kernel_config = "accelerate"
+config.kernel_config = "accelerate_etd2"
 
 import crflux.models as pm
 from MCEq.core import MCEqRun

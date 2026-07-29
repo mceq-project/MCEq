@@ -270,3 +270,247 @@ def test_generalized_target(X):
     tgt.reset()
     assert len(tgt.mat_list) == 1
     assert np.isclose(tgt.get_density(10), 2.0)
+
+
+# ---------------------------------------------------------------------------
+# MSIS00LocationCentered tests
+# ---------------------------------------------------------------------------
+
+
+def test_impact_point_at_southpole_matches_icecube_formula():
+    """MSIS00LocationCentered at South Pole must reproduce the legacy _latitude formula."""
+    atm = dp.MSIS00LocationCentered(
+        detector_coord=(0.0, -90.0),
+        depth_m=1948.0,
+        season="January",
+    )
+    # Replicate the original IceCube formula for reference
+    r = atm.geom.r_E / 1e2  # cm → m
+    d = 1948.0
+
+    for theta_deg in [0.0, 30.0, 45.0, 60.0, 90.0]:
+        lat_ecef, _ = atm._impact_point(theta_deg, 0.0)
+
+        theta_rad = np.deg2rad(theta_deg)
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
+            r - d
+        ) * np.cos(theta_rad)
+        lat_ref = (
+            -90.0
+            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            / np.pi
+            * 180.0
+        )
+        assert np.isclose(lat_ecef, lat_ref, atol=1e-6), (
+            f"theta={theta_deg}: ECEF={lat_ecef:.6f}, ref={lat_ref:.6f}"
+        )
+
+
+def test_impact_point_vertical_returns_detector_location():
+    """For theta=0 (vertical), impact point must equal detector lat/lon."""
+    for lon, lat in [(6.033, 42.803), (15.4, 36.264), (139.0, 35.0), (0.0, -90.0)]:
+        atm = dp.MSIS00LocationCentered(
+            detector_coord=(lon, lat),
+            depth_m=1000.0,
+            season="January",
+        )
+        for azi in [0.0, 90.0, 180.0, 270.0]:
+            lat_imp, lon_imp = atm._impact_point(0.0, azi)
+            assert np.isclose(lat_imp, lat, atol=1e-4), (
+                f"lat mismatch for ({lon},{lat}) azi={azi}: got {lat_imp}"
+            )
+            assert np.isclose(lon_imp, lon, atol=1e-4), (
+                f"lon mismatch for ({lon},{lat}) azi={azi}: got {lon_imp}"
+            )
+
+
+def test_location_centered_single_azimuth():
+    """Single azimuth mode: impact coordinates must be set and density > 0."""
+    atm = dp.MSIS00LocationCentered(
+        detector_coord=(6.033, 42.803),
+        depth_m=2450.0,
+        season="January",
+    )
+    atm.set_theta(30.0, azimuth_deg=0.0)  # North
+    assert atm.theta_deg == 30.0
+    assert atm.current_impact_latitude is not None
+    assert atm.current_impact_longitude is not None
+    assert -90.0 <= atm.current_impact_latitude <= 90.0
+    assert -180.0 <= atm.current_impact_longitude <= 180.0
+    assert atm.get_density(1e5) > 0.0
+
+    # Northward shot should push impact latitude above detector latitude
+    atm.set_theta(60.0, azimuth_deg=0.0)
+    assert atm.current_impact_latitude >= 42.803
+
+
+def test_location_centered_azimuth_averaging():
+    """No-azimuth mode: impact coords are None (averaged), density > 0."""
+    atm = dp.MSIS00LocationCentered(
+        detector_coord=(6.033, 42.803),
+        depth_m=2450.0,
+        season="January",
+    )
+    atm.set_theta(30.0)  # no azimuth → average
+    assert atm.theta_deg == 30.0
+    assert atm.current_impact_latitude is None
+    assert atm.current_impact_longitude is None
+    assert atm.get_density(1e5) > 0.0
+
+
+def test_location_centered_upgoing():
+    """Upgoing angles are correctly handled when max_theta=180."""
+    atm = dp.MSIS00LocationCentered(
+        detector_coord=(6.033, 42.803),
+        depth_m=2450.0,
+        season="January",
+        max_theta=180.0,
+    )
+    atm.set_theta(135.0)
+    assert atm.theta_deg == 135.0
+    assert atm.get_density(1e5) > 0.0
+
+    # With azimuth
+    atm.set_theta(150.0, azimuth_deg=90.0)
+    assert atm.theta_deg == 150.0
+    assert atm.current_impact_latitude is not None
+
+
+def test_km3net_orca_and_arca_instantiation():
+    """ORCA and ARCA detectors can be instantiated and return positive density."""
+    for det in ["ORCA", "ARCA"]:
+        atm = dp.MSIS00KM3NeTCentered(det, season="January")
+        assert atm.get_density(1e5) > 0.0
+        assert atm.max_theta == 180.0
+
+    with pytest.raises(ValueError, match="Unknown KM3NeT detector"):
+        dp.MSIS00KM3NeTCentered("INVALID")
+
+
+def test_km3net_upgoing():
+    """KM3NeT can handle upgoing neutrino angles."""
+    atm = dp.MSIS00KM3NeTCentered("ORCA", season="January")
+    atm.set_theta(135.0)
+    assert atm.theta_deg == 135.0
+    assert atm.get_density(1e5) > 0.0
+
+
+def test_km3net_single_azimuth():
+    """KM3NeT with explicit azimuth returns a specific impact point."""
+    atm = dp.MSIS00KM3NeTCentered("ORCA", season="January")
+    atm.set_theta(60.0, azimuth_deg=0.0)
+    assert atm.current_impact_latitude is not None
+    assert atm.current_impact_longitude is not None
+    assert atm.get_density(1e5) > 0.0
+
+
+def test_km3net_arca_set_theta():
+    """ARCA model with azimuth averaging works for a typical zenith."""
+    atm = dp.MSIS00KM3NeTCentered("ARCA", season="July")
+    atm.set_theta(45.0)
+    assert atm.theta_deg == 45.0
+    assert atm.get_density(1e5) > 0.0
+
+
+def test_base_class_impact_properties_return_none():
+    """Non-location-coupled models return None for impact coordinates."""
+    atm = dp.CorsikaAtmosphere("USStd")
+    assert atm.current_impact_latitude is None
+    assert atm.current_impact_longitude is None
+
+
+def test_icecube_latitude_wrapper():
+    """MSIS00IceCubeCentered._latitude backward-compat wrapper returns correct values."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    # Detector is 1948 m below the glacier top at 2835 m elevation
+    r = atm.geom.r_E / 1e2 + 2835.0
+    d = 1948.0
+    for theta_deg in [0.0, 30.0, 60.0, 90.0]:
+        lat_wrapper = atm._latitude(theta_deg)
+        theta_rad = np.deg2rad(theta_deg)
+        x = np.sqrt(2.0 * r * d + ((r - d) * np.cos(theta_rad)) ** 2 - d**2) - (
+            r - d
+        ) * np.cos(theta_rad)
+        lat_ref = (
+            -90.0
+            + np.arctan2(x * np.sin(theta_rad), r - d + x * np.cos(theta_rad))
+            / np.pi
+            * 180.0
+        )
+        assert np.isclose(lat_wrapper, lat_ref, atol=1e-6), (
+            f"theta={theta_deg}: _latitude={lat_wrapper:.6f}, ref={lat_ref:.6f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Detector-depth zenith correction and far-side geometry
+# ---------------------------------------------------------------------------
+
+
+def test_local_zenith_correction():
+    """The column angle is the local zenith at the surface crossing:
+    sin(theta_s) = (r_det/r_surf) sin(theta_det)."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    r_det = atm.geom.r_E + (2835.0 - 1948.0) * 1e2
+
+    # Negligible at small angles
+    atm.set_theta(30.0)
+    assert np.isclose(np.rad2deg(atm.thrad), 30.0, atol=0.02)
+
+    # Exact impact-parameter formula at the horizon: ~1.4 deg correction
+    atm.set_theta(90.0)
+    expected = np.rad2deg(np.arcsin(r_det / atm.geom.r_obs))
+    assert np.isclose(np.rad2deg(atm.thrad), expected, atol=1e-9)
+    assert np.rad2deg(atm.thrad) < 88.7  # ~88.58 for 1948 m below the surface
+
+
+def test_icecube_observation_level_follows_surface():
+    """Downgoing/grazing columns end at the glacier top (2835 m), upgoing
+    columns at sea level (far side is the ocean)."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    atm.set_theta(0.0)
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+    # Vertical column above 2835 m is much thinner than to sea level
+    assert atm.max_X < 800.0
+
+    atm.set_theta(180.0)
+    assert np.isclose(atm.geom.h_obs, 0.0)
+    assert atm.max_X > 950.0  # full sea-level column on the far side
+
+    # switching back restores the surface level
+    atm.set_theta(45.0)
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+
+
+def test_grazing_window_is_near_side():
+    """Angles in (90, 90 + dip] exit through the near-side surface and are
+    treated as downgoing grazing columns, not far-side upgoing ones."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+    atm.set_theta(91.0, azimuth_deg=0.0)
+    # Impact point is a few hundred km from the pole, not on the far side
+    assert atm.current_impact_latitude < -85.0
+    assert np.isclose(atm.geom.h_obs, 2835.0e2)
+    assert np.rad2deg(atm.thrad) < 90.0
+
+
+def test_upgoing_impact_point_is_far_side():
+    """For upgoing angles the MSIS anchor is the far-side surface crossing,
+    where the shower actually developed."""
+    atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
+
+    atm.set_theta(180.0, azimuth_deg=0.0)
+    assert atm.current_impact_latitude > 89.9  # North Pole, not South
+
+    atm.set_theta(120.0, azimuth_deg=0.0)
+    # Chord from the South Pole at 120 deg exits near latitude -30
+    assert np.isclose(atm.current_impact_latitude, -30.0, atol=0.1)
+    # Local zenith at the far-side crossing is ~(180 - 120) deg
+    assert np.isclose(np.rad2deg(atm.thrad), 60.0, atol=0.1)
+
+
+def test_arca_site_coordinates():
+    """ARCA (KM3NeT-It) is offshore Capo Passero at 36deg16'N 16deg06'E."""
+    atm = dp.MSIS00KM3NeTCentered("ARCA", season="January")
+    lat, lon = atm._impact_point(0.0, 0.0)
+    assert np.isclose(lat, 36.267, atol=1e-3)
+    assert np.isclose(lon, 16.100, atol=1e-3)
