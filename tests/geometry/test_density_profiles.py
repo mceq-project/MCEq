@@ -514,3 +514,76 @@ def test_arca_site_coordinates():
     lat, lon = atm._impact_point(0.0, 0.0)
     assert np.isclose(lat, 36.267, atol=1e-3)
     assert np.isclose(lon, 16.100, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# MSIS21 <-> MSIS00 geometry parity
+#
+# MSIS21LocationCentered hand-copies the MSIS00LocationCentered geometry
+# (impact-point projection, local-zenith correction, grazing window,
+# far-side anchor, site coordinates).  Two copies of the same maths can
+# drift silently -- git cannot report a conflict across two files, and that
+# is exactly what happened once: the PR #164 geometry review updated
+# MSIS00 while the MSIS21 copy kept the pre-review version.  These tests
+# assert the two families agree exactly, so any future fix applied to one
+# and not the other fails here.
+#
+# Requires the optional 'nrlmsis' package (MSIS21 is opt-in), so they skip
+# where it is absent -- including CI.  Collapsing the duplication into one
+# shared implementation would remove the need for them entirely.
+# ---------------------------------------------------------------------------
+
+MSIS21_PAIRS = [
+    ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
+     lambda: dp.MSIS21IceCubeCentered("SouthPole", "January")),
+    ("ARCA", lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
+     lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January")),
+    ("ORCA", lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
+     lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January")),
+]
+
+
+@pytest.mark.parametrize("label,make00,make21", MSIS21_PAIRS)
+def test_msis21_impact_point_matches_msis00(label, make00, make21):
+    """The two families must project to the same impact point everywhere."""
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    a00, a21 = make00(), make21()
+
+    assert a00._detector_depth_m == a21._detector_depth_m, "depth differs"
+    assert a00._surface_elevation_m == a21._surface_elevation_m, "elevation differs"
+    assert a00._detector_latitude == a21._detector_latitude
+    assert a00._detector_longitude == a21._detector_longitude
+
+    for theta in (0.0, 30.0, 60.0, 80.0, 89.0, 90.0, 90.5, 100.0, 140.0, 179.0):
+        if theta > min(a00.max_theta, a21.max_theta):
+            continue
+        # set_theta moves the observation level, which _impact_point reads,
+        # so drive both families through it in step before comparing.
+        a00.set_theta(theta, azimuth_deg=0.0)
+        a21.set_theta(theta, azimuth_deg=0.0)
+        assert np.isclose(
+            a00._effective_theta_deg, a21._effective_theta_deg, rtol=0, atol=1e-10
+        ), (
+            f"{label}: local zenith differs at theta={theta}: "
+            f"{a00._effective_theta_deg} vs {a21._effective_theta_deg}"
+        )
+        assert a00.geom.h_obs == a21.geom.h_obs, (
+            f"{label}: observation level differs at theta={theta}"
+        )
+        for azi in (0.0, 45.0, 90.0, 180.0, 270.0):
+            lat0, lon0 = a00._impact_point(theta, azi)
+            lat1, lon1 = a21._impact_point(theta, azi)
+            assert np.isclose(lat0, lat1, rtol=0, atol=1e-9), (
+                f"{label}: impact latitude differs at theta={theta}, azi={azi}"
+            )
+            assert np.isclose(lon0, lon1, rtol=0, atol=1e-9), (
+                f"{label}: impact longitude differs at theta={theta}, azi={azi}"
+            )
+
+
+def test_msis21_shares_km3net_site_table():
+    """Site coordinates must come from one table, not a second copy."""
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    from MCEq.geometry import msis21_atmosphere
+
+    assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS
