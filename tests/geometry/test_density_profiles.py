@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 import pytest
 
@@ -514,3 +516,125 @@ def test_arca_site_coordinates():
     lat, lon = atm._impact_point(0.0, 0.0)
     assert np.isclose(lat, 36.267, atol=1e-3)
     assert np.isclose(lon, 16.100, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# MSIS21 <-> MSIS00 geometry parity
+#
+# MSIS21 is deliberately a **separate class tree** from MSIS00 -- not a
+# subclass hierarchy and not a shared implementation -- but it must expose
+# the **same interface** and, where the maths is the same, produce the same
+# numbers.  That design decision is what these tests enforce.
+#
+# The risk it guards: MSIS21LocationCentered re-implements the
+# MSIS00LocationCentered geometry (impact-point projection, local-zenith
+# correction, grazing window, far-side anchor, site coordinates), and two
+# copies of the same maths drift silently -- git cannot report a conflict
+# across two files.  That has already happened once: the PR #164 geometry
+# review updated MSIS00 while the MSIS21 copy kept the pre-review version.
+#
+# Two layers, deliberately split by what they need:
+#   * interface conformance -- pure class introspection, no backend, so it
+#     runs everywhere including CI;
+#   * numerical parity -- needs the optional 'nrlmsis' package (MSIS21 is
+#     opt-in), so it skips where that is absent, including CI.
+# ---------------------------------------------------------------------------
+
+MSIS_TREE_PAIRS = [
+    ("MSIS00Atmosphere", "MSIS21Atmosphere"),
+    ("MSIS00LocationCentered", "MSIS21LocationCentered"),
+    ("MSIS00IceCubeCentered", "MSIS21IceCubeCentered"),
+    ("MSIS00KM3NeTCentered", "MSIS21KM3NeTCentered"),
+]
+
+
+@pytest.mark.parametrize("name00,name21", MSIS_TREE_PAIRS)
+def test_msis21_public_interface_matches_msis00(name00, name21):
+    """Each MSIS21 class must be interface-compatible with its MSIS00 peer.
+
+    Introspection only -- no atmosphere is instantiated, so this needs
+    neither 'nrlmsis' nor any MSIS backend and therefore runs in CI, which
+    the numerical parity tests cannot.  MSIS21 may *add* public API; it may
+    not drop or rename anything MSIS00 exposes, and shared keyword
+    arguments must keep the same defaults so the two are drop-in
+    substitutable.
+    """
+    cls00, cls21 = getattr(dp, name00), getattr(dp, name21)
+
+    public00 = {n for n in dir(cls00) if not n.startswith("_")}
+    public21 = {n for n in dir(cls21) if not n.startswith("_")}
+    missing = sorted(public00 - public21)
+    assert not missing, (
+        f"{name21} is missing public API that {name00} exposes: {missing}"
+    )
+
+    params00 = inspect.signature(cls00.__init__).parameters
+    params21 = inspect.signature(cls21.__init__).parameters
+    missing_args = [n for n in params00 if n not in params21]
+    assert not missing_args, (
+        f"{name21}.__init__ does not accept {missing_args}, which "
+        f"{name00}.__init__ does -- the two are not drop-in substitutable"
+    )
+
+    for name, p00 in params00.items():
+        if p00.default is inspect.Parameter.empty:
+            continue
+        assert params21[name].default == p00.default, (
+            f"{name21}.__init__ default for '{name}' is "
+            f"{params21[name].default!r}, but {name00} uses {p00.default!r}"
+        )
+
+MSIS21_PAIRS = [
+    ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
+     lambda: dp.MSIS21IceCubeCentered("SouthPole", "January")),
+    ("ARCA", lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
+     lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January")),
+    ("ORCA", lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
+     lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January")),
+]
+
+
+@pytest.mark.parametrize("label,make00,make21", MSIS21_PAIRS)
+def test_msis21_impact_point_matches_msis00(label, make00, make21):
+    """The two families must project to the same impact point everywhere."""
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    a00, a21 = make00(), make21()
+
+    assert a00._detector_depth_m == a21._detector_depth_m, "depth differs"
+    assert a00._surface_elevation_m == a21._surface_elevation_m, "elevation differs"
+    assert a00._detector_latitude == a21._detector_latitude
+    assert a00._detector_longitude == a21._detector_longitude
+
+    for theta in (0.0, 30.0, 60.0, 80.0, 89.0, 90.0, 90.5, 100.0, 140.0, 179.0):
+        if theta > min(a00.max_theta, a21.max_theta):
+            continue
+        # set_theta moves the observation level, which _impact_point reads,
+        # so drive both families through it in step before comparing.
+        a00.set_theta(theta, azimuth_deg=0.0)
+        a21.set_theta(theta, azimuth_deg=0.0)
+        assert np.isclose(
+            a00._effective_theta_deg, a21._effective_theta_deg, rtol=0, atol=1e-10
+        ), (
+            f"{label}: local zenith differs at theta={theta}: "
+            f"{a00._effective_theta_deg} vs {a21._effective_theta_deg}"
+        )
+        assert a00.geom.h_obs == a21.geom.h_obs, (
+            f"{label}: observation level differs at theta={theta}"
+        )
+        for azi in (0.0, 45.0, 90.0, 180.0, 270.0):
+            lat0, lon0 = a00._impact_point(theta, azi)
+            lat1, lon1 = a21._impact_point(theta, azi)
+            assert np.isclose(lat0, lat1, rtol=0, atol=1e-9), (
+                f"{label}: impact latitude differs at theta={theta}, azi={azi}"
+            )
+            assert np.isclose(lon0, lon1, rtol=0, atol=1e-9), (
+                f"{label}: impact longitude differs at theta={theta}, azi={azi}"
+            )
+
+
+def test_msis21_shares_km3net_site_table():
+    """Site coordinates must come from one table, not a second copy."""
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    from MCEq.geometry import msis21_atmosphere
+
+    assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS

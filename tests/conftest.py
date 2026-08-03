@@ -26,6 +26,8 @@ def _restore_global_config_state():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     saved_X_start = config.X_start
+    saved_em_adaptive = config.em_adaptive_step
+    saved_em_safety = config.em_step_safety
     try:
         yield
     finally:
@@ -34,6 +36,8 @@ def _restore_global_config_state():
         config.kernel_config = saved_kernel
         config.mceq_db_fname = saved_db
         config.X_start = saved_X_start
+        config.em_adaptive_step = saved_em_adaptive
+        config.em_step_safety = saved_em_safety
 
 
 @pytest.fixture(scope="session")
@@ -44,9 +48,13 @@ def mceq_sib21():
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     # Tests are calibrated with the EM cascade (e±, helicity variants) in
     # the system; the production default disables electrons because of the
-    # ETD2 EM caveat. Re-enable here so the matrix shapes and reference
-    # values stay consistent with what the tests expect.
+    # ETD2 EM caveat. Re-enable here so the matrix shapes, particle counts,
+    # and reference values stay consistent with what the tests expect. The
+    # helicity pin is defensive: it must stay True (matches the config
+    # default; the unpolarized decay dataset carries a K_mu2-halving defect
+    # in DBs <= v150).
     config.adv_set["disabled_particles"] = []
+    config.muon_helicity_dependence = True
 
     if config.has_mkl:
         config.set_mkl_threads(2)
@@ -65,6 +73,7 @@ def mceq_qgs():
 
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     config.adv_set["disabled_particles"] = []
+    config.muon_helicity_dependence = True
 
     if config.has_mkl:
         config.set_mkl_threads(2)

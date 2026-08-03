@@ -108,19 +108,102 @@ Most geometries support angles between 0 (vertical) and 90 degrees.
 
 To change the density profile ::
 
-    mceq.set_density_model(('MSIS00', ('Sudbury', 'June')))
+    mceq.set_density_model(('MSIS21', ('Sudbury', 'June')))
 
 Available models are:
 
-- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC (see :func:`MCEq.geometry.density_models.CorsikaAtmosphere.init_parameters`)
-- 'MSIS00' and 'MSIS00_IC' - NRLMSISE-00 global static atmospheric model by NASA (_IC = centered on IceCube at the South Pole, where zenith angles > 90 degrees are up-going)
-- 'AIRS' - an interface to tabulated satellite data (not provided), extrapolated with MSIS00 at altitudes above 50km
-- 'Isothermal' - a simple isothermal model with scale height at 6.3 km
-- 'GeneralizedTarget' - a piece-wise homogeneous density (not exponential like the atmosphere)
+- 'MSIS21', 'MSIS21_IC', 'MSIS21_KM3NeT' - NRLMSIS 2.1 (Emmert et al. 2021),
+  pure-Python and vectorised. The default since v2.x; `_IC` is centered on
+  IceCube at the South Pole (upgoing supported up to 180°) and `_KM3NeT`
+  on ORCA / ARCA. Fork-safe — use `path_workers > 1` in :func:`MCEqRun.solve_fullsky`.
+- 'MSIS00' and 'MSIS00_IC' - the legacy NRLMSISE-00 backend (Fortran-via-C).
+  Kept for back-compat. Not fork-safe; `path_workers` must be 0.
+- 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
+  (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
+- 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
+- 'Isothermal' - simple isothermal model with scale height 6.3 km.
+- 'GeneralizedTarget' - piece-wise homogeneous density.
 
 Refer for more info to :ref:`densities`.
 
 After changing the models, the spectra can be recomputed with a :func:`MCEq.core.MCEqRun.solve()`.
+
+Batched solves: many angles, days, or primaries in one go
+.........................................................
+
+Anything that would otherwise be a loop of ``solve()`` calls with the
+same interaction model — several zenith angles, atmospheres for
+different days or seasons, a scan over single-primary energies, or any
+mix — runs much faster as **one batched call**, because the transport
+operator is shared and the per-step work is amortized over all batch
+members. Pick the entry point by what varies:
+
+===============================================  =============================================
+What varies across the batch                     Use
+===============================================  =============================================
+Only the initial spectrum (``phi0`` columns)     :func:`MCEq.core.MCEqRun.solve_batch` with
+                                                 ``conditions=None``
+A (zenith × azimuth) sky grid                    :func:`MCEq.core.MCEqRun.solve_fullsky`
+Directions, days/atmospheres, or a mix           :func:`MCEq.core.MCEqRun.solve_batch` with
+                                                 ``conditions=[...]``
+===============================================  =============================================
+
+All variants work on all four backends (``numpy_etd2`` / ``cuda_etd2``
+/ ``mkl_etd2`` / ``accelerate_etd2``) and return an
+:class:`MCEq.core.MCEqBatchResult` with per-member named-spectrum
+extraction — no manual state-vector indexing::
+
+    # 1) a scan over single-primary energies (e.g. a response matrix)
+    phi0 = np.stack(
+        [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_prims],
+        axis=1)
+    res = mceq.solve_batch(phi0)
+    res.get_solution("total_mu+", k=3, mag=3)
+
+    # 2) one spectrum through 12 months x 3 zenith angles
+    conditions = [
+        {"zenith_deg": z, "density_model": ("MSIS21", ("SouthPole", month))}
+        for month in months for z in (0.0, 30.0, 60.0)]
+    res = mceq.solve_batch(conditions=conditions)
+    res.get_solution("conv_numu", k=5)
+
+    # 3) a full sky grid (adds the geomagnetic cutoff + skymap helpers)
+    res = mceq.solve_fullsky(zenith_grid, azimuth_grid)
+    res.get_solution("conv_numu", zenith=60.0, azimuth=90.0)
+    res.skymap("conv_numu", 100.0)      # (n_zen, n_az) map at 100 GeV
+
+Initial-state columns are composed with
+:func:`MCEq.core.MCEqRun.initial_state` (single primaries via ``E`` +
+``pdg_id``/``corsika_id``, user spectra via ``spectrum`` + ``pdg_id``;
+a list of components is summed) or copied from the instance with
+:func:`MCEq.core.MCEqRun.get_initial_state`; both leave the instance
+state untouched. A 1-D ``phi0`` (or ``phi0=None`` for the current
+primary model) is broadcast to all batch members; a 2-D
+``(dim_states, K)`` array carries one column per member.
+
+Under the hood, duplicate conditions share one integration path
+(azimuth pixels of azimuth-independent atmospheres collapse
+automatically), heterogeneous batches are scheduled through an LPT
+carousel (pipeline width ``carousel_K``, default ``min(K, 128)``), and
+batches whose conditions collapse onto a single path take a cheaper
+shared-path route that also supports ``int_grid`` snapshots. For large
+grids, ``path_workers=N`` forks a process pool for the path build
+(MSIS21 + CORSIKA only; MSIS00 is rejected as not fork-safe).
+
+For sky grids, ``solve_fullsky`` additionally applies the geomagnetic
+rigidity cutoff: when ``geomagnetic_cutoff`` is on (auto-detected for
+MSIS-based and location-tagged CORSIKA atmospheres), the first call
+builds the gtracr cutoff map for the detector and caches it under
+``<MCEq.data_dir>/gtracr_cutoffs/``; subsequent runs at the same
+detector hit the cache. The toggle can also be set at the ``MCEqRun``
+constructor (``geomagnetic_cutoff=True/False/None``) or overridden per
+call. Passing a 2-D ``phi0`` puts the caller in charge of the
+per-pixel primary — the cutoff is then *not* applied on top (a warning
+is emitted if it was requested explicitly).
+
+The ``Full_sky_carousel`` example notebook walks through the sky-grid
+API: serial scan baseline, one-shot carousel, per-pixel ``phi0``, and
+auto-cutoff at a mid-latitude detector.
 
 Changing hadronic interaction models
 ....................................

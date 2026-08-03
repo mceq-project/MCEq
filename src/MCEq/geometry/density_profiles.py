@@ -39,6 +39,13 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
     #: not silently reset the allowed zenith-angle range.
     _preserve_max_theta: bool = False
 
+    #: If True, the density profile depends on the azimuth angle and
+    #: :meth:`set_theta` accepts an ``azimuth_deg`` argument (detector-
+    #: centred models that bind the shower impact point to a geographic
+    #: location).  Batched solvers use this flag to share integration
+    #: paths across azimuth pixels at fixed zenith when it is False.
+    depends_on_azimuth: bool = False
+
     def __init__(self, *args, **kwargs):
         from MCEq.geometry.geometry import EarthGeometry
 
@@ -541,9 +548,12 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         self._msis = cNRLMSISE00()
 
-        self.init_parameters(location, season, doy, use_loc_altitudes)
-
+        # Base class first: it creates self.geom, which init_parameters needs
+        # when ``use_loc_altitudes`` moves the observation level.  Calling it
+        # afterwards made ``use_loc_altitudes=True`` raise AttributeError.
         EarthsAtmosphere.__init__(self)
+
+        self.init_parameters(location, season, doy, use_loc_altitudes)
 
     def init_parameters(self, location, season, doy, use_loc_altitudes):
         """Sets location and season in :class:`NRLMSISE-00`.
@@ -566,7 +576,9 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         self.theta_deg = None
         if use_loc_altitudes:
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
-            self.geom.h_obs = self._msis.alt_surface
+            # set_h_obs, not a bare attribute write: the geometry caches
+            # r_obs and the maximal zenith angle off the observation level.
+            self.geom.set_h_obs(self._msis.alt_surface)
 
     def _clear_cache(self):
         """Clears the density model cache so that density profiles can be recalculated
@@ -736,6 +748,10 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
     #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
     _preserve_max_theta: bool = True
 
+    #: Density profile depends on azimuth (impact point bound to the
+    #: detector location); ``set_theta`` accepts ``azimuth_deg``.
+    depends_on_azimuth: bool = True
+
     def __init__(
         self,
         detector_coord,
@@ -799,6 +815,8 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         showers the crossing is near the detector; for upgoing showers
         (zenith > 90°) the toward-source ray traverses the Earth and the
         crossing is on the far side, where the shower actually developed.
+        The original (theta, azimuth) at the detector is passed in — no
+        mirroring of either angle is needed.
 
         At South Pole and zenith ≤ 90° this formula is algebraically
         equivalent to the original 2-D formula in the legacy
@@ -1030,6 +1048,8 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         else:
             # Pre-compute all impact points once; they depend only on zenith,
             # not on height, so they are constant for this set_theta call.
+            # Use the original theta_deg (transparent-Earth projection — see
+            # the comment above for the single-azimuth branch).
             azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
             self._azimuth_avg_coords = [
                 self._impact_point(theta_deg, azi) for azi in azi_grid
@@ -1767,3 +1787,37 @@ if __name__ == "__main__":
     plt.legend(loc="upper left")
     plt.tight_layout()
     plt.show()
+
+
+# ---------------------------------------------------------------------------
+# NRLMSIS 2.1 atmosphere models (see geometry/msis21_atmosphere.py).
+# Re-exported here so users can do
+#     from MCEq.geometry.density_profiles import MSIS21Atmosphere, ...
+# alongside MSIS00Atmosphere and friends.  The classes live in a separate
+# module to keep this file from growing further; their public API mirrors
+# the MSIS00 hierarchy 1:1.
+#
+# The re-export is lazy (PEP 562): msis21_atmosphere imports names from
+# *this* module, so an eager import here makes the cycle order-dependent —
+# importing MCEq.geometry.msis21_atmosphere first would fail on a
+# partially initialised module.  Resolving on first attribute access keeps
+# both import orders working.
+# ---------------------------------------------------------------------------
+_MSIS21_EXPORTS = (
+    "MSIS21Atmosphere",
+    "MSIS21LocationCentered",
+    "MSIS21IceCubeCentered",
+    "MSIS21KM3NeTCentered",
+)
+
+
+def __getattr__(name):
+    if name in _MSIS21_EXPORTS:
+        from MCEq.geometry import msis21_atmosphere
+
+        return getattr(msis21_atmosphere, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted([*globals(), *_MSIS21_EXPORTS])
