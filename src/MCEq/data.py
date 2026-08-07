@@ -672,15 +672,25 @@ class HDF5Backend:
             }
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            # 2D databases store ``polarized`` as a *delta* (only helicity-
-            # resolved muon entries; the base 1D-style entries live in the
-            # ``unpolarized`` dataset). 1D databases store ``polarized`` as
-            # the full superset and load it directly with no overlay.
+            # Legacy 2D databases (PR #48 / URQMD) store ``polarized`` as a
+            # *delta* (only helicity-resolved muon entries; the base 1D-style
+            # entries live in the ``unpolarized`` dataset). 1D databases and
+            # newer 2D databases store ``polarized`` as the full superset and
+            # load it directly with no overlay; they declare this with a
+            # ``layout='superset'`` attribute on the ``polarized`` dataset.
+            polarized_layout = None
+            if decay_dset_name == "polarized" and "polarized" in mceq_db["decays"]:
+                polarized_layout = mceq_db["decays"]["polarized"].attrs.get(
+                    "layout", None
+                )
+                if isinstance(polarized_layout, bytes):
+                    polarized_layout = polarized_layout.decode()
             is_2d_delta_layout = (
                 self.is_2d
                 and config.muon_helicity_dependence
                 and decay_dset_name == "polarized"
                 and "unpolarized" in mceq_db["decays"]
+                and polarized_layout != "superset"
             )
 
             if config.muon_helicity_dependence:
