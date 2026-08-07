@@ -672,27 +672,35 @@ class HDF5Backend:
             }
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
             # 2D databases store ``polarized`` as a *delta* (only helicity-
             # resolved muon entries; the base 1D-style entries live in the
             # ``unpolarized`` dataset). 1D databases store ``polarized`` as
-            # the full superset. Detect the 2D layout and load ``unpolarized``
-            # as the base in that case — the helicity overlay below then
-            # updates muon entries to their polarized counterparts.
-            base_dset_name = decay_dset_name
-            if (
+            # the full superset and load it directly with no overlay.
+            is_2d_delta_layout = (
                 self.is_2d
                 and config.muon_helicity_dependence
                 and decay_dset_name == "polarized"
                 and "unpolarized" in mceq_db["decays"]
-            ):
-                base_dset_name = "unpolarized"
+            )
+
+            if config.muon_helicity_dependence:
+                if decay_dset_name != "polarized":
+                    info(
+                        0,
+                        "Warning: "
+                        + f"Does this decay dataset '{decay_dset_name}'"
+                        + " include polarization?",
+                    )
+                info(2, "Using helicity dependent decays.")
+
+            base_dset_name = "unpolarized" if is_2d_delta_layout else decay_dset_name
+            self._check_subgroup_exists(mceq_db["decays"], base_dset_name)
             dec_index = self._gen_db_dictionary(
                 mceq_db["decays"][base_dset_name],
                 mceq_db["decays"][base_dset_name + "_indptrs"],
             )
 
-            if config.muon_helicity_dependence:
+            if is_2d_delta_layout:
                 # TK: Support for older names of the polarized/unpolarized datasets
                 # (e.g. if testing matrices from MCEq 1.2.0)
                 try:
@@ -707,10 +715,11 @@ class HDF5Backend:
                         mceq_db["decays"]["polarized" + "_indptrs"],
                     )
 
-                info(2, "Using helicity dependent decays.")
                 info(5, "Replacing decay from custom decay_db.")
                 dec_index["index_d"].update(custom_index["index_d"])
 
+                # Drop the unpolarized pi/K -> mu channels superseded by the
+                # polarized overlay, so muons are not double-counted.
                 _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
                 _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
                 _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
