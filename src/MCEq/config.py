@@ -42,8 +42,17 @@ em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 #: 'total energy' else 'kinetic energy'
 return_as = "kinetic energy"
 #: Atmospheric model in the format: (model, (arguments))
+#: CORSIKA BK_USStd is the default — generic, location-free, and dependency-free.
+#: NRLMSIS 2.1 (whole-atmosphere refit with newer satellite data) is available
+#: opt-in but requires the external 'nrlmsis' package
+#: (pip install 'git+https://github.com/afedynitch/nrlmsis2.1').
 density_model = ("CORSIKA", ("BK_USStd", None))
-#: density_model = ('MSIS00_IC',('SouthPole','January'))
+#: Alternatives:
+#: density_model = ('MSIS21', ('SouthPole', 'January'))   # NRLMSIS 2.1 — needs 'nrlmsis' (opt-in)
+#: density_model = ('MSIS00', ('SouthPole', 'January'))  # MSISE-00 (Fortran-via-C, fork-unsafe)
+#: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
+#: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
+#: density_model = ('MSIS21_KM3NeT', ('ORCA', 'January'))      # detector-centered NRLMSIS 2.1 at ORCA
 #: density_model = ('GeneralizedTarget', None)
 
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
@@ -66,7 +75,7 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6391.0e3  # Earth radius in m
+r_E = 6371.315e3  # Earth radius in m (as in CORSIKA; was 6391 km < v2.0, a typo)
 h_obs = 0.0  # observation level in m
 h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
@@ -106,6 +115,17 @@ default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
 
 #: Enable electromagnetic cascade with matrices from EmCA
 enable_em = False
+
+#: Air-target EM matrices: select a specific density slice from a
+#: ρ-stratified EM database (one produced by
+#: ``mceq-maintenance-tools/database_generator/5_assemble_em_db.py``
+#: with ``--air-density-grid``).  Value is air density in g/cm³.
+#: ``None`` (default) loads the legacy single-density slice — back-compat
+#: with un-stratified EM databases.  When set, the loader picks the
+#: ρ subgroup whose stored density is closest in log10 to this value.
+#: Used for LPM-realistic atmospheric cascades; see
+#: ``wiki/methods/lpm-density-factorization.md`` in mceq-em-integration.
+em_air_density = None
 
 #: ETD2RK kernel implementation. Choices:
 #:   "auto"            — pick the best available ETD2 kernel (see below).
@@ -184,6 +204,55 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
+#: EM-cascade adaptive step cap (cure B). The ETD2 ``dX_max`` of 20 g/cm^2
+#: above is set by the off-diagonal stability/accuracy bound
+#: ``h * spec(int_off) < 2`` with ``spec(int_off) ~ 0.094`` for the *hadronic*
+#: matrix. The e+/-/gamma block of ``int_m`` is far stiffer (steep
+#: bremsstrahlung/pair multiplication, near-singular soft tail), so the same
+#: bound demands a much smaller step. When the density-gradient schedule does
+#: not refine on its own (homogeneous media, low-density shower start), the
+#: large legacy step over-integrates the EM cascade and biases the
+#: charged-shower X_max deep by ~8-12 g/cm^2 (muon/hadron profiles are
+#: unaffected: their off-diagonal block is ~200x less stiff). When True, the
+#: effective step is additionally capped at ``em_step_safety / r_EM``, where
+#: ``r_EM`` is the explicit-stepping stiffness scale of the e+/-/gamma block
+#: of ``int_m`` (spectral radius of its off-diagonal part, 1/(g/cm^2)).
+#: Default False preserves the legacy schedule exactly; enable for absolute
+#: EM-X_max work. Because r_EM tracks the operator, the cap also tightens
+#: automatically as the energy grid is refined.
+em_adaptive_step = False
+
+#: Dimensionless safety factor for ``em_adaptive_step``: effective cap
+#: ``dX = em_step_safety / r_EM`` [g/cm^2]. This is the per-step off-diagonal
+#: accuracy budget ``h * spec(int_off_EM)``; the EM-X_max bias is an accuracy
+#: (not stability) effect, so this is far tighter than the explicit stability
+#: cliff. Re-calibrated 2026-06 against the gamma@100TeV charged-X_max
+#: convergence on the v13 1-MeV air EM grid AFTER the dense-r_EM fix
+#: (true spec(int_off_EM) = 0.5155 1/(g/cm^2); the previous ARPACK/norm
+#: estimate over-stated it and forced ~3x more steps). Convergence vs the
+#: dX->0 limit (e+- >=1 MeV, parabolic peak):
+#:   safety  cap[g/cm^2]  nsteps  dXmax[g/cm^2]  ground-spectrum max-rel
+#:    0.04      0.078       13448     +0.003           0.005%
+#:    0.12      0.233        4562     +0.030           0.046%   <- default
+#:    0.16      0.310        3528     +0.053           0.081%   (spec ceiling)
+#:    0.24      0.466        2290     +0.114           0.172%   (over tolerance)
+#: 0.12 holds X_max to <0.05 g/cm^2 and the ground spectrum to <0.05% of the
+#: dX->0 limit while cutting steps ~3x vs the old 0.04; 0.16 is the largest
+#: value still inside the <0.1 g/cm^2 / <0.1% tolerance. Nmax is
+#: step-independent to <0.001% throughout. (Legacy fixed 20 g/cm^2 steps bias
+#: X_max up to +57 g/cm^2 in homogeneous media.) See the wiki lesson
+#: ``mceq-loss-averaging-grid-fragility``.
+em_step_safety = 0.12
+
+#: Max EM off-diagonal block dimension for which ``r_EM`` (the cure-B step
+#: scale) is computed with a dense ``np.linalg.eigvals``. The EM block is a
+#: small sub-system (a few e+/-/gamma species x dim_e) and strongly
+#: NON-NORMAL, on which sparse ``eigs(k=1)`` routinely fails to converge and
+#: silently degrades to a matrix-norm over-estimate. Dense eigvals is exact,
+#: deterministic and cheap at this size (~1-2 s at dim 2000, computed once per
+#: matrix build and cached). Above this guard, fall back to ARPACK then norm.
+em_step_dense_eig_max = 4000
+
 #: Minimal CR nucleon energy in primary model. If (low energy)
 #: hadronic interaction model doesn't properly implement interactions
 #: or cross sections, nucleons can "drop through" without cascading
@@ -198,8 +267,17 @@ enable_default_tracking = True
 #: Ionization and radiative losses according to stopping power tables (PDG)
 enable_energy_loss = True
 
-#: Apply stopping power to all charged hadrons (muon dEdX is used and is ~ok)
-generic_losses_all_charged = False
+#: Apply stopping power to all charged hadrons (the muon dEdX is used and is
+#: ~ok). Default True: without it sub-4-GeV protons and charged hadrons never
+#: range out (~2 MeV/g/cm^2 x 2000 g/cm^2 ~ 4 GeV of ionization loss across a
+#: slant column) and pile up unphysically at the low-energy end of
+#: deep-atmosphere spectra. Requires the monotone low-energy boundary layer of
+#: ``loss_stencil_method = "expfit_low_upwind2"`` (the default): with the pure
+#: ``"expfit"`` operator the extra hadronic loss rows excite the low-energy
+#: boundary cliff and deep-slant solves diverge outright. Set False to
+#: reproduce the v1.x behaviour where only muons (and e+-, see
+#: ``enable_em_ion``) carried continuous losses.
+generic_losses_all_charged = True
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
@@ -212,25 +290,49 @@ fallback_to_air_cs = True
 enable_em_ion = True
 
 #: Improve (explicit solver) stability by averaging the continous loss
-#: operator
-average_loss_operator = True
+#: operator. Default False: the canonical configuration is the raw
+#: ``expfit_low_upwind2`` loss stencil (now the default, see
+#: ``loss_stencil_method``) with NO averaging — averaging inflates the EM
+#: number Xmax ~+2.7 g/cm^2 / Nmax ~5.6%. Set True only to reproduce
+#: pre-2026-06 historical numbers.
+average_loss_operator = False
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
 
 #: Stencil for the continuous-loss differential operator on the
 #: log-uniform energy grid. Choices:
-#:   "expfit"   -- 7-point exponentially-fitted stencil anchored at
+#:   "expfit_low_upwind2" (default) -- exponentially-fitted 7-point interior
+#:                 stencil with the low-energy boundary layer
+#:                 (``loss_stencil_low_upwind_rows`` rows) replaced by
+#:                 monotone second-order upwind rows. This is the validated
+#:                 canonical configuration: it removes the low-energy
+#:                 boundary cliff of the pure "expfit" operator (essential
+#:                 for the 1 MeV EM grid, harmless on hadronic-only grids
+#:                 where it touches only the lowest rows).
+#:   "expfit_low_upwind" -- same with first-order upwind rows.
+#:   "expfit"   -- pure 7-point exponentially-fitted stencil anchored at
 #:                 ``loss_stencil_alpha0``. Designed to be near-exact for
 #:                 power-law spectra E^{-alpha} with alpha ~ alpha0 on the
 #:                 default 10 bins/decade grid; orders of magnitude smaller
-#:                 truncation error than plain FD on steep spectra.
+#:                 truncation error than plain FD on steep spectra. Uses
+#:                 one-sided polynomial-fit boundary rows that develop
+#:                 large non-normal transients at a low-energy grid floor
+#:                 (the "boundary cliff", see ``docs/mceq_v1.x_v2_diff.md``).
 #:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
-#:   "biased"   -- legacy 7-point biased "6th-order" stencil (pre-existing default).
-#: All three options share the same one-sided polynomial-fit stencils on
-#: the boundary rows (0,1,2 and last-2,last-1,last); see
-#: ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
-loss_stencil_method = "expfit"
+#:   "biased"   -- legacy 7-point biased "6th-order" stencil (v1 default).
+#: "expfit"/"centered"/"biased" share the same one-sided polynomial-fit
+#: stencils on the boundary rows (0,1,2 and last-2,last-1,last).
+loss_stencil_method = "expfit_low_upwind2"
+
+#: Number of low-energy rows replaced when ``loss_stencil_method`` is
+#: ``"expfit_low_upwind"`` or ``"expfit_low_upwind2"`` (the default). At
+#: 10 bins/decade and a 1 MeV EM floor, the formal one-sided boundary rows
+#: (0..2) are not enough: the raw operator still develops enormous
+#: non-normal transients. Eight rows is the first stable setting in the
+#: realistic-screening 1 MeV/no-averaging diagnostic and leaves the expfit
+#: interior untouched above ~6 MeV.
+loss_stencil_low_upwind_rows = 8
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to
 #: be exact for f = exp(a u) at trial slopes a = -alpha0 + delta around
@@ -246,7 +348,18 @@ excpt_on_missing_particle = False
 #: modification for neutrons and K0L/K0S
 use_isospin_sym = True
 
-#: Helicity dependent muons decays from analytical expressions
+#: Helicity dependent muon decays from analytical expressions. Default True.
+#: KEEP THIS ON for flux calculations: the alternative ``decays/unpolarized``
+#: DB dataset carries a construction defect (the inclusive K± -> mu nu entry
+#: was averaged with its 3-body duplicate, halving the dominant K_mu2
+#: channel), which suppresses conventional nu_mu by up to ~40% at TeV
+#: energies (all DBs up to and including v150; fix pending a DB rebuild).
+#: The EM cascade is the exception: the helicity L/R variants add e±/mu
+#: semi-Lagrangian rows without diagonal damping that blow up in the EM
+#: system (the ``_EM_BLOWUP_CAVEAT``), so ``enable_em`` runs force this
+#: flag off at MCEqRun construction (with a warning). EM shower-maximum
+#: observables do not involve kaon neutrinos and are unaffected by the
+#: dataset defect.
 muon_helicity_dependence = True
 
 #: Muon multiple scattering from the CORSIKA-like Gauss approximation
@@ -257,11 +370,14 @@ muon_multiple_scattering = True
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
 
-#: This is not used in the code as before, instead the low energy
-#: extension is compiled into the HDF backend files.
+#: Optional run-time low-energy model blending in the HDF5 backend.  When
+#: ``model`` is None (default), the selected interaction model is loaded
+#: unchanged.  ``he_le_trwidth`` is the 10--90% sigmoid width in log10(E/GeV)
+#: decades; zero selects a hard switch at ``he_le_transition``.
 low_energy_extension = {
+    "model": None,
     "he_le_transition": 80,  # GeV
-    "nbins_interp": 3,
+    "he_le_trwidth": 0.3,  # decades (10--90% width)
     "use_unknown_cs": True,
 }
 

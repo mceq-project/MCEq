@@ -35,7 +35,7 @@ jobs:
             python-version: "3.10"
       fail-fast: false
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         submodules: False
         fetch-depth: 3
@@ -54,7 +54,7 @@ jobs:
       run: pip show mkl
     - name: Cache test database
       id: cache-db
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: src/MCEq/data/mceq_db_v140reduced_compact.h5
         key: mceq-test-db-v1-${{ runner.os }}
@@ -65,10 +65,10 @@ jobs:
       run: |
         curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
     - name: Run tests
-      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3
+      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3 --dist loadgroup
     - name: Upload coverage reports to Codecov
       if: matrix.python-version == '3.14'
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: ${{ matrix.os }}

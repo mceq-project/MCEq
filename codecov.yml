@@ -1,0 +1,32 @@
+# Codecov configuration for mceq-project/MCEq.
+#
+# Rationale: MCEq ships kernels across four backends (numpy, Apple
+# Accelerate (Mac-only), Intel MKL Sparse BLAS, NVIDIA cuSPARSE via cupy).
+# Each backend is only exercised by CI on the platforms where it actually
+# runs:
+#   - Accelerate kernels run only on macOS jobs.
+#   - MKL kernels run on Linux/Windows jobs that load libmkl_rt.
+#   - cupy/cuSPARSE kernels require a CUDA-capable GPU, which GitHub
+#     hosted runners do not have.
+# As a result the cross-backend ETD2 code paths cannot all be covered by
+# any single CI matrix entry, and PRs that add or refactor multi-backend
+# code structurally under-shoot the project's overall coverage on the
+# "patch" metric. We treat patch coverage as informational rather than as
+# a blocking required check; the project coverage trend remains tracked.
+
+coverage:
+  status:
+    project:
+      default:
+        # Allow up to ~2% drop in overall coverage before flagging.
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        # Report patch coverage in the PR comment but do not block on it.
+        informational: true
+
+comment:
+  layout: "header, diff, files, footer"
+  behavior: default
+  require_changes: false
