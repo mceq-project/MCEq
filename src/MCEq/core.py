@@ -43,6 +43,22 @@ def _path_worker_one(args):
     return flat_idx, _PATH_WORKER_MCEQ.integration_path
 
 
+def _same_int_grid(a, b):
+    """True if two ``int_grid`` specifications request the same snapshots.
+
+    An ``int_grid`` is either ``None`` (no snapshots) or a 1-D array of
+    depths. Elementwise ``==`` on two arrays of *different* length does not
+    broadcast: NumPy raises ``ValueError``. The lengths therefore have to be
+    compared before the values, or a second :meth:`MCEqRun.solve` with a
+    differently sized grid crashes in the cache check instead of rebuilding
+    the path.
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    a, b = np.atleast_1d(a), np.atleast_1d(b)
+    return a.shape == b.shape and bool(np.all(a == b))
+
+
 class MCEqBatchResult:
     """Result of a batched (multi-RHS) solve.
 
@@ -3215,7 +3231,7 @@ class MCEqRun:
 
         if (
             self.integration_path
-            and np.all(int_grid == self.int_grid)
+            and _same_int_grid(int_grid, self.int_grid)
             and np.all(self.grid_var == grid_var)
             and cached_etd2_params == etd2_params
             and not force

@@ -1560,6 +1560,62 @@ def test_etd2_solve_int_grid_below_X_start_raises(mceq_sib21):
         config.X_start = saved_X_start
 
 
+def test_etd2_int_grid_cache_handles_length_change(mceq_sib21):
+    """Consecutive solves with int_grids of *different* length must rebuild
+    the path, not crash in the cache check.
+
+    The cache condition used to compare the requested grid to the cached one
+    with a bare elementwise ``==``. That does not broadcast across different
+    lengths: NumPy raises ``ValueError``, so the second solve died before it
+    could rebuild. The workaround was to null ``integration_path`` by hand
+    before every solve.
+
+    Also pins the two behaviours the fix must not break: an identical grid
+    still hits the cache (the path object is reused, not rebuilt), and the
+    ``None`` sentinel round-trips.
+    """
+    mceq_sib21.set_zenith_azimuth(60.0)
+    saved_kernel = config.kernel_config
+    max_X = mceq_sib21.density_model.max_X
+    try:
+        config.kernel_config = "numpy_etd2"
+        grid_a = np.linspace(max_X / 10, max_X, 10)
+        grid_b = np.linspace(max_X / 25, max_X, 25)
+
+        mceq_sib21.integration_path = None
+        mceq_sib21.solve(int_grid=grid_a)
+        assert len(mceq_sib21.integration_path[3]) == grid_a.size
+
+        # The regression: no manual reset between solves.
+        mceq_sib21.solve(int_grid=grid_b)
+        assert len(mceq_sib21.integration_path[3]) == grid_b.size
+
+        # ...and back to the shorter grid, the other direction of the
+        # broadcast mismatch.
+        mceq_sib21.solve(int_grid=grid_a)
+        assert len(mceq_sib21.integration_path[3]) == grid_a.size
+
+        # Caching still works: an identical grid must reuse the same path
+        # object rather than rebuild it.
+        cached_path = mceq_sib21.integration_path
+        mceq_sib21.solve(int_grid=grid_a.copy())
+        assert mceq_sib21.integration_path is cached_path
+
+        # None (no snapshots) must be distinguishable from any array, in
+        # both directions.
+        mceq_sib21.solve()
+        assert mceq_sib21.integration_path is not cached_path
+        assert mceq_sib21.int_grid is None
+        no_grid_path = mceq_sib21.integration_path
+        mceq_sib21.solve()
+        assert mceq_sib21.integration_path is no_grid_path
+        mceq_sib21.solve(int_grid=grid_a)
+        assert len(mceq_sib21.integration_path[3]) == grid_a.size
+    finally:
+        config.kernel_config = saved_kernel
+        mceq_sib21.integration_path = None
+
+
 # ---------------------------------------------------------------------------
 # solve_fullsky — 2-D phi0 (per-pixel initial spectrum)
 # ---------------------------------------------------------------------------
