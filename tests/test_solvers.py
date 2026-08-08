@@ -1616,6 +1616,83 @@ def test_etd2_int_grid_cache_handles_length_change(mceq_sib21):
         mceq_sib21.integration_path = None
 
 
+@pytest.mark.parametrize(
+    ("eps", "dX_max", "tol"),
+    [
+        (0.1, 5.0, 1e-3),
+        (0.03, 2.0, 1e-4),
+    ],
+)
+def test_etd2_readout_invariance(mceq_sib21, eps, dX_max, tol):
+    """Requesting more snapshots must not change the solution.
+
+    ``int_grid`` is a *readout* request: it says where to record the state,
+    not how to integrate. But grid points truncate ETD2 steps, so a denser
+    grid silently produces a different (finer) integration path. When the
+    path is under-resolved the two answers disagree, and a consistency
+    check that merely asks for more snapshots comes back with different
+    physics.
+
+    This is the defect the whole depth-convergence investigation started
+    from. It is a property of the step controller, so the tolerance has to
+    be stated against a step control: measured worst relative shift on this
+    fixture (SIBYLL21, 60 deg, three probe depths) is
+
+        eps=0.3  / dX_max=20   (shipped)   5.2e-3
+        eps=0.1  / dX_max=5                5.8e-5
+        eps=0.03 / dX_max=2                2.8e-6
+        eps=0.01 / dX_max=1                5.1e-7
+
+    i.e. it converges away cleanly, and the shipped defaults are the one
+    setting where it is visible. The shipped defaults are deliberately not
+    asserted here: they would fail. Tighten these cases (or add the
+    defaults) if the default controller changes.
+    """
+    mceq_sib21.set_zenith_azimuth(60.0)
+    saved_kernel = config.kernel_config
+    max_X = mceq_sib21.density_model.max_X
+    try:
+        config.kernel_config = "numpy_etd2"
+        # Probe in the production zone, the bulk, and at ground: at ground
+        # the truncation error is partly a cancellation of two larger
+        # opposite-signed contributions, so ground alone is the least
+        # sensitive place to look.
+        X_probe = np.array([60.0, 300.0, max_X])
+        dense = np.unique(
+            np.concatenate([X_probe, np.linspace(max_X / 200, max_X, 200)])
+        )
+
+        def snapshots(int_grid):
+            mceq_sib21.solve(int_grid=int_grid, eps=eps, dX_max=dX_max)
+            idx = [int(np.argmin(np.abs(int_grid - x))) for x in X_probe]
+            return [
+                {
+                    sp: mceq_sib21.get_solution(sp, mag=0, grid_idx=gi)
+                    for sp in ("mu+", "mu-", "numu", "antinumu", "nue", "antinue")
+                }
+                for gi in idx
+            ]
+
+        mceq_sib21.integration_path = None
+        sparse_sol = snapshots(X_probe)
+        dense_sol = snapshots(dense)
+
+        for j, X in enumerate(X_probe):
+            for sp, ref in sparse_sol[j].items():
+                # Only bins carrying flux; the far tail is numerical dust.
+                m = ref > 1e-12 * ref.max()
+                rel = np.abs(dense_sol[j][sp][m] - ref[m]) / ref[m]
+                assert rel.max() < tol, (
+                    f"eps={eps}, dX_max={dX_max}: adding {dense.size - X_probe.size} "
+                    f"int_grid points moved {sp} at X={X:.0f} g/cm2 by "
+                    f"{rel.max():.3e} (tol {tol:.0e}) at "
+                    f"E={mceq_sib21.e_grid[m][np.argmax(rel)]:.3g} GeV"
+                )
+    finally:
+        config.kernel_config = saved_kernel
+        mceq_sib21.integration_path = None
+
+
 # ---------------------------------------------------------------------------
 # solve_fullsky — 2-D phi0 (per-pixel initial spectrum)
 # ---------------------------------------------------------------------------
