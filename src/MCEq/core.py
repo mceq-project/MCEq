@@ -2098,6 +2098,16 @@ class MCEqRun:
         else:
             phi0_mat = np.ascontiguousarray(phi0_arr)
 
+        # 2D databases: the stitched solver state is n_k * dim_states per
+        # column. phi0 stays user-facing at dim_states (per mode); a delta
+        # angular initial condition populates every Hankel mode with the
+        # same amplitude, so tile the rows across the n_k blocks — the
+        # exact analogue of the np.tile in solve().
+        if self._mceq_db.is_2d:
+            phi0_mat = np.ascontiguousarray(
+                np.tile(phi0_mat, (self._mceq_db.n_k, 1))
+            )
+
         # --- build integration paths -------------------------------------
         path_kwargs = dict(
             X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
@@ -2161,7 +2171,7 @@ class MCEqRun:
             K_pipe = max(1, min(int(carousel_K), K))
             slots, T = schedule_lpt(nsteps_per_col, K_pipe)
             dX_c, ri_c, phi_init, sched = compile_carousel_schedule(
-                paths, slots, T, self.dim_states, phi0_mat
+                paths, slots, T, phi0_mat.shape[0], phi0_mat
             )
             sum_ns = int(nsteps_per_col.sum())
             waste = 1.0 - sum_ns / float(T * K_pipe) if (T * K_pipe) else 0.0
