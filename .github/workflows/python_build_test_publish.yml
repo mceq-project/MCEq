@@ -10,9 +10,14 @@ on:
   pull_request:
     paths:
       - '.github/workflows/python_build_test_publish.yml'
+      - 'CMakeLists.txt'
+      - 'pyproject.toml'
+      - 'src/**'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref }}
+  # head_ref is empty for push and tag events, so without the run_id fallback
+  # every push to main cancels the release run of the previous one.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -35,10 +40,16 @@ jobs:
             echo "should_release=false" >> $GITHUB_OUTPUT
           fi
 
-  test_pr:
-    name: Test Building Wheels on PR with Python 3.14
-    if: github.event_name == 'pull_request'
+  # One Python per platform, ~2 min a job. Anything that breaks the toolchain on
+  # a platform -- a compiler that is not found, a wheel the repair step refuses,
+  # a deployment target that no longer matches the runner image -- fails here
+  # instead of somewhere inside the 46-job release matrix. Runs on PRs that
+  # touch the build, and gates `wheels` on push so a bad platform costs one
+  # round of six jobs rather than the whole matrix.
+  smoke:
+    name: Wheel smoke test (Python 3.14)
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -57,9 +68,13 @@ jobs:
 
   wheels:
     name: Building Wheels
-    needs: release_check
+    needs: [release_check, smoke]
     if: needs.release_check.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
+    # No wheel job in this matrix has ever needed more than ~2.5 min. Without a
+    # bound, a runner that loses contact with the server (as macos-26-intel /
+    # cp314 did in run 31360781445) sits on the 6 h default before failing.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +110,7 @@ jobs:
     if: needs.release_check.outputs.should_release == 'true'
     name: source package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
