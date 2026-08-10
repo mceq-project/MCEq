@@ -2212,6 +2212,153 @@ def solv_mkl_etd2(
     return phc_v.copy(), np.array(grid_sol)
 
 
+def solv_mkl_etd2_secant(
+    nsteps,
+    dX,
+    rho_inv,
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    phi,
+    grid_idcs,
+    sec_ops,
+):
+    """ETD2RK on Intel MKL sparse BLAS with the sec(theta) mode coupling.
+
+    MKL port of :func:`solv_numpy_etd2_secant`: the 4 SpMVs per step act
+    on ``w = phi + T_gated phi`` through ``MklSparseMatrix.gemv_ctargs``
+    (persistent ctypes buffers — same contract as :func:`solv_mkl_etd2`,
+    plus one extra persistent ``w`` buffer the SpMVs read from), while
+    the small dense mode-coupling corrections (a handful of (n_P, n_P)
+    GEMMs against the gated state plane per step) stay in numpy on the
+    host — they are a few MFlop per step, far below the SpMV cost.
+    """
+    from ctypes import POINTER, c_double
+
+    dim = phi.shape[0]
+    n_padded = dim
+    for m in (mkl_int_off, mkl_dec_off):
+        if m is not None:
+            n_padded = max(n_padded, m.n_padded)
+
+    P = sec_ops["P"]
+    T_P = sec_ops["T_P"]          # (n_P, n_k)
+    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
+    V = sec_ops["V"]
+    Vi = sec_ops["Vi"]
+    lam = sec_ops["lam"]          # (n_P,)
+    g_idx = sec_ops["gate_idx"]   # (n_g,)
+    n_k = sec_ops["n_k"]
+    N = dim // n_k
+    assert n_k * N == dim, "state dim not divisible by n_k"
+    ixPG = np.ix_(P, g_idx)
+
+    # Persistent buffers — ctypes pointers must remain valid across the
+    # loop; padding slots stay zero throughout (zero rows/cols there).
+    phc = np.zeros(n_padded, dtype=np.float64)
+    phc[:dim] = phi
+    F_phi = np.zeros(n_padded, dtype=np.float64)
+    F_a = np.zeros(n_padded, dtype=np.float64)
+    a = np.zeros(n_padded, dtype=np.float64)
+    w = np.zeros(n_padded, dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
+    D = bufs["D"]
+
+    phc_v = phc[:dim]
+    F_phi_v = F_phi[:dim]
+    F_a_v = F_a[:dim]
+    a_v = a[:dim]
+    w_v = w[:dim]
+
+    F_phi_p = F_phi.ctypes.data_as(POINTER(c_double))
+    F_a_p = F_a.ctypes.data_as(POINTER(c_double))
+    w_p = w.ctypes.data_as(POINTER(c_double))
+
+    int_off_empty = mkl_int_off is None or mkl_int_off.nnz == 0
+    dec_off_empty = mkl_dec_off is None or mkl_dec_off.nnz == 0
+
+    def eval_F(x_v, F_p, F_v, ri, Df_PG, D0_G):
+        """F <- off-diagonal + coupling remainder of the operator at x
+        (SpMVs act on w = x + T_gated x); returns the gathered x_PG."""
+        x2 = x_v.reshape(n_k, N)
+        XG = x2[:, g_idx]                     # (n_k, n_g)
+        YG = T_P @ XG                         # coupling u on (P, g)
+        np.copyto(w_v, x_v)
+        w_v.reshape(n_k, N)[ixPG] += YG
+        if not int_off_empty:
+            mkl_int_off.gemv_ctargs(1.0, w_p, 0.0, F_p)
+        else:
+            F_v.fill(0.0)
+        if not dec_off_empty:
+            mkl_dec_off.gemv_ctargs(ri, w_p, 1.0, F_p)
+        x_PG = XG[P, :]
+        SPxP = x_PG + T_PP @ x_PG
+        w_PG = x_PG + YG
+        delta = Df_PG * w_PG - D0_G[None, :] * SPxP
+        F_v.reshape(n_k, N)[ixPG] += delta
+        return x_PG
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+            D2 = D.reshape(n_k, N)
+            Df_PG = D2[ixPG]                  # full diag on coupled plane
+            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
+
+            # block factors for the exact slot: f(h * D0_i * lam_j)
+            ZB = lam[:, None] * (h * D0_G)[None, :]
+            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
+
+            x_PG = eval_F(phc_v, F_phi_p, F_phi_v, ri, Df_PG, D0_G)
+            F_PG = F_phi_v.reshape(n_k, N)[ixPG]
+
+            # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
+            np.multiply(eD, phc_v, out=a_v)
+            np.multiply(phi1, F_phi_v, out=scratch)
+            scratch *= h
+            np.add(a_v, scratch, out=a_v)
+            a_PG = V @ (eDB * (Vi @ x_PG)) + h * (V @ (phi1B * (Vi @ F_PG)))
+            a_v.reshape(n_k, N)[ixPG] = a_PG
+
+            eval_F(a_v, F_a_p, F_a_v, ri, Df_PG, D0_G)
+            Fa_PG = F_a_v.reshape(n_k, N)[ixPG]
+
+            # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
+            np.subtract(F_a_v, F_phi_v, out=scratch)
+            scratch *= h
+            np.multiply(scratch, phi2, out=scratch)
+            np.add(a_v, scratch, out=phc_v)
+            phc_PG = a_PG + h * (V @ (phi2B * (Vi @ (Fa_PG - F_PG))))
+            phc_v.reshape(n_k, N)[ixPG] = phc_PG
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc_v))
+                grid_step += 1
+
+    info(
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
+
+    return phc_v.copy(), np.array(grid_sol)
+
+
 # ---------------------------------------------------------------------------
 # CUDA ETD2 kernel
 # ---------------------------------------------------------------------------
@@ -2246,17 +2393,25 @@ def _preload_nvidia_pip_libs():
             mod = importlib.import_module(pkg_name)
         except ImportError:
             continue
-        libdir = os.path.join(os.path.dirname(mod.__file__), "lib")
-        candidate = os.path.join(libdir, libname)
-        if not os.path.isfile(candidate):
-            continue
-        try:
-            ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
-        except OSError:
-            # Best effort — if the dlopen fails, cupy will still try its own
-            # discovery and report a more specific error if it's actually
-            # missing.
-            pass
+        # The nvidia.* wheels are PEP-420 namespace packages under some
+        # installers (uv): ``__file__`` is None and the package may span
+        # several site-packages dirs — walk ``__path__`` instead.
+        if getattr(mod, "__file__", None) is not None:
+            pkg_dirs = [os.path.dirname(mod.__file__)]
+        else:
+            pkg_dirs = list(getattr(mod, "__path__", []))
+        for pkg_dir in pkg_dirs:
+            candidate = os.path.join(pkg_dir, "lib", libname)
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                # Best effort — if the dlopen fails, cupy will still try
+                # its own discovery and report a more specific error if
+                # it's actually missing.
+                pass
+            break
 
 
 class CudaEtd2Context:
@@ -2461,6 +2616,152 @@ def solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi, grid_idcs):
     # Implicit sync via asnumpy — needed before timing to be honest, but the
     # cost dominates the loop's last few SpMVs anyway and is amortised over
     # nsteps in the per-iteration print.
+    phc_host = cp.asnumpy(cu_phc).astype(np.float64, copy=False)
+    if grid_sol_gpu:
+        grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu)).astype(np.float64, copy=False)
+    else:
+        grid_arr = np.array([])
+
+    info(
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
+
+    return phc_host, grid_arr
+
+
+def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
+    """ETD2RK on NVIDIA cuSPARSE via cupy with the sec(theta) coupling.
+
+    CUDA port of :func:`solv_numpy_etd2_secant`, run end-to-end on the
+    GPU: the 4 SpMVs per step act on ``w = phi + T_gated phi``, and the
+    coupled same-(species, E) diagonal block is integrated exactly in
+    the constant eigenbasis of ``S_P`` — a handful of small dense GEMMs
+    ((n_P, n_P) @ (n_P, n_g)) per step, done in cupy so the state never
+    leaves the device. The constant operator set ``sec_ops`` (a few tens
+    of KB) is uploaded once per call.
+
+    With ``fp_precision=32`` the eigenbasis transforms run in fp32 like
+    everything else; the secant accuracy budget (operator rms 1-2 %) is
+    far above fp32 round-off, so the fp64/fp32 trade-off is unchanged
+    from the plain kernel.
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+
+    cp.cuda.Device(ctx.device_id).use()
+
+    dim = ctx.dim
+    n_k = int(sec_ops["n_k"])
+    N = dim // n_k
+    assert n_k * N == dim, "state dim not divisible by n_k"
+
+    # Upload the constant operator set (few tens of KB — negligible).
+    P = cp.asarray(sec_ops["P"])
+    T_P = cp.asarray(sec_ops["T_P"], dtype=fl_pr)      # (n_P, n_k)
+    T_PP = cp.asarray(sec_ops["T_PP"], dtype=fl_pr)    # (n_P, n_P)
+    V = cp.asarray(sec_ops["V"], dtype=fl_pr)
+    Vi = cp.asarray(sec_ops["Vi"], dtype=fl_pr)
+    lam = cp.asarray(sec_ops["lam"], dtype=fl_pr)      # (n_P,)
+    g_idx = cp.asarray(sec_ops["gate_idx"])            # (n_g,)
+    ixPG = cp.ix_(P, g_idx)
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_scratch = ctx.cu_scratch
+    cu_w = cp.empty(dim, dtype=fl_pr)
+
+    cu_phc[:] = cp.asarray(phi, dtype=fl_pr)
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+
+    def block_phi_factors(ZB):
+        """Elementwise exp/phi1/phi2 with Taylor patches (cupy)."""
+        safe = cp.where(ZB == 0.0, fl_pr(1.0), ZB)
+        e1 = cp.expm1(ZB)
+        phi1B = cp.where(cp.abs(ZB) > _PHI1_SMALL, e1 / safe,
+                         1.0 + ZB * (0.5 + ZB * _INV_6))
+        phi2B = cp.where(cp.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
+                         0.5 + ZB * (_INV_6 + ZB * _INV_24))
+        return cp.exp(ZB), phi1B, phi2B
+
+    def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
+        """Fbuf <- off-diagonal + coupling remainder at xbuf; returns the
+        gathered x_PG. SpMVs act on w = xbuf + T_gated xbuf."""
+        X2 = xbuf.reshape(n_k, N)
+        XG = X2[:, g_idx]                     # (n_k, n_g)
+        YG = T_P @ XG                         # coupling u on (P, g)
+        cu_w[:] = xbuf
+        W2 = cu_w.reshape(n_k, N)
+        W2[ixPG] = W2[ixPG] + YG
+        if not int_off_empty:
+            Fbuf[:] = ctx.cu_int_off @ cu_w
+        else:
+            Fbuf.fill(0)
+        if not dec_off_empty:
+            Fbuf += ri * (ctx.cu_dec_off @ cu_w)
+        x_PG = XG[P, :]
+        SPxP = x_PG + T_PP @ x_PG
+        w_PG = x_PG + YG
+        delta = Df_PG * w_PG - D0_G[None, :] * SPxP
+        F2 = Fbuf.reshape(n_k, N)
+        F2[ixPG] = F2[ixPG] + delta
+        return x_PG
+
+    grid_sol_gpu = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    for k in range(nsteps):
+        h = float(dX[k])
+        ri = float(rho_inv[k])
+
+        _cuda_compute_diag_factors(ctx, h, ri)
+        eD = ctx.cu_eD
+        phi1 = ctx.cu_phi1
+        phi2 = ctx.cu_phi2
+        D2 = ctx.cu_D.reshape(n_k, N)
+        Df_PG = D2[ixPG]                      # full diag on coupled plane
+        D0_G = D2[0, g_idx]                   # k-shared part (kappa = 0)
+
+        # block factors for the exact slot: f(h * D0_i * lam_j)
+        ZB = lam[:, None] * (h * D0_G)[None, :]
+        eDB, phi1B, phi2B = block_phi_factors(ZB)
+
+        x_PG = eval_F(cu_phc, cu_F_phi, ri, Df_PG, D0_G)
+        F_PG = cu_F_phi.reshape(n_k, N)[ixPG]
+
+        # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
+        cp.multiply(eD, cu_phc, out=cu_a)
+        cp.multiply(phi1, cu_F_phi, out=cu_scratch)
+        cu_scratch *= h
+        cp.add(cu_a, cu_scratch, out=cu_a)
+        a_PG = V @ (eDB * (Vi @ x_PG)) + h * (V @ (phi1B * (Vi @ F_PG)))
+        A2 = cu_a.reshape(n_k, N)
+        A2[ixPG] = a_PG
+
+        eval_F(cu_a, cu_F_a, ri, Df_PG, D0_G)
+        Fa_PG = cu_F_a.reshape(n_k, N)[ixPG]
+
+        # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
+        cp.subtract(cu_F_a, cu_F_phi, out=cu_scratch)
+        cu_scratch *= h
+        cp.multiply(cu_scratch, phi2, out=cu_scratch)
+        cp.add(cu_a, cu_scratch, out=cu_phc)
+        phc_PG = a_PG + h * (V @ (phi2B * (Vi @ (Fa_PG - F_PG))))
+        P2 = cu_phc.reshape(n_k, N)
+        P2[ixPG] = phc_PG
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+            grid_sol_gpu.append(cu_phc.copy())
+            grid_step += 1
+
     phc_host = cp.asnumpy(cu_phc).astype(np.float64, copy=False)
     if grid_sol_gpu:
         grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu)).astype(np.float64, copy=False)

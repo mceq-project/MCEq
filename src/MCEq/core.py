@@ -2052,6 +2052,8 @@ class MCEqRun:
                 f"solve_batch: dtype must be float32 or float64, got {dtype}"
             )
 
+        self._require_no_secant("solve_batch")
+
         # --- resolve phi0 ------------------------------------------------
         if phi0 is None:
             phi0_arr = self._phi0.copy()
@@ -2219,6 +2221,7 @@ class MCEqRun:
           (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
           final state matrix and stacked snapshots.
         """
+        self._require_no_secant("solve_multirhs")
         phi0_matrix = np.asarray(phi0_matrix)
         if phi0_matrix.ndim != 2:
             raise ValueError(
@@ -2711,6 +2714,7 @@ class MCEqRun:
             ``(sol, nsteps_per_col[, pixel_index])`` tuple.
         """
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
+        self._require_no_secant("solve_fullsky")
         start = time()
 
         # Resolve geomagnetic-cutoff toggle. Per-call argument has
@@ -2876,6 +2880,22 @@ class MCEqRun:
         cap = 5.0 * round((90.0 - float(theta_z) + 5.0) / 5.0)
         return float(np.clip(cap, 30.0, 75.0))
 
+    def _require_no_secant(self, caller):
+        """Refuse multi-RHS entry points while the secant coupling is on.
+
+        The multi-RHS / carousel kernels do not apply the sec(theta)
+        mode coupling; silently dropping a requested physics correction
+        is worse than refusing. Batching across zeniths would also need
+        per-zenith operators (grouped columns) — see the 2d-on-v2 secant
+        commits.
+        """
+        if getattr(config, "secant_theta_transport", False) and self._mceq_db.is_2d:
+            raise NotImplementedError(
+                f"{caller}: secant_theta_transport is not applied by the "
+                "multi-RHS/carousel kernels (single-axis solve() only). "
+                "Set config.secant_theta_transport = False or use solve()."
+            )
+
     def _build_secant_ops(self):
         """Build the constant sec(theta) kernel operator set for the
         current geometry (see :mod:`MCEq.secant`)."""
@@ -2907,10 +2927,17 @@ class MCEqRun:
             getattr(config, "secant_theta_transport", False)
             and self._mceq_db.is_2d
         )
-        if secant_on and kc != "numpy_etd2":
+        if secant_on and kc not in (
+            "numpy_etd2",
+            "mkl",
+            "mkl_etd2",
+            "cuda",
+            "cuda_etd2",
+        ):
             raise NotImplementedError(
-                "secant_theta_transport is implemented for the numpy_etd2 "
-                f"kernel only (kernel_config = {config.kernel_config})"
+                "secant_theta_transport is implemented for the numpy_etd2, "
+                f"mkl_etd2 and cuda_etd2 kernels only (kernel_config = "
+                f"{config.kernel_config})"
             )
 
         if kc == "numpy_etd2":
@@ -3057,6 +3084,19 @@ class MCEqRun:
                         if old is not None:
                             old.close()  # idempotent
             c = self._mkl_etd2_cache
+            if secant_on:
+                return MCEq.solvers.solv_mkl_etd2_secant, (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    c["mkl_int_off"],
+                    c["mkl_dec_off"],
+                    c["d_int"],
+                    c["d_dec"],
+                    phi0,
+                    grid_idcs,
+                    self._build_secant_ops(),
+                )
             return MCEq.solvers.solv_mkl_etd2, (
                 nsteps,
                 dX,
@@ -3106,6 +3146,16 @@ class MCEqRun:
                     "ctx": ctx,
                 }
             ctx = self._cuda_etd2_cache["ctx"]
+            if secant_on:
+                return MCEq.solvers.solv_cuda_etd2_secant, (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    ctx,
+                    phi0,
+                    grid_idcs,
+                    self._build_secant_ops(),
+                )
             return MCEq.solvers.solv_cuda_etd2, (
                 nsteps,
                 dX,
