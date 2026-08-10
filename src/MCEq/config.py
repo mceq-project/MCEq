@@ -379,8 +379,16 @@ muon_multiple_scattering = True
 #: default; 2D databases + numpy_etd2 kernel only.
 secant_theta_transport = False
 #: cap angle in degrees for the sec(theta) growth (transport breaks down
-#: at 90 deg; C7 comparison shows the excess saturating at ~3-4x).
-secant_theta_cap_deg = 75.0
+#: at 90 deg), or the string "auto". For an axis inclined at zenith
+#: theta_z the azimuthal ring at axis-angle theta first touches the
+#: horizon at 90 - theta_z; beyond that the flat-atmosphere sec(theta)
+#: law has no single meaningful value and the m=0 solver over-attenuates
+#: (measured in the 2026-08-10 cap sweep: the >60 deg overshoot is the
+#: cap, and it wants to go DOWN). "auto" therefore sets
+#: cap = clip(90 - theta_zenith + 5, 30, 75), snapped to 5-degree steps
+#: so the disk-cached operator set stays small. A float pins the cap
+#: (75.0 was the original static default).
+secant_theta_cap_deg = "auto"
 #: zero T rows with kappa > this: the correction has no support at narrow
 #: angular scales and high-kappa rows carry inversion ringing.
 secant_theta_row_kmax = 50.0

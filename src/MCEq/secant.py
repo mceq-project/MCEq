@@ -157,8 +157,13 @@ def secant_coupling_matrix(
     return T
 
 
-def build_secant_kernel_ops(k_grid, e_centers, n_species, config):
+def build_secant_kernel_ops(k_grid, e_centers, n_species, config,
+                            theta_cap_deg=None):
     """Assemble the constant data the secant ETD2RK kernel needs.
+
+    ``theta_cap_deg`` overrides ``config.secant_theta_cap_deg`` — the
+    caller resolves the "auto" (zenith-dependent) mode, since only it
+    knows the geometry. It must be a number here.
 
     Returns a dict with:
       P          -- indices of the coupled modes (kappa <= row_kmax)
@@ -168,9 +173,12 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config):
       gate_idx   -- state columns (species x energy) with E < e_gate
       n_k        -- number of Hankel modes
     """
+    if theta_cap_deg is None:
+        theta_cap_deg = config.secant_theta_cap_deg
+    theta_cap_deg = float(theta_cap_deg)
     T = secant_coupling_matrix(
         np.asarray(k_grid, dtype=np.float64),
-        theta_cap_deg=config.secant_theta_cap_deg,
+        theta_cap_deg=theta_cap_deg,
         row_kmax=config.secant_theta_row_kmax,
         lam_rel=config.secant_theta_lam_rel,
         w_flat=config.secant_theta_w_flat,

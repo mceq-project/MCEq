@@ -2855,6 +2855,40 @@ class MCEqRun:
         info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
         return res
 
+    def _secant_theta_cap_deg(self):
+        """Resolve ``config.secant_theta_cap_deg``, including "auto".
+
+        "auto" follows the cap-sweep geometry: for an axis at zenith
+        theta_z the azimuthal ring at axis-angle theta first touches the
+        horizon at 90 - theta_z, beyond which the flat-atmosphere
+        sec(theta) law has no single meaningful value and a larger cap
+        over-attenuates. The auto cap is 90 - theta_z + 5 (margin),
+        snapped to 5-degree steps so the disk-cached operator set stays
+        small, clipped to [30, 75]. Falls back to 75 when no zenith has
+        been set yet.
+        """
+        cap = config.secant_theta_cap_deg
+        if not (isinstance(cap, str) and cap.lower() == "auto"):
+            return float(cap)
+        theta_z = getattr(self.density_model, "theta_deg", None)
+        if theta_z is None:
+            return 75.0
+        cap = 5.0 * round((90.0 - float(theta_z) + 5.0) / 5.0)
+        return float(np.clip(cap, 30.0, 75.0))
+
+    def _build_secant_ops(self):
+        """Build the constant sec(theta) kernel operator set for the
+        current geometry (see :mod:`MCEq.secant`)."""
+        from MCEq.secant import build_secant_kernel_ops
+
+        return build_secant_kernel_ops(
+            self._mceq_db.k_grid,
+            self._energy_grid.c,
+            self.dim_states // self.dim,
+            config,
+            theta_cap_deg=self._secant_theta_cap_deg(),
+        )
+
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.
 
@@ -2902,14 +2936,7 @@ class MCEqRun:
                     grid_idcs,
                 )
             if secant_on:
-                from MCEq.secant import build_secant_kernel_ops
-
-                sec_ops = build_secant_kernel_ops(
-                    self._mceq_db.k_grid,
-                    self._energy_grid.c,
-                    self.dim_states // self.dim,
-                    config,
-                )
+                sec_ops = self._build_secant_ops()
                 return MCEq.solvers.solv_numpy_etd2_secant, (
                     nsteps,
                     dX,
