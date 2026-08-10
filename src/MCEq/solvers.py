@@ -601,6 +601,168 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     return phc_v.copy(), np.array(grid_sol)
 
 
+def _secant_phi_factors(ZB):
+    """Elementwise phi1/phi2 with Taylor patches for a 2-D block argument."""
+    safe = np.where(ZB == 0.0, 1.0, ZB)
+    e1 = np.expm1(ZB)
+    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe,
+                    1.0 + ZB * (0.5 + ZB * _INV_6))
+    phi2 = np.where(np.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
+                    0.5 + ZB * (_INV_6 + ZB * _INV_24))
+    return np.exp(ZB), phi1, phi2
+
+
+def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
+                           sec_ops):
+    """ETD2RK with the sec(theta) path-elongation mode coupling.
+
+    Integrates ``dPhi/dX = (A + rho_inv B)(I + T_gated) Phi`` where
+    ``T`` is the constant Hankel-space representation of multiplication
+    by ``min(sec theta, sec theta_cap)`` (see ``MCEq/secant.py``) and the
+    gate restricts the coupling to state columns with E below
+    ``config.secant_theta_e_gate``.
+
+    Operator split (per gated state column i, coupled mode subspace P =
+    {kappa <= row_kmax}, S_P = (I+T)[P,P]):
+
+      exact slot   D0_i * S_P        D0_i = diagonal of A + ri B at the
+                                     kappa=0 mode (k-independent part;
+                                     the decay diagonal is exactly
+                                     k-independent, the interaction
+                                     self-yield spread and the muon
+                                     multiple-scattering damping at
+                                     kappa <= row_kmax are mild and go
+                                     to the remainder)
+      remainder    everything else: off-diagonal production (coupled via
+                   w = Phi + u, u = T_gated Phi), the k-dependent diagonal
+                   spread on coupled rows, and the one-way cross coupling
+                   from uncoupled modes.
+
+    The exact slot is evaluated through the eigendecomposition
+    ``S_P = V diag(lam) V^-1`` (constant, shared by every state), so
+    ``exp/phi1/phi2(h D0_i S_P)`` are elementwise in the V-basis. This is
+    unconditionally stable at any stiffness and reproduces the
+    S-corrected equilibrium exactly in the stiff limit — stitching the
+    coupling into the CSR instead puts stiff coupled loss terms in the
+    explicit part and diverges (rho(D_S^-1 T_off) = 1.75).
+
+    Cost: the baseline 4 SpMVs plus ~10 small dense GEMMs per step
+    (22x22 @ 22 x n_gated) — a few MFlop, negligible.
+    """
+    blocksize = getattr(config, "numpy_bsr_blocksize", None)
+    d_int, d_dec, int_off, dec_off, n_padded = _etd_get_split_for_numpy(
+        int_m, dec_m, blocksize
+    )
+
+    dim = phi.shape[0]
+    P = sec_ops["P"]
+    T_P = sec_ops["T_P"]          # (n_P, n_k)
+    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
+    V = sec_ops["V"]
+    Vi = sec_ops["Vi"]
+    lam = sec_ops["lam"]          # (n_P,)
+    g_idx = sec_ops["gate_idx"]   # (n_g,)
+    n_k = sec_ops["n_k"]
+    N = dim // n_k
+    assert n_k * N == dim, "state dim not divisible by n_k"
+    n_P = len(P)
+    n_g = len(g_idx)
+    # flat state indices of the (coupled mode, gated column) plane
+    flatPG = (P[:, None] * N + g_idx[None, :])  # (n_P, n_g)
+
+    phc = np.zeros(n_padded, dtype=np.float64)
+    phc[:dim] = phi
+    F_phi = np.empty(n_padded, dtype=np.float64)
+    F_a = np.empty(n_padded, dtype=np.float64)
+    a = np.empty(n_padded, dtype=np.float64)
+    w = np.zeros(n_padded, dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    scratch = bufs["scratch"]
+    D = bufs["D"]
+
+    phc_v = phc[:dim]
+    F_phi_v = F_phi[:dim]
+    F_a_v = F_a[:dim]
+    a_v = a[:dim]
+
+    def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
+        """Fbuf <- off-diagonal + coupling remainder of the operator at
+        xbuf; returns the gathered x_PG for reuse."""
+        x2 = xbuf[:dim].reshape(n_k, N)
+        XG = x2[:, g_idx]                     # (n_k, n_g)
+        YG = T_P @ XG                         # coupling u on (P, g)
+        np.copyto(w, xbuf)
+        w[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] += YG
+        np.copyto(Fbuf, int_off.dot(w))
+        ri_dec = dec_off.dot(w)
+        ri_dec *= ri
+        np.add(Fbuf, ri_dec, out=Fbuf)
+        x_PG = XG[P, :]
+        SPxP = x_PG + T_PP @ x_PG
+        w_PG = x_PG + YG
+        delta = Df_PG * w_PG - D0_G[None, :] * SPxP
+        Fbuf[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] += delta
+        return x_PG
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+
+    # See module-level :data:`_EM_BLOWUP_CAVEAT` for the errstate contract.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+            D2 = D.reshape(n_k, N)
+            Df_PG = D2[np.ix_(P, g_idx)]      # full diag on coupled plane
+            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
+
+            # block factors for the exact slot: f(h * D0_i * lam_j)
+            ZB = lam[:, None] * (h * D0_G)[None, :]
+            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
+
+            x_PG = eval_F(phc, F_phi, ri, Df_PG, D0_G)
+            F_PG = F_phi[:dim].reshape(n_k, N)[np.ix_(P, g_idx)]
+
+            # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
+            np.multiply(eD, phc_v, out=a_v)
+            np.multiply(phi1, F_phi_v, out=scratch)
+            scratch *= h
+            np.add(a_v, scratch, out=a_v)
+            a_PG = V @ (eDB * (Vi @ x_PG)) + h * (V @ (phi1B * (Vi @ F_PG)))
+            a[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] = a_PG
+
+            a_PG_state = eval_F(a, F_a, ri, Df_PG, D0_G)  # noqa: F841
+            Fa_PG = F_a[:dim].reshape(n_k, N)[np.ix_(P, g_idx)]
+
+            # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
+            np.subtract(F_a_v, F_phi_v, out=scratch)
+            scratch *= h
+            np.multiply(scratch, phi2, out=scratch)
+            np.add(a_v, scratch, out=phc_v)
+            phc_PG = a_PG + h * (V @ (phi2B * (Vi @ (Fa_PG - F_PG))))
+            phc[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] = phc_PG
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(np.copy(phc_v))
+                grid_step += 1
+
+    info(
+        2,
+        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    )
+
+    return phc_v.copy(), np.array(grid_sol)
+
+
 # ---------------------------------------------------------------------------
 # Multi-RHS variant: propagate K independent initial conditions through the
 # same operator simultaneously. Mirrors PriNCe's

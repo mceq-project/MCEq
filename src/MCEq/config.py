@@ -366,6 +366,35 @@ muon_helicity_dependence = True
 #: (PR #48 / 2D path; folded into the 2D D matrix in Task 1.3).
 muon_multiple_scattering = True
 
+#: sec(theta) path-elongation correction for the 2D transport (see
+#: MCEq/secant.py). The paraxial solver books all losses per unit
+#: axis-projected depth; enabling this right-multiplies the per-mode
+#: transport operator by the constant Hankel-space matrix S = I + T
+#: representing multiplication by min(sec theta, sec cap), which charges
+#: every particle its physical sec(theta) path on the parent side of the
+#: yield kick (loss-free daughters — neutrinos — are preserved exactly).
+#: Applied inside the numpy ETD2RK kernel (solv_numpy_etd2_secant): the
+#: coupled same-(species,E) block d_i*S_P is integrated exactly in the
+#: eigenbasis of S_P, unconditionally stable at any stiffness. Off by
+#: default; 2D databases + numpy_etd2 kernel only.
+secant_theta_transport = False
+#: cap angle in degrees for the sec(theta) growth (transport breaks down
+#: at 90 deg; C7 comparison shows the excess saturating at ~3-4x).
+secant_theta_cap_deg = 75.0
+#: zero T rows with kappa > this: the correction has no support at narrow
+#: angular scales and high-kappa rows carry inversion ringing.
+secant_theta_row_kmax = 50.0
+#: ridge strength (relative to the Gram matrix top singular value) for
+#: the operator fit.
+secant_theta_lam_rel = 1e-9
+#: weight of the flat-state (kappa-flat = collimated) damping term:
+#: enforces S@1 = 1 so collimated states pass through untouched.
+secant_theta_w_flat = 1.0
+#: apply the coupling only to state columns with E_kin below this (GeV).
+#: The effect is 30-60% at 0.1 GeV, ~1% at 2-4 GeV, <0.1% above 10 GeV.
+#: None disables the gate.
+secant_theta_e_gate = 31.6
+
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True

@@ -1607,8 +1607,8 @@ class MCEqRun:
         hankel_transf,
         pdg_id,
         hel,
-        oversample_res=5,
-        theta_res=600,
+        oversample_res=10,
+        theta_res=1200,
         log_theta=False,
     ):
         """Convert Hankel-space amplitudes from the 2D MCEq solver to real
@@ -1637,7 +1637,14 @@ class MCEqRun:
         else:
             theta_range = np.linspace(0, np.pi / 2, theta_res)
         k_grid = self._mceq_db.k_grid
-        oversample_pts = np.max(k_grid) * oversample_res
+        # int() so a NON-INTEGER k_grid is usable. The grid had to be integer
+        # only because np.linspace(num=...) rejects a float; that in turn
+        # forced kappa_min >= 1, which caps the largest representable angular
+        # scale at theta ~ 1/kappa = 57 deg and leaves the whole 14-90 deg
+        # range to four or five nodes. Measured on a cascade-like profile
+        # (Pearson-VII p=1.05, a=2.5 deg): 14% error at 30 deg with integer
+        # nodes, 0.0% once ~10 nodes sit below kappa=1.
+        oversample_pts = int(np.max(k_grid) * oversample_res)
         oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
         j0_ktheta_k = (
             scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
@@ -2862,6 +2869,16 @@ class MCEqRun:
 
         kc = config.kernel_config.lower()
 
+        secant_on = (
+            getattr(config, "secant_theta_transport", False)
+            and self._mceq_db.is_2d
+        )
+        if secant_on and kc != "numpy_etd2":
+            raise NotImplementedError(
+                "secant_theta_transport is implemented for the numpy_etd2 "
+                f"kernel only (kernel_config = {config.kernel_config})"
+            )
+
         if kc == "numpy_etd2":
             # If an EM ρ-stack has been built (via
             # enable_em_density_interpolation), route to the ρ-aware kernel
@@ -2869,6 +2886,11 @@ class MCEqRun:
             int_m_stack = getattr(self, "_int_m_stack", None)
             em_rho_grid = getattr(self, "_em_rho_grid", None)
             if int_m_stack is not None and em_rho_grid is not None:
+                if secant_on:
+                    raise NotImplementedError(
+                        "secant_theta_transport + EM rho-stack blending "
+                        "are not combined"
+                    )
                 return MCEq.solvers.solv_numpy_etd2_rho_stack, (
                     nsteps,
                     dX,
@@ -2878,6 +2900,25 @@ class MCEqRun:
                     self.dec_m,
                     phi0,
                     grid_idcs,
+                )
+            if secant_on:
+                from MCEq.secant import build_secant_kernel_ops
+
+                sec_ops = build_secant_kernel_ops(
+                    self._mceq_db.k_grid,
+                    self._energy_grid.c,
+                    self.dim_states // self.dim,
+                    config,
+                )
+                return MCEq.solvers.solv_numpy_etd2_secant, (
+                    nsteps,
+                    dX,
+                    rho_inv,
+                    self.int_m,
+                    self.dec_m,
+                    phi0,
+                    grid_idcs,
+                    sec_ops,
                 )
             return MCEq.solvers.solv_numpy_etd2, (
                 nsteps,
@@ -3702,6 +3743,14 @@ class MatrixBuilder:
                     )
             if apply_muon_scattering:
                 self._apply_muon_scattering_to_diagonal(per_mode)
+            # NOTE: config.secant_theta_transport does NOT alter the
+            # matrices. The sec(theta) mode coupling is applied inside the
+            # ETD2RK kernel (solv_numpy_etd2_secant), where the coupled
+            # same-(species,E) diagonal block is treated exactly in the
+            # eigenbasis of S = I + T; stitching the coupling into the CSR
+            # (tried first) puts stiff mode-coupled loss terms in the
+            # explicit part, which diverges wherever rows are stiff
+            # (rho(D_S^-1 T_off) = 1.75 > 1). See MCEq/secant.py.
             per_mode_csr = [csr_matrix(m) for m in per_mode]
             for m in per_mode_csr:
                 m.eliminate_zeros()
