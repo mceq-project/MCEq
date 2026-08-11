@@ -23,6 +23,10 @@ def mceq_2d():
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False  # keep this test pure to the splitting
+    # URQMD/PR#48 regression DB (non-FLUKA labels); the end-to-end solve
+    # checks the paraxial per-mode equivalence.
+    config.restrict_2d_to_fluka = False
+    config.secant_theta_transport = False
     return MCEqRun(
         interaction_model="SIBYLL23D",
         primary_model=None,

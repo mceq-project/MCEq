@@ -2890,6 +2890,21 @@ class MCEqRun:
         cap = 5.0 * round((90.0 - float(theta_z) + 5.0) / 5.0)
         return float(np.clip(cap, 30.0, 75.0))
 
+    def _secant_mode(self):
+        """Resolve ``config.secant_theta_transport`` against the loaded DB.
+
+        Returns one of ``"off"`` (1D database, or the flag is False),
+        ``"auto"`` (the default — apply where implemented, downgrade to
+        paraxial with a warning elsewhere) and ``"require"`` (flag is
+        True — unsupported paths refuse instead of downgrading).
+        """
+        flag = getattr(config, "secant_theta_transport", False)
+        if not self._mceq_db.is_2d:
+            return "off"
+        if isinstance(flag, str) and flag.lower() == "auto":
+            return "auto"
+        return "require" if flag else "off"
+
     def _require_no_secant(self, caller):
         """Refuse multi-RHS entry points while the secant coupling is on.
 
@@ -2897,13 +2912,24 @@ class MCEqRun:
         mode coupling; silently dropping a requested physics correction
         is worse than refusing. Batching across zeniths would also need
         per-zenith operators (grouped columns) — see the 2d-on-v2 secant
-        commits.
+        commits. Under the default ``"auto"`` the correction was not
+        explicitly requested, so these entry points warn and proceed
+        with the paraxial transport instead.
         """
-        if getattr(config, "secant_theta_transport", False) and self._mceq_db.is_2d:
+        mode = self._secant_mode()
+        if mode == "require":
             raise NotImplementedError(
                 f"{caller}: secant_theta_transport is not applied by the "
                 "multi-RHS/carousel kernels (single-axis solve() only). "
                 "Set config.secant_theta_transport = False or use solve()."
+            )
+        if mode == "auto":
+            info(
+                1,
+                f"{caller}: sec(theta) transport correction is not "
+                "implemented for the multi-RHS/carousel kernels — "
+                "proceeding with the paraxial 2D transport. Use "
+                "solve() for corrected single-axis results.",
             )
 
     def _build_secant_ops(self):
@@ -2933,10 +2959,8 @@ class MCEqRun:
 
         kc = config.kernel_config.lower()
 
-        secant_on = (
-            getattr(config, "secant_theta_transport", False)
-            and self._mceq_db.is_2d
-        )
+        secant_mode = self._secant_mode()
+        secant_on = secant_mode != "off"
         if secant_on and kc not in (
             "numpy_etd2",
             "mkl",
@@ -2944,11 +2968,19 @@ class MCEqRun:
             "cuda",
             "cuda_etd2",
         ):
-            raise NotImplementedError(
-                "secant_theta_transport is implemented for the numpy_etd2, "
-                f"mkl_etd2 and cuda_etd2 kernels only (kernel_config = "
-                f"{config.kernel_config})"
+            if secant_mode == "require":
+                raise NotImplementedError(
+                    "secant_theta_transport is implemented for the numpy_etd2, "
+                    f"mkl_etd2 and cuda_etd2 kernels only (kernel_config = "
+                    f"{config.kernel_config})"
+                )
+            info(
+                1,
+                "sec(theta) transport correction is not implemented for "
+                f"kernel_config = {config.kernel_config} — proceeding "
+                "with the paraxial 2D transport.",
             )
+            secant_on = False
 
         if kc == "numpy_etd2":
             # If an EM ρ-stack has been built (via
@@ -2958,10 +2990,18 @@ class MCEqRun:
             em_rho_grid = getattr(self, "_em_rho_grid", None)
             if int_m_stack is not None and em_rho_grid is not None:
                 if secant_on:
-                    raise NotImplementedError(
-                        "secant_theta_transport + EM rho-stack blending "
-                        "are not combined"
+                    if secant_mode == "require":
+                        raise NotImplementedError(
+                            "secant_theta_transport + EM rho-stack blending "
+                            "are not combined"
+                        )
+                    info(
+                        1,
+                        "sec(theta) transport correction is not combined "
+                        "with EM rho-stack blending — proceeding with the "
+                        "paraxial 2D transport.",
                     )
+                    secant_on = False
                 return MCEq.solvers.solv_numpy_etd2_rho_stack, (
                     nsteps,
                     dX,

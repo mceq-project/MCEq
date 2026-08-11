@@ -373,11 +373,16 @@ muon_multiple_scattering = True
 #: representing multiplication by min(sec theta, sec cap), which charges
 #: every particle its physical sec(theta) path on the parent side of the
 #: yield kick (loss-free daughters — neutrinos — are preserved exactly).
-#: Applied inside the numpy ETD2RK kernel (solv_numpy_etd2_secant): the
-#: coupled same-(species,E) block d_i*S_P is integrated exactly in the
-#: eigenbasis of S_P, unconditionally stable at any stiffness. Off by
-#: default; 2D databases + numpy_etd2 kernel only.
-secant_theta_transport = False
+#: Applied inside the ETD2RK kernels (numpy/mkl/cuda): the coupled
+#: same-(species,E) block d_i*S_P is integrated exactly in the
+#: eigenbasis of S_P, unconditionally stable at any stiffness.
+#: Tri-state: "auto" (default) applies the correction to every
+#: single-axis solve() on a 2D database and falls back to the paraxial
+#: transport (with a warning) on the multi-RHS/carousel entry points
+#: and kernels where the coupling is not implemented; True requires it
+#: (unsupported paths raise); False disables it. 1D databases are
+#: never affected.
+secant_theta_transport = "auto"
 #: cap angle in degrees for the sec(theta) growth (transport breaks down
 #: at 90 deg), or the string "auto". For an axis inclined at zenith
 #: theta_z the azimuthal ring at axis-angle theta first touches the
@@ -402,6 +407,16 @@ secant_theta_w_flat = 1.0
 #: The effect is 30-60% at 0.1 GeV, ~1% at 2-4 GeV, <0.1% above 10 GeV.
 #: None disables the gate.
 secant_theta_e_gate = 31.6
+
+#: 2D (Hankel-mode) databases are production-supported for the FLUKA
+#: interaction model only, on the energy range the FLUKA angular cubes
+#: cover (= the 2D database's own grid). Selecting a different model or
+#: enabling runtime HE/LE blending on a 2D database raises — coupling a
+#: 1D high-energy model to the 2D low-energy window is the (postponed)
+#: hybrid kappa-window extension. The historical URQMD/PR#48 validation
+#: databases carry other model labels; the regression tests disable
+#: this restriction explicitly.
+restrict_2d_to_fluka = True
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
