@@ -1,0 +1,64 @@
+name: Run test suite
+
+# Single definition of "install MCEq and run the test suite on one platform",
+# called by test.yaml for both the quick gate and the full matrix so the two
+# cannot drift apart.
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      python-version:
+        required: true
+        type: string
+      upload-coverage:
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  test:
+    runs-on: ${{ inputs.os }}
+    env:
+      UV_SYSTEM_PYTHON: "true"
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: False
+        fetch-depth: 3
+    - uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: test-${{ inputs.os }}-${{ inputs.python-version }}
+    - uses: astral-sh/setup-uv@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        allow-prereleases: true
+    - name: Install requirements
+      run: uv pip install -e . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }}
+    - name: Check MKL version
+      if: runner.os != 'macOS' && runner.arch != 'ARM64'
+      run: pip show mkl
+    - name: Cache test database
+      id: cache-db
+      uses: actions/cache@v6
+      with:
+        path: src/MCEq/data/mceq_db_v140reduced_compact.h5
+        key: mceq-test-db-v1-${{ runner.os }}
+
+    - name: Download test database if not cached
+      if: steps.cache-db.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
+    - name: Run tests
+      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3 --dist loadgroup
+    - name: Upload coverage reports to Codecov
+      if: inputs.upload-coverage
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: ${{ inputs.os }}
