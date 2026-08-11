@@ -22,11 +22,14 @@ def mceq_2d():
         "e_min": config.e_min,
         "e_max": config.e_max,
         "muon_helicity_dependence": config.muon_helicity_dependence,
+        "restrict_2d_to_fluka": config.restrict_2d_to_fluka,
     }
     config.mceq_db_fname = fn
     config.e_min = 1e-1
     config.e_max = 1e4
     config.muon_helicity_dependence = True
+    # The URQMD/PR#48 regression database carries non-FLUKA model labels.
+    config.restrict_2d_to_fluka = False
     try:
         yield MCEqRun(
             interaction_model="SIBYLL23D",

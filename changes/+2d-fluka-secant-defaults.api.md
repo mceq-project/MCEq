@@ -1,0 +1,17 @@
+2D (Hankel-mode) databases now ship with production defaults:
+
+- ``config.secant_theta_transport`` defaults to ``"auto"``: the sec(theta)
+  path-elongation correction is applied to every single-axis ``solve()`` on a
+  2D database (numpy/mkl/cuda ETD2 kernels) and falls back to the paraxial
+  transport with a warning on the multi-RHS/carousel entry points, where the
+  mode coupling is not implemented. ``True`` restores the previous strict
+  semantics (unsupported paths raise); ``False`` disables the correction.
+  1D databases are unaffected.
+- New ``config.restrict_2d_to_fluka`` (default ``True``): 2D databases are
+  production-supported for the FLUKA interaction model only, on the energy
+  range covered by the FLUKA angular cubes (the database's own grid).
+  Selecting a different model or combining a 2D database with runtime HE/LE
+  blending raises ``NotImplementedError`` — coupling a 1D high-energy model
+  to the 2D low-energy window is the postponed hybrid kappa-window
+  extension. The URQMD/PR#48 validation databases remain usable in the test
+  suite by switching the flag off.
