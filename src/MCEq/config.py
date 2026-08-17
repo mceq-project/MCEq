@@ -390,9 +390,13 @@ secant_theta_transport = "auto"
 #: law has no single meaningful value and the m=0 solver over-attenuates
 #: (measured in the 2026-08-10 cap sweep: the >60 deg overshoot is the
 #: cap, and it wants to go DOWN). "auto" therefore sets
-#: cap = clip(90 - theta_zenith + 5, 30, 75), snapped to 5-degree steps
-#: so the disk-cached operator set stays small. A float pins the cap
-#: (75.0 was the original static default).
+#: cap = clip(90 - theta_zenith + 5, 50, 75), snapped to 5-degree steps
+#: so the disk-cached operator set stays small. The lower clip at 50 is
+#: numerical: below ~45 deg the fitted coupling is nearly nilpotent and
+#: the S_P eigenbasis degenerates (cond ~1e17), so the exact kernel
+#: slot cannot be built; the under-corrected range beyond 50 deg lies
+#: past the 90 - theta_zenith acceptance horizon for those zeniths
+#: anyway. A float pins the cap (75.0 was the original static default).
 secant_theta_cap_deg = "auto"
 #: zero T rows with kappa > this: the correction has no support at narrow
 #: angular scales and high-kappa rows carry inversion ringing.

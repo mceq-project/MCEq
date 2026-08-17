@@ -2878,8 +2878,17 @@ class MCEqRun:
         sec(theta) law has no single meaningful value and a larger cap
         over-attenuates. The auto cap is 90 - theta_z + 5 (margin),
         snapped to 5-degree steps so the disk-cached operator set stays
-        small, clipped to [30, 75]. Falls back to 75 when no zenith has
-        been set yet.
+        small, clipped to [50, 75]. The lower bound is numerical: for
+        caps below ~45 deg the fitted coupling T becomes nearly
+        nilpotent (g - 1 <= 0.22 with support only at wide angle), the
+        S_P spectrum collapses onto 1 and its eigenbasis degenerates
+        (cond(V) ~ 1e17 at cap 35-40 vs ~1e2 at cap >= 50), so the
+        exact-eigenbasis kernel slot cannot be built. Zeniths >= 45 deg
+        therefore run at cap 50: the theta range (50, 90) is then
+        under-corrected relative to the horizon-aware ideal, but it
+        lies entirely beyond the 90 - theta_z acceptance horizon where
+        the flat-atmosphere law is invalid regardless. Falls back to 75
+        when no zenith has been set yet.
         """
         cap = config.secant_theta_cap_deg
         if not (isinstance(cap, str) and cap.lower() == "auto"):
@@ -2888,7 +2897,7 @@ class MCEqRun:
         if theta_z is None:
             return 75.0
         cap = 5.0 * round((90.0 - float(theta_z) + 5.0) / 5.0)
-        return float(np.clip(cap, 30.0, 75.0))
+        return float(np.clip(cap, 50.0, 75.0))
 
     def _secant_mode(self):
         """Resolve ``config.secant_theta_transport`` against the loaded DB.

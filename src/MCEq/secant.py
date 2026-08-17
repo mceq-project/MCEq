@@ -193,7 +193,11 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config,
         raise RuntimeError(
             "secant coupling: S_P eigenvalues not positive-real "
             f"(min real {lam.real.min():.3e}, "
-            f"max |imag| {np.abs(lam.imag).max():.3e})"
+            f"max |imag| {np.abs(lam.imag).max():.3e}). This happens "
+            f"for small caps (theta_cap_deg = {theta_cap_deg:g}): below "
+            "~45 deg the coupling is nearly nilpotent and S_P becomes "
+            "numerically defective. Use theta_cap_deg >= 50 (the 'auto' "
+            "cap clips there)."
         )
     lam = lam.real
     V = V.real
