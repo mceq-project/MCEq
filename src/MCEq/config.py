@@ -412,16 +412,6 @@ secant_theta_w_flat = 1.0
 #: None disables the gate.
 secant_theta_e_gate = 31.6
 
-#: 2D (Hankel-mode) databases are production-supported for the FLUKA
-#: interaction model only, on the energy range the FLUKA angular cubes
-#: cover (= the 2D database's own grid). Selecting a different model or
-#: enabling runtime HE/LE blending on a 2D database raises — coupling a
-#: 1D high-energy model to the 2D low-energy window is the (postponed)
-#: hybrid kappa-window extension. The historical URQMD/PR#48 validation
-#: databases carry other model labels; the regression tests disable
-#: this restriction explicitly.
-restrict_2d_to_fluka = True
-
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True

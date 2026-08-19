@@ -497,6 +497,15 @@ class HDF5Backend:
         model remain unchanged, matching the former compiled low-energy
         extension. Model-specific projectile equivalences have already been
         applied by ``_gen_db_dictionary`` before this step.
+
+        On 2D databases the channel matrices are ``(n_k, n_e, n_e)`` Hankel-
+        mode tensors and the ``(1, n_e)`` column weights broadcast over every
+        mode: the blend weight depends on the projectile energy only, so
+        blending commutes with the Hankel transform and applies per kappa.
+        Both models must be stored on the database's common grid (a model's
+        blocks are zero outside its production range, so the transition
+        window must lie inside both models' coverage — the multi-model 2D
+        database build guarantees this).
         """
         w_he = self._he_le_weight()[np.newaxis, :]
         w_le = 1.0 - w_he
@@ -527,37 +536,8 @@ class HDF5Backend:
             ),
         }
 
-    def _check_2d_model_restriction(self, mname):
-        """2D (Hankel-mode) databases are supported for FLUKA only, on the
-        energy range the FLUKA cubes cover (the DB's own grid). The hybrid
-        kappa-window design that couples a 1D high-energy model to the 2D
-        low-energy window is postponed, so HE-model selection and runtime
-        HE/LE blending on a 2D database are refused rather than silently
-        mis-modelled. ``config.restrict_2d_to_fluka`` exists for the
-        URQMD/PR#48 regression fixtures only.
-        """
-        if not (
-            getattr(self, "is_2d", False)
-            and getattr(config, "restrict_2d_to_fluka", True)
-        ):
-            return
-        if "FLUKA" not in mname:
-            raise NotImplementedError(
-                f"2D databases support the FLUKA interaction model "
-                f"only (requested: {mname}). High-energy models in "
-                "2D require the hybrid kappa-window extension, which "
-                "is not implemented yet."
-            )
-        if self.low_energy_model is not None and self.low_energy_model != mname:
-            raise NotImplementedError(
-                "Runtime low-energy blending is not supported on 2D "
-                "databases — the 2D solve is FLUKA-native across the "
-                "database's entire energy range."
-            )
-
     def interaction_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
-        self._check_2d_model_restriction(mname)
         if self.low_energy_model is None or mname == self.low_energy_model:
             return self._interaction_db_single(mname)
         he_index = self._interaction_db_single(mname)
@@ -806,10 +786,6 @@ class HDF5Backend:
 
     def cs_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
-        # Same 2D restriction as interaction_db (cs_db is hit first on the
-        # set_interaction_model path, so refuse with the clear message here
-        # rather than a generic missing-group error).
-        self._check_2d_model_restriction(mname)
         if self.low_energy_model is None or mname == self.low_energy_model:
             return self._cs_db_single(mname)
 

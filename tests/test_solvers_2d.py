@@ -58,9 +58,8 @@ def _solve(kernel, base):
     config.muon_helicity_dependence = base["muon_helicity_dependence"]
     config.muon_multiple_scattering = base["muon_multiple_scattering"]
     config.kernel_config = kernel
-    # URQMD/PR#48 regression DB (non-FLUKA labels) + paraxial cross-backend
-    # comparison; the secant coupling is exercised by its own runs.
-    config.restrict_2d_to_fluka = False
+    # URQMD/PR#48 regression DB + paraxial cross-backend comparison;
+    # the secant coupling is exercised by its own runs.
     config.secant_theta_transport = False
     mceq = MCEqRun(
         interaction_model=base["interaction_model"],

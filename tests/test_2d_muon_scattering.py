@@ -16,7 +16,6 @@ def _saved_config():
         "e_max": config.e_max,
         "muon_helicity_dependence": config.muon_helicity_dependence,
         "muon_multiple_scattering": config.muon_multiple_scattering,
-        "restrict_2d_to_fluka": config.restrict_2d_to_fluka,
     }
 
 
@@ -38,7 +37,6 @@ def mceq_2d_with_scattering():
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = True
-    config.restrict_2d_to_fluka = False
     try:
         yield MCEqRun(
             interaction_model="SIBYLL23D",
@@ -63,7 +61,6 @@ def mceq_2d_no_scattering():
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False
-    config.restrict_2d_to_fluka = False
     try:
         yield MCEqRun(
             interaction_model="SIBYLL23D",

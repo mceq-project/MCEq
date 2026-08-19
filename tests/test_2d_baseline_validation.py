@@ -68,7 +68,6 @@ _CONFIG_KEYS = (
     "enable_energy_loss",
     "muon_helicity_dependence",
     "muon_multiple_scattering",
-    "restrict_2d_to_fluka",
     "secant_theta_transport",
 )
 _ADV_KEYS = ("force_resonance", "disabled_particles")
@@ -111,9 +110,8 @@ def mceq_v2_2d(baseline):
         config.muon_multiple_scattering = True
         config.adv_set["force_resonance"] = [421, 431, 411, 310]
         config.adv_set["disabled_particles"] = [22, 111, 16, 11]
-        # The PR#48 fixture is a paraxial solve on the URQMD validation DB
-        # (non-FLUKA model labels) — pin both post-merge 2D defaults back.
-        config.restrict_2d_to_fluka = False
+        # The PR#48 fixture is a paraxial solve — pin the post-merge
+        # 2D default back.
         config.secant_theta_transport = False
 
         mceq = MCEqRun(
