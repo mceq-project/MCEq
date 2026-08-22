@@ -11,14 +11,28 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 _xmat = None
 
 _target_masses = {
-    # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    "air": sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    # <A> must be the ATOM-number-weighted mean mass so that the
+    # interaction rate per grammage N_A/<A> * <sigma> (with <sigma> the
+    # per-atom air average) equals N_A * sum_i w_i/A_i * sigma_i.
+    # Dry-air volume fractions N2/O2/Ar = 0.78084/0.20946/0.00934
+    # (https://en.wikipedia.org/wiki/Atmosphere_of_Earth) contribute
+    # 2/2/1 atoms per molecule -> <A> = 14.5431, identical to CORSIKA's
+    # AVERAW. (The pre-2026 value 14.6568 weighted by MOLECULE fractions,
+    # double-counting argon relative to the diatomics: +0.78% in every
+    # interaction length.)
+    "air": (
+        sum(n * f * a for f, a, n in
+            [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)])
+        / sum(n * f for f, _, n in
+              [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)])
+    ),
     "water": 1.0 / 3.0 * (2.0 + 16.0),
     "ice": 1.0 / 3.0 * (2.0 + 16.0),
     "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
     "rock": 22.0,
     "hydrogen": 1.0,
-    "iron": 26.0,
+    # A of iron, not Z (was 26.0 = Z until 2026)
+    "iron": 55.845,
 }
 
 
@@ -73,9 +87,11 @@ def normalize_hadronic_model_name(name):
 def average_A_target(mat="auto"):
     """Average target mass number.
 
-    For air <A> = 14.6568 (using mass fractions from
-    https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    Other media supported are co2, rock, ice, water, and hydrogen.
+    For air <A> = 14.5431: the atom-number-weighted mean mass of dry
+    air (N2/O2/Ar volume fractions with 2/2/1 atoms per molecule),
+    matching CORSIKA's AVERAW. Pair it with per-atom-averaged air
+    cross sections. Other media supported are co2, rock, ice, water,
+    hydrogen, and iron.
 
     Args:
         mat: str or float, optional
