@@ -777,6 +777,10 @@ class HDF5Backend:
         elif 100 < apid < 300:
             candidates.append(211)
         elif 1000 < apid < 5000:
+            # Antibaryons carry annihilation channels: prefer the pbar
+            # column over the proton one when the model provides it.
+            if projectile < 0:
+                candidates.append(-2212)
             candidates.append(2212)
 
         for candidate in candidates:
@@ -802,7 +806,21 @@ class HDF5Backend:
             blended[projectile] = (
                 he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
             )
-        return {"parents": list(he_index["parents"]), "index_d": blended}
+        # LE-only projectiles (e.g. FLUKA's dedicated n, nbar, K0, hyperon
+        # columns) keep their identity instead of being dropped: their own
+        # sigma below the transition, the mapped HE equivalent above it.
+        # Without this, get_cs falls back to the proton column, which for
+        # antibaryons misses the annihilation part entirely.
+        for projectile, le_cs in le_index["index_d"].items():
+            if projectile in blended:
+                continue
+            he_cs = self._mapped_cross_section(
+                he_index["index_d"], projectile, mname
+            )
+            blended[projectile] = (
+                le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
+            )
+        return {"parents": sorted(blended), "index_d": blended}
 
     def _cs_db_single(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
@@ -1460,8 +1478,14 @@ class InteractionCrossSections:
             info(15, message_templ.format(parent, "K+-"))
             cs = self.index_d[321]
         elif abs(parent) > 1000 and abs(parent) < 5000:
-            info(15, message_templ.format(parent, "nucleon"))
-            cs = self.index_d[2212]
+            # Antibaryons prefer the pbar column (annihilation channels)
+            # over the proton one when the model provides it.
+            if parent < 0 and -2212 in self.index_d:
+                info(15, message_templ.format(parent, "pbar"))
+                cs = self.index_d[-2212]
+            else:
+                info(15, message_templ.format(parent, "nucleon"))
+                cs = self.index_d[2212]
         elif 5 < abs(parent) < 23:
             info(15, "returning 0 cross-section for lepton", parent)
             return np.zeros(self.energy_grid.d)

@@ -87,6 +87,37 @@ def test_cross_sections_blend_separately_and_use_equivalences():
     assert np.array_equal(mixed["index_d"][2212], [20.0, 4.0, 4.0])
 
 
+def test_le_only_projectiles_survive_the_blend_with_mapped_he_sigma():
+    obj = backend([8.0, 80.0, 800.0], width=0.0)
+    he = {
+        "parents": [2212, -2212],
+        "index_d": {
+            2212: np.full(3, 4.0),
+            -2212: np.full(3, 6.0),
+        },
+    }
+    le = {
+        "parents": [2112, -2112, 2212, -2212],
+        "index_d": {
+            2112: np.full(3, 10.0),
+            -2112: np.full(3, 30.0),
+            2212: np.full(3, 20.0),
+            -2212: np.full(3, 40.0),
+        },
+    }
+    obj._cs_db_single = lambda name: le if name == "FLUKA20251" else he
+    mixed = obj.cs_db("SIBYLL23E")
+    # HE parents keep the historical behaviour.
+    assert np.array_equal(mixed["index_d"][2212], [20.0, 4.0, 4.0])
+    # An LE-only projectile keeps its own sigma below the transition and
+    # switches to the mapped HE equivalent above it (n -> p).
+    assert 2112 in mixed["parents"]
+    assert np.array_equal(mixed["index_d"][2112], [10.0, 4.0, 4.0])
+    # Antibaryons map to the HE pbar column (annihilation channels), not
+    # to the proton one.
+    assert np.array_equal(mixed["index_d"][-2112], [30.0, 6.0, 6.0])
+
+
 def test_disabled_backend_path_loads_only_selected_model():
     obj = backend([1.0], low=None)
     marker = object()
