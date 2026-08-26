@@ -1703,7 +1703,9 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
-    def _dispatch_mkl_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+    def _dispatch_mkl_multirhs(
+        self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype, sec_ops=None
+    ):
         """Pick the MKL multirhs kernel by ``dtype`` and reuse a per-dtype
         sparse-handle cache. The MKL handle owns the optimised internal
         layout (after ``mkl_sparse_optimize``) — reusing the handle across
@@ -1746,6 +1748,12 @@ class MCEqRun:
                     if old is not None:
                         old.close()
         c = getattr(self, cache_attr)
+        if sec_ops is not None:
+            # fp32 + secant is excluded by _resolve_batch_secant.
+            return MCEq.solvers.solv_mkl_etd2_secant_multirhs(
+                nsteps, dX, rho_inv, c["mkl_int_off"], c["mkl_dec_off"],
+                c["d_int"], c["d_dec"], phi0, grid_idcs, sec_ops,
+            )
         return solver(
             nsteps,
             dX,
@@ -1758,7 +1766,9 @@ class MCEqRun:
             grid_idcs,
         )
 
-    def _dispatch_cuda_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+    def _dispatch_cuda_multirhs(
+        self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype, sec_ops=None
+    ):
         """Pick the cupy multirhs kernel and reuse a per-(dtype, K) context
         cache. The context owns the cuSPARSE CSR copies of the off-diagonals
         and the (dim, K) state/scratch buffers, so reconstructing them costs
@@ -1803,6 +1813,10 @@ class MCEqRun:
             }
             entry = cache[cache_key]
         ctx = entry["ctx"]
+        if sec_ops is not None:
+            return MCEq.solvers.solv_cuda_etd2_secant_multirhs(
+                nsteps, dX, rho_inv, ctx, phi0, grid_idcs, sec_ops
+            )
         return MCEq.solvers.solv_cuda_etd2_multirhs(
             nsteps,
             dX,
@@ -1866,7 +1880,9 @@ class MCEqRun:
             grid_idcs,
         )
 
-    def _dispatch_shared_path_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+    def _dispatch_shared_path_multirhs(
+        self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype, sec_ops=None
+    ):
         """Route a shared-path multi-RHS solve to the ``kernel_config``
         backend.
 
@@ -1901,6 +1917,8 @@ class MCEqRun:
             int_m_stack = getattr(self, "_int_m_stack", None)
             em_rho_grid = getattr(self, "_em_rho_grid", None)
             if int_m_stack is not None and em_rho_grid is not None:
+                # sec_ops is None here — _resolve_batch_secant excludes
+                # the rho-stack combination.
                 return MCEq.solvers.solv_numpy_etd2_rho_stack_multirhs(
                     nsteps,
                     dX,
@@ -1911,6 +1929,11 @@ class MCEqRun:
                     phi0,
                     grid_idcs,
                 )
+            if sec_ops is not None:
+                return MCEq.solvers.solv_numpy_etd2_secant_multirhs(
+                    nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs, sec_ops,
+                )
             return MCEq.solvers.solv_numpy_etd2_multirhs(
                 nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0, grid_idcs
             )
@@ -1920,11 +1943,11 @@ class MCEqRun:
             )
         if kc == "cuda_etd2":
             return self._dispatch_cuda_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype, sec_ops=sec_ops
             )
         if kc == "mkl_etd2":
             return self._dispatch_mkl_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+                nsteps, dX, rho_inv, grid_idcs, phi0, dtype, sec_ops=sec_ops
             )
         raise NotImplementedError(
             f"solve_batch is not yet wired for kernel_config={kc!r}. "
@@ -1976,6 +1999,14 @@ class MCEqRun:
         Does NOT mutate ``self._phi0`` / ``self._solution`` /
         ``self.grid_sol``; the active density model and angles are
         restored after the path build.
+
+        For 2D databases the sec(theta) transport correction resolves
+        through ``config.secant_mode(is_2d)`` exactly as in
+        :meth:`solve`: one constant operator set (the cap is not zenith
+        dependent) is shared by every column, applied on the
+        ``numpy_etd2`` / ``mkl_etd2`` (fp64) / ``cuda_etd2`` backends;
+        other configurations downgrade to paraxial with a warning under
+        ``"auto"`` and refuse under ``"require"``.
 
         Examples::
 
@@ -2035,7 +2066,7 @@ class MCEqRun:
                 f"solve_batch: dtype must be float32 or float64, got {dtype}"
             )
 
-        self._require_no_secant("solve_batch")
+        sec_ops = self._resolve_batch_secant("solve_batch", dtype)
 
         # --- resolve phi0 ------------------------------------------------
         if phi0 is None:
@@ -2136,7 +2167,8 @@ class MCEqRun:
             # zenith).
             phi0_typed = phi0_mat.astype(dtype, copy=True)
             sol, grid_sol = self._dispatch_shared_path_multirhs(
-                nsteps, dX, rho_inv, grid_idcs, phi0_typed, dtype
+                nsteps, dX, rho_inv, grid_idcs, phi0_typed, dtype,
+                sec_ops=sec_ops,
             )
             legacy = (sol, grid_sol)
         else:
@@ -2164,7 +2196,8 @@ class MCEqRun:
                 f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
             )
             sol = self._dispatch_carousel(
-                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype
+                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype,
+                sec_ops=sec_ops,
             )
             grid_sol = None
             legacy = (sol, nsteps_per_col)
@@ -2214,7 +2247,6 @@ class MCEqRun:
           (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
           final state matrix and stacked snapshots.
         """
-        self._require_no_secant("solve_multirhs")
         phi0_matrix = np.asarray(phi0_matrix)
         if phi0_matrix.ndim != 2:
             raise ValueError(
@@ -2486,24 +2518,32 @@ class MCEqRun:
         schedule,
         phi0_per_pixel,
         dtype=np.float64,
+        sec_ops=None,
     ):
         """Dispatch one carousel solve to the ``kernel_config`` backend
-        (all four backends are wired: numpy/cuda/mkl/accelerate ETD2).
+        (all four backends are wired: numpy/cuda/mkl/accelerate ETD2;
+        ``sec_ops`` routes to the secant variants on numpy/cuda/mkl).
         Returns ``(dim, K_total)`` pixel-order final states.
         """
         import MCEq.solvers
 
         kc = config.kernel_config.lower()
         if kc == "numpy_etd2":
-            sol = MCEq.solvers.solv_numpy_etd2_carousel(
-                self.int_m,
-                self.dec_m,
-                dX_c,
-                rho_inv_c,
-                phi_initial,
-                schedule,
-                phi0_per_pixel,
-            )
+            if sec_ops is not None:
+                sol = MCEq.solvers.solv_numpy_etd2_secant_carousel(
+                    self.int_m, self.dec_m, dX_c, rho_inv_c, phi_initial,
+                    schedule, phi0_per_pixel, sec_ops,
+                )
+            else:
+                sol = MCEq.solvers.solv_numpy_etd2_carousel(
+                    self.int_m,
+                    self.dec_m,
+                    dX_c,
+                    rho_inv_c,
+                    phi_initial,
+                    schedule,
+                    phi0_per_pixel,
+                )
             return np.asarray(sol, dtype=np.dtype(dtype))
         if kc == "cuda_etd2":
             # Reuse the multi-RHS cupy context cache (keyed on (dtype, K))
@@ -2545,9 +2585,15 @@ class MCEqRun:
             phi0_typed = np.asarray(phi0_per_pixel, dtype=dtype)
             dX_typed = np.asarray(dX_c, dtype=dtype)
             ri_typed = np.asarray(rho_inv_c, dtype=dtype)
-            sol = MCEq.solvers.solv_cuda_etd2_carousel(
-                ctx, dX_typed, ri_typed, phi_init_typed, schedule, phi0_typed
-            )
+            if sec_ops is not None:
+                sol = MCEq.solvers.solv_cuda_etd2_secant_carousel(
+                    ctx, dX_typed, ri_typed, phi_init_typed, schedule,
+                    phi0_typed, sec_ops,
+                )
+            else:
+                sol = MCEq.solvers.solv_cuda_etd2_carousel(
+                    ctx, dX_typed, ri_typed, phi_init_typed, schedule, phi0_typed
+                )
             return sol
         if kc == "mkl_etd2":
             from MCEq.solvers import _etd_split_cache
@@ -2580,10 +2626,17 @@ class MCEqRun:
                         if old is not None:
                             old.close()
             c = getattr(self, cache_attr)
-            sol = MCEq.solvers.solv_mkl_etd2_carousel(
-                c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
-                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-            )
+            if sec_ops is not None:
+                sol = MCEq.solvers.solv_mkl_etd2_secant_carousel(
+                    c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
+                    dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+                    sec_ops,
+                )
+            else:
+                sol = MCEq.solvers.solv_mkl_etd2_carousel(
+                    c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
+                    dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+                )
             return np.asarray(sol, dtype=np.dtype(dtype))
         if kc in ("accelerate_etd2", "spacc_etd2"):
             import MCEq.spacc as spacc
@@ -2707,7 +2760,6 @@ class MCEqRun:
             ``(sol, nsteps_per_col[, pixel_index])`` tuple.
         """
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
-        self._require_no_secant("solve_fullsky")
         start = time()
 
         # Resolve geomagnetic-cutoff toggle. Per-call argument has
@@ -2852,32 +2904,47 @@ class MCEqRun:
         info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
         return res
 
-    def _require_no_secant(self, caller):
-        """Refuse multi-RHS entry points while the secant coupling is on.
+    def _resolve_batch_secant(self, caller, dtype=np.float64):
+        """Resolve the sec(theta) correction for the batch entry points.
 
-        The multi-RHS / carousel kernels do not apply the sec(theta)
-        mode coupling; silently dropping a requested physics correction
-        is worse than refusing. Batching across zeniths would also need
-        per-zenith operators (grouped columns) — see the 2d-on-v2 secant
-        commits. Under the default ``"auto"`` the correction was not
-        explicitly requested, so these entry points warn and proceed
-        with the paraxial transport instead.
+        Returns the constant operator set (one build per call — the cap
+        is not zenith dependent, so a single set serves every column of
+        every batch) when the correction applies, or ``None`` for the
+        paraxial transport. Mirrors the single-axis resolution in
+        :meth:`_build_kernel_dispatch`: backends without a secant SpMM
+        path (accelerate/spacc), the EM rho-stack and fp32 state buffers
+        outside cuda warn under ``"auto"`` and raise under ``"require"``.
         """
         mode = config.secant_mode(self._mceq_db.is_2d)
+        if mode == "off":
+            return None
+        kc = config.kernel_config.lower()
+        supported = kc in ("numpy_etd2", "mkl", "mkl_etd2", "cuda", "cuda_etd2")
+        if np.dtype(dtype) == np.float32 and kc not in ("cuda", "cuda_etd2"):
+            # fp32 state buffers are wired for the cupy secant driver
+            # only (the MKL secant SpMM path is fp64).
+            supported = False
+        if getattr(self, "_int_m_stack", None) is not None:
+            # secant_theta_transport + EM rho-stack blending are not
+            # combined (matches the single-axis dispatch).
+            supported = False
+        if supported:
+            return self._build_secant_ops()
         if mode == "require":
             raise NotImplementedError(
-                f"{caller}: secant_theta_transport is not applied by the "
-                "multi-RHS/carousel kernels (single-axis solve() only). "
-                "Set config.secant_theta_transport = False or use solve()."
+                f"{caller}: secant_theta_transport is implemented for the "
+                "numpy_etd2, mkl_etd2 (fp64) and cuda_etd2 batch kernels "
+                f"only, without the EM rho-stack (kernel_config = "
+                f"{config.kernel_config}, dtype = {np.dtype(dtype)})"
             )
-        if mode == "auto":
-            info(
-                1,
-                f"{caller}: sec(theta) transport correction is not "
-                "implemented for the multi-RHS/carousel kernels — "
-                "proceeding with the paraxial 2D transport. Use "
-                "solve() for corrected single-axis results.",
-            )
+        info(
+            1,
+            f"{caller}: sec(theta) transport correction is not "
+            f"implemented for kernel_config = {config.kernel_config} "
+            "with this configuration — proceeding with the paraxial "
+            "2D transport.",
+        )
+        return None
 
     def _build_secant_ops(self):
         """Build the constant sec(theta) kernel operator set for the
