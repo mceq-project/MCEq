@@ -625,6 +625,37 @@ def _secant_left_matmul(matrix, plane):
     )
 
 
+def _secant_blas_thread_limit(batched):
+    """Context capping OpenBLAS threads for the batched secant GEMMs.
+
+    The coupled-slot mode transforms are skinny dense GEMMs
+    (``(n_P, n_k) @ (n_k, n_g * K)``). Single-axis planes stay below
+    OpenBLAS's GEMM threading threshold, but the batched planes cross it
+    and the default all-cores fan-out is pure thread contention on these
+    shapes (66x slower than 4 threads at K = 8 on a 48-core EPYC). Cap
+    the OpenBLAS pool at ``config.secant_blas_threads`` for the step
+    loop; MKL's pool (``config.mkl_threads``) is left alone.
+    """
+    import contextlib
+
+    if not batched:
+        return contextlib.nullcontext()
+    try:
+        from threadpoolctl import ThreadpoolController
+    except ImportError:
+        info(
+            1,
+            "threadpoolctl is not installed — the batched secant mode-"
+            "coupling GEMMs may hit severe OpenBLAS thread contention "
+            "on many-core hosts.",
+        )
+        return contextlib.nullcontext()
+    limit = int(getattr(config, "secant_blas_threads", 4))
+    return ThreadpoolController().select(internal_api="openblas").limit(
+        limits=limit
+    )
+
+
 def _etd2_secant_driver(
     nsteps,
     dX,
@@ -788,7 +819,9 @@ def _etd2_secant_driver(
     start = time()
 
     # See module-level :data:`_EM_BLOWUP_CAVEAT` for the errstate contract.
-    with np.errstate(over="ignore", invalid="ignore"):
+    with _secant_blas_thread_limit(batched), np.errstate(
+        over="ignore", invalid="ignore"
+    ):
         for k in range(nsteps):
             h = dX[k]  # scalar, or the (K,) lane row
             ri = rho_inv[k]

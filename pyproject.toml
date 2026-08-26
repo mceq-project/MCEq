@@ -30,6 +30,7 @@ dependencies = [
     "tqdm",
     "requests",
     "jacobi",
+    "threadpoolctl",
 ]
 
 [project.optional-dependencies]

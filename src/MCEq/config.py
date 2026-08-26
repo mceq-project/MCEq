@@ -368,10 +368,11 @@ muon_multiple_scattering = True
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
 #: the Hankel modes), independent of the axis' zenith angle.
-#: "auto" (default): applied on every single-axis solve() with a 2D
-#: database; the multi-RHS/carousel entry points fall back to the
-#: paraxial transport with a warning. True: required (entry points
-#: without the coupling raise). False: off. Ignored on 1D databases.
+#: "auto" (default): applied on every solve with a 2D database where
+#: the coupling is implemented (single-axis and batched entry points on
+#: the numpy/MKL/CUDA kernels); unsupported configurations fall back to
+#: the paraxial transport with a warning. True: required (unsupported
+#: configurations raise). False: off. Ignored on 1D databases.
 secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
@@ -395,6 +396,15 @@ secant_theta_w_flat = 1.0
 #: <0.1% above 10 GeV, so the default excludes energies where it is
 #: numerically irrelevant. None applies it to all energies.
 secant_theta_e_max = 31.6
+#: OpenBLAS thread cap for the batched secant drivers' dense mode-
+#: coupling GEMMs. The batched (dim, K) planes cross OpenBLAS's GEMM
+#: threading threshold and its default all-cores fan-out is pure
+#: contention on these skinny (n_P x n_g*K) shapes — 66x slower than 4
+#: threads on a 48-core EPYC. Applied via threadpoolctl around the
+#: batched step loop (no-op if threadpoolctl is not installed;
+#: single-axis solves stay below the threshold and are not touched).
+#: MKL's pool is controlled separately by ``mkl_threads``.
+secant_blas_threads = 4
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
