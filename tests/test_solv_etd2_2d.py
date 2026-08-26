@@ -13,7 +13,7 @@ from MCEq.solvers import solv_numpy_etd2
 
 @pytest.fixture(scope="module")
 def mceq_2d():
-    fn = "mceq_db_URQMD_150GeV_2D.h5"
+    fn = "mceq_db_v2_fluka2d_rc7.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -23,11 +23,10 @@ def mceq_2d():
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False  # keep this test pure to the splitting
-    # URQMD/PR#48 regression DB; the end-to-end solve checks the
-    # paraxial per-mode equivalence.
+    # The end-to-end solve checks the paraxial per-mode equivalence.
     config.secant_theta_transport = False
     return MCEqRun(
-        interaction_model="SIBYLL23D",
+        interaction_model="FLUKA20251",
         primary_model=None,
         theta_deg=60.0,
         density_model=("CORSIKA", ("USStd", None)),

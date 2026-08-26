@@ -33,13 +33,13 @@ def _has_backend(modname):
 def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
-        mceq_db_fname="mceq_db_URQMD_150GeV_2D.h5",
+        mceq_db_fname="mceq_db_v2_fluka2d_rc7.h5",
         e_min=1e-1,
         e_max=1e4,
         muon_helicity_dependence=True,
         muon_multiple_scattering=False,
         theta_deg=60.0,
-        interaction_model="SIBYLL23D",
+        interaction_model="FLUKA20251",
         density_model=("CORSIKA", ("USStd", None)),
     )
 
@@ -58,8 +58,8 @@ def _solve(kernel, base):
     config.muon_helicity_dependence = base["muon_helicity_dependence"]
     config.muon_multiple_scattering = base["muon_multiple_scattering"]
     config.kernel_config = kernel
-    # URQMD/PR#48 regression DB + paraxial cross-backend comparison;
-    # the secant coupling is exercised by its own runs.
+    # Paraxial cross-backend comparison; the secant coupling is
+    # exercised by its own runs.
     config.secant_theta_transport = False
     mceq = MCEqRun(
         interaction_model=base["interaction_model"],

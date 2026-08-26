@@ -12,7 +12,7 @@ from MCEq.core import MCEqRun
 
 @pytest.fixture(scope="module")
 def mceq_2d():
-    fn = "mceq_db_URQMD_150GeV_2D.h5"
+    fn = "mceq_db_v2_fluka2d_rc7.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -29,7 +29,7 @@ def mceq_2d():
     config.muon_helicity_dependence = True
     try:
         yield MCEqRun(
-            interaction_model="SIBYLL23D",
+            interaction_model="FLUKA20251",
             primary_model=None,
             theta_deg=0.0,
             density_model=("CORSIKA", ("USStd", None)),
@@ -98,9 +98,8 @@ def test_1d_matrix_unchanged():
         config.e_min = 1.0
         config.e_max = 1e8
         config.muon_helicity_dependence = False
-        # The reduced 1D test db only ships SIBYLL21 / QGSJETII04 (matches the
-        # session fixtures in conftest.py). SIBYLL23C is silently rewritten to
-        # SIBYLL23D inside ``cs_db`` which isn't available in this database.
+        # The reduced 1D test db only ships SIBYLL21 / QGSJETII04 (matches
+        # the session fixtures in conftest.py).
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
             primary_model=None,

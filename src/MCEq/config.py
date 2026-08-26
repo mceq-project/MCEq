@@ -5,8 +5,6 @@ import platform
 import sys
 import warnings
 
-import numpy as np
-
 from MCEq import base_path
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
@@ -106,14 +104,8 @@ e_min = 0.1
 #: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
 
-#: TK: energy grid defaults for the cross sections and continuous _cont_losses
-#: ported over from the 1D database to the 2D database. Used to "cut" the
-#: cross-section arrays defined on the entire 1D MCEq grid down to the
-#: smaller 2D grid.
-default_ebins = np.logspace(-2, 12, 14 * 10 + 1)
-default_ecenters = 0.5 * (default_ebins[1:] + default_ebins[:-1])
-
-#: Enable electromagnetic cascade with matrices from EmCA
+#: Enable electromagnetic cascade with matrices from the EM database
+#: (``em_db_fname``)
 enable_em = False
 
 #: Air-target EM matrices: select a specific density slice from a
@@ -383,21 +375,17 @@ muon_multiple_scattering = True
 #: (unsupported paths raise); False disables it. 1D databases are
 #: never affected.
 secant_theta_transport = "auto"
-#: cap angle in degrees for the sec(theta) growth (transport breaks down
-#: at 90 deg), or the string "auto". For an axis inclined at zenith
-#: theta_z the azimuthal ring at axis-angle theta first touches the
-#: horizon at 90 - theta_z; beyond that the flat-atmosphere sec(theta)
-#: law has no single meaningful value and the m=0 solver over-attenuates
-#: (measured in the 2026-08-10 cap sweep: the >60 deg overshoot is the
-#: cap, and it wants to go DOWN). "auto" therefore sets
-#: cap = clip(90 - theta_zenith + 5, 50, 75), snapped to 5-degree steps
-#: so the disk-cached operator set stays small. The lower clip at 50 is
-#: numerical: below ~45 deg the fitted coupling is nearly nilpotent and
-#: the S_P eigenbasis degenerates (cond ~1e17), so the exact kernel
-#: slot cannot be built; the under-corrected range beyond 50 deg lies
-#: past the 90 - theta_zenith acceptance horizon for those zeniths
-#: anyway. A float pins the cap (75.0 was the original static default).
-secant_theta_cap_deg = "auto"
+#: cap angle in degrees for the sec(theta) growth. theta is the angle
+#: to the shower axis (the Hankel modes are defined relative to the
+#: axis, independent of the axis' zenith angle), and sec(theta)
+#: diverges at 90 deg, so the elongation factor is clamped to
+#: min(sec theta, sec cap). Valid range [50, 90): below ~45-50 deg the
+#: fitted coupling is nearly nilpotent and the S_P eigenbasis
+#: degenerates (cond ~1e17), so the exact kernel slot cannot be built
+#: (the operator build raises). The default 75 (sec = 3.9) covers the
+#: angular range where the Hankel grid carries support while keeping
+#: S_P well-conditioned.
+secant_theta_cap_deg = 75.0
 #: zero T rows with kappa > this: the correction has no support at narrow
 #: angular scales and high-kappa rows carry inversion ringing.
 secant_theta_row_kmax = 50.0

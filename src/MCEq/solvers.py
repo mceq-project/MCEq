@@ -612,13 +612,14 @@ def _secant_phi_factors(ZB):
     return np.exp(ZB), phi1, phi2
 
 
-def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
-                           sec_ops):
-    """ETD2RK with the sec(theta) path-elongation mode coupling.
+def _etd2_secant_driver(
+    nsteps, dX, rho_inv, apply_off, d_int, d_dec, phi, grid_idcs, sec_ops, n_padded
+):
+    """Backend-agnostic ETD2RK step loop with the sec(theta) mode coupling.
 
-    Integrates ``dPhi/dX = (A + rho_inv B)(I + T_gated) Phi`` where
-    ``T`` is the constant Hankel-space representation of multiplication
-    by ``min(sec theta, sec theta_cap)`` (see ``MCEq/secant.py``) and the
+    Integrates ``dPhi/dX = (A + rho_inv B)(I + T_gated) Phi`` where ``T``
+    is the constant Hankel-space representation of multiplication by
+    ``min(sec theta, sec theta_cap)`` (see ``MCEq/secant.py``) and the
     gate restricts the coupling to state columns with E below
     ``config.secant_theta_e_gate``.
 
@@ -644,37 +645,37 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
     unconditionally stable at any stiffness and reproduces the
     S-corrected equilibrium exactly in the stiff limit — stitching the
     coupling into the CSR instead puts stiff coupled loss terms in the
-    explicit part and diverges (rho(D_S^-1 T_off) = 1.75).
+    explicit part and diverges.
+
+    The sparse backends differ only in how the off-diagonal SpMVs are
+    issued: ``apply_off(w, out, ri)`` computes
+    ``out[:] = int_off @ w + ri * (dec_off @ w)`` on the padded buffers.
+    All buffers keep fixed addresses throughout the loop, so ctypes-based
+    backends may cache their pointers.
 
     Cost: the baseline 4 SpMVs plus ~10 small dense GEMMs per step
-    (22x22 @ 22 x n_gated) — a few MFlop, negligible.
+    (n_P x n_P against the gated state plane) — a few MFlop, negligible.
     """
-    blocksize = getattr(config, "numpy_bsr_blocksize", None)
-    d_int, d_dec, int_off, dec_off, n_padded = _etd_get_split_for_numpy(
-        int_m, dec_m, blocksize
-    )
-
     dim = phi.shape[0]
     P = sec_ops["P"]
-    T_P = sec_ops["T_P"]          # (n_P, n_k)
-    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
+    T_P = sec_ops["T_P"]  # (n_P, n_k)
+    T_PP = sec_ops["T_PP"]  # (n_P, n_P)
     V = sec_ops["V"]
     Vi = sec_ops["Vi"]
-    lam = sec_ops["lam"]          # (n_P,)
-    g_idx = sec_ops["gate_idx"]   # (n_g,)
+    lam = sec_ops["lam"]  # (n_P,)
+    g_idx = sec_ops["gate_idx"]  # (n_g,)
     n_k = sec_ops["n_k"]
     N = dim // n_k
     assert n_k * N == dim, "state dim not divisible by n_k"
-    n_P = len(P)
-    n_g = len(g_idx)
-    # flat state indices of the (coupled mode, gated column) plane
-    flatPG = (P[:, None] * N + g_idx[None, :])  # (n_P, n_g)
+    ixPG = np.ix_(P, g_idx)
 
+    # Persistent buffers — fixed addresses for the ctypes backends;
+    # padding slots stay zero throughout (zero rows/cols there).
     phc = np.zeros(n_padded, dtype=np.float64)
     phc[:dim] = phi
-    F_phi = np.empty(n_padded, dtype=np.float64)
-    F_a = np.empty(n_padded, dtype=np.float64)
-    a = np.empty(n_padded, dtype=np.float64)
+    F_phi = np.zeros(n_padded, dtype=np.float64)
+    F_a = np.zeros(n_padded, dtype=np.float64)
+    a = np.zeros(n_padded, dtype=np.float64)
     w = np.zeros(n_padded, dtype=np.float64)
     bufs = _etd_step_buffers(dim)
     eD = bufs["eD"]
@@ -687,24 +688,22 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
     F_phi_v = F_phi[:dim]
     F_a_v = F_a[:dim]
     a_v = a[:dim]
+    w_v = w[:dim]
 
-    def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
-        """Fbuf <- off-diagonal + coupling remainder of the operator at
-        xbuf; returns the gathered x_PG for reuse."""
-        x2 = xbuf[:dim].reshape(n_k, N)
-        XG = x2[:, g_idx]                     # (n_k, n_g)
-        YG = T_P @ XG                         # coupling u on (P, g)
-        np.copyto(w, xbuf)
-        w[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] += YG
-        np.copyto(Fbuf, int_off.dot(w))
-        ri_dec = dec_off.dot(w)
-        ri_dec *= ri
-        np.add(Fbuf, ri_dec, out=Fbuf)
+    def eval_F(x_v, Fbuf, F_v, ri, Df_PG, D0_G):
+        """F <- off-diagonal + coupling remainder of the operator at x
+        (SpMVs act on w = x + T_gated x); returns the gathered x_PG."""
+        x2 = x_v.reshape(n_k, N)
+        XG = x2[:, g_idx]  # (n_k, n_g)
+        YG = T_P @ XG  # coupling u on (P, g)
+        np.copyto(w_v, x_v)
+        w_v.reshape(n_k, N)[ixPG] += YG
+        apply_off(w, Fbuf, ri)
         x_PG = XG[P, :]
         SPxP = x_PG + T_PP @ x_PG
         w_PG = x_PG + YG
         delta = Df_PG * w_PG - D0_G[None, :] * SPxP
-        Fbuf[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] += delta
+        F_v.reshape(n_k, N)[ixPG] += delta
         return x_PG
 
     grid_sol = []
@@ -722,15 +721,15 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
 
             _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
             D2 = D.reshape(n_k, N)
-            Df_PG = D2[np.ix_(P, g_idx)]      # full diag on coupled plane
-            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
+            Df_PG = D2[ixPG]  # full diag on coupled plane
+            D0_G = D2[0, g_idx]  # k-shared part (kappa = 0)
 
             # block factors for the exact slot: f(h * D0_i * lam_j)
             ZB = lam[:, None] * (h * D0_G)[None, :]
             eDB, phi1B, phi2B = _secant_phi_factors(ZB)
 
-            x_PG = eval_F(phc, F_phi, ri, Df_PG, D0_G)
-            F_PG = F_phi[:dim].reshape(n_k, N)[np.ix_(P, g_idx)]
+            x_PG = eval_F(phc_v, F_phi, F_phi_v, ri, Df_PG, D0_G)
+            F_PG = F_phi_v.reshape(n_k, N)[ixPG]
 
             # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
             np.multiply(eD, phc_v, out=a_v)
@@ -738,10 +737,10 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
             scratch *= h
             np.add(a_v, scratch, out=a_v)
             a_PG = V @ (eDB * (Vi @ x_PG)) + h * (V @ (phi1B * (Vi @ F_PG)))
-            a[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] = a_PG
+            a_v.reshape(n_k, N)[ixPG] = a_PG
 
-            a_PG_state = eval_F(a, F_a, ri, Df_PG, D0_G)  # noqa: F841
-            Fa_PG = F_a[:dim].reshape(n_k, N)[np.ix_(P, g_idx)]
+            eval_F(a_v, F_a, F_a_v, ri, Df_PG, D0_G)
+            Fa_PG = F_a_v.reshape(n_k, N)[ixPG]
 
             # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
             np.subtract(F_a_v, F_phi_v, out=scratch)
@@ -749,7 +748,7 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
             np.multiply(scratch, phi2, out=scratch)
             np.add(a_v, scratch, out=phc_v)
             phc_PG = a_PG + h * (V @ (phi2B * (Vi @ (Fa_PG - F_PG))))
-            phc[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] = phc_PG
+            phc_v.reshape(n_k, N)[ixPG] = phc_PG
 
             if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
                 grid_sol.append(np.copy(phc_v))
@@ -761,6 +760,38 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
     )
 
     return phc_v.copy(), np.array(grid_sol)
+
+
+def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, sec_ops):
+    """ETD2RK with the sec(theta) mode coupling on scipy sparse.
+
+    Thin wrapper around :func:`_etd2_secant_driver` (which documents the
+    operator split) issuing the off-diagonal SpMVs through scipy's
+    ``.dot``.
+    """
+    blocksize = getattr(config, "numpy_bsr_blocksize", None)
+    d_int, d_dec, int_off, dec_off, n_padded = _etd_get_split_for_numpy(
+        int_m, dec_m, blocksize
+    )
+
+    def apply_off(w, out, ri):
+        np.copyto(out, int_off.dot(w))
+        ri_dec = dec_off.dot(w)
+        ri_dec *= ri
+        np.add(out, ri_dec, out=out)
+
+    return _etd2_secant_driver(
+        nsteps,
+        dX,
+        rho_inv,
+        apply_off,
+        d_int,
+        d_dec,
+        phi,
+        grid_idcs,
+        sec_ops,
+        n_padded,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2224,139 +2255,53 @@ def solv_mkl_etd2_secant(
     grid_idcs,
     sec_ops,
 ):
-    """ETD2RK on Intel MKL sparse BLAS with the sec(theta) mode coupling.
+    """ETD2RK with the sec(theta) mode coupling on Intel MKL sparse BLAS.
 
-    MKL port of :func:`solv_numpy_etd2_secant`: the 4 SpMVs per step act
-    on ``w = phi + T_gated phi`` through ``MklSparseMatrix.gemv_ctargs``
-    (persistent ctypes buffers — same contract as :func:`solv_mkl_etd2`,
-    plus one extra persistent ``w`` buffer the SpMVs read from), while
-    the small dense mode-coupling corrections (a handful of (n_P, n_P)
-    GEMMs against the gated state plane per step) stay in numpy on the
-    host — they are a few MFlop per step, far below the SpMV cost.
+    Thin wrapper around :func:`_etd2_secant_driver` (which documents the
+    operator split) issuing the off-diagonal SpMVs through
+    ``MklSparseMatrix.gemv_ctargs``. The driver's buffers keep fixed
+    addresses, so the ctypes pointers are cached per buffer; the small
+    dense mode-coupling corrections stay in numpy on the host — a few
+    MFlop per step, far below the SpMV cost.
     """
     from ctypes import POINTER, c_double
 
-    dim = phi.shape[0]
-    n_padded = dim
+    n_padded = phi.shape[0]
     for m in (mkl_int_off, mkl_dec_off):
         if m is not None:
             n_padded = max(n_padded, m.n_padded)
 
-    P = sec_ops["P"]
-    T_P = sec_ops["T_P"]          # (n_P, n_k)
-    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
-    V = sec_ops["V"]
-    Vi = sec_ops["Vi"]
-    lam = sec_ops["lam"]          # (n_P,)
-    g_idx = sec_ops["gate_idx"]   # (n_g,)
-    n_k = sec_ops["n_k"]
-    N = dim // n_k
-    assert n_k * N == dim, "state dim not divisible by n_k"
-    ixPG = np.ix_(P, g_idx)
-
-    # Persistent buffers — ctypes pointers must remain valid across the
-    # loop; padding slots stay zero throughout (zero rows/cols there).
-    phc = np.zeros(n_padded, dtype=np.float64)
-    phc[:dim] = phi
-    F_phi = np.zeros(n_padded, dtype=np.float64)
-    F_a = np.zeros(n_padded, dtype=np.float64)
-    a = np.zeros(n_padded, dtype=np.float64)
-    w = np.zeros(n_padded, dtype=np.float64)
-    bufs = _etd_step_buffers(dim)
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-    scratch = bufs["scratch"]
-    D = bufs["D"]
-
-    phc_v = phc[:dim]
-    F_phi_v = F_phi[:dim]
-    F_a_v = F_a[:dim]
-    a_v = a[:dim]
-    w_v = w[:dim]
-
-    F_phi_p = F_phi.ctypes.data_as(POINTER(c_double))
-    F_a_p = F_a.ctypes.data_as(POINTER(c_double))
-    w_p = w.ctypes.data_as(POINTER(c_double))
-
     int_off_empty = mkl_int_off is None or mkl_int_off.nnz == 0
     dec_off_empty = mkl_dec_off is None or mkl_dec_off.nnz == 0
 
-    def eval_F(x_v, F_p, F_v, ri, Df_PG, D0_G):
-        """F <- off-diagonal + coupling remainder of the operator at x
-        (SpMVs act on w = x + T_gated x); returns the gathered x_PG."""
-        x2 = x_v.reshape(n_k, N)
-        XG = x2[:, g_idx]                     # (n_k, n_g)
-        YG = T_P @ XG                         # coupling u on (P, g)
-        np.copyto(w_v, x_v)
-        w_v.reshape(n_k, N)[ixPG] += YG
+    ptrs = {}
+
+    def _ptr(arr):
+        p = ptrs.get(id(arr))
+        if p is None:
+            p = ptrs[id(arr)] = arr.ctypes.data_as(POINTER(c_double))
+        return p
+
+    def apply_off(w, out, ri):
         if not int_off_empty:
-            mkl_int_off.gemv_ctargs(1.0, w_p, 0.0, F_p)
+            mkl_int_off.gemv_ctargs(1.0, _ptr(w), 0.0, _ptr(out))
         else:
-            F_v.fill(0.0)
+            out.fill(0.0)
         if not dec_off_empty:
-            mkl_dec_off.gemv_ctargs(ri, w_p, 1.0, F_p)
-        x_PG = XG[P, :]
-        SPxP = x_PG + T_PP @ x_PG
-        w_PG = x_PG + YG
-        delta = Df_PG * w_PG - D0_G[None, :] * SPxP
-        F_v.reshape(n_k, N)[ixPG] += delta
-        return x_PG
+            mkl_dec_off.gemv_ctargs(ri, _ptr(w), 1.0, _ptr(out))
 
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps):
-            h = dX[k]
-            ri = rho_inv[k]
-
-            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
-            D2 = D.reshape(n_k, N)
-            Df_PG = D2[ixPG]                  # full diag on coupled plane
-            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
-
-            # block factors for the exact slot: f(h * D0_i * lam_j)
-            ZB = lam[:, None] * (h * D0_G)[None, :]
-            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
-
-            x_PG = eval_F(phc_v, F_phi_p, F_phi_v, ri, Df_PG, D0_G)
-            F_PG = F_phi_v.reshape(n_k, N)[ixPG]
-
-            # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
-            np.multiply(eD, phc_v, out=a_v)
-            np.multiply(phi1, F_phi_v, out=scratch)
-            scratch *= h
-            np.add(a_v, scratch, out=a_v)
-            a_PG = V @ (eDB * (Vi @ x_PG)) + h * (V @ (phi1B * (Vi @ F_PG)))
-            a_v.reshape(n_k, N)[ixPG] = a_PG
-
-            eval_F(a_v, F_a_p, F_a_v, ri, Df_PG, D0_G)
-            Fa_PG = F_a_v.reshape(n_k, N)[ixPG]
-
-            # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
-            np.subtract(F_a_v, F_phi_v, out=scratch)
-            scratch *= h
-            np.multiply(scratch, phi2, out=scratch)
-            np.add(a_v, scratch, out=phc_v)
-            phc_PG = a_PG + h * (V @ (phi2B * (Vi @ (Fa_PG - F_PG))))
-            phc_v.reshape(n_k, N)[ixPG] = phc_PG
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc_v))
-                grid_step += 1
-
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
+    return _etd2_secant_driver(
+        nsteps,
+        dX,
+        rho_inv,
+        apply_off,
+        d_int,
+        d_dec,
+        phi,
+        grid_idcs,
+        sec_ops,
+        n_padded,
     )
-
-    return phc_v.copy(), np.array(grid_sol)
 
 
 # ---------------------------------------------------------------------------

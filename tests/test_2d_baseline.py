@@ -1,10 +1,11 @@
-"""Loader test for the PR #48 2D baseline regression fixture.
+"""Loader test for the 2D regression fixture.
 
-The fixture was captured by running ``examples/Angular_shower_development.ipynb``
-on the unmodified PR #48 branch (commit ba916fa) using the URQMD 2D database.
-Future tasks (1.6, 2.3) will compare the v2-based 2D solver against this
-fixture. This test only verifies that the fixture file is well-formed and
-loadable so that downstream tests can rely on its presence and structure.
+The fixture at ``tests/data/2d_baseline_solution.npz`` is a snapshot of the
+production 2D configuration — FLUKA 2D database (48 Hankel modes), secant
+transport, muon multiple scattering, helicity-dependent decays — produced
+by ``tests/data/make_2d_baseline_fixture.py``. This test only verifies that
+the fixture file is well-formed and loadable so that
+``test_2d_baseline_validation.py`` can rely on its presence and structure.
 """
 
 import pathlib
@@ -22,7 +23,7 @@ def test_baseline_fixture_loads():
     assert "k_grid" in d.files
     assert "e_grid" in d.files
     assert "theta_grid" in d.files
-    assert d["k_grid"].shape == (24,)
+    assert d["k_grid"].shape == (48,)
     assert d["phi_hankel"].size > 0
     assert d["f_theta"].size > 0
 
@@ -56,11 +57,11 @@ def test_baseline_fixture_shapes_consistent():
 
 
 def test_baseline_fixture_metadata():
-    """Document the provenance baked into the fixture."""
+    """The provenance baked into the fixture pins the production 2D setup."""
     d = np.load(FIXTURE, allow_pickle=True)
-    assert str(d["pr_commit"]) == "ba916fa"
-    assert str(d["db_fname"]) == "mceq_db_URQMD_150GeV_2D.h5"
-    assert str(d["interaction_model"]) == "EPOSLHC"
+    assert str(d["db_fname"]) == "mceq_db_v2_fluka2d_rc7.h5"
+    assert str(d["interaction_model"]) == "FLUKA20251"
+    assert str(d["kernel_config"]) == "numpy_etd2"
     assert float(d["theta_deg"]) == 30.0
     assert int(d["primary_pdg"]) == 2212
-    assert float(d["primary_energy_gev"]) == 100.0
+    assert len(str(d["mceq_commit"])) > 0

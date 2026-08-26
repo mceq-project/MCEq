@@ -135,10 +135,6 @@ equivalences = {
         431: 321,
         3122: 2112,
     },
-    "URQMD34": {
-        3122: 2112,
-        -3122: -2112,
-    },
 }
 
 equivalences["FLUKA"] = equivalences["DPMJET"]
@@ -246,11 +242,6 @@ class HDF5Backend:
                 ca["e_grid"], config.e_min, config.e_max
             )
 
-            # TK: Cuts for the cross sections copied over from the 1D database
-            self.cs_min_idx, self.cs_max_idx, self.cs_cuts = _eval_energy_cuts(
-                config.default_ecenters, config.e_min, config.e_max
-            )
-
             self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
@@ -258,10 +249,8 @@ class HDF5Backend:
                 int(self.max_idx - self.min_idx),
             )
 
-            # 2D-database auto-detection. The presence of a ``k_dim``
-            # attribute on the ``common`` group is the source of truth;
-            # there is no longer a config flag (PR #48's
-            # ``config.enable_2D`` was removed in Task 1.1).
+            # 2D databases are detected by the ``k_dim`` attribute on the
+            # ``common`` group; there is no config flag.
             self.is_2d = "k_dim" in ca
             if self.is_2d:
                 self.n_k = int(ca["k_dim"])
@@ -345,8 +334,8 @@ class HDF5Backend:
             eqv_lookup[(equivalences[k], 0)].append((k, 0))
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
-            # TK: "expand_len" is a parameter to expand the dimensions of the yield matrices
-            # (in the 2D case) or to leave them the same as in the 1D case
+            # In 2D each channel stores n_k Hankel-mode blocks back-to-back,
+            # so the flat read length per channel scales with n_k.
             if self.is_2d:
                 expand_len = self.n_k
             else:
@@ -367,47 +356,35 @@ class HDF5Backend:
 
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            # TK (PR #48): do not apply energy slicing right away in 2D!
-            # Need to do this for every k mode separately. Phased out in
-            # Task 1.2 (stitched-matrix assembly) — kept here so the 2D
-            # database loader continues to work during the merge.
             if self.is_2d:
-                index_d[(parent_pdg, child_pdg)] = np.asarray(
+                # The stored channel matrix is block-diagonal in kappa
+                # (modes are decoupled). Slice each per-mode block out of
+                # the sparse matrix and energy-cut it straight into a
+                # preallocated ``(n_k, n_e, n_e)`` tensor — the dense
+                # ``(dim_full, dim_full)`` intermediate would be n_k times
+                # larger than the data it carries.
+                channel_csr = csr_matrix(
                     (
-                        csr_matrix(
-                            (
-                                mat_data[
-                                    0,
-                                    read_idx : read_idx + expand_len * len_data[tupidx],
-                                ],
-                                mat_data[
-                                    1,
-                                    read_idx : read_idx + expand_len * len_data[tupidx],
-                                ],
-                                indptr_data[tupidx, :],
-                            ),
-                            shape=(self.dim_full, self.dim_full),
-                        )
-                    ).toarray()
-                )
-
-                # TK (PR #48): In 2D, reshape the yield matrices from a
-                # block-diagonal representation to a tensor with dimensions
-                # ``(len(k_grid), len(e_grid), len(e_grid))``.
-                ind_blocks = np.array(
-                    [
-                        index_d[(parent_pdg, child_pdg)][
-                            i + self.min_idx : i + self.max_idx,
-                            i + self.min_idx : i + self.max_idx,
-                        ]
-                        for i in range(
+                        mat_data[
                             0,
-                            len(index_d[(parent_pdg, child_pdg)]),
-                            self.dim_full // self.n_k,
-                        )
-                    ]
+                            read_idx : read_idx + expand_len * len_data[tupidx],
+                        ],
+                        mat_data[
+                            1,
+                            read_idx : read_idx + expand_len * len_data[tupidx],
+                        ],
+                        indptr_data[tupidx, :],
+                    ),
+                    shape=(self.dim_full, self.dim_full),
                 )
-                index_d[(parent_pdg, child_pdg)] = ind_blocks
+                n_e_full = self.dim_full // self.n_k
+                n_e = self.max_idx - self.min_idx
+                tensor = np.empty((self.n_k, n_e, n_e), dtype=mat_data.dtype)
+                for ik in range(self.n_k):
+                    lo = ik * n_e_full + self.min_idx
+                    hi = ik * n_e_full + self.max_idx
+                    tensor[ik] = channel_csr[lo:hi, lo:hi].toarray()
+                index_d[(parent_pdg, child_pdg)] = tensor
             else:
                 index_d[(parent_pdg, child_pdg)] = np.asarray(
                     (
@@ -442,6 +419,8 @@ class HDF5Backend:
                             "parent.",
                         )
                         continue
+                    # plain ``if`` (not ``elif``): no behaviour change — the
+                    # branch above always ``continue``s, the elif was redundant
                     if eqv_parent in available_parents:
                         info(
                             10,
@@ -585,8 +564,6 @@ class HDF5Backend:
                 eqv = equivalences["EPOSLHC"]
             elif "PYTHIA8" in mname:
                 eqv = equivalences["PYTHIA8"]
-            elif "URQMD34" in mname:
-                eqv = equivalences["URQMD34"]
             elif "FLUKA" in mname:
                 eqv = equivalences["FLUKA"]
             else:
@@ -606,14 +583,14 @@ class HDF5Backend:
                     equivalences=eqv,
                 )
 
-        # Append electromagnetic interaction matrices from EmCA
+        # Append electromagnetic interaction matrices from the EM database
         if config.enable_em:
             if medium == "ice":
                 info(5, "Electromagnetic cross sections for ice replaced by water.")
                 medium = "water"
 
             with h5py.File(self.em_fname, "r") as em_db:
-                info(2, "Injecting EmCA matrices into interaction_db.")
+                info(2, "Injecting EM matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
                 self._check_subgroup_exists(em_db["electromagnetic"], self.medium)
                 em_group = em_db["electromagnetic"][self.medium]
@@ -681,27 +658,6 @@ class HDF5Backend:
             }
 
         with h5py.File(self.had_fname, "r") as mceq_db:
-            # Legacy 2D databases (PR #48 / URQMD) store ``polarized`` as a
-            # *delta* (only helicity-resolved muon entries; the base 1D-style
-            # entries live in the ``unpolarized`` dataset). 1D databases and
-            # newer 2D databases store ``polarized`` as the full superset and
-            # load it directly with no overlay; they declare this with a
-            # ``layout='superset'`` attribute on the ``polarized`` dataset.
-            polarized_layout = None
-            if decay_dset_name == "polarized" and "polarized" in mceq_db["decays"]:
-                polarized_layout = mceq_db["decays"]["polarized"].attrs.get(
-                    "layout", None
-                )
-                if isinstance(polarized_layout, bytes):
-                    polarized_layout = polarized_layout.decode()
-            is_2d_delta_layout = (
-                self.is_2d
-                and config.muon_helicity_dependence
-                and decay_dset_name == "polarized"
-                and "unpolarized" in mceq_db["decays"]
-                and polarized_layout != "superset"
-            )
-
             if config.muon_helicity_dependence:
                 if decay_dset_name != "polarized":
                     info(
@@ -712,50 +668,29 @@ class HDF5Backend:
                     )
                 info(2, "Using helicity dependent decays.")
 
-            base_dset_name = "unpolarized" if is_2d_delta_layout else decay_dset_name
-            self._check_subgroup_exists(mceq_db["decays"], base_dset_name)
+            self._check_subgroup_exists(mceq_db["decays"], decay_dset_name)
+            if self.is_2d and decay_dset_name == "polarized":
+                # 2D databases declare ``layout='superset'`` on the
+                # ``polarized`` dataset: the full channel set including the
+                # helicity-resolved muon entries, loadable directly. A 2D
+                # database without this attribute stores only a helicity
+                # overlay (an unsupported legacy layout) and must be rebuilt
+                # with current mceq-maintenance-tools.
+                layout = mceq_db["decays"]["polarized"].attrs.get("layout", None)
+                if isinstance(layout, bytes):
+                    layout = layout.decode()
+                if layout != "superset":
+                    raise RuntimeError(
+                        f"2D database '{self.had_fname}': the 'polarized' "
+                        "decay dataset does not declare layout='superset'. "
+                        "Legacy delta-layout 2D databases are not supported; "
+                        "rebuild the database with current "
+                        "mceq-maintenance-tools."
+                    )
             dec_index = self._gen_db_dictionary(
-                mceq_db["decays"][base_dset_name],
-                mceq_db["decays"][base_dset_name + "_indptrs"],
+                mceq_db["decays"][decay_dset_name],
+                mceq_db["decays"][decay_dset_name + "_indptrs"],
             )
-
-            if is_2d_delta_layout:
-                # TK: Support for older names of the polarized/unpolarized datasets
-                # (e.g. if testing matrices from MCEq 1.2.0)
-                try:
-                    custom_index = self._gen_db_dictionary(
-                        mceq_db["decays"]["custom_decays"],
-                        mceq_db["decays"]["custom_decays" + "_indptrs"],
-                    )
-
-                except Exception:
-                    custom_index = self._gen_db_dictionary(
-                        mceq_db["decays"]["polarized"],
-                        mceq_db["decays"]["polarized" + "_indptrs"],
-                    )
-
-                info(5, "Replacing decay from custom decay_db.")
-                dec_index["index_d"].update(custom_index["index_d"])
-
-                # Drop the unpolarized pi/K -> mu channels superseded by the
-                # polarized overlay, so muons are not double-counted.
-                _ = dec_index["index_d"].pop(((211, 0), (-13, 0)), None)
-                _ = dec_index["index_d"].pop(((-211, 0), (13, 0)), None)
-                _ = dec_index["index_d"].pop(((321, 0), (-13, 0)), None)
-                _ = dec_index["index_d"].pop(((-321, 0), (13, 0)), None)
-
-            # Refresh the metadata after modifying the index
-            dec_index["relations"] = defaultdict(list)
-            dec_index["particles"] = []
-
-            for idx_tup in dec_index["index_d"]:
-                parent, child = idx_tup
-                dec_index["relations"][parent].append(child)
-                dec_index["particles"].append(parent)
-                dec_index["particles"].append(child)
-
-            dec_index["parents"] = sorted(list(dec_index["relations"]))
-            dec_index["particles"] = sorted(list(set(dec_index["particles"])))
         return dec_index
 
     def _mapped_cross_section(self, index_d, projectile, model_name):
@@ -771,17 +706,19 @@ class HDF5Backend:
             if mapped is not None:
                 candidates.extend([mapped, abs(mapped)])
 
+        # Family fallback, sign-preserving: a negative projectile tries the
+        # antiparticle representative first (antibaryons carry annihilation
+        # channels — nbar, lambda-bar etc. must map to pbar, not p; same
+        # logic for K-/pi- when the model stores dedicated columns) before
+        # falling back to the positive one.
         apid = abs(projectile)
+        sign = -1 if projectile < 0 else 1
         if apid in (130, 310, 311) or 300 < apid < 1000:
-            candidates.append(321)
+            candidates.extend([sign * 321, 321])
         elif 100 < apid < 300:
-            candidates.append(211)
+            candidates.extend([sign * 211, 211])
         elif 1000 < apid < 5000:
-            # Antibaryons carry annihilation channels: prefer the pbar
-            # column over the proton one when the model provides it.
-            if projectile < 0:
-                candidates.append(-2212)
-            candidates.append(2212)
+            candidates.extend([sign * 2212, 2212])
 
         for candidate in candidates:
             if candidate in index_d:
@@ -865,11 +802,15 @@ class HDF5Backend:
                 self._check_subgroup_exists(mceq_db["cross_sections"][medium], mname)
                 cs_db = mceq_db["cross_sections"][medium][mname]
                 cs_data = cs_db[:]
-                # 2D databases use "projectiles"; 1D databases use "parents".
-                if "parents" in cs_db.attrs:
-                    parents = list(cs_db.attrs["parents"])
-                else:
-                    parents = list(cs_db.attrs["projectiles"])
+                if "parents" not in cs_db.attrs:
+                    raise RuntimeError(
+                        f"Cross-section table '{medium}/{mname}' in "
+                        f"'{self.had_fname}' has no 'parents' attribute. "
+                        "Legacy databases using 'projectiles' are not "
+                        "supported; rebuild the database with current "
+                        "mceq-maintenance-tools."
+                    )
+                parents = list(cs_db.attrs["parents"])
                 for ip, p in enumerate(parents):
                     index_d[p] = cs_data[self._cuts, ip]
 
@@ -883,16 +824,16 @@ class HDF5Backend:
                 )
                 mes_cs_db = mceq_db["cross_sections"][medium][mname_mesons]
                 mes_cs_data = mes_cs_db[:]
-                mes_parents = list(mes_cs_db.attrs["projectiles"])
+                mes_parents = list(mes_cs_db.attrs["parents"])
                 for ip, p in enumerate(mes_parents):
                     if p in index_d and (100 < abs(p) < 2000):
                         info(1, "Meson cross sections for", p, "replaced.")
                         index_d[p] = mes_cs_data[self._cuts, ip]
 
-        # Append electromagnetic interaction cross sections from EmCA
+        # Append electromagnetic interaction cross sections from the EM database
         if config.enable_em:
             with h5py.File(self.em_fname, "r") as em_db:
-                info(2, "Injecting EmCA matrices into interaction_db.")
+                info(2, "Injecting EM matrices into interaction_db.")
                 self._check_subgroup_exists(em_db, "electromagnetic")
                 self._check_subgroup_exists(em_db["electromagnetic"], medium)
                 em_group = em_db["electromagnetic"][medium]
@@ -915,13 +856,12 @@ class HDF5Backend:
                 loss_case = "ionization"
             else:
                 loss_case = "total"
-            try:
-                cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
-                # No rad losses for hadrons implememented
-                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
-            except Exception:
-                cl_db = mceq_db["continuous_losses"][self.medium]
-                cl_db_hadrons = mceq_db["continuous_losses"][self.medium]
+            self._check_subgroup_exists(
+                mceq_db["continuous_losses"][self.medium], loss_case
+            )
+            cl_db = mceq_db["continuous_losses"][self.medium][loss_case]
+            # No radiative losses for hadrons implemented
+            cl_db_hadrons = mceq_db["continuous_losses"][self.medium]["total"]
             index_d = {}
             generic_dedx = None
 
@@ -952,17 +892,6 @@ class HDF5Backend:
                     # Tuple (boost, dEdx)
                     generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
 
-            # if config.enable_em:
-            #     with h5py.File(self.em_fname, "r") as em_db:
-            #         info(2, "Injecting EmCA matrices into interaction_db.")
-            #         self._check_subgroup_exists(em_db, "electromagnetic")
-            #         for hel in [0, 1, -1]:
-            #             index_d[(11, hel)] = em_db["electromagnetic"][self.medium][
-            #                 "dEdX 11"
-            #             ][self._cuts]
-            #             index_d[(-11, hel)] = em_db["electromagnetic"][self.medium][
-            #                 "dEdX -11"
-            #             ][self._cuts]
         if generic_dedx is not None:
             return {
                 "parents": sorted(list(index_d)),
@@ -1323,21 +1252,7 @@ class Decays:
         if decay_dset is None:
             decay_dset = self._default_decay_dset
 
-        try:
-            index = self.mceq_db.decay_db(decay_dset)
-
-        # TK: Support for older names of the polarized/unpolarized datasets
-        # (e.g. if testing matrices from MCEq 1.2.0)
-        except Exception:
-            if decay_dset == "unpolarized":
-                decay_dset = "full_decays"
-
-            elif decay_dset == "polarized":
-                decay_dset = "custom_decays"
-
-            print("defaulting to %s" % decay_dset)
-
-            index = self.mceq_db.decay_db(decay_dset)
+        index = self.mceq_db.decay_db(decay_dset)
 
         self.parents = index["parents"]
         self.particles = index["particles"]
@@ -1468,24 +1383,28 @@ class InteractionCrossSections:
         message_templ = "replacing {0} with {1} cross section"
         if isinstance(parent, tuple):
             parent = parent[0]
+
+        def _family_cs(base_pdg, label):
+            """Family representative, sign-preserving: a negative parent
+            uses the antiparticle column when the model provides one
+            (annihilation channels for antibaryons; dedicated K-/pi-
+            columns) and falls back to the particle column otherwise."""
+            if parent < 0 and -base_pdg in self.index_d:
+                info(15, message_templ.format(parent, f"anti-{label}"))
+                return self.index_d[-base_pdg]
+            info(15, message_templ.format(parent, label))
+            return self.index_d[base_pdg]
+
         if parent in list(self.index_d):
             cs = self.index_d[parent]
         elif abs(parent) in list(self.index_d):
             cs = self.index_d[abs(parent)]
         elif 100 < abs(parent) < 300 and abs(parent) != 130:
-            cs = self.index_d[211]
+            cs = _family_cs(211, "pi+-")
         elif 300 < abs(parent) < 1000 or abs(parent) in [130, 10313, 10323]:
-            info(15, message_templ.format(parent, "K+-"))
-            cs = self.index_d[321]
+            cs = _family_cs(321, "K+-")
         elif abs(parent) > 1000 and abs(parent) < 5000:
-            # Antibaryons prefer the pbar column (annihilation channels)
-            # over the proton one when the model provides it.
-            if parent < 0 and -2212 in self.index_d:
-                info(15, message_templ.format(parent, "pbar"))
-                cs = self.index_d[-2212]
-            else:
-                info(15, message_templ.format(parent, "nucleon"))
-                cs = self.index_d[2212]
+            cs = _family_cs(2212, "nucleon")
         elif 5 < abs(parent) < 23:
             info(15, "returning 0 cross-section for lepton", parent)
             return np.zeros(self.energy_grid.d)

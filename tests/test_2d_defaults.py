@@ -14,6 +14,8 @@ kappa-window hybrid.)
 
 from types import SimpleNamespace
 
+import pytest
+
 from MCEq import config
 from MCEq.core import MCEqRun
 
@@ -28,27 +30,30 @@ def _mode_for(flag, is_2d):
         config.secant_theta_transport = saved
 
 
-def test_secant_auto_cap_clips_at_50():
-    """The 'auto' cap is 90 - zenith + 5 snapped to 5-deg steps, clipped
-    to [50, 75]: below ~45 deg the S_P eigenbasis is numerically
-    defective (near-nilpotent coupling), so inclined zeniths run at 50."""
-    def cap_for(theta_z):
-        stub = SimpleNamespace(
-            density_model=SimpleNamespace(theta_deg=theta_z))
+def test_secant_cap_validation():
+    """The cap is a plain float in [50, 90): sec(theta) diverges at 90
+    deg, and below ~45-50 deg the S_P eigenbasis is numerically defective
+    (near-nilpotent coupling), so out-of-range values are rejected."""
+    stub = SimpleNamespace()
+
+    def cap_for(value):
+        config.secant_theta_cap_deg = value
         return MCEqRun._secant_theta_cap_deg(stub)
 
     saved = config.secant_theta_cap_deg
-    config.secant_theta_cap_deg = "auto"
     try:
-        assert cap_for(0.0) == 75.0
-        assert cap_for(30.0) == 65.0
-        assert cap_for(45.0) == 50.0
-        assert cap_for(60.0) == 50.0   # not 35 — defective below ~45
-        assert cap_for(85.0) == 50.0
-        config.secant_theta_cap_deg = 62.5
-        assert cap_for(60.0) == 62.5   # explicit float passes through
+        assert cap_for(75.0) == 75.0  # the default
+        assert cap_for(62.5) == 62.5  # any float in range passes through
+        assert cap_for(50.0) == 50.0  # lower edge included
+        for bad in (45.0, 90.0, 120.0):
+            with pytest.raises(ValueError):
+                cap_for(bad)
     finally:
         config.secant_theta_cap_deg = saved
+
+
+def test_secant_cap_default_is_75():
+    assert config.secant_theta_cap_deg == 75.0
 
 
 def test_secant_mode_resolution():

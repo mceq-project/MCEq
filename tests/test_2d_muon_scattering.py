@@ -26,7 +26,7 @@ def _restore(saved):
 
 @pytest.fixture(scope="module")
 def mceq_2d_with_scattering():
-    fn = "mceq_db_URQMD_150GeV_2D.h5"
+    fn = "mceq_db_v2_fluka2d_rc7.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -39,7 +39,7 @@ def mceq_2d_with_scattering():
     config.muon_multiple_scattering = True
     try:
         yield MCEqRun(
-            interaction_model="SIBYLL23D",
+            interaction_model="FLUKA20251",
             primary_model=None,
             theta_deg=0.0,
             density_model=("CORSIKA", ("USStd", None)),
@@ -50,7 +50,7 @@ def mceq_2d_with_scattering():
 
 @pytest.fixture(scope="module")
 def mceq_2d_no_scattering():
-    fn = "mceq_db_URQMD_150GeV_2D.h5"
+    fn = "mceq_db_v2_fluka2d_rc7.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -63,7 +63,7 @@ def mceq_2d_no_scattering():
     config.muon_multiple_scattering = False
     try:
         yield MCEqRun(
-            interaction_model="SIBYLL23D",
+            interaction_model="FLUKA20251",
             primary_model=None,
             theta_deg=0.0,
             density_model=("CORSIKA", ("USStd", None)),

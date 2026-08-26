@@ -2870,34 +2870,21 @@ class MCEqRun:
         return res
 
     def _secant_theta_cap_deg(self):
-        """Resolve ``config.secant_theta_cap_deg``, including "auto".
+        """Validated float value of ``config.secant_theta_cap_deg``.
 
-        "auto" follows the cap-sweep geometry: for an axis at zenith
-        theta_z the azimuthal ring at axis-angle theta first touches the
-        horizon at 90 - theta_z, beyond which the flat-atmosphere
-        sec(theta) law has no single meaningful value and a larger cap
-        over-attenuates. The auto cap is 90 - theta_z + 5 (margin),
-        snapped to 5-degree steps so the disk-cached operator set stays
-        small, clipped to [50, 75]. The lower bound is numerical: for
-        caps below ~45 deg the fitted coupling T becomes nearly
-        nilpotent (g - 1 <= 0.22 with support only at wide angle), the
-        S_P spectrum collapses onto 1 and its eigenbasis degenerates
-        (cond(V) ~ 1e17 at cap 35-40 vs ~1e2 at cap >= 50), so the
-        exact-eigenbasis kernel slot cannot be built. Zeniths >= 45 deg
-        therefore run at cap 50: the theta range (50, 90) is then
-        under-corrected relative to the horizon-aware ideal, but it
-        lies entirely beyond the 90 - theta_z acceptance horizon where
-        the flat-atmosphere law is invalid regardless. Falls back to 75
-        when no zenith has been set yet.
+        The cap is defined relative to the shower axis (like the Hankel
+        modes themselves) and must lie in [50, 90): sec(theta) diverges
+        at 90 deg, and below ~45-50 deg the fitted coupling operator's
+        eigenbasis degenerates numerically so the exact kernel slot
+        cannot be built (see ``config.secant_theta_cap_deg``).
         """
-        cap = config.secant_theta_cap_deg
-        if not (isinstance(cap, str) and cap.lower() == "auto"):
-            return float(cap)
-        theta_z = getattr(self.density_model, "theta_deg", None)
-        if theta_z is None:
-            return 75.0
-        cap = 5.0 * round((90.0 - float(theta_z) + 5.0) / 5.0)
-        return float(np.clip(cap, 50.0, 75.0))
+        cap = float(config.secant_theta_cap_deg)
+        if not 50.0 <= cap < 90.0:
+            raise ValueError(
+                f"config.secant_theta_cap_deg = {cap:g} is outside the "
+                "supported range [50, 90)."
+            )
+        return cap
 
     def _secant_mode(self):
         """Resolve ``config.secant_theta_transport`` against the loaded DB.

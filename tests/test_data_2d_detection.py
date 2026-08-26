@@ -3,7 +3,7 @@
 The backend should detect a 2D database by reading the ``k_dim`` attribute
 from the ``common`` HDF5 group and expose ``is_2d``, ``n_k`` and ``k_grid``
 attributes. The 1D reduced test database has no ``k_dim`` attribute; the
-URQMD 2D database has ``k_dim=24``.
+FLUKA 2D database has ``k_dim=48``.
 """
 
 import os
@@ -24,8 +24,8 @@ def backend_1d():
 
 @pytest.fixture(scope="module")
 def backend_2d():
-    """URQMD 2D database. Must be present (or symlinked) on disk."""
-    fn = "mceq_db_URQMD_150GeV_2D.h5"
+    """FLUKA 2D database. Must be present (or symlinked) on disk."""
+    fn = "mceq_db_v2_fluka2d_rc7.h5"
     if not os.path.exists(os.path.join(config.data_dir, fn)):
         pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
     config.mceq_db_fname = fn
@@ -41,10 +41,9 @@ def test_1d_database_not_2d(backend_1d):
 
 def test_2d_database_detected(backend_2d):
     assert backend_2d.is_2d is True
-    assert backend_2d.n_k == 24
+    assert backend_2d.n_k == 48
     assert backend_2d.k_grid[0] == 0
     assert backend_2d.k_grid[-1] == 2000
-    # URQMD 2D db k_grid is integer-valued
     assert np.issubdtype(backend_2d.k_grid.dtype, np.integer) or np.issubdtype(
         backend_2d.k_grid.dtype, np.floating
     )

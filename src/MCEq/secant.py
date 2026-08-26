@@ -1,16 +1,14 @@
 """Hankel-space sec(theta) path-elongation operator for the 2D transport.
 
-The 2D solver books interaction, decay and continuous losses per unit
-AXIS-projected slant depth X, while a particle travelling at angle theta to
-the shower axis physically crosses ``sec(theta)`` more air (the paraxial
-approximation). For populations in local production/loss equilibrium
-(sub-GeV hadrons and muons) this over-predicts the wide-angle density by
-exactly ``sec(theta)`` — measured as C/M(theta) = cos(theta) against
-CORSIKA-7, see mceq-em-integration
-``wiki/results/lowe-excess-secant-theta.md``.
+Problem: the 2D solver books interaction, decay and continuous losses per
+unit AXIS-projected slant depth X, while a particle travelling at angle
+theta to the shower axis physically crosses ``sec(theta)`` more air (the
+paraxial approximation). For populations in local production/loss
+equilibrium (sub-GeV hadrons and muons) this over-predicts the wide-angle
+density by exactly ``sec(theta)``.
 
-The fix: multiplication by ``g(theta) = min(sec theta, sec theta_cap)`` in
-angle space is a constant mode-coupling matrix ``S = I + T`` in Hankel
+Solution: multiplication by ``g(theta) = min(sec theta, sec theta_cap)``
+in angle space is a constant mode-coupling matrix ``S = I + T`` in Hankel
 space. The corrected transport right-multiplies the per-mode blocks::
 
     dF_k/dX = M_k  sum_k' (I + T)_{kk'} F_k'
@@ -19,13 +17,12 @@ i.e. the elongation charges the flux BEFORE the yield kick — the parent's
 path, not the child's emission angle. In equilibrium the parent density
 becomes ``source x lambda cos(theta)`` while its interaction/decay rate
 per axis depth gains ``sec(theta)``; the product (daughter production) is
-unchanged, so loss-free daughters (neutrinos), which already agree with
-CORSIKA, are preserved identically. For the same reason the correction
-must cover ALL loss channels of a species or none: correcting ionization
-but not decay would break the mu -> nu balance by cos(theta).
+unchanged, so loss-free daughters (neutrinos) are preserved identically.
+For the same reason the correction must cover ALL loss channels of a
+species or none: correcting ionization but not decay would break the
+mu -> nu balance by cos(theta).
 
-Construction (per-column ridge with a flat-state damping term, prototype
-v6 in mceq-em-integration ``runs/2026-08-10_secant-transport-kernel/``)::
+Construction of ``T`` (per-column ridge with a flat-state damping term)::
 
     obj(T) = || W (R T - diag(g-1) R) ||_F^2
              + || T (lam2 I + w_f 1 1^T)^(1/2) ||_F^2
@@ -34,20 +31,21 @@ with ``R`` the readout linear map (cubic kappa-oversampling + trapz, the
 same convention as ``MCEqRun.convert_to_theta_space``) on a dense theta
 grid, ``W`` the sqrt(theta dtheta) measure, and the rank-one term damping
 ``T @ 1`` (kappa-flat = collimated states must pass through untouched).
-Rows with ``kappa > row_kmax`` are zeroed: the correction has no business
-at narrow angular scales. Validated: rms 1-2 % on near-isotropic sub-GeV
-profiles, angle-integrated action exact to 0.1 %, S@1 = 1 to 0.15 %,
-eig(S) real in [1.0, 3.9].
+Rows with ``kappa > row_kmax`` are zeroed: the correction has no support
+at narrow angular scales. Accuracy of the operator: rms 1-2 % on
+near-isotropic profiles, angle-integrated action exact to 0.1 %,
+S@1 = 1 to 0.15 %, eig(S) real and positive.
 
 Solver integration: NOT via the matrices. Stitching ``M_k S`` into the
 block CSR puts stiff mode-coupled loss terms (short-lived species at
 altitude, ``rate/rho`` unbounded) into ETD2RK's explicit part; the
 stiff-limit update is then a Jacobi-like iteration with matrix
-``D_S^-1 (S - D_S)`` whose spectral radius is 1.75 — it NaNs. Instead the
-kernel (``solv_numpy_etd2_secant``) treats the coupled same-(species,E)
-block ``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
-(constant, shared by every state), which is unconditionally stable and
-reproduces the S-corrected equilibrium exactly in the stiff limit.
+``D_S^-1 (S - D_S)`` whose spectral radius exceeds 1 — it diverges.
+Instead the kernels (``solv_numpy_etd2_secant`` / ``solv_mkl_etd2_secant``
+/ ``solv_cuda_etd2_secant``) treat the coupled same-(species,E) block
+``d_i * S_P`` exactly through the eigendecomposition of ``S_P`` (constant,
+shared by every state), which is unconditionally stable and reproduces
+the S-corrected equilibrium exactly in the stiff limit.
 """
 
 import numpy as np
@@ -95,18 +93,28 @@ def secant_coupling_matrix(
     Rows with ``k_grid > row_kmax`` and entries below ``entry_tol`` are
     zeroed. The result is cached per (k_grid, parameters).
     """
-    key = (tuple(np.asarray(k_grid, dtype=float)), theta_cap_deg, row_kmax,
-           lam_rel, w_flat, n_theta, entry_tol)
+    key = (
+        tuple(np.asarray(k_grid, dtype=float)),
+        theta_cap_deg,
+        row_kmax,
+        lam_rel,
+        w_flat,
+        n_theta,
+        entry_tol,
+    )
     if key in _T_CACHE:
         return _T_CACHE[key]
 
-    # Disk cache: the dense-grid construction takes ~4 minutes.
+    # Disk cache in the MCEq data directory: the dense-grid construction
+    # takes ~4 minutes. The MCEq version is part of the hash so a version
+    # bump invalidates stale operators.
     import hashlib
-    import pathlib
-    import tempfile
 
-    digest = hashlib.sha256(repr(key).encode()).hexdigest()[:16]
-    cache_dir = pathlib.Path(tempfile.gettempdir()) / "mceq_secant_cache"
+    from MCEq import config
+    from MCEq.version import __version__
+
+    digest = hashlib.sha256(repr((__version__, key)).encode()).hexdigest()[:16]
+    cache_dir = config.data_dir / "secant_cache"
     cache_file = cache_dir / f"T_{digest}.npy"
     if cache_file.exists():
         T = np.load(cache_file)
@@ -118,8 +126,11 @@ def secant_coupling_matrix(
     theta = np.linspace(0, np.pi / 2, n_theta)
     g = 1.0 / np.cos(np.minimum(theta, np.radians(theta_cap_deg)))
 
-    info(2, f"Building sec(theta) coupling operator: cap {theta_cap_deg} deg,"
-            f" rows kappa <= {row_kmax}, lam_rel {lam_rel:g}")
+    info(
+        2,
+        f"Building sec(theta) coupling operator: cap {theta_cap_deg} deg,"
+        f" rows kappa <= {row_kmax}, lam_rel {lam_rel:g}",
+    )
     R = _readout_matrix(k_grid, theta)
     w = np.gradient(theta)
     w[0] *= 0.5
@@ -157,13 +168,11 @@ def secant_coupling_matrix(
     return T
 
 
-def build_secant_kernel_ops(k_grid, e_centers, n_species, config,
-                            theta_cap_deg=None):
+def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=None):
     """Assemble the constant data the secant ETD2RK kernel needs.
 
-    ``theta_cap_deg`` overrides ``config.secant_theta_cap_deg`` — the
-    caller resolves the "auto" (zenith-dependent) mode, since only it
-    knows the geometry. It must be a number here.
+    ``theta_cap_deg`` overrides ``config.secant_theta_cap_deg``; it must
+    be a number in [50, 90) (see the config docstring).
 
     Returns a dict with:
       P          -- indices of the coupled modes (kappa <= row_kmax)
@@ -196,15 +205,17 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config,
             f"max |imag| {np.abs(lam.imag).max():.3e}). This happens "
             f"for small caps (theta_cap_deg = {theta_cap_deg:g}): below "
             "~45 deg the coupling is nearly nilpotent and S_P becomes "
-            "numerically defective. Use theta_cap_deg >= 50 (the 'auto' "
-            "cap clips there)."
+            "numerically defective. Use theta_cap_deg >= 50."
         )
     lam = lam.real
     V = V.real
     Vi = np.linalg.inv(V)
-    info(2, f"secant kernel ops: {len(P)} coupled modes, eig(S_P) in "
-            f"[{lam.min():.3f}, {lam.max():.3f}], cond(V) "
-            f"{np.linalg.cond(V):.1e}")
+    info(
+        2,
+        f"secant kernel ops: {len(P)} coupled modes, eig(S_P) in "
+        f"[{lam.min():.3f}, {lam.max():.3f}], cond(V) "
+        f"{np.linalg.cond(V):.1e}",
+    )
 
     e_gate = getattr(config, "secant_theta_e_gate", None)
     e_centers = np.asarray(e_centers)
