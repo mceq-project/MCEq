@@ -376,12 +376,12 @@ muon_multiple_scattering = True
 #: Applied inside the ETD2RK kernels (numpy/mkl/cuda): the coupled
 #: same-(species,E) block d_i*S_P is integrated exactly in the
 #: eigenbasis of S_P, unconditionally stable at any stiffness.
-#: Tri-state: "auto" (default) applies the correction to every
-#: single-axis solve() on a 2D database and falls back to the paraxial
-#: transport (with a warning) on the multi-RHS/carousel entry points
-#: and kernels where the coupling is not implemented; True requires it
-#: (unsupported paths raise); False disables it. 1D databases are
-#: never affected.
+#: Tri-state: "auto" (default) applies the correction wherever a secant
+#: kernel is implemented; True requires it; False disables it. Batched
+#: multi-RHS/carousel transport is supported on NumPy and CUDA, grouping
+#: columns by their resolved auto-cap so every RHS receives its own operator.
+#: Active secant modes raise on unsupported batched backends instead of
+#: silently falling back to paraxial transport. 1D databases are unaffected.
 secant_theta_transport = "auto"
 #: cap angle in degrees for the sec(theta) growth (transport breaks down
 #: at 90 deg), or the string "auto". For an axis inclined at zenith

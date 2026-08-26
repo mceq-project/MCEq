@@ -605,15 +605,16 @@ def _secant_phi_factors(ZB):
     """Elementwise phi1/phi2 with Taylor patches for a 2-D block argument."""
     safe = np.where(ZB == 0.0, 1.0, ZB)
     e1 = np.expm1(ZB)
-    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe,
-                    1.0 + ZB * (0.5 + ZB * _INV_6))
-    phi2 = np.where(np.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
-                    0.5 + ZB * (_INV_6 + ZB * _INV_24))
+    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6))
+    phi2 = np.where(
+        np.abs(ZB) > _PHI2_SMALL,
+        (e1 - ZB) / (safe * safe),
+        0.5 + ZB * (_INV_6 + ZB * _INV_24),
+    )
     return np.exp(ZB), phi1, phi2
 
 
-def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
-                           sec_ops):
+def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, sec_ops):
     """ETD2RK with the sec(theta) path-elongation mode coupling.
 
     Integrates ``dPhi/dX = (A + rho_inv B)(I + T_gated) Phi`` where
@@ -656,19 +657,19 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
 
     dim = phi.shape[0]
     P = sec_ops["P"]
-    T_P = sec_ops["T_P"]          # (n_P, n_k)
-    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
+    T_P = sec_ops["T_P"]  # (n_P, n_k)
+    T_PP = sec_ops["T_PP"]  # (n_P, n_P)
     V = sec_ops["V"]
     Vi = sec_ops["Vi"]
-    lam = sec_ops["lam"]          # (n_P,)
-    g_idx = sec_ops["gate_idx"]   # (n_g,)
+    lam = sec_ops["lam"]  # (n_P,)
+    g_idx = sec_ops["gate_idx"]  # (n_g,)
     n_k = sec_ops["n_k"]
     N = dim // n_k
     assert n_k * N == dim, "state dim not divisible by n_k"
     n_P = len(P)
     n_g = len(g_idx)
     # flat state indices of the (coupled mode, gated column) plane
-    flatPG = (P[:, None] * N + g_idx[None, :])  # (n_P, n_g)
+    flatPG = P[:, None] * N + g_idx[None, :]  # (n_P, n_g)
 
     phc = np.zeros(n_padded, dtype=np.float64)
     phc[:dim] = phi
@@ -692,8 +693,8 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
         """Fbuf <- off-diagonal + coupling remainder of the operator at
         xbuf; returns the gathered x_PG for reuse."""
         x2 = xbuf[:dim].reshape(n_k, N)
-        XG = x2[:, g_idx]                     # (n_k, n_g)
-        YG = T_P @ XG                         # coupling u on (P, g)
+        XG = x2[:, g_idx]  # (n_k, n_g)
+        YG = T_P @ XG  # coupling u on (P, g)
         np.copyto(w, xbuf)
         w[:dim].reshape(n_k, N)[np.ix_(P, g_idx)] += YG
         np.copyto(Fbuf, int_off.dot(w))
@@ -722,8 +723,8 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
 
             _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
             D2 = D.reshape(n_k, N)
-            Df_PG = D2[np.ix_(P, g_idx)]      # full diag on coupled plane
-            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
+            Df_PG = D2[np.ix_(P, g_idx)]  # full diag on coupled plane
+            D0_G = D2[0, g_idx]  # k-shared part (kappa = 0)
 
             # block factors for the exact slot: f(h * D0_i * lam_j)
             ZB = lam[:, None] * (h * D0_G)[None, :]
@@ -761,6 +762,148 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs,
     )
 
     return phc_v.copy(), np.array(grid_sol)
+
+
+def _secant_left_matmul(matrix, plane):
+    """Apply a mode-space matrix to the first axis of a >=2-D plane.
+
+    The secant multi-RHS kernels carry a logical ``(mode, state, rhs)``
+    tensor.  Flattening the trailing axes turns each mode transform into
+    one dense GEMM instead of one launch/call per RHS.  The helper is
+    deliberately NumPy/CuPy agnostic; both array libraries implement the
+    operations used here.
+    """
+    trailing = plane.shape[1:]
+    return (matrix @ plane.reshape(plane.shape[0], -1)).reshape(
+        (matrix.shape[0],) + trailing
+    )
+
+
+def solv_numpy_etd2_secant_multirhs(
+    nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, sec_ops
+):
+    """Shared-path multi-RHS lift of :func:`solv_numpy_etd2_secant`.
+
+    All RHS columns share the atmosphere path and one resolved secant
+    operator.  Sparse applications are SpMMs over ``(dim, K)`` while the
+    exact coupled diagonal slot is evaluated by flattening the logical
+    ``(n_P, n_gated, K)`` plane into one dense GEMM per transform.
+    """
+    if phi.ndim != 2:
+        raise ValueError(
+            "solv_numpy_etd2_secant_multirhs: phi must be 2-D (dim, K), "
+            f"got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if K < 1:
+        raise ValueError(f"K must be >= 1, got {K}")
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    if not sp.isspmatrix_csr(int_off):
+        int_off = int_off.tocsr()
+    if not sp.isspmatrix_csr(dec_off):
+        dec_off = dec_off.tocsr()
+
+    P = np.asarray(sec_ops["P"], dtype=np.intp)
+    T_P = np.asarray(sec_ops["T_P"], dtype=np.float64)
+    T_PP = np.asarray(sec_ops["T_PP"], dtype=np.float64)
+    V = np.asarray(sec_ops["V"], dtype=np.float64)
+    Vi = np.asarray(sec_ops["Vi"], dtype=np.float64)
+    lam = np.asarray(sec_ops["lam"], dtype=np.float64)
+    g_idx = np.asarray(sec_ops["gate_idx"], dtype=np.intp)
+    n_k = int(sec_ops["n_k"])
+    N = dim // n_k
+    if n_k * N != dim:
+        raise ValueError("state dim not divisible by secant n_k")
+
+    phc = np.array(phi, dtype=np.float64, copy=True)
+    F_phi = np.empty((dim, K), dtype=np.float64)
+    F_a = np.empty((dim, K), dtype=np.float64)
+    a = np.empty((dim, K), dtype=np.float64)
+    w = np.empty((dim, K), dtype=np.float64)
+    scratch_NK = np.empty((dim, K), dtype=np.float64)
+    bufs = _etd_step_buffers(dim)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    D = bufs["D"]
+
+    def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
+        X3 = xbuf.reshape(n_k, N, K)
+        XG = X3[:, g_idx, :]
+        YG = _secant_left_matmul(T_P, XG)
+        np.copyto(w, xbuf)
+        W3 = w.reshape(n_k, N, K)
+        W3[P[:, None], g_idx[None, :], :] += YG
+        np.copyto(Fbuf, int_off.dot(w))
+        ri_dec = dec_off.dot(w)
+        ri_dec *= ri
+        np.add(Fbuf, ri_dec, out=Fbuf)
+        x_PG = XG[P, :, :]
+        SPxP = x_PG + _secant_left_matmul(T_PP, x_PG)
+        w_PG = x_PG + YG
+        delta = Df_PG[:, :, None] * w_PG - D0_G[None, :, None] * SPxP
+        F3 = Fbuf.reshape(n_k, N, K)
+        F3[P[:, None], g_idx[None, :], :] += delta
+        return x_PG
+
+    grid_sol = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+    with np.errstate(over="ignore", invalid="ignore"):
+        for k in range(nsteps):
+            h = dX[k]
+            ri = rho_inv[k]
+            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
+            D2 = D.reshape(n_k, N)
+            Df_PG = D2[P[:, None], g_idx[None, :]]
+            D0_G = D2[0, g_idx]
+
+            ZB = lam[:, None] * (h * D0_G)[None, :]
+            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
+
+            x_PG = eval_F(phc, F_phi, ri, Df_PG, D0_G)
+            F_PG = F_phi.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+            np.multiply(eD[:, None], phc, out=a)
+            np.multiply(phi1[:, None], F_phi, out=scratch_NK)
+            scratch_NK *= h
+            np.add(a, scratch_NK, out=a)
+            a_PG = _secant_left_matmul(
+                V, eDB[:, :, None] * _secant_left_matmul(Vi, x_PG)
+            ) + h * _secant_left_matmul(
+                V, phi1B[:, :, None] * _secant_left_matmul(Vi, F_PG)
+            )
+            a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = a_PG
+
+            eval_F(a, F_a, ri, Df_PG, D0_G)
+            Fa_PG = F_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+            np.subtract(F_a, F_phi, out=scratch_NK)
+            scratch_NK *= h
+            np.multiply(phi2[:, None], scratch_NK, out=scratch_NK)
+            np.add(a, scratch_NK, out=phc)
+            phc_PG = a_PG + h * _secant_left_matmul(
+                V,
+                phi2B[:, :, None] * _secant_left_matmul(Vi, Fa_PG - F_PG),
+            )
+            phc.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = phc_PG
+
+            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
+                grid_sol.append(phc.copy())
+                grid_step += 1
+
+    elapsed = time() - start
+    info(
+        2,
+        f"Performance (secant multirhs K={K}): "
+        f"{1e3 * elapsed / float(nsteps):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
+    )
+    return phc.copy(), np.array(grid_sol)
 
 
 # ---------------------------------------------------------------------------
@@ -932,16 +1075,16 @@ from collections import namedtuple
 CarouselSchedule = namedtuple(
     "CarouselSchedule",
     [
-        "T",                # int — makespan (outer loop iters)
-        "K",                # int — pipeline width (slots)
-        "K_total",          # int — total pixels packed
-        "slot_assignments", # list[list[int]] — per-slot pixel ids in run order
-        "reset_t_starts",   # (T+1,) int32 — CSR ptrs into reset_j / reset_pixel
-        "reset_j",          # (R,) int32 — slot id of each reset event
-        "reset_pixel",      # (R,) int32 — pixel id whose phi0 to load
+        "T",  # int — makespan (outer loop iters)
+        "K",  # int — pipeline width (slots)
+        "K_total",  # int — total pixels packed
+        "slot_assignments",  # list[list[int]] — per-slot pixel ids in run order
+        "reset_t_starts",  # (T+1,) int32 — CSR ptrs into reset_j / reset_pixel
+        "reset_j",  # (R,) int32 — slot id of each reset event
+        "reset_pixel",  # (R,) int32 — pixel id whose phi0 to load
         "record_t_starts",  # (T+1,) int32 — CSR ptrs into record_j / record_pixel
-        "record_j",         # (K_total,) int32 — slot id of each harvest event
-        "record_pixel",     # (K_total,) int32 — pixel id to record into
+        "record_j",  # (K_total,) int32 — slot id of each harvest event
+        "record_pixel",  # (K_total,) int32 — pixel id to record into
     ],
 )
 
@@ -1117,7 +1260,7 @@ def solv_numpy_etd2_carousel(
     dim = phi_initial.shape[0]
     if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_numpy_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"solv_numpy_etd2_carousel: dX/rho_inv must be (T,K)={T, K}; "
             f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
     if phi_initial.shape != (dim, K):
@@ -1210,6 +1353,167 @@ def solv_numpy_etd2_carousel(
         f"waste={waste:.1%})",
     )
 
+    return sol_pixel
+
+
+def solv_numpy_etd2_secant_carousel(
+    int_m,
+    dec_m,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
+    sec_ops,
+):
+    """Cap-homogeneous NumPy secant carousel.
+
+    This is the per-path/RHS lift of :func:`solv_numpy_etd2_secant`.
+    Every pixel scheduled into this invocation has the same resolved
+    secant operator, while ``dX`` and ``rho_inv`` remain independent per
+    pipeline slot.  Core groups heterogeneous sky columns by cap before
+    calling this kernel and scatters the returned local pixel order back
+    to the original full-sky order.
+    """
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = phi_initial.shape[0]
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
+        raise ValueError(
+            f"solv_numpy_etd2_secant_carousel: dX/rho_inv must be "
+            f"(T,K)=({T},{K}); got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+    if phi_initial.shape != (dim, K):
+        raise ValueError(
+            f"solv_numpy_etd2_secant_carousel: phi_initial must be "
+            f"(dim,K)=({dim},{K}); got {phi_initial.shape}"
+        )
+    if phi0_per_pixel.shape != (dim, K_total):
+        raise ValueError(
+            f"solv_numpy_etd2_secant_carousel: phi0_per_pixel must be "
+            f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
+        )
+
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    if not sp.isspmatrix_csr(int_off):
+        int_off = int_off.tocsr()
+    if not sp.isspmatrix_csr(dec_off):
+        dec_off = dec_off.tocsr()
+
+    P = np.asarray(sec_ops["P"], dtype=np.intp)
+    T_P = np.asarray(sec_ops["T_P"], dtype=np.float64)
+    T_PP = np.asarray(sec_ops["T_PP"], dtype=np.float64)
+    V = np.asarray(sec_ops["V"], dtype=np.float64)
+    Vi = np.asarray(sec_ops["Vi"], dtype=np.float64)
+    lam = np.asarray(sec_ops["lam"], dtype=np.float64)
+    g_idx = np.asarray(sec_ops["gate_idx"], dtype=np.intp)
+    n_k = int(sec_ops["n_k"])
+    N = dim // n_k
+    if n_k * N != dim:
+        raise ValueError("state dim not divisible by secant n_k")
+
+    phc = np.array(phi_initial, dtype=np.float64, copy=True)
+    F_phi = np.empty((dim, K), dtype=np.float64)
+    F_a = np.empty((dim, K), dtype=np.float64)
+    a = np.empty((dim, K), dtype=np.float64)
+    w = np.empty((dim, K), dtype=np.float64)
+    scratch_NK = np.empty((dim, K), dtype=np.float64)
+    bufs = _etd_step_buffers_multipath(dim, K)
+    eD = bufs["eD"]
+    phi1 = bufs["phi1"]
+    phi2 = bufs["phi2"]
+    D = bufs["D"]
+    sol_pixel = np.empty((dim, K_total), dtype=np.float64)
+
+    def eval_F(xbuf, Fbuf, ri_K, Df_PG, D0_G):
+        X3 = xbuf.reshape(n_k, N, K)
+        XG = X3[:, g_idx, :]
+        YG = _secant_left_matmul(T_P, XG)
+        np.copyto(w, xbuf)
+        W3 = w.reshape(n_k, N, K)
+        W3[P[:, None], g_idx[None, :], :] += YG
+        np.copyto(Fbuf, int_off.dot(w))
+        ri_dec = dec_off.dot(w)
+        ri_dec *= ri_K[None, :]
+        np.add(Fbuf, ri_dec, out=Fbuf)
+        x_PG = XG[P, :, :]
+        SPxP = x_PG + _secant_left_matmul(T_PP, x_PG)
+        w_PG = x_PG + YG
+        delta = Df_PG * w_PG - D0_G[None, :, :] * SPxP
+        F3 = Fbuf.reshape(n_k, N, K)
+        F3[P[:, None], g_idx[None, :], :] += delta
+        return x_PG
+
+    rs = schedule.reset_t_starts
+    rj = schedule.reset_j
+    rp = schedule.reset_pixel
+    cs = schedule.record_t_starts
+    cj = schedule.record_j
+    cpix = schedule.record_pixel
+
+    from time import time
+
+    start = time()
+    with np.errstate(over="ignore", invalid="ignore"):
+        for step in range(T):
+            h_K = dX[step]
+            ri_K = rho_inv[step]
+            _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, bufs)
+            D3 = D.reshape(n_k, N, K)
+            Df_PG = D3[P[:, None], g_idx[None, :], :]
+            D0_G = D3[0, g_idx, :]
+
+            ZB = lam[:, None, None] * (h_K[None, None, :] * D0_G[None, :, :])
+            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
+
+            x_PG = eval_F(phc, F_phi, ri_K, Df_PG, D0_G)
+            F_PG = F_phi.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+            np.multiply(eD, phc, out=a)
+            np.multiply(phi1, F_phi, out=scratch_NK)
+            scratch_NK *= h_K[None, :]
+            np.add(a, scratch_NK, out=a)
+            a_PG = _secant_left_matmul(V, eDB * _secant_left_matmul(Vi, x_PG)) + h_K[
+                None, None, :
+            ] * _secant_left_matmul(V, phi1B * _secant_left_matmul(Vi, F_PG))
+            frozen = h_K == 0.0
+            if np.any(frozen):
+                # A padded carousel slot is a strict identity map.  Avoid
+                # repeatedly round-tripping it through V/Vi during a long
+                # tail after its final pixel was harvested.
+                a_PG[:, :, frozen] = x_PG[:, :, frozen]
+            a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = a_PG
+
+            eval_F(a, F_a, ri_K, Df_PG, D0_G)
+            Fa_PG = F_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+            np.subtract(F_a, F_phi, out=scratch_NK)
+            scratch_NK *= h_K[None, :]
+            np.multiply(phi2, scratch_NK, out=scratch_NK)
+            np.add(a, scratch_NK, out=phc)
+            phc_PG = a_PG + h_K[None, None, :] * _secant_left_matmul(
+                V, phi2B * _secant_left_matmul(Vi, Fa_PG - F_PG)
+            )
+            if np.any(frozen):
+                phc_PG[:, :, frozen] = x_PG[:, :, frozen]
+            phc.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = phc_PG
+
+            for r in range(cs[step], cs[step + 1]):
+                sol_pixel[:, cpix[r]] = phc[:, cj[r]]
+            for r in range(rs[step], rs[step + 1]):
+                phc[:, rj[r]] = phi0_per_pixel[:, rp[r]]
+
+    elapsed = time() - start
+    useful = int(np.count_nonzero(dX))
+    waste = 1.0 - useful / float(T * K) if (T * K) else 0.0
+    info(
+        2,
+        f"Performance (secant carousel K={K}, K_total={K_total}, T={T}): "
+        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
+        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot, "
+        f"waste={waste:.1%})",
+    )
     return sol_pixel
 
 
@@ -1615,25 +1919,53 @@ def _set_mkl_argtypes(mkl):
 
     # fp64
     mkl.mkl_sparse_d_mv.argtypes = [
-        c_int, fl64, c_void_p, _MklMatrixDescr,
-        POINTER(fl64), fl64, POINTER(fl64),
+        c_int,
+        fl64,
+        c_void_p,
+        _MklMatrixDescr,
+        POINTER(fl64),
+        fl64,
+        POINTER(fl64),
     ]
     mkl.mkl_sparse_d_mv.restype = c_int
     mkl.mkl_sparse_d_mm.argtypes = [
-        c_int, fl64, c_void_p, _MklMatrixDescr, c_int,
-        POINTER(fl64), c_int, c_int, fl64, POINTER(fl64), c_int,
+        c_int,
+        fl64,
+        c_void_p,
+        _MklMatrixDescr,
+        c_int,
+        POINTER(fl64),
+        c_int,
+        c_int,
+        fl64,
+        POINTER(fl64),
+        c_int,
     ]
     mkl.mkl_sparse_d_mm.restype = c_int
     # fp32
     if hasattr(mkl, "mkl_sparse_s_mv"):
         mkl.mkl_sparse_s_mv.argtypes = [
-            c_int, fl32, c_void_p, _MklMatrixDescr,
-            POINTER(fl32), fl32, POINTER(fl32),
+            c_int,
+            fl32,
+            c_void_p,
+            _MklMatrixDescr,
+            POINTER(fl32),
+            fl32,
+            POINTER(fl32),
         ]
         mkl.mkl_sparse_s_mv.restype = c_int
         mkl.mkl_sparse_s_mm.argtypes = [
-            c_int, fl32, c_void_p, _MklMatrixDescr, c_int,
-            POINTER(fl32), c_int, c_int, fl32, POINTER(fl32), c_int,
+            c_int,
+            fl32,
+            c_void_p,
+            _MklMatrixDescr,
+            c_int,
+            POINTER(fl32),
+            c_int,
+            c_int,
+            fl32,
+            POINTER(fl32),
+            c_int,
         ]
         mkl.mkl_sparse_s_mm.restype = c_int
 
@@ -2243,12 +2575,12 @@ def solv_mkl_etd2_secant(
             n_padded = max(n_padded, m.n_padded)
 
     P = sec_ops["P"]
-    T_P = sec_ops["T_P"]          # (n_P, n_k)
-    T_PP = sec_ops["T_PP"]        # (n_P, n_P)
+    T_P = sec_ops["T_P"]  # (n_P, n_k)
+    T_PP = sec_ops["T_PP"]  # (n_P, n_P)
     V = sec_ops["V"]
     Vi = sec_ops["Vi"]
-    lam = sec_ops["lam"]          # (n_P,)
-    g_idx = sec_ops["gate_idx"]   # (n_g,)
+    lam = sec_ops["lam"]  # (n_P,)
+    g_idx = sec_ops["gate_idx"]  # (n_g,)
     n_k = sec_ops["n_k"]
     N = dim // n_k
     assert n_k * N == dim, "state dim not divisible by n_k"
@@ -2286,8 +2618,8 @@ def solv_mkl_etd2_secant(
         """F <- off-diagonal + coupling remainder of the operator at x
         (SpMVs act on w = x + T_gated x); returns the gathered x_PG."""
         x2 = x_v.reshape(n_k, N)
-        XG = x2[:, g_idx]                     # (n_k, n_g)
-        YG = T_P @ XG                         # coupling u on (P, g)
+        XG = x2[:, g_idx]  # (n_k, n_g)
+        YG = T_P @ XG  # coupling u on (P, g)
         np.copyto(w_v, x_v)
         w_v.reshape(n_k, N)[ixPG] += YG
         if not int_off_empty:
@@ -2318,8 +2650,8 @@ def solv_mkl_etd2_secant(
 
             _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
             D2 = D.reshape(n_k, N)
-            Df_PG = D2[ixPG]                  # full diag on coupled plane
-            D0_G = D2[0, g_idx]               # k-shared part (kappa = 0)
+            Df_PG = D2[ixPG]  # full diag on coupled plane
+            D0_G = D2[0, g_idx]  # k-shared part (kappa = 0)
 
             # block factors for the exact slot: f(h * D0_i * lam_j)
             ZB = lam[:, None] * (h * D0_G)[None, :]
@@ -2658,12 +2990,12 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
 
     # Upload the constant operator set (few tens of KB — negligible).
     P = cp.asarray(sec_ops["P"])
-    T_P = cp.asarray(sec_ops["T_P"], dtype=fl_pr)      # (n_P, n_k)
-    T_PP = cp.asarray(sec_ops["T_PP"], dtype=fl_pr)    # (n_P, n_P)
+    T_P = cp.asarray(sec_ops["T_P"], dtype=fl_pr)  # (n_P, n_k)
+    T_PP = cp.asarray(sec_ops["T_PP"], dtype=fl_pr)  # (n_P, n_P)
     V = cp.asarray(sec_ops["V"], dtype=fl_pr)
     Vi = cp.asarray(sec_ops["Vi"], dtype=fl_pr)
-    lam = cp.asarray(sec_ops["lam"], dtype=fl_pr)      # (n_P,)
-    g_idx = cp.asarray(sec_ops["gate_idx"])            # (n_g,)
+    lam = cp.asarray(sec_ops["lam"], dtype=fl_pr)  # (n_P,)
+    g_idx = cp.asarray(sec_ops["gate_idx"])  # (n_g,)
     ixPG = cp.ix_(P, g_idx)
 
     cu_phc = ctx.cu_phc
@@ -2682,18 +3014,22 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
         """Elementwise exp/phi1/phi2 with Taylor patches (cupy)."""
         safe = cp.where(ZB == 0.0, fl_pr(1.0), ZB)
         e1 = cp.expm1(ZB)
-        phi1B = cp.where(cp.abs(ZB) > _PHI1_SMALL, e1 / safe,
-                         1.0 + ZB * (0.5 + ZB * _INV_6))
-        phi2B = cp.where(cp.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
-                         0.5 + ZB * (_INV_6 + ZB * _INV_24))
+        phi1B = cp.where(
+            cp.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6)
+        )
+        phi2B = cp.where(
+            cp.abs(ZB) > _PHI2_SMALL,
+            (e1 - ZB) / (safe * safe),
+            0.5 + ZB * (_INV_6 + ZB * _INV_24),
+        )
         return cp.exp(ZB), phi1B, phi2B
 
     def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
         """Fbuf <- off-diagonal + coupling remainder at xbuf; returns the
         gathered x_PG. SpMVs act on w = xbuf + T_gated xbuf."""
         X2 = xbuf.reshape(n_k, N)
-        XG = X2[:, g_idx]                     # (n_k, n_g)
-        YG = T_P @ XG                         # coupling u on (P, g)
+        XG = X2[:, g_idx]  # (n_k, n_g)
+        YG = T_P @ XG  # coupling u on (P, g)
         cu_w[:] = xbuf
         W2 = cu_w.reshape(n_k, N)
         W2[ixPG] = W2[ixPG] + YG
@@ -2727,8 +3063,8 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
         phi1 = ctx.cu_phi1
         phi2 = ctx.cu_phi2
         D2 = ctx.cu_D.reshape(n_k, N)
-        Df_PG = D2[ixPG]                      # full diag on coupled plane
-        D0_G = D2[0, g_idx]                   # k-shared part (kappa = 0)
+        Df_PG = D2[ixPG]  # full diag on coupled plane
+        D0_G = D2[0, g_idx]  # k-shared part (kappa = 0)
 
         # block factors for the exact slot: f(h * D0_i * lam_j)
         ZB = lam[:, None] * (h * D0_G)[None, :]
@@ -2935,20 +3271,28 @@ class CudaEtd2MultiRHSContext:
     * ``fl_pr``: ``cp.float32`` or ``cp.float64`` — buffer dtype.
 
     Constructed once per ``MCEqRun`` per (dtype, K) pair and cached in
-    ``MCEqRun._cuda_etd2_multirhs_cache`` so the cuSPARSE handle and the
-    state buffers are reused across ``solve_multirhs`` / ``solve_fullsky``
-    calls.
+    ``MCEqRun._cuda_etd2_multirhs_cache``. Contexts with different K but the
+    same matrices/device/precision share the immutable CSR matrices and
+    diagonals; only K-shaped state/scratch buffers are distinct.
     """
 
-    def __init__(self, int_off, dec_off, d_int, d_dec, K, device_id, fp_precision):
+    def __init__(
+        self,
+        int_off,
+        dec_off,
+        d_int,
+        d_dec,
+        K,
+        device_id,
+        fp_precision,
+        shared_static=None,
+    ):
         _preload_nvidia_pip_libs()
         try:
             import cupy as cp
             import cupyx.scipy.sparse as cusp
         except ImportError as e:
-            raise RuntimeError(
-                "CudaEtd2MultiRHSContext: CuPy is not available."
-            ) from e
+            raise RuntimeError("CudaEtd2MultiRHSContext: CuPy is not available.") from e
 
         if fp_precision == 32:
             fl_pr = cp.float32
@@ -2971,19 +3315,45 @@ class CudaEtd2MultiRHSContext:
         if self.K < 1:
             raise ValueError(f"K must be >= 1, got {self.K}")
 
-        # cuSPARSE CSR copies — None when empty (matches the single-RHS
-        # context's convention; the kernel skips empty SpMMs).
-        self.cu_int_off = (
-            cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
-        )
-        self.cu_dec_off = (
-            cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
-        )
-        # Diagonals stay on device in fp64-precision arithmetic; we cast
-        # down to fl_pr for the phi/eD pipeline (sufficient — the Mac fp32
-        # stability test holds at 1e-4 rel-err with the same arithmetic).
-        self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
-        self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
+        # cuSPARSE matrices and diagonals do not depend on K. Share them with
+        # another width context when core has established identical host matrix
+        # identities, device and precision. Direct array/matrix references keep
+        # the storage alive even if the original cache entry is later replaced.
+        self._shared_static = shared_static
+        if shared_static is None:
+            self.cu_int_off = (
+                cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
+            )
+            self.cu_dec_off = (
+                cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
+            )
+            # The host diagonals are fp64; device storage follows the context
+            # precision, matching the existing phi/eD pipeline.
+            self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
+            self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
+        else:
+            if int(shared_static.device_id) != self.device_id:
+                raise ValueError(
+                    "CudaEtd2MultiRHSContext: shared_static device mismatch"
+                )
+            if shared_static.fl_pr is not fl_pr:
+                raise ValueError(
+                    "CudaEtd2MultiRHSContext: shared_static precision mismatch"
+                )
+            if int(shared_static.dim) != dim:
+                raise ValueError(
+                    "CudaEtd2MultiRHSContext: shared_static dimension mismatch"
+                )
+            if (shared_static.cu_int_off is None) != (int_off.nnz == 0) or (
+                shared_static.cu_dec_off is None
+            ) != (dec_off.nnz == 0):
+                raise ValueError(
+                    "CudaEtd2MultiRHSContext: shared_static sparsity mismatch"
+                )
+            self.cu_int_off = shared_static.cu_int_off
+            self.cu_dec_off = shared_static.cu_dec_off
+            self.cu_d_int = shared_static.cu_d_int
+            self.cu_d_dec = shared_static.cu_d_dec
 
         # (dim, K) state + scratch.
         self.cu_phc = cp.empty((dim, self.K), dtype=fl_pr)
@@ -2992,10 +3362,14 @@ class CudaEtd2MultiRHSContext:
         self.cu_a = cp.empty((dim, self.K), dtype=fl_pr)
         # dec_off scratch only used when dec_off is non-empty.
         self.cu_dec_phc = (
-            cp.empty((dim, self.K), dtype=fl_pr) if self.cu_dec_off is not None else None
+            cp.empty((dim, self.K), dtype=fl_pr)
+            if self.cu_dec_off is not None
+            else None
         )
         self.cu_dec_a = (
-            cp.empty((dim, self.K), dtype=fl_pr) if self.cu_dec_off is not None else None
+            cp.empty((dim, self.K), dtype=fl_pr)
+            if self.cu_dec_off is not None
+            else None
         )
 
         # (dim,) diag-factor buffers — shared across the K columns.
@@ -3030,6 +3404,135 @@ class CudaEtd2MultiRHSContext:
         self.cu_ri_K = cp.empty(K, dtype=self.fl_pr)
         # Row view for broadcast.
         self.cu_h_K_row = self.cu_h_K.reshape(1, K)
+
+
+def _cuda_secant_multirhs_state(ctx, sec_ops):
+    """Validate/cache a fixed secant operator for a CUDA multi-RHS context.
+
+    A carousel invocation is cap-homogeneous: every pixel propagated by
+    the call uses the same ``sec_ops``.  The operator arrays are small, but
+    uploading them and reallocating the full ``(dim, K)`` ``w`` plane for
+    every cap group is avoidable.  Cache operator uploads by an exact hash
+    of the normalized host arrays, and keep one context-wide ``w`` buffer.
+
+    Returns ``(ops, cu_w, N)`` where ``ops`` is a namespace of device
+    arrays and ``N = dim / n_k`` is the per-mode state dimension.
+    """
+    import hashlib
+
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+
+    try:
+        n_k = int(sec_ops["n_k"])
+        P_h = np.ascontiguousarray(sec_ops["P"], dtype=np.int64)
+        g_h = np.ascontiguousarray(sec_ops["gate_idx"], dtype=np.int64)
+        T_P_h = np.ascontiguousarray(sec_ops["T_P"])
+        T_PP_h = np.ascontiguousarray(sec_ops["T_PP"])
+        V_h = np.ascontiguousarray(sec_ops["V"])
+        Vi_h = np.ascontiguousarray(sec_ops["Vi"])
+        lam_h = np.ascontiguousarray(sec_ops["lam"])
+    except KeyError as exc:
+        raise ValueError(f"sec_ops is missing required entry {exc.args[0]!r}") from exc
+
+    if n_k < 1 or ctx.dim % n_k:
+        raise ValueError(
+            "CUDA secant multi-RHS: state dim must be divisible by "
+            f"sec_ops['n_k'] (dim={ctx.dim}, n_k={n_k})"
+        )
+    N = ctx.dim // n_k
+    if P_h.ndim != 1 or g_h.ndim != 1:
+        raise ValueError("CUDA secant multi-RHS: P and gate_idx must be 1-D")
+    n_P = P_h.size
+    expected = {
+        "T_P": (n_P, n_k),
+        "T_PP": (n_P, n_P),
+        "V": (n_P, n_P),
+        "Vi": (n_P, n_P),
+        "lam": (n_P,),
+    }
+    actual = {
+        "T_P": T_P_h.shape,
+        "T_PP": T_PP_h.shape,
+        "V": V_h.shape,
+        "Vi": Vi_h.shape,
+        "lam": lam_h.shape,
+    }
+    bad = [name for name in expected if actual[name] != expected[name]]
+    if bad:
+        details = ", ".join(
+            f"{name}={actual[name]} (expected {expected[name]})" for name in bad
+        )
+        raise ValueError(
+            f"CUDA secant multi-RHS: inconsistent sec_ops shapes: {details}"
+        )
+    if P_h.size and (P_h.min() < 0 or P_h.max() >= n_k):
+        raise ValueError(f"CUDA secant multi-RHS: P indices must lie in [0, {n_k})")
+    if g_h.size and (g_h.min() < 0 or g_h.max() >= N):
+        raise ValueError(
+            f"CUDA secant multi-RHS: gate_idx indices must lie in [0, {N})"
+        )
+
+    # Hash values, shapes and source dtypes.  This remains correct if a
+    # caller mutates/rebuilds a dict in place, unlike an id(sec_ops) key.
+    digest = hashlib.sha256()
+    digest.update(np.asarray([n_k], dtype=np.int64).tobytes())
+    normalized = (
+        ("P", P_h),
+        ("gate_idx", g_h),
+        ("T_P", T_P_h),
+        ("T_PP", T_PP_h),
+        ("V", V_h),
+        ("Vi", Vi_h),
+        ("lam", lam_h),
+    )
+    for name, arr in normalized:
+        digest.update(name.encode("ascii"))
+        digest.update(arr.dtype.str.encode("ascii"))
+        digest.update(np.asarray(arr.shape, dtype=np.int64).tobytes())
+        digest.update(arr.tobytes(order="C"))
+    cache_key = (fl_pr.__name__, digest.digest())
+
+    cache = getattr(ctx, "_cuda_secant_ops_cache", None)
+    if cache is None:
+        cache = {}
+        ctx._cuda_secant_ops_cache = cache
+    ops = cache.get(cache_key)
+    if ops is None:
+        ops = SimpleNamespace(
+            n_k=n_k,
+            P=cp.asarray(P_h),
+            gate_idx=cp.asarray(g_h),
+            T_P=cp.asarray(T_P_h, dtype=fl_pr),
+            T_PP=cp.asarray(T_PP_h, dtype=fl_pr),
+            V=cp.asarray(V_h, dtype=fl_pr),
+            Vi=cp.asarray(Vi_h, dtype=fl_pr),
+            lam=cp.asarray(lam_h, dtype=fl_pr),
+        )
+        cache[cache_key] = ops
+
+    cu_w = getattr(ctx, "_cuda_secant_w", None)
+    if cu_w is None or cu_w.shape != (ctx.dim, ctx.K) or cu_w.dtype != fl_pr:
+        cu_w = cp.empty((ctx.dim, ctx.K), dtype=fl_pr)
+        ctx._cuda_secant_w = cu_w
+    return ops, cu_w, N
+
+
+def _cuda_secant_phi_factors(cp, fl_pr, ZB):
+    """CUDA exp/phi1/phi2 factors for a secant exact-block argument."""
+    safe = cp.where(ZB == 0.0, fl_pr(1.0), ZB)
+    e1 = cp.expm1(ZB)
+    phi1B = cp.where(
+        cp.abs(ZB) > _PHI1_SMALL,
+        e1 / safe,
+        1.0 + ZB * (0.5 + ZB * _INV_6),
+    )
+    phi2B = cp.where(
+        cp.abs(ZB) > _PHI2_SMALL,
+        (e1 - ZB) / (safe * safe),
+        0.5 + ZB * (_INV_6 + ZB * _INV_24),
+    )
+    return cp.exp(ZB), phi1B, phi2B
 
 
 def solv_cuda_etd2_multirhs(
@@ -3172,9 +3675,211 @@ def solv_cuda_etd2_multirhs(
     return phc_host, grid_arr
 
 
-def solv_cuda_etd2_carousel(
-    ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
+def solv_cuda_etd2_secant_multirhs(
+    nsteps,
+    dX,
+    rho_inv,
+    ctx,
+    phi,
+    grid_idcs,
+    sec_ops,
 ):
+    """Shared-path CUDA multi-RHS ETD2 with fixed sec(theta) coupling.
+
+    This is the GPU lift of :func:`solv_numpy_etd2_secant_multirhs`.
+    Sparse stages remain one cuSPARSE SpMM over ``(dim, K)``.  The mode
+    transforms flatten the logical ``(n_P, n_gated, K)`` plane so each
+    transform is one dense GEMM, rather than one launch per RHS.
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+    Kset = _cuda_etd2_kernels()
+
+    phi = np.asarray(phi)
+    if phi.ndim != 2:
+        raise ValueError(
+            "solv_cuda_etd2_secant_multirhs: phi must be 2-D (dim, K), "
+            f"got shape {phi.shape}"
+        )
+    dim, K = phi.shape
+    if dim != ctx.dim or K != ctx.K:
+        raise ValueError(
+            "solv_cuda_etd2_secant_multirhs: phi must match ctx shape "
+            f"({ctx.dim}, {ctx.K}); got {phi.shape}"
+        )
+    dX = np.asarray(dX)
+    rho_inv = np.asarray(rho_inv)
+    if dX.shape != (nsteps,) or rho_inv.shape != (nsteps,):
+        raise ValueError(
+            "solv_cuda_etd2_secant_multirhs: dX/rho_inv must be "
+            f"({nsteps},); got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+
+    cp.cuda.Device(ctx.device_id).use()
+    ops, cu_w, N = _cuda_secant_multirhs_state(ctx, sec_ops)
+    if ops.P.size == 0 or ops.gate_idx.size == 0:
+        return solv_cuda_etd2_multirhs(nsteps, dX, rho_inv, ctx, phi, grid_idcs)
+
+    n_k = ops.n_k
+    P = ops.P
+    g_idx = ops.gate_idx
+    T_P = ops.T_P
+    T_PP = ops.T_PP
+    V = ops.V
+    Vi = ops.Vi
+    lam = ops.lam
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_dec_phc = ctx.cu_dec_phc
+    cu_dec_a = ctx.cu_dec_a
+    cu_D = ctx.cu_D
+    cu_hD = ctx.cu_hD
+    cu_eD = ctx.cu_eD
+    cu_phi1 = ctx.cu_phi1
+    cu_phi2 = ctx.cu_phi2
+    cu_phc[:] = cp.asarray(phi, dtype=fl_pr)
+
+    # Diagonal slices needed by the coupled exact slot.  They are shared
+    # by all RHS columns; only the scalar rho_inv changes per step.
+    d_int_2 = ctx.cu_d_int.reshape(n_k, N)
+    d_dec_2 = ctx.cu_d_dec.reshape(n_k, N)
+    d_int_PG = d_int_2[P[:, None], g_idx[None, :]]
+    d_dec_PG = d_dec_2[P[:, None], g_idx[None, :]]
+    d_int_0G = d_int_2[0, g_idx]
+    d_dec_0G = d_dec_2[0, g_idx]
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+
+    def eval_F(xbuf, Fbuf, dec_scratch, ri, Df_PG, D0_G):
+        X3 = xbuf.reshape(n_k, N, K)
+        XG = X3[:, g_idx, :]
+        YG = _secant_left_matmul(T_P, XG)
+        cp.copyto(cu_w, xbuf)
+        W3 = cu_w.reshape(n_k, N, K)
+        W3[P[:, None], g_idx[None, :], :] = W3[P[:, None], g_idx[None, :], :] + YG
+        if not int_off_empty:
+            cp.copyto(Fbuf, ctx.cu_int_off @ cu_w)
+        else:
+            Fbuf.fill(0)
+        if not dec_off_empty:
+            cp.copyto(dec_scratch, ctx.cu_dec_off @ cu_w)
+            dec_scratch *= ri
+            Fbuf += dec_scratch
+        x_PG = XG[P, :, :]
+        SPxP = x_PG + _secant_left_matmul(T_PP, x_PG)
+        w_PG = x_PG + YG
+        delta = Df_PG[:, :, None] * w_PG - D0_G[None, :, None] * SPxP
+        F3 = Fbuf.reshape(n_k, N, K)
+        F3[P[:, None], g_idx[None, :], :] = F3[P[:, None], g_idx[None, :], :] + delta
+        return x_PG
+
+    grid_sol_gpu = []
+    grid_step = 0
+
+    from time import time
+
+    start = time()
+    for step in range(nsteps):
+        h = fl_pr(dX[step])
+        ri = fl_pr(rho_inv[step])
+
+        # A requested snapshot at X_start creates an h=0 step.  Skip it
+        # explicitly: V @ Vi is only numerically identity, while a frozen
+        # ETD2 step must be exactly identity.
+        if float(h) == 0.0:
+            if (
+                grid_idcs
+                and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step
+            ):
+                grid_sol_gpu.append(cu_phc.copy())
+                grid_step += 1
+            continue
+
+        if fl_pr is cp.float32:
+            Kset.phi_compute_multipath_f64diag(
+                ctx.cu_d_int,
+                ctx.cu_d_dec,
+                h,
+                ri,
+                cu_eD,
+                cu_phi1,
+                cu_phi2,
+            )
+        else:
+            cp.multiply(ctx.cu_d_dec, ri, out=cu_D)
+            cp.add(cu_D, ctx.cu_d_int, out=cu_D)
+            cp.multiply(cu_D, h, out=cu_hD)
+            cp.exp(cu_hD, out=cu_eD)
+            Kset.phi_compute(cu_hD, cu_eD, cu_eD, cu_phi1, cu_phi2)
+
+        Df_PG = d_int_PG + ri * d_dec_PG
+        D0_G = d_int_0G + ri * d_dec_0G
+        ZB = lam[:, None] * (h * D0_G)[None, :]
+        eDB, phi1B, phi2B = _cuda_secant_phi_factors(cp, fl_pr, ZB)
+
+        x_PG = eval_F(cu_phc, cu_F_phi, cu_dec_phc, ri, Df_PG, D0_G)
+        F_PG = cu_F_phi.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+        Kset.post_apply1(
+            cu_eD[:, None],
+            cu_phc,
+            cu_phi1[:, None],
+            cu_F_phi,
+            h,
+            cu_a,
+        )
+        a_PG = _secant_left_matmul(
+            V, eDB[:, :, None] * _secant_left_matmul(Vi, x_PG)
+        ) + h * _secant_left_matmul(
+            V, phi1B[:, :, None] * _secant_left_matmul(Vi, F_PG)
+        )
+        cu_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = a_PG
+
+        eval_F(cu_a, cu_F_a, cu_dec_a, ri, Df_PG, D0_G)
+        Fa_PG = cu_F_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+        Kset.post_apply2(
+            cu_a,
+            cu_F_a,
+            cu_F_phi,
+            cu_phi2[:, None],
+            h,
+            cu_phc,
+        )
+        phc_PG = a_PG + h * _secant_left_matmul(
+            V,
+            phi2B[:, :, None] * _secant_left_matmul(Vi, Fa_PG - F_PG),
+        )
+        cu_phc.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = phc_PG
+
+        if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == step:
+            grid_sol_gpu.append(cu_phc.copy())
+            grid_step += 1
+
+    cp.cuda.Stream.null.synchronize()
+    phc_host = cp.asnumpy(cu_phc)
+    if grid_sol_gpu:
+        grid_arr = cp.asnumpy(cp.stack(grid_sol_gpu))
+    else:
+        grid_arr = np.array([])
+
+    elapsed = time() - start
+    per_step = elapsed / float(nsteps) if nsteps else 0.0
+    info(
+        2,
+        f"Performance (cuda secant multirhs dtype={fl_pr.__name__} K={K}): "
+        f"{1e3 * per_step:6.2f}ms/iteration "
+        f"({1e3 * per_step / float(K):6.2f}ms/iteration/RHS)",
+    )
+    return phc_host, grid_arr
+
+
+def solv_cuda_etd2_carousel(ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel):
     """ETD2RK on cuSPARSE via cupy — Stage 5 LPT carousel multipath.
 
     Per-step body is structurally identical to
@@ -3211,8 +3916,7 @@ def solv_cuda_etd2_carousel(
     dim = ctx.dim
     if K != ctx.K:
         raise ValueError(
-            f"solv_cuda_etd2_carousel: schedule.K ({K}) does not match "
-            f"ctx.K ({ctx.K})"
+            f"solv_cuda_etd2_carousel: schedule.K ({K}) does not match ctx.K ({ctx.K})"
         )
     if phi_initial.shape != (dim, K):
         raise ValueError(
@@ -3262,7 +3966,7 @@ def solv_cuda_etd2_carousel(
     rp_d = cp.asarray(schedule.reset_pixel, dtype=cp.int32)
     cj_d = cp.asarray(schedule.record_j, dtype=cp.int32)
     cp_d = cp.asarray(schedule.record_pixel, dtype=cp.int32)
-    rs = schedule.reset_t_starts   # host int32, used for the per-step gate
+    rs = schedule.reset_t_starts  # host int32, used for the per-step gate
     cs = schedule.record_t_starts
 
     int_off_empty = ctx.cu_int_off is None
@@ -3284,12 +3988,10 @@ def solv_cuda_etd2_carousel(
     start = time()
 
     for step in range(T):
-        h_row = dX_d[step : step + 1]    # (1, K) device view
+        h_row = dX_d[step : step + 1]  # (1, K) device view
         ri_row = rho_inv_d[step : step + 1]
 
-        phi_kernel(
-            d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2
-        )
+        phi_kernel(d_int_col, d_dec_col, h_row, ri_row, cu_eD, cu_phi1, cu_phi2)
 
         if not int_off_empty:
             cp.copyto(cu_F_phi, ctx.cu_int_off @ cu_phc)
@@ -3338,6 +4040,223 @@ def solv_cuda_etd2_carousel(
         f"waste={waste:.1%})",
     )
 
+    return sol_host
+
+
+def solv_cuda_etd2_secant_carousel(
+    ctx,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
+    sec_ops,
+):
+    """Cap-homogeneous CUDA carousel with exact sec(theta) blocks.
+
+    Core groups pixels by their resolved secant operator before invoking
+    this kernel.  Paths and initial states remain per pixel; within one
+    invocation the fixed mode operator is applied to every live pipeline
+    slot.  Mode transforms flatten ``(n_P, n_gated, K)`` into one GEMM,
+    while the sparse interaction/decay stages remain cuSPARSE SpMMs.
+    """
+    cp = ctx.cp
+    fl_pr = ctx.fl_pr
+    Kset = _cuda_etd2_kernels()
+
+    T = schedule.T
+    K = schedule.K
+    K_total = schedule.K_total
+    dim = ctx.dim
+    dX = np.asarray(dX)
+    rho_inv = np.asarray(rho_inv)
+    phi_initial = np.asarray(phi_initial)
+    phi0_per_pixel = np.asarray(phi0_per_pixel)
+    if K != ctx.K:
+        raise ValueError(
+            f"solv_cuda_etd2_secant_carousel: schedule.K ({K}) does not "
+            f"match ctx.K ({ctx.K})"
+        )
+    if phi_initial.shape != (dim, K):
+        raise ValueError(
+            "solv_cuda_etd2_secant_carousel: phi_initial must be "
+            f"(dim, K)=({dim}, {K}); got {phi_initial.shape}"
+        )
+    if phi0_per_pixel.shape != (dim, K_total):
+        raise ValueError(
+            "solv_cuda_etd2_secant_carousel: phi0_per_pixel must be "
+            f"(dim, K_total)=({dim}, {K_total}); got {phi0_per_pixel.shape}"
+        )
+    if dX.shape != (T, K) or rho_inv.shape != (T, K):
+        raise ValueError(
+            "solv_cuda_etd2_secant_carousel: dX/rho_inv must be "
+            f"(T, K)=({T}, {K}); got dX={dX.shape}, rho_inv={rho_inv.shape}"
+        )
+
+    cp.cuda.Device(ctx.device_id).use()
+    ctx.ensure_multipath_buffers()
+    ops, cu_w, N = _cuda_secant_multirhs_state(ctx, sec_ops)
+    if ops.P.size == 0 or ops.gate_idx.size == 0:
+        return solv_cuda_etd2_carousel(
+            ctx,
+            dX,
+            rho_inv,
+            phi_initial,
+            schedule,
+            phi0_per_pixel,
+        )
+
+    n_k = ops.n_k
+    P = ops.P
+    g_idx = ops.gate_idx
+    T_P = ops.T_P
+    T_PP = ops.T_PP
+    V = ops.V
+    Vi = ops.Vi
+    lam = ops.lam
+
+    cu_phc = ctx.cu_phc
+    cu_F_phi = ctx.cu_F_phi
+    cu_F_a = ctx.cu_F_a
+    cu_a = ctx.cu_a
+    cu_dec_phc = ctx.cu_dec_phc
+    cu_dec_a = ctx.cu_dec_a
+    cu_eD = ctx.cu_eD_mp
+    cu_phi1 = ctx.cu_phi1_mp
+    cu_phi2 = ctx.cu_phi2_mp
+    cu_phc[:] = cp.asarray(phi_initial, dtype=fl_pr)
+
+    cu_phi0_pp = cp.asarray(phi0_per_pixel, dtype=fl_pr)
+    cu_sol = cp.empty((dim, K_total), dtype=fl_pr)
+    dX_d = cp.asarray(dX, dtype=fl_pr)
+    rho_inv_d = cp.asarray(rho_inv, dtype=fl_pr)
+
+    rj_d = cp.asarray(schedule.reset_j, dtype=cp.int32)
+    rp_d = cp.asarray(schedule.reset_pixel, dtype=cp.int32)
+    cj_d = cp.asarray(schedule.record_j, dtype=cp.int32)
+    cp_d = cp.asarray(schedule.record_pixel, dtype=cp.int32)
+    rs = schedule.reset_t_starts
+    cs = schedule.record_t_starts
+
+    int_off_empty = ctx.cu_int_off is None
+    dec_off_empty = ctx.cu_dec_off is None
+    d_int_col = ctx.cu_d_int.reshape(dim, 1)
+    d_dec_col = ctx.cu_d_dec.reshape(dim, 1)
+    d_int_2 = ctx.cu_d_int.reshape(n_k, N)
+    d_dec_2 = ctx.cu_d_dec.reshape(n_k, N)
+    d_int_PG = d_int_2[P[:, None], g_idx[None, :]]
+    d_dec_PG = d_dec_2[P[:, None], g_idx[None, :]]
+    d_int_0G = d_int_2[0, g_idx]
+    d_dec_0G = d_dec_2[0, g_idx]
+
+    phi_kernel = (
+        Kset.phi_compute_multipath_f64diag
+        if fl_pr is cp.float32
+        else Kset.phi_compute_multipath
+    )
+
+    def eval_F(xbuf, Fbuf, dec_scratch, ri_row, Df_PG, D0_G):
+        X3 = xbuf.reshape(n_k, N, K)
+        XG = X3[:, g_idx, :]
+        YG = _secant_left_matmul(T_P, XG)
+        cp.copyto(cu_w, xbuf)
+        W3 = cu_w.reshape(n_k, N, K)
+        W3[P[:, None], g_idx[None, :], :] = W3[P[:, None], g_idx[None, :], :] + YG
+        if not int_off_empty:
+            cp.copyto(Fbuf, ctx.cu_int_off @ cu_w)
+        else:
+            Fbuf.fill(0)
+        if not dec_off_empty:
+            cp.copyto(dec_scratch, ctx.cu_dec_off @ cu_w)
+            dec_scratch *= ri_row
+            Fbuf += dec_scratch
+        x_PG = XG[P, :, :]
+        SPxP = x_PG + _secant_left_matmul(T_PP, x_PG)
+        w_PG = x_PG + YG
+        delta = Df_PG * w_PG - D0_G[None, :, :] * SPxP
+        F3 = Fbuf.reshape(n_k, N, K)
+        F3[P[:, None], g_idx[None, :], :] = F3[P[:, None], g_idx[None, :], :] + delta
+        return x_PG
+
+    from time import time
+
+    start = time()
+    for step in range(T):
+        h_row = dX_d[step : step + 1]
+        ri_row = rho_inv_d[step : step + 1]
+        h_3 = h_row.reshape(1, 1, K)
+        active_3 = h_3 != 0
+
+        phi_kernel(
+            d_int_col,
+            d_dec_col,
+            h_row,
+            ri_row,
+            cu_eD,
+            cu_phi1,
+            cu_phi2,
+        )
+
+        Df_PG = d_int_PG[:, :, None] + d_dec_PG[:, :, None] * ri_row.reshape(1, 1, K)
+        D0_G = d_int_0G[:, None] + d_dec_0G[:, None] * ri_row
+        ZB = lam[:, None, None] * (h_3 * D0_G[None, :, :])
+        eDB, phi1B, phi2B = _cuda_secant_phi_factors(cp, fl_pr, ZB)
+
+        x_PG = eval_F(cu_phc, cu_F_phi, cu_dec_phc, ri_row, Df_PG, D0_G)
+        F_PG = cu_F_phi.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+        Kset.post_apply1(cu_eD, cu_phc, cu_phi1, cu_F_phi, h_row, cu_a)
+        a_PG_calc = _secant_left_matmul(
+            V, eDB * _secant_left_matmul(Vi, x_PG)
+        ) + h_3 * _secant_left_matmul(V, phi1B * _secant_left_matmul(Vi, F_PG))
+        # A tail-padded slot must be bitwise frozen.  Without this mask,
+        # V @ (Vi @ x) would introduce roundoff on every h=0 tail step.
+        a_PG = cp.where(active_3, a_PG_calc, x_PG)
+        cu_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = a_PG
+
+        eval_F(cu_a, cu_F_a, cu_dec_a, ri_row, Df_PG, D0_G)
+        Fa_PG = cu_F_a.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :]
+
+        Kset.post_apply2(
+            cu_a,
+            cu_F_a,
+            cu_F_phi,
+            cu_phi2,
+            h_row,
+            cu_phc,
+        )
+        phc_PG_calc = a_PG + h_3 * _secant_left_matmul(
+            V, phi2B * _secant_left_matmul(Vi, Fa_PG - F_PG)
+        )
+        phc_PG = cp.where(active_3, phc_PG_calc, x_PG)
+        cu_phc.reshape(n_k, N, K)[P[:, None], g_idx[None, :], :] = phc_PG
+
+        # Harvest before reset: both events may target the same slot at
+        # this boundary, and reset overwrites the state being recorded.
+        c_lo = int(cs[step])
+        c_hi = int(cs[step + 1])
+        if c_hi > c_lo:
+            cu_sol[:, cp_d[c_lo:c_hi]] = cu_phc[:, cj_d[c_lo:c_hi]]
+        r_lo = int(rs[step])
+        r_hi = int(rs[step + 1])
+        if r_hi > r_lo:
+            cu_phc[:, rj_d[r_lo:r_hi]] = cu_phi0_pp[:, rp_d[r_lo:r_hi]]
+
+    cp.cuda.Stream.null.synchronize()
+    sol_host = cp.asnumpy(cu_sol)
+
+    elapsed = time() - start
+    useful = int(np.count_nonzero(dX))
+    waste = 1.0 - useful / float(T * K) if (T * K) else 0.0
+    per_step = elapsed / float(T) if T else 0.0
+    info(
+        2,
+        f"Performance (cuda secant carousel dtype={fl_pr.__name__} K={K}, "
+        f"K_total={K_total}, T={T}): "
+        f"{1e3 * per_step:6.2f}ms/iteration "
+        f"({1e3 * per_step / float(K):6.2f}ms/iter/slot, "
+        f"waste={waste:.1%})",
+    )
     return sol_host
 
 
@@ -3497,13 +4416,23 @@ def solv_mkl_etd2_multirhs(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
             # a = eD[:, None] * phc + h * phi1[:, None] * F_phi  (fused C)
@@ -3516,16 +4445,28 @@ def solv_mkl_etd2_multirhs(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
-            _post2(n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
+            _post2(
+                n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
+            )
 
             if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
                 grid_sol.append(np.copy(phc[:dim, :]))
@@ -3652,13 +4593,23 @@ def solv_mkl_etd2_multirhs_f32(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
             _post1(n_padded, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
@@ -3668,16 +4619,28 @@ def solv_mkl_etd2_multirhs_f32(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
-            _post2(n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
+            _post2(
+                n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
+            )
 
             if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
                 grid_sol.append(np.copy(phc[:dim, :]))
@@ -3720,7 +4683,7 @@ def solv_mkl_etd2_carousel(
     dim = phi_initial.shape[0]
     if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_mkl_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"solv_mkl_etd2_carousel: dX/rho_inv must be (T,K)={T, K}; "
             f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
     if phi_initial.shape != (dim, K):
@@ -3750,12 +4713,16 @@ def solv_mkl_etd2_carousel(
     dec_phc = np.zeros((n_padded, K), dtype=np.float64, order="F")
     dec_a = np.zeros((n_padded, K), dtype=np.float64, order="F")
 
-    diag = {key: np.zeros((n_padded, K), dtype=np.float64, order="F")
-            for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
+    diag = {
+        key: np.zeros((n_padded, K), dtype=np.float64, order="F")
+        for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")
+    }
     diag["mask1"] = np.zeros((dim, K), dtype=bool, order="F")
     diag["mask2"] = np.zeros((dim, K), dtype=bool, order="F")
-    diag_view = {k: diag[k][:dim, :] for k in
-                 ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")}
+    diag_view = {
+        k: diag[k][:dim, :]
+        for k in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD")
+    }
     diag_view["mask1"] = diag["mask1"]
     diag_view["mask2"] = diag["mask2"]
 
@@ -3830,16 +4797,26 @@ def solv_mkl_etd2_carousel(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
             if not dec_off_empty:
                 dec_phc.fill(0.0)
                 for t in range(n_tiles):
                     nrhs = tile_widths[t]
                     mkl_dec_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
-                        dec_phc_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        dec_phc_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 dec_phc *= ri_K[None, :]
                 np.add(F_phi, dec_phc, out=F_phi)
@@ -3854,23 +4831,39 @@ def solv_mkl_etd2_carousel(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
             if not dec_off_empty:
                 dec_a.fill(0.0)
                 for t in range(n_tiles):
                     nrhs = tile_widths[t]
                     mkl_dec_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], n_padded,
-                        dec_a_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        dec_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 dec_a *= ri_K[None, :]
                 np.add(F_a, dec_a, out=F_a)
 
             _post2(
-                n_padded, K, h_K_p, phi2_p,
-                a_p_full, F_a_p_full, F_phi_p_full, phc_p_full,
+                n_padded,
+                K,
+                h_K_p,
+                phi2_p,
+                a_p_full,
+                F_a_p_full,
+                F_phi_p_full,
+                phc_p_full,
             )
 
             # Harvest pixels that just finished — BEFORE the reset.
@@ -4263,7 +5256,7 @@ def solv_spacc_etd2_carousel(
     dim = phi_initial.shape[0]
     if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T, K}; "
             f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
     if phi_initial.shape != (dim, K):
