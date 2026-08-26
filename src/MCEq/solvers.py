@@ -617,14 +617,14 @@ def _etd2_secant_driver(
 ):
     """Backend-agnostic ETD2RK step loop with the sec(theta) mode coupling.
 
-    Integrates ``dPhi/dX = (A + rho_inv B)(I + T_gated) Phi`` where ``T``
+    Integrates ``dPhi/dX = (A + rho_inv B)(I + T Pi) Phi`` where ``T``
     is the constant Hankel-space representation of multiplication by
-    ``min(sec theta, sec theta_cap)`` (see ``MCEq/secant.py``) and the
-    gate restricts the coupling to state columns with E below
-    ``config.secant_theta_e_gate``.
+    ``min(sec theta, sec theta_cap)`` (see ``MCEq/secant.py``) and ``Pi``
+    is the orthogonal projector onto the state columns with
+    ``E_kin < config.secant_theta_e_max`` (the correction's support).
 
-    Operator split (per gated state column i, coupled mode subspace P =
-    {kappa <= row_kmax}, S_P = (I+T)[P,P]):
+    Operator split (per state column i in the support of Pi, coupled
+    mode subspace P = {kappa <= row_kmax}, S_P = (I+T)[P,P]):
 
       exact slot   D0_i * S_P        D0_i = diagonal of A + ri B at the
                                      kappa=0 mode (k-independent part;
@@ -635,7 +635,7 @@ def _etd2_secant_driver(
                                      kappa <= row_kmax are mild and go
                                      to the remainder)
       remainder    everything else: off-diagonal production (coupled via
-                   w = Phi + u, u = T_gated Phi), the k-dependent diagonal
+                   w = Phi + u, u = T Pi Phi), the k-dependent diagonal
                    spread on coupled rows, and the one-way cross coupling
                    from uncoupled modes.
 
@@ -654,7 +654,8 @@ def _etd2_secant_driver(
     backends may cache their pointers.
 
     Cost: the baseline 4 SpMVs plus ~10 small dense GEMMs per step
-    (n_P x n_P against the gated state plane) — a few MFlop, negligible.
+    (n_P x n_P against the corrected state plane) — a few MFlop,
+    negligible.
     """
     dim = phi.shape[0]
     P = sec_ops["P"]
@@ -663,7 +664,7 @@ def _etd2_secant_driver(
     V = sec_ops["V"]
     Vi = sec_ops["Vi"]
     lam = sec_ops["lam"]  # (n_P,)
-    g_idx = sec_ops["gate_idx"]  # (n_g,)
+    g_idx = sec_ops["low_e_idx"]  # (n_g,)
     n_k = sec_ops["n_k"]
     N = dim // n_k
     assert n_k * N == dim, "state dim not divisible by n_k"
@@ -692,7 +693,7 @@ def _etd2_secant_driver(
 
     def eval_F(x_v, Fbuf, F_v, ri, Df_PG, D0_G):
         """F <- off-diagonal + coupling remainder of the operator at x
-        (SpMVs act on w = x + T_gated x); returns the gathered x_PG."""
+        (SpMVs act on w = x + T Pi x); returns the gathered x_PG."""
         x2 = x_v.reshape(n_k, N)
         XG = x2[:, g_idx]  # (n_k, n_g)
         YG = T_P @ XG  # coupling u on (P, g)
@@ -2579,7 +2580,7 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
     """ETD2RK on NVIDIA cuSPARSE via cupy with the sec(theta) coupling.
 
     CUDA port of :func:`solv_numpy_etd2_secant`, run end-to-end on the
-    GPU: the 4 SpMVs per step act on ``w = phi + T_gated phi``, and the
+    GPU: the 4 SpMVs per step act on ``w = phi + T Pi phi``, and the
     coupled same-(species, E) diagonal block is integrated exactly in
     the constant eigenbasis of ``S_P`` — a handful of small dense GEMMs
     ((n_P, n_P) @ (n_P, n_g)) per step, done in cupy so the state never
@@ -2608,7 +2609,7 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
     V = cp.asarray(sec_ops["V"], dtype=fl_pr)
     Vi = cp.asarray(sec_ops["Vi"], dtype=fl_pr)
     lam = cp.asarray(sec_ops["lam"], dtype=fl_pr)      # (n_P,)
-    g_idx = cp.asarray(sec_ops["gate_idx"])            # (n_g,)
+    g_idx = cp.asarray(sec_ops["low_e_idx"])           # (n_g,)
     ixPG = cp.ix_(P, g_idx)
 
     cu_phc = ctx.cu_phc
@@ -2635,7 +2636,7 @@ def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
 
     def eval_F(xbuf, Fbuf, ri, Df_PG, D0_G):
         """Fbuf <- off-diagonal + coupling remainder at xbuf; returns the
-        gathered x_PG. SpMVs act on w = xbuf + T_gated xbuf."""
+        gathered x_PG. SpMVs act on w = xbuf + T Pi xbuf."""
         X2 = xbuf.reshape(n_k, N)
         XG = X2[:, g_idx]                     # (n_k, n_g)
         YG = T_P @ XG                         # coupling u on (P, g)

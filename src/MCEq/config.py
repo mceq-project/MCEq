@@ -354,51 +354,47 @@ use_isospin_sym = True
 #: dataset defect.
 muon_helicity_dependence = True
 
-#: Muon multiple scattering from the CORSIKA-like Gauss approximation
-#: (PR #48 / 2D path; folded into the 2D D matrix in Task 1.3).
+#: Gaussian multiple Coulomb scattering of muons in the 2D transport,
+#: applied as per-mode diagonal damping -kappa^2 theta_s^2(E)/4 with the
+#: CORSIKA Gauss-approximation theta_s (E_s = 21 MeV, lambda_s = 37.7
+#: g/cm2; Gaussian core only, no Moliere tail). Disable only to compare
+#: against MC runs with scattering switched off.
 muon_multiple_scattering = True
 
-#: sec(theta) path-elongation correction for the 2D transport (see
-#: MCEq/secant.py). The paraxial solver books all losses per unit
-#: axis-projected depth; enabling this right-multiplies the per-mode
-#: transport operator by the constant Hankel-space matrix S = I + T
-#: representing multiplication by min(sec theta, sec cap), which charges
-#: every particle its physical sec(theta) path on the parent side of the
-#: yield kick (loss-free daughters — neutrinos — are preserved exactly).
-#: Applied inside the ETD2RK kernels (numpy/mkl/cuda): the coupled
-#: same-(species,E) block d_i*S_P is integrated exactly in the
-#: eigenbasis of S_P, unconditionally stable at any stiffness.
-#: Tri-state: "auto" (default) applies the correction to every
-#: single-axis solve() on a 2D database and falls back to the paraxial
-#: transport (with a warning) on the multi-RHS/carousel entry points
-#: and kernels where the coupling is not implemented; True requires it
-#: (unsupported paths raise); False disables it. 1D databases are
-#: never affected.
+#: sec(theta) path-elongation correction for the 2D transport. The
+#: paraxial solver books all losses per unit axis-projected depth,
+#: over-predicting the wide-angle density of species in local
+#: production/loss equilibrium (sub-GeV hadrons and muons) by
+#: sec(theta). Physics, operator construction and solver integration:
+#: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
+#: the Hankel modes), independent of the axis' zenith angle.
+#: "auto" (default): applied on every single-axis solve() with a 2D
+#: database; the multi-RHS/carousel entry points fall back to the
+#: paraxial transport with a warning. True: required (entry points
+#: without the coupling raise). False: off. Ignored on 1D databases.
 secant_theta_transport = "auto"
-#: cap angle in degrees for the sec(theta) growth. theta is the angle
-#: to the shower axis (the Hankel modes are defined relative to the
-#: axis, independent of the axis' zenith angle), and sec(theta)
-#: diverges at 90 deg, so the elongation factor is clamped to
-#: min(sec theta, sec cap). Valid range [50, 90): below ~45-50 deg the
-#: fitted coupling is nearly nilpotent and the S_P eigenbasis
-#: degenerates (cond ~1e17), so the exact kernel slot cannot be built
-#: (the operator build raises). The default 75 (sec = 3.9) covers the
-#: angular range where the Hankel grid carries support while keeping
-#: S_P well-conditioned.
+#: angle (deg) at which the sec(theta) elongation is clamped:
+#: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
+#: elongation at wide angles at the price of a worse-conditioned
+#: coupling operator; below ~50 the operator's eigenbasis is
+#: numerically defective and the build raises. Valid range [50, 90).
 secant_theta_cap_deg = 75.0
-#: zero T rows with kappa > this: the correction has no support at narrow
-#: angular scales and high-kappa rows carry inversion ringing.
+#: zero coupling-matrix rows with kappa > this. The correction has no
+#: support at narrow angular scales (high kappa); raising the limit
+#: only adds inversion ringing, lowering it truncates the operator.
 secant_theta_row_kmax = 50.0
-#: ridge strength (relative to the Gram matrix top singular value) for
-#: the operator fit.
+#: ridge strength of the operator fit, relative to the top singular
+#: value of the Gram matrix. Increase only if the operator build
+#: reports conditioning problems.
 secant_theta_lam_rel = 1e-9
-#: weight of the flat-state (kappa-flat = collimated) damping term:
-#: enforces S@1 = 1 so collimated states pass through untouched.
+#: weight of the S @ 1 = 1 constraint (kappa-flat = collimated states
+#: are not elongated).
 secant_theta_w_flat = 1.0
-#: apply the coupling only to state columns with E_kin below this (GeV).
-#: The effect is 30-60% at 0.1 GeV, ~1% at 2-4 GeV, <0.1% above 10 GeV.
-#: None disables the gate.
-secant_theta_e_gate = 31.6
+#: apply the coupling only to state columns with E_kin (GeV) below this
+#: threshold. The correction is 30-60% at 0.1 GeV, ~1% at 2-4 GeV and
+#: <0.1% above 10 GeV, so the default excludes energies where it is
+#: numerically irrelevant. None applies it to all energies.
+secant_theta_e_max = 31.6
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
@@ -684,6 +680,40 @@ release_tag = "builds_on_azure/"
 # sha256 checksum of the default database file
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
 file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
+
+
+def secant_theta_cap():
+    """Validated float value of :data:`secant_theta_cap_deg`.
+
+    The cap is defined relative to the shower axis (like the Hankel
+    modes themselves) and must lie in [50, 90): sec(theta) diverges at
+    90 deg, and below ~50 deg the coupling operator's eigenbasis is
+    numerically defective so it cannot be built (see :mod:`MCEq.secant`).
+    """
+    cap = float(secant_theta_cap_deg)
+    if not 50.0 <= cap < 90.0:
+        raise ValueError(
+            f"config.secant_theta_cap_deg = {cap:g} is outside the "
+            "supported range [50, 90)."
+        )
+    return cap
+
+
+def secant_mode(is_2d):
+    """Resolve :data:`secant_theta_transport` against the database
+    dimensionality.
+
+    Returns one of ``"off"`` (1D database, or the flag is False),
+    ``"auto"`` (the default — apply where implemented, downgrade to
+    paraxial with a warning elsewhere) and ``"require"`` (flag is
+    True — unsupported paths refuse instead of downgrading).
+    """
+    flag = secant_theta_transport
+    if not is_2d:
+        return "off"
+    if isinstance(flag, str) and flag.lower() == "auto":
+        return "auto"
+    return "require" if flag else "off"
 
 
 def ensure_db_available():

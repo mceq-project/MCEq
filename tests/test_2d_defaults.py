@@ -12,20 +12,16 @@ became the production design, superseding the postponed 1D-HE/2D-LE
 kappa-window hybrid.)
 """
 
-from types import SimpleNamespace
-
 import pytest
 
 from MCEq import config
-from MCEq.core import MCEqRun
 
 
 def _mode_for(flag, is_2d):
-    stub = SimpleNamespace(_mceq_db=SimpleNamespace(is_2d=is_2d))
     saved = config.secant_theta_transport
     config.secant_theta_transport = flag
     try:
-        return MCEqRun._secant_mode(stub)
+        return config.secant_mode(is_2d)
     finally:
         config.secant_theta_transport = saved
 
@@ -34,11 +30,10 @@ def test_secant_cap_validation():
     """The cap is a plain float in [50, 90): sec(theta) diverges at 90
     deg, and below ~45-50 deg the S_P eigenbasis is numerically defective
     (near-nilpotent coupling), so out-of-range values are rejected."""
-    stub = SimpleNamespace()
 
     def cap_for(value):
         config.secant_theta_cap_deg = value
-        return MCEqRun._secant_theta_cap_deg(stub)
+        return config.secant_theta_cap()
 
     saved = config.secant_theta_cap_deg
     try:

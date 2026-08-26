@@ -2,12 +2,8 @@ from itertools import product
 from time import time
 
 import numpy as np
-import scipy  # noqa: F401  (used by ``convert_to_theta_space`` for ``scipy.special.j0``)
 import scipy.sparse as sp
 import six
-from scipy.interpolate import (
-    interp1d,  # noqa: F401  (used by ``convert_to_theta_space``)
-)
 
 import MCEq.data
 from MCEq import config
@@ -1614,9 +1610,8 @@ class MCEqRun:
         """Convert Hankel-space amplitudes from the 2D MCEq solver to real
         (angular) space.
 
-        .. note::
-            Inherited verbatim from PR #48 — replaced by the Filon-J0
-            quadrature in Phase 2.3.
+        The transform itself is :func:`MCEq.hankel.inverse_hankel_legacy`;
+        this method adds the state-vector indexing and the theta grid.
 
         Args:
             hankel_transf (list of np.arrays): list of Hankel space solutions at
@@ -1631,47 +1626,35 @@ class MCEqRun:
                 inverse Hankel transform will output the densities
             log_theta (bool): whether to return logarithmic angular grid
                 (True=logarithmic, False=linear)
+
+        Returns:
+            tuple: ``(k_oversampled, oversampled_amps, theta_range,
+            f_theta)`` with the list entries indexed ``[depth][eidx]``.
         """
+        from MCEq.hankel import inverse_hankel_legacy
+
         if log_theta:
             theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
         else:
             theta_range = np.linspace(0, np.pi / 2, theta_res)
         k_grid = self._mceq_db.k_grid
-        # int() so a NON-INTEGER k_grid is usable. The grid had to be integer
-        # only because np.linspace(num=...) rejects a float; that in turn
-        # forced kappa_min >= 1, which caps the largest representable angular
-        # scale at theta ~ 1/kappa = 57 deg and leaves the whole 14-90 deg
-        # range to four or five nodes. Measured on a cascade-like profile
-        # (Pearson-VII p=1.05, a=2.5 deg): 14% error at 30 deg with integer
-        # nodes, 0.0% once ~10 nodes sit below kappa=1.
+        n_e = len(self.e_grid)
+        ref = self.pman.pdg2mceqidx[(pdg_id, hel)] * n_e
         oversample_pts = int(np.max(k_grid) * oversample_res)
         oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
-        j0_ktheta_k = (
-            scipy.special.j0(np.outer(oversampled_k_arr, theta_range))
-            * oversampled_k_arr[:, None]
-        )
 
-        store_oversampled_hankel_amps = [
-            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
-        ]
-        store_inverse_hankel_transfs = [
-            [[] for eidx in range(len(self.e_grid))] for j in range(len(hankel_transf))
-        ]
-
-        for j in range(len(hankel_transf)):
-            for eidx in range(len(self.e_grid)):
-                mceqidx = self.pman.pdg2mceqidx[(pdg_id, hel)] * len(self.e_grid) + eidx
-                oversampled_hankel_amps = interp1d(
-                    k_grid, hankel_transf[j][:, mceqidx], kind="cubic"
-                )(oversampled_k_arr)
-                inverse_hankel_transf = trapz(
-                    j0_ktheta_k * oversampled_hankel_amps[:, None],
-                    oversampled_k_arr,
-                    axis=0,
-                )
-
-                store_oversampled_hankel_amps[j][eidx] = oversampled_hankel_amps
-                store_inverse_hankel_transfs[j][eidx] = inverse_hankel_transf
+        store_oversampled_hankel_amps = []
+        store_inverse_hankel_transfs = []
+        for sol in hankel_transf:
+            _, F_ov, f_theta = inverse_hankel_legacy(
+                sol[:, ref : ref + n_e].T,
+                k_grid,
+                theta_range,
+                oversample_res=oversample_res,
+                return_oversampled=True,
+            )
+            store_oversampled_hankel_amps.append(list(F_ov))
+            store_inverse_hankel_transfs.append(list(f_theta))
 
         return (
             oversampled_k_arr,
@@ -2869,38 +2852,6 @@ class MCEqRun:
         info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
         return res
 
-    def _secant_theta_cap_deg(self):
-        """Validated float value of ``config.secant_theta_cap_deg``.
-
-        The cap is defined relative to the shower axis (like the Hankel
-        modes themselves) and must lie in [50, 90): sec(theta) diverges
-        at 90 deg, and below ~45-50 deg the fitted coupling operator's
-        eigenbasis degenerates numerically so the exact kernel slot
-        cannot be built (see ``config.secant_theta_cap_deg``).
-        """
-        cap = float(config.secant_theta_cap_deg)
-        if not 50.0 <= cap < 90.0:
-            raise ValueError(
-                f"config.secant_theta_cap_deg = {cap:g} is outside the "
-                "supported range [50, 90)."
-            )
-        return cap
-
-    def _secant_mode(self):
-        """Resolve ``config.secant_theta_transport`` against the loaded DB.
-
-        Returns one of ``"off"`` (1D database, or the flag is False),
-        ``"auto"`` (the default — apply where implemented, downgrade to
-        paraxial with a warning elsewhere) and ``"require"`` (flag is
-        True — unsupported paths refuse instead of downgrading).
-        """
-        flag = getattr(config, "secant_theta_transport", False)
-        if not self._mceq_db.is_2d:
-            return "off"
-        if isinstance(flag, str) and flag.lower() == "auto":
-            return "auto"
-        return "require" if flag else "off"
-
     def _require_no_secant(self, caller):
         """Refuse multi-RHS entry points while the secant coupling is on.
 
@@ -2912,7 +2863,7 @@ class MCEqRun:
         explicitly requested, so these entry points warn and proceed
         with the paraxial transport instead.
         """
-        mode = self._secant_mode()
+        mode = config.secant_mode(self._mceq_db.is_2d)
         if mode == "require":
             raise NotImplementedError(
                 f"{caller}: secant_theta_transport is not applied by the "
@@ -2938,7 +2889,7 @@ class MCEqRun:
             self._energy_grid.c,
             self.dim_states // self.dim,
             config,
-            theta_cap_deg=self._secant_theta_cap_deg(),
+            theta_cap_deg=config.secant_theta_cap(),
         )
 
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
@@ -2955,7 +2906,7 @@ class MCEqRun:
 
         kc = config.kernel_config.lower()
 
-        secant_mode = self._secant_mode()
+        secant_mode = config.secant_mode(self._mceq_db.is_2d)
         secant_on = secant_mode != "off"
         if secant_on and kc not in (
             "numpy_etd2",
@@ -3762,22 +3713,21 @@ class MatrixBuilder:
             )
         return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
-    def _apply_muon_scattering_to_diagonal(self, per_mode):
-        """Add ``-kappa^2 * theta_s^2(E) / 4`` to muon-row diagonals of each
-        per-mode dense matrix (modifies ``per_mode`` in place).
+    def _muon_scattering_damping(self):
+        """Per-energy Gaussian multiple-scattering damping data for muons.
 
-        This is the v2 way of representing PR #48's muon multiple-scattering
-        damping: instead of an explicit per-step elementwise multiplier on
-        the state vector (operator splitting, O(h) extra error), we put the
-        contribution on the diagonal D so ETD2RK's ``e^{h*D}`` integrates it
-        exactly per step.
-
-        See ``docs/mceq_v1.x_v2_diff.md`` §11.4.
+        Returns ``(muon_lidcs, theta_s_sq)`` — the state-vector offsets of
+        all muon species present (PDG ±13, helicities 0, ±1) and the
+        squared scattering angle per unit depth — or ``None`` when muon
+        multiple scattering does not apply. The per-mode diagonal
+        contribution is ``-kappa^2 * theta_s^2(E) / 4``; it sits on the
+        diagonal D so ETD2RK's ``e^{h*D}`` integrates it exactly, without
+        a per-step operator split.
         """
         if not (self.is_2d and getattr(config, "muon_multiple_scattering", False)):
-            return
-        # Constants from CORSIKA's Gauss approximation (Heck & Pierog handbook
-        # p.12).
+            return None
+        # Constants of the Gauss approximation used by CORSIKA (Heck &
+        # Pierog handbook p.12): Gaussian core only, no Moliere tail.
         lambda_s = 37.7  # g/cm^2
         E_s = 0.021  # GeV
         e_kin = self._energy_grid.c
@@ -3791,9 +3741,7 @@ class MatrixBuilder:
         p2 = np.where(p2 > 0, p2, 1e-30)
         beta = np.sqrt(p2) / E_lab
         theta_s_sq = (1.0 / lambda_s) * (E_s / (E_lab * beta**2)) ** 2
-        # Identify all muon species present (PDG +-13, helicities 0, +-1).
         muon_lidcs = []
-        n_e = len(e_kin)
         for pdg in (13, -13):
             for hel in (0, 1, -1):
                 key = (pdg, hel)
@@ -3802,82 +3750,86 @@ class MatrixBuilder:
                     if hasattr(p, "lidx") and getattr(p, "mceqidx", -1) >= 0:
                         muon_lidcs.append(p.lidx)
         if not muon_lidcs:
-            return
-        diag_idx = np.arange(self.dim_states)
-        for k_idx in range(self.n_k):
-            kappa = self.k_grid[k_idx]
-            if kappa == 0:
-                continue
-            damping = -(kappa**2) * theta_s_sq / 4.0
-            mat = per_mode[k_idx]
-            for lidx in muon_lidcs:
-                rows = diag_idx[lidx : lidx + n_e]
-                mat[rows, rows] += damping
+            return None
+        return muon_lidcs, theta_s_sq
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
-        """Construct a CSR matrix from a dictionary of submatrices (blocks).
+        """Assemble the per-channel blocks into the global CSR operator.
 
-        For 1D databases the result is a single ``(dim_states, dim_states)``
-        sparse matrix.
+        For 1D databases each block is a dense ``(dim, dim)`` channel
+        matrix placed at its (child, parent) offsets in a single
+        ``(dim_states, dim_states)`` sparse matrix.
 
         For 2D databases each block carries a leading ``n_k`` axis (one
-        per-mode slab, shape ``(n_k, dim, dim)``). We assemble one
-        ``(dim_states, dim_states)`` dense scratch buffer per Hankel mode
-        and then stitch the n_k blocks into a single block-diagonal CSR of
-        shape ``(n_k * dim_states, n_k * dim_states)``. Since k-modes are
-        decoupled this is mathematically equivalent to the old per-mode
-        tensor representation, but it lets v2's dimension-agnostic ETD2RK
-        kernels operate on the stitched matrix directly (see
-        ``docs/mceq_v1.x_v2_diff.md`` §11.4).
+        slab per Hankel mode, shape ``(n_k, dim, dim)``). The Hankel modes
+        are mutually decoupled, so the operator is block-diagonal in
+        kappa: per mode, the nonzero entries of every channel slab are
+        scattered (with their global row/column offsets) into one COO
+        triplet set and converted to CSR in one shot — no dense
+        ``(dim_states, dim_states)`` intermediate. ``scipy.sparse.
+        block_diag`` then stitches the ``n_k`` mode matrices into the
+        final ``(n_k * dim_states, n_k * dim_states)`` CSR that the
+        dimension-agnostic ETD2RK kernels consume.
 
-        When ``apply_muon_scattering`` is True (only set by the interaction
-        matrix path), and ``config.muon_multiple_scattering`` is enabled,
-        the per-mode diagonal entries on muon rows receive the extra
-        ``-kappa^2 * theta_s^2(E) / 4`` damping. ETD2RK absorbs the
-        diagonal exactly via ``e^{h*D}``, so this folds PR #48's
-        per-step elementwise multiplier into the matrix without any
-        operator-splitting error.
+        When ``apply_muon_scattering`` is True (the interaction-matrix
+        path) and ``config.muon_multiple_scattering`` is on, muon-row
+        diagonals receive the per-mode Gaussian multiple-scattering
+        damping ``-kappa^2 * theta_s^2(E) / 4`` (see
+        :meth:`_muon_scattering_damping`), added as extra COO entries
+        (duplicates are summed on CSR conversion).
 
-        Note::
-
-            It's super pain the a** to construct a properly indexed sparse matrix
-            directly from the blocks, since bmat totally messes up the order.
+        ``config.secant_theta_transport`` does not alter these matrices;
+        the sec(theta) mode coupling is applied inside the ETD2RK secant
+        kernels (see :mod:`MCEq.secant` for why it is not stitched into
+        the CSR).
         """
-        from scipy.sparse import csr_matrix
+        from scipy.sparse import coo_matrix, csr_matrix
 
         if self.is_2d:
-            # Build n_k (dim_states, dim_states) dense scratch buffers,
-            # scatter each per-channel block into all of them.
-            per_mode = [
-                np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
-                for _ in range(self.n_k)
-            ]
-            for (c, p), d in six.iteritems(blocks):
-                rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
-                try:
-                    for k in range(self.n_k):
-                        per_mode[k][rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d[k]
-                except ValueError:
-                    _d = self.dim_states
-                    raise Exception(
-                        "Dimension mismatch: matrix "
-                        + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
-                        + f" c={rc.name}:({rc.lidx},{rc.uidx})"
-                    )
+            mu_damp = None
             if apply_muon_scattering:
-                self._apply_muon_scattering_to_diagonal(per_mode)
-            # NOTE: config.secant_theta_transport does NOT alter the
-            # matrices. The sec(theta) mode coupling is applied inside the
-            # ETD2RK kernel (solv_numpy_etd2_secant), where the coupled
-            # same-(species,E) diagonal block is treated exactly in the
-            # eigenbasis of S = I + T; stitching the coupling into the CSR
-            # (tried first) puts stiff mode-coupled loss terms in the
-            # explicit part, which diverges wherever rows are stiff
-            # (rho(D_S^-1 T_off) = 1.75 > 1). See MCEq/secant.py.
-            per_mode_csr = [csr_matrix(m) for m in per_mode]
-            for m in per_mode_csr:
+                mu_damp = self._muon_scattering_damping()
+            n_e = self.dim
+            shape = (self.dim_states, self.dim_states)
+            per_mode_csr = []
+            for k in range(self.n_k):
+                rows, cols, vals = [], [], []
+                for (c, p), d in six.iteritems(blocks):
+                    rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
+                    slab = d[k]
+                    if slab.shape != (rc.uidx - rc.lidx, rp.uidx - rp.lidx):
+                        _d = self.dim_states
+                        raise Exception(
+                            "Dimension mismatch: matrix "
+                            + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
+                            + f" c={rc.name}:({rc.lidx},{rc.uidx})"
+                        )
+                    r, cc = np.nonzero(slab)
+                    rows.append(r + rc.lidx)
+                    cols.append(cc + rp.lidx)
+                    vals.append(slab[r, cc])
+                kappa = self.k_grid[k]
+                if mu_damp is not None and kappa != 0:
+                    muon_lidcs, theta_s_sq = mu_damp
+                    damping = -(kappa**2) * theta_s_sq / 4.0
+                    for lidx in muon_lidcs:
+                        diag = np.arange(lidx, lidx + n_e)
+                        rows.append(diag)
+                        cols.append(diag)
+                        vals.append(damping)
+                if rows:
+                    m = coo_matrix(
+                        (
+                            np.concatenate(vals).astype(config.floatlen),
+                            (np.concatenate(rows), np.concatenate(cols)),
+                        ),
+                        shape=shape,
+                    ).tocsr()
+                else:
+                    m = csr_matrix(shape, dtype=config.floatlen)
                 m.eliminate_zeros()
                 m.sort_indices()
+                per_mode_csr.append(m)
             stitched = sp.block_diag(per_mode_csr, format="csr")
             stitched.eliminate_zeros()
             stitched.sort_indices()

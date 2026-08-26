@@ -13,14 +13,19 @@ space. The corrected transport right-multiplies the per-mode blocks::
 
     dF_k/dX = M_k  sum_k' (I + T)_{kk'} F_k'
 
-i.e. the elongation charges the flux BEFORE the yield kick — the parent's
-path, not the child's emission angle. In equilibrium the parent density
-becomes ``source x lambda cos(theta)`` while its interaction/decay rate
-per axis depth gains ``sec(theta)``; the product (daughter production) is
+so the elongation acts on the flux entering the transport operator: it
+rescales the parent's path length, not the daughter's emission angle. In
+equilibrium the parent density becomes ``source x lambda x cos(theta)``
+while its interaction/decay rate per unit axis depth grows by
+``sec(theta)``; the product — the daughter production rate — is
 unchanged, so loss-free daughters (neutrinos) are preserved identically.
-For the same reason the correction must cover ALL loss channels of a
-species or none: correcting ionization but not decay would break the
-mu -> nu balance by cos(theta).
+Consequently the correction must cover ALL loss channels of a species or
+none: elongating the ionization path but not the decay path would change
+the mu -> nu balance by cos(theta).
+
+All angles are relative to the shower axis, like the Hankel modes
+themselves, so the operator and the choice of ``theta_cap`` are
+independent of the axis' zenith angle.
 
 Construction of ``T`` (per-column ridge with a flat-state damping term)::
 
@@ -28,9 +33,9 @@ Construction of ``T`` (per-column ridge with a flat-state damping term)::
              + || T (lam2 I + w_f 1 1^T)^(1/2) ||_F^2
 
 with ``R`` the readout linear map (cubic kappa-oversampling + trapz, the
-same convention as ``MCEqRun.convert_to_theta_space``) on a dense theta
-grid, ``W`` the sqrt(theta dtheta) measure, and the rank-one term damping
-``T @ 1`` (kappa-flat = collimated states must pass through untouched).
+same convention as :func:`MCEq.hankel.inverse_hankel_legacy`) on a dense
+theta grid, ``W`` the sqrt(theta dtheta) measure, and the rank-one term
+damping ``T @ 1`` (kappa-flat = collimated states are not elongated).
 Rows with ``kappa > row_kmax`` are zeroed: the correction has no support
 at narrow angular scales. Accuracy of the operator: rms 1-2 % on
 near-isotropic profiles, angle-integrated action exact to 0.1 %,
@@ -40,12 +45,18 @@ Solver integration: NOT via the matrices. Stitching ``M_k S`` into the
 block CSR puts stiff mode-coupled loss terms (short-lived species at
 altitude, ``rate/rho`` unbounded) into ETD2RK's explicit part; the
 stiff-limit update is then a Jacobi-like iteration with matrix
-``D_S^-1 (S - D_S)`` whose spectral radius exceeds 1 — it diverges.
-Instead the kernels (``solv_numpy_etd2_secant`` / ``solv_mkl_etd2_secant``
-/ ``solv_cuda_etd2_secant``) treat the coupled same-(species,E) block
-``d_i * S_P`` exactly through the eigendecomposition of ``S_P`` (constant,
-shared by every state), which is unconditionally stable and reproduces
-the S-corrected equilibrium exactly in the stiff limit.
+``D_S^-1 (S - D_S)``. Its spectral radius grows monotonically with the
+cap — 0.28 / 0.46 / 0.57 at caps 50 / 60 / 65 deg, 1.07 at the default
+75, 2.65 at 85 (current operator, 48-mode grid) — so at production
+settings the iteration diverges, and even below the rho = 1 crossover
+(~70 deg) the stitched form showed transient blow-ups at moderate
+stiffness in prototyping. Instead the kernels
+(``solv_numpy_etd2_secant`` / ``solv_mkl_etd2_secant`` /
+``solv_cuda_etd2_secant``) treat the coupled same-(species,E) block
+``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
+(constant, shared by every state), which is unconditionally stable at
+any cap and reproduces the S-corrected equilibrium exactly in the
+stiff limit.
 """
 
 import numpy as np
@@ -179,7 +190,8 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=
       T_P        -- T restricted to coupled rows, all columns (n_P, n_k)
       T_PP       -- the (n_P, n_P) same-subspace block
       V, Vi, lam -- eigendecomposition of S_P = I + T_PP (real)
-      gate_idx   -- state columns (species x energy) with E < e_gate
+      low_e_idx  -- state columns (species x energy) with
+                    E_kin < config.secant_theta_e_max
       n_k        -- number of Hankel modes
     """
     if theta_cap_deg is None:
@@ -217,14 +229,13 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=
         f"{np.linalg.cond(V):.1e}",
     )
 
-    e_gate = getattr(config, "secant_theta_e_gate", None)
+    e_max = getattr(config, "secant_theta_e_max", None)
     e_centers = np.asarray(e_centers)
-    if e_gate is None:
-        gate_e = np.ones(len(e_centers), dtype=bool)
+    if e_max is None:
+        low_e = np.ones(len(e_centers), dtype=bool)
     else:
-        gate_e = e_centers < e_gate
-    gate = np.tile(gate_e, n_species)
-    gate_idx = np.where(gate)[0]
+        low_e = e_centers < e_max
+    low_e_idx = np.where(np.tile(low_e, n_species))[0]
 
     return {
         "P": P,
@@ -233,6 +244,6 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=
         "V": np.ascontiguousarray(V),
         "Vi": np.ascontiguousarray(Vi),
         "lam": lam,
-        "gate_idx": gate_idx,
+        "low_e_idx": low_e_idx,
         "n_k": len(k_grid),
     }
