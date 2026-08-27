@@ -1039,9 +1039,10 @@ def _numpy_compact_apply_off_G(int_off, dec_off, sec_ops, dim):
         if int_G is not None:
             out_v += int_G.dot(YGc)
         if dec_G is not None:
-            d = dec_G.dot(YGc)
-            d *= ri  # scalar, or (K,) broadcast over the lane axis
-            out_v += d
+            # ri scales lanes (result columns), which commutes with the
+            # left product — scale the small coupled plane, not a
+            # full-state temporary.
+            out_v += dec_G.dot(YGc * ri)
 
     return apply_off_G
 
@@ -2732,8 +2733,6 @@ def _mkl_compact_apply_off_G(mkl_int_off, mkl_dec_off, sec_ops, dim, K,
         mkl_int_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
     if mkl_dec_G is not None:
         mkl_dec_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
-    dec_bufG = np.zeros((dim, K), dtype=np.float64)
-    dec_bufG_p = dec_bufG.ctypes.data_as(POINTER(c_double))
 
     def apply_off_G(YG, out, ri):
         # YG is a fresh array per call — no pointer caching here.
@@ -2749,11 +2748,14 @@ def _mkl_compact_apply_off_G(mkl_int_off, mkl_dec_off, sec_ops, dim, K,
                 float(ri), K, B_p, K, C_p, K, beta=1.0, layout=101
             )
         else:
+            # Lane scaling commutes with the left product: scale the
+            # small coupled plane instead of a full-state temporary,
+            # then accumulate with beta = 1.
+            YGr = YGc * ri
+            Br_p = YGr.ctypes.data_as(POINTER(c_double))
             mkl_dec_G.gemm_ctargs(
-                1.0, K, B_p, K, dec_bufG_p, K, beta=0.0, layout=101
+                1.0, K, Br_p, K, C_p, K, beta=1.0, layout=101
             )
-            np.multiply(dec_bufG, ri, out=dec_bufG)
-            np.add(out[:dim], dec_bufG, out=out[:dim])
 
     apply_off_G._handles = (mkl_int_G, mkl_dec_G)
     return apply_off_G
@@ -3352,13 +3354,16 @@ def _etd2_secant_driver_cuda(
             cp.multiply(cu_dec_tmp, ri_b, out=cu_dec_tmp)
             Fbuf += cu_dec_tmp
         if compact:
+            # cupyx-level SpMM cannot accumulate into the C-order Fbuf
+            # (cusparse.spmm requires F-contiguous dense operands), so
+            # the compact contributions go through fresh results + adds.
+            # Lane scaling commutes with the left product — scale the
+            # small coupled plane, not a full-state temporary.
             YGc = YG.reshape(n_c, K)
             if cu_int_G is not None:
                 Fbuf += cu_int_G @ YGc
             if cu_dec_G is not None:
-                gtmp = cu_dec_G @ YGc
-                gtmp *= ri_b
-                Fbuf += gtmp
+                Fbuf += cu_dec_G @ (YGc * ri_b)
         x_PG = XG[P]
         SPxP = x_PG + lmm(T_PP, x_PG)
         w_PG = x_PG + YG
