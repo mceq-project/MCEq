@@ -405,6 +405,14 @@ secant_theta_e_max = 31.6
 #: single-axis solves stay below the threshold and are not touched).
 #: MKL's pool is controlled separately by ``mkl_threads``.
 secant_blas_threads = 4
+#: issue the secant drivers' dense mode-coupling GEMMs through MKL's
+#: ``cblas_dgemm`` (the already loaded ``mkl_rt``) instead of numpy's
+#: linked BLAS. Applies to the MKL secant routes only; ~1.5-2x faster
+#: per GEMM than OpenBLAS at matched thread counts on the skinny
+#: (n_P x n_g*K) shapes. Off by default: a different BLAS changes
+#: results at round-off level, so the default preserves bit-identity
+#: between the MKL and numpy secant routes.
+secant_mkl_gemm = False
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)

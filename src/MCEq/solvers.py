@@ -625,6 +625,52 @@ def _secant_left_matmul(matrix, plane):
     )
 
 
+def _mkl_left_matmul(matrix, plane):
+    """MKL ``cblas_dgemm`` variant of :func:`_secant_left_matmul`.
+
+    Same contract, but the GEMM is issued through the already loaded
+    ``mkl_rt`` instead of numpy's linked BLAS. On the skinny secant
+    shapes MKL is ~1.5-2x faster than OpenBLAS at matched thread
+    counts; thread count follows MKL's own pool (``mkl_threads``).
+    fp64 host arrays only — the CUDA driver keeps the cupy helper.
+    """
+    from ctypes import POINTER, c_double
+
+    A = np.ascontiguousarray(matrix, dtype=np.float64)
+    trailing = plane.shape[1:]
+    B = np.ascontiguousarray(
+        plane.reshape(plane.shape[0], -1), dtype=np.float64
+    )
+    m, kk = A.shape
+    n = B.shape[1]
+    C = np.empty((m, n), dtype=np.float64)
+    config.mkl.cblas_dgemm(
+        101, 111, 111, m, n, kk,                       # row-major, NN
+        1.0, A.ctypes.data_as(POINTER(c_double)), kk,
+        B.ctypes.data_as(POINTER(c_double)), n,
+        0.0, C.ctypes.data_as(POINTER(c_double)), n,
+    )
+    return C.reshape((m,) + trailing)
+
+
+def _resolve_secant_left_matmul():
+    """Dense-GEMM hook for the MKL secant routes.
+
+    Returns :func:`_mkl_left_matmul` when ``config.secant_mkl_gemm`` is
+    set (registering the ``cblas_dgemm`` argtypes first), else None —
+    the driver then uses the numpy default.
+    """
+    if not getattr(config, "secant_mkl_gemm", False):
+        return None
+    if config.mkl is None:
+        raise RuntimeError(
+            "config.secant_mkl_gemm is set but the MKL library is not "
+            "loaded. Call config.set_mkl_threads(...) first."
+        )
+    _set_mkl_argtypes(config.mkl)
+    return _mkl_left_matmul
+
+
 def _secant_blas_thread_limit(batched):
     """Context capping OpenBLAS threads for the batched secant GEMMs.
 
@@ -669,6 +715,7 @@ def _etd2_secant_driver(
     n_padded,
     schedule=None,
     phi0_per_pixel=None,
+    left_matmul=None,
 ):
     """Backend-agnostic ETD2RK step loop with the sec(theta) mode coupling.
 
@@ -725,6 +772,10 @@ def _etd2_secant_driver(
     with the next pixel's phi0 at step boundaries, and the return value
     becomes the ``(dim, K_total)`` per-pixel solution. Single-axis is
     the ``(dim,)`` state without a schedule.
+
+    ``left_matmul`` overrides the dense mode-transform GEMM
+    (:func:`_secant_left_matmul` by default); the MKL routes pass the
+    ``cblas_dgemm`` variant when ``config.secant_mkl_gemm`` is set.
     """
     batched = phi.ndim == 2
     per_lane = np.ndim(dX) == 2
@@ -757,7 +808,7 @@ def _etd2_secant_driver(
     assert n_k * N == dim, "state dim not divisible by n_k"
     ixPG = np.ix_(P, g_idx)
     tail = (K,) if batched else ()
-    lmm = _secant_left_matmul
+    lmm = _secant_left_matmul if left_matmul is None else left_matmul
 
     # Persistent buffers — fixed addresses for the ctypes backends;
     # padding slots stay zero throughout (zero rows/cols there).
@@ -1870,6 +1921,16 @@ def _set_mkl_argtypes(mkl):
         ]
         mkl.mkl_sparse_s_mm.restype = c_int
 
+    # dense fp64 GEMM for the secant mode-coupling transforms
+    mkl.cblas_dgemm.argtypes = [
+        c_int, c_int, c_int,            # layout, transa, transb
+        c_int, c_int, c_int,            # m, n, k
+        fl64, POINTER(fl64), c_int,     # alpha, A, lda
+        POINTER(fl64), c_int,           # B, ldb
+        fl64, POINTER(fl64), c_int,     # beta, C, ldc
+    ]
+    mkl.cblas_dgemm.restype = None
+
     _MKL_ARGTYPES_SET = True
 
 
@@ -2506,6 +2567,7 @@ def solv_mkl_etd2_secant(
         grid_idcs,
         sec_ops,
         n_padded,
+        left_matmul=_resolve_secant_left_matmul(),
     )
 
 
@@ -2576,7 +2638,7 @@ def solv_mkl_etd2_secant_multirhs(
     )
     return _etd2_secant_driver(
         nsteps, dX, rho_inv, apply_off, d_int, d_dec, phi, grid_idcs,
-        sec_ops, n_padded,
+        sec_ops, n_padded, left_matmul=_resolve_secant_left_matmul(),
     )
 
 
@@ -2592,6 +2654,7 @@ def solv_mkl_etd2_secant_carousel(
     return _etd2_secant_driver(
         schedule.T, dX, rho_inv, apply_off, d_int, d_dec, phi_initial, [],
         sec_ops, n_padded, schedule=schedule, phi0_per_pixel=phi0_per_pixel,
+        left_matmul=_resolve_secant_left_matmul(),
     )
 
 
