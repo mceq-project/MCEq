@@ -671,6 +671,51 @@ def _resolve_secant_left_matmul():
     return _mkl_left_matmul
 
 
+#: (id(int_off), id(dec_off), nnz's, dim, coupled-index digest) -> sliced
+#: operators. The off-diagonals are cached upstream (core solver caches /
+#: _etd_split_cache callers), so identity keys are stable for the life of
+#: an operator set; nnz + digest guard against id reuse.
+_COMPACT_COUPLING_CACHE = {}
+
+
+def _compact_coupling_ops(int_off, dec_off, sec_ops, dim):
+    """Column-restricted off-diagonals for the compact secant coupling.
+
+    The driver's scattered SpMM operand is ``w = x + scatter(YG)`` with
+    YG living on the coupled (mode in P) x (low-E column in g_idx)
+    plane. By linearity ``off @ w = off @ x + off[:, idx] @ YG_flat``
+    where ``idx = (P[:, None] * N + g_idx).ravel()`` enumerates those
+    state slots in YG's own (P-major, g-minor) C order. Returns
+    ``(int_G, dec_G, n_c)`` — scipy CSR (dim, n_c) or None when empty.
+    """
+    n_k = int(sec_ops["n_k"])
+    N = dim // n_k
+    P = np.asarray(sec_ops["P"])
+    g_idx = np.asarray(sec_ops["low_e_idx"])
+    idx = (P[:, None] * N + g_idx[None, :]).ravel()
+    key = (
+        id(int_off), id(dec_off),
+        None if int_off is None else int_off.nnz,
+        None if dec_off is None else dec_off.nnz,
+        dim, hash(idx.tobytes()),
+    )
+    hit = _COMPACT_COUPLING_CACHE.get(key)
+    if hit is not None:
+        return hit
+    if len(_COMPACT_COUPLING_CACHE) > 8:
+        _COMPACT_COUPLING_CACHE.clear()
+
+    def _slice(m):
+        if m is None or m.nnz == 0:
+            return None
+        mG = m.tocsc()[:, idx].tocsr()
+        return mG if mG.nnz else None
+
+    ops = (_slice(int_off), _slice(dec_off), len(idx))
+    _COMPACT_COUPLING_CACHE[key] = ops
+    return ops
+
+
 def _secant_blas_thread_limit(batched):
     """Context capping OpenBLAS threads for the batched secant GEMMs.
 
@@ -716,6 +761,7 @@ def _etd2_secant_driver(
     schedule=None,
     phi0_per_pixel=None,
     left_matmul=None,
+    apply_off_G=None,
 ):
     """Backend-agnostic ETD2RK step loop with the sec(theta) mode coupling.
 
@@ -776,6 +822,15 @@ def _etd2_secant_driver(
     ``left_matmul`` overrides the dense mode-transform GEMM
     (:func:`_secant_left_matmul` by default); the MKL routes pass the
     ``cblas_dgemm`` variant when ``config.secant_mkl_gemm`` is set.
+
+    ``apply_off_G`` switches on the compact coupling template
+    (``config.secant_compact_coupling``): instead of building the
+    scattered operand ``w = x + T Pi x`` (a full-state copy + fancy
+    scatter per stage), the SpMMs act on the state buffer directly and
+    ``apply_off_G(YG, out, ri)`` accumulates the coupling contribution
+    ``off[:, idx] @ YG_flat`` through column-restricted operators
+    (:func:`_compact_coupling_ops`) — same arithmetic by linearity,
+    reordered at round-off level.
     """
     batched = phi.ndim == 2
     per_lane = np.ndim(dX) == 2
@@ -817,7 +872,9 @@ def _etd2_secant_driver(
     F_phi = np.zeros_like(phc)
     F_a = np.zeros_like(phc)
     a = np.zeros_like(phc)
-    w = np.zeros_like(phc)
+    # The scattered-operand buffer only exists on the copy+scatter path;
+    # the compact template issues the SpMMs on phc/a directly.
+    w = np.zeros_like(phc) if apply_off_G is None else None
     bufs = _etd_step_buffers_multipath(dim, K) if per_lane else _etd_step_buffers(dim)
     eD = bufs["eD"]
     phi1 = bufs["phi1"]
@@ -835,17 +892,22 @@ def _etd2_secant_driver(
     F_phi_v = F_phi[:dim]
     F_a_v = F_a[:dim]
     a_v = a[:dim]
-    w_v = w[:dim]
+    w_v = w[:dim] if w is not None else None
 
-    def eval_F(x_v, Fbuf, F_v, ri, Df_PG_b, D0_G_b):
+    def eval_F(xbuf, x_v, Fbuf, F_v, ri, Df_PG_b, D0_G_b):
         """F <- off-diagonal + coupling remainder of the operator at x
-        (SpMVs act on w = x + T Pi x); returns the gathered x_PG."""
+        (SpMVs act on w = x + T Pi x, either as the scattered operand or
+        as F(x) + the compact coupling term); returns the gathered x_PG."""
         x2 = x_v.reshape((n_k, N) + tail)
         XG = x2[:, g_idx]  # (n_k, n_g[, K])
         YG = lmm(T_P, XG)  # coupling u on (P, g[, K])
-        np.copyto(w_v, x_v)
-        w_v.reshape((n_k, N) + tail)[ixPG] += YG
-        apply_off(w, Fbuf, ri)
+        if apply_off_G is None:
+            np.copyto(w_v, x_v)
+            w_v.reshape((n_k, N) + tail)[ixPG] += YG
+            apply_off(w, Fbuf, ri)
+        else:
+            apply_off(xbuf, Fbuf, ri)
+            apply_off_G(YG, Fbuf, ri)
         x_PG = XG[P]
         SPxP = x_PG + lmm(T_PP, x_PG)
         w_PG = x_PG + YG
@@ -908,7 +970,7 @@ def _etd2_secant_driver(
                 Df_PG_b = Df_PG
                 D0_G_b = D0_G[None]
 
-            x_PG = eval_F(phc_v, F_phi, F_phi_v, ri, Df_PG_b, D0_G_b)
+            x_PG = eval_F(phc, phc_v, F_phi, F_phi_v, ri, Df_PG_b, D0_G_b)
             F_PG = F_phi_v.reshape((n_k, N) + tail)[ixPG]
 
             # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
@@ -925,7 +987,7 @@ def _etd2_secant_driver(
                 a_PG[..., frozen] = x_PG[..., frozen]
             a_v.reshape((n_k, N) + tail)[ixPG] = a_PG
 
-            eval_F(a_v, F_a, F_a_v, ri, Df_PG_b, D0_G_b)
+            eval_F(a, a_v, F_a, F_a_v, ri, Df_PG_b, D0_G_b)
             Fa_PG = F_a_v.reshape((n_k, N) + tail)[ixPG]
 
             # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
@@ -959,6 +1021,31 @@ def _etd2_secant_driver(
     return phc_v.copy(), np.array(grid_sol)
 
 
+def _numpy_compact_apply_off_G(int_off, dec_off, sec_ops, dim):
+    """Compact-coupling accumulator for the scipy routes, or None.
+
+    When ``config.secant_compact_coupling`` is set, returns
+    ``apply_off_G(YG, out, ri)`` adding ``int_G @ YG + ri * (dec_G @ YG)``
+    into ``out[:dim]`` through the column-restricted operators of
+    :func:`_compact_coupling_ops`; None keeps the scatter path.
+    """
+    if not getattr(config, "secant_compact_coupling", False):
+        return None
+    int_G, dec_G, n_c = _compact_coupling_ops(int_off, dec_off, sec_ops, dim)
+
+    def apply_off_G(YG, out, ri):
+        YGc = YG.reshape((n_c, -1) if YG.ndim == 3 else n_c)
+        out_v = out[:dim]
+        if int_G is not None:
+            out_v += int_G.dot(YGc)
+        if dec_G is not None:
+            d = dec_G.dot(YGc)
+            d *= ri  # scalar, or (K,) broadcast over the lane axis
+            out_v += d
+
+    return apply_off_G
+
+
 def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, sec_ops):
     """ETD2RK with the sec(theta) mode coupling on scipy sparse.
 
@@ -988,15 +1075,21 @@ def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, se
         grid_idcs,
         sec_ops,
         n_padded,
+        apply_off_G=_numpy_compact_apply_off_G(
+            int_off, dec_off, sec_ops, int_m.shape[0]
+        ),
     )
 
 
-def _numpy_secant_batch_apply_off(int_m, dec_m):
-    """(apply_off, d_int, d_dec, n_padded) for the batched scipy route.
+def _numpy_secant_batch_apply_off(int_m, dec_m, sec_ops):
+    """(apply_off, apply_off_G, d_int, d_dec, n_padded) for the batched
+    scipy route.
 
     Forces CSR off-diagonals: scipy's BSR ``@`` on a 2-D RHS loops K
     block-SpMVs while CSR ``@`` is a true SpMM (see
-    :func:`solv_numpy_etd2_multirhs`).
+    :func:`solv_numpy_etd2_multirhs`). ``apply_off_G`` is the compact
+    coupling accumulator (or None — see
+    :func:`_numpy_compact_apply_off_G`).
     """
     d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
     if not sp.isspmatrix_csr(int_off):
@@ -1010,7 +1103,10 @@ def _numpy_secant_batch_apply_off(int_m, dec_m):
         ri_dec *= ri  # scalar, or (K,) broadcast over the lane axis
         np.add(out, ri_dec, out=out)
 
-    return apply_off, d_int, d_dec, int_m.shape[0]
+    apply_off_G = _numpy_compact_apply_off_G(
+        int_off, dec_off, sec_ops, int_m.shape[0]
+    )
+    return apply_off, apply_off_G, d_int, d_dec, int_m.shape[0]
 
 
 def solv_numpy_etd2_secant_multirhs(
@@ -1023,10 +1119,12 @@ def solv_numpy_etd2_secant_multirhs(
     eigenbasis GEMMs act on the flattened ``(n_P, n_g * K)`` plane —
     see :func:`_etd2_secant_driver`.
     """
-    apply_off, d_int, d_dec, n_padded = _numpy_secant_batch_apply_off(int_m, dec_m)
+    apply_off, apply_off_G, d_int, d_dec, n_padded = _numpy_secant_batch_apply_off(
+        int_m, dec_m, sec_ops
+    )
     return _etd2_secant_driver(
         nsteps, dX, rho_inv, apply_off, d_int, d_dec, phi, grid_idcs,
-        sec_ops, n_padded,
+        sec_ops, n_padded, apply_off_G=apply_off_G,
     )
 
 
@@ -1040,10 +1138,13 @@ def solv_numpy_etd2_secant_carousel(
     every pixel (the cap is not zenith dependent). Returns the
     ``(dim, K_total)`` per-pixel final states in pixel order.
     """
-    apply_off, d_int, d_dec, n_padded = _numpy_secant_batch_apply_off(int_m, dec_m)
+    apply_off, apply_off_G, d_int, d_dec, n_padded = _numpy_secant_batch_apply_off(
+        int_m, dec_m, sec_ops
+    )
     return _etd2_secant_driver(
         schedule.T, dX, rho_inv, apply_off, d_int, d_dec, phi_initial, [],
         sec_ops, n_padded, schedule=schedule, phi0_per_pixel=phi0_per_pixel,
+        apply_off_G=apply_off_G,
     )
 
 
@@ -1982,7 +2083,13 @@ class MklSparseMatrix:
 
         n_orig = csr.shape[0]
         self.n_orig = n_orig
+        # CSR mode supports rectangular operators (the compact secant
+        # coupling slices columns); BSR stays square.
+        self.n_cols = csr.shape[1]
         self.blocksize = blocksize
+        # Source CSR kept for column-restricted derivations
+        # (_compact_coupling_ops); the arrays are shared, not copied.
+        self._src_csr = csr
 
         mkl = config.mkl
         self._mkl = mkl
@@ -2009,7 +2116,7 @@ class MklSparseMatrix:
                 byref(handle),
                 c_int(0),
                 c_int(n_orig),
-                c_int(n_orig),
+                c_int(self.n_cols),
                 pb_p,
                 pe_p,
                 ci_p,
@@ -2021,6 +2128,11 @@ class MklSparseMatrix:
             # ----- BSR path -----
             if not isinstance(blocksize, int) or blocksize < 2:
                 raise ValueError(f"blocksize must be int >= 2, got {blocksize!r}")
+            if csr.shape[0] != csr.shape[1]:
+                raise ValueError(
+                    "BSR mode requires a square matrix; rectangular "
+                    "operators are CSR-only (blocksize=None)"
+                )
             pad = (-n_orig) % blocksize
             if pad > 0:
                 # Append `pad` zero rows / cols at the end. CSR-pad: extend
@@ -2568,7 +2680,83 @@ def solv_mkl_etd2_secant(
         sec_ops,
         n_padded,
         left_matmul=_resolve_secant_left_matmul(),
+        apply_off_G=_mkl_compact_apply_off_G(
+            mkl_int_off, mkl_dec_off, sec_ops, phi.shape[0], 0,
+            expected_calls=2 * nsteps,
+        ),
     )
+
+
+def _mkl_compact_apply_off_G(mkl_int_off, mkl_dec_off, sec_ops, dim, K,
+                             expected_calls):
+    """Compact-coupling accumulator for the MKL routes, or None.
+
+    Slices the column-restricted operators from the source CSRs the
+    handles keep (``_src_csr``) and wraps them as rectangular
+    ``(dim, n_c)`` MKL CSR handles. ``apply_off_G(YG, out, ri)``
+    accumulates ``int_G @ YG + ri * (dec_G @ YG)`` into the padded
+    ``out`` buffer; K = 0 selects the single-axis (SpMV) form.
+    """
+    if not getattr(config, "secant_compact_coupling", False):
+        return None
+    from ctypes import POINTER, c_double
+
+    int_G, dec_G, n_c = _compact_coupling_ops(
+        None if mkl_int_off is None else mkl_int_off._src_csr,
+        None if mkl_dec_off is None else mkl_dec_off._src_csr,
+        sec_ops, dim,
+    )
+    mkl_int_G = (
+        MklSparseMatrix(int_G, expected_calls=expected_calls)
+        if int_G is not None else None
+    )
+    mkl_dec_G = (
+        MklSparseMatrix(dec_G, expected_calls=expected_calls)
+        if dec_G is not None else None
+    )
+
+    if K == 0:
+        def apply_off_G(YG, out, ri):
+            YGc = np.ascontiguousarray(YG.reshape(n_c))
+            x_p = YGc.ctypes.data_as(POINTER(c_double))
+            y_p = out.ctypes.data_as(POINTER(c_double))
+            if mkl_int_G is not None:
+                mkl_int_G.gemv_ctargs(1.0, x_p, 1.0, y_p)
+            if mkl_dec_G is not None:
+                mkl_dec_G.gemv_ctargs(float(ri), x_p, 1.0, y_p)
+
+        apply_off_G._handles = (mkl_int_G, mkl_dec_G)
+        return apply_off_G
+
+    if mkl_int_G is not None:
+        mkl_int_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
+    if mkl_dec_G is not None:
+        mkl_dec_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
+    dec_bufG = np.zeros((dim, K), dtype=np.float64)
+    dec_bufG_p = dec_bufG.ctypes.data_as(POINTER(c_double))
+
+    def apply_off_G(YG, out, ri):
+        # YG is a fresh array per call — no pointer caching here.
+        YGc = np.ascontiguousarray(YG.reshape(n_c, K))
+        B_p = YGc.ctypes.data_as(POINTER(c_double))
+        C_p = out.ctypes.data_as(POINTER(c_double))
+        if mkl_int_G is not None:
+            mkl_int_G.gemm_ctargs(1.0, K, B_p, K, C_p, K, beta=1.0, layout=101)
+        if mkl_dec_G is None:
+            return
+        if np.ndim(ri) == 0:
+            mkl_dec_G.gemm_ctargs(
+                float(ri), K, B_p, K, C_p, K, beta=1.0, layout=101
+            )
+        else:
+            mkl_dec_G.gemm_ctargs(
+                1.0, K, B_p, K, dec_bufG_p, K, beta=0.0, layout=101
+            )
+            np.multiply(dec_bufG, ri, out=dec_bufG)
+            np.add(out[:dim], dec_bufG, out=out[:dim])
+
+    apply_off_G._handles = (mkl_int_G, mkl_dec_G)
+    return apply_off_G
 
 
 def _mkl_secant_batch_apply_off(mkl_int_off, mkl_dec_off, dim, K, expected_calls):
@@ -2639,6 +2827,10 @@ def solv_mkl_etd2_secant_multirhs(
     return _etd2_secant_driver(
         nsteps, dX, rho_inv, apply_off, d_int, d_dec, phi, grid_idcs,
         sec_ops, n_padded, left_matmul=_resolve_secant_left_matmul(),
+        apply_off_G=_mkl_compact_apply_off_G(
+            mkl_int_off, mkl_dec_off, sec_ops, dim, K,
+            expected_calls=2 * nsteps,
+        ),
     )
 
 
@@ -2655,6 +2847,10 @@ def solv_mkl_etd2_secant_carousel(
         schedule.T, dX, rho_inv, apply_off, d_int, d_dec, phi_initial, [],
         sec_ops, n_padded, schedule=schedule, phi0_per_pixel=phi0_per_pixel,
         left_matmul=_resolve_secant_left_matmul(),
+        apply_off_G=_mkl_compact_apply_off_G(
+            mkl_int_off, mkl_dec_off, sec_ops, dim, K,
+            expected_calls=2 * schedule.T,
+        ),
     )
 
 
@@ -2775,6 +2971,10 @@ class CudaEtd2Context:
         # cuSPARSE handles on some versions).
         self.cu_int_off = cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
         self.cu_dec_off = cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
+        # Host CSRs kept for column-restricted derivations
+        # (_compact_coupling_ops); shared references, not copies.
+        self._host_int_off = int_off if int_off.nnz else None
+        self._host_dec_off = dec_off if dec_off.nnz else None
         self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
         self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
 
@@ -2946,10 +3146,18 @@ def _cuda_secant_upload_ops(ctx, sec_ops):
     The batch entry points re-enter the driver once per ``solve_batch``
     call with the same host dict; keying the cache on the dict itself
     (holding the reference keeps the identity check safe) avoids
-    re-uploading per call.
+    re-uploading per call. With ``config.secant_compact_coupling`` the
+    column-restricted coupling operators (``int_G``/``dec_G``/``n_c``,
+    see :func:`_compact_coupling_ops`) ride along; the flag is part of
+    the cache key so toggling it between solves re-uploads.
     """
+    compact = bool(getattr(config, "secant_compact_coupling", False))
     cached = getattr(ctx, "_cu_secant_ops", None)
-    if cached is not None and cached[0] is sec_ops:
+    if (
+        cached is not None
+        and cached[0] is sec_ops
+        and cached[2] == compact
+    ):
         return cached[1]
     cp = ctx.cp
     fl_pr = ctx.fl_pr
@@ -2962,7 +3170,20 @@ def _cuda_secant_upload_ops(ctx, sec_ops):
         "lam": cp.asarray(sec_ops["lam"], dtype=fl_pr),
         "low_e_idx": cp.asarray(sec_ops["low_e_idx"]),
     }
-    ctx._cu_secant_ops = (sec_ops, dev)
+    if compact:
+        import cupyx.scipy.sparse as cusp
+
+        int_G, dec_G, n_c = _compact_coupling_ops(
+            ctx._host_int_off, ctx._host_dec_off, sec_ops, ctx.dim
+        )
+        dev["int_G"] = (
+            cusp.csr_matrix(int_G, dtype=fl_pr) if int_G is not None else None
+        )
+        dev["dec_G"] = (
+            cusp.csr_matrix(dec_G, dtype=fl_pr) if dec_G is not None else None
+        )
+        dev["n_c"] = n_c
+    ctx._cu_secant_ops = (sec_ops, dev, compact)
     return dev
 
 
@@ -3051,6 +3272,10 @@ def _etd2_secant_driver_cuda(
     lam = ops["lam"]
     ixPG = (P[:, None], g_idx[None, :])
     lmm = _secant_left_matmul
+    cu_int_G = ops.get("int_G")
+    cu_dec_G = ops.get("dec_G")
+    compact = "n_c" in ops
+    n_c = ops.get("n_c")
 
     # (dim, K) working views over the context buffers; the single-axis
     # context's (dim,) buffers are the K = 1 column of the same layout.
@@ -3058,7 +3283,9 @@ def _etd2_secant_driver_cuda(
     cu_F_phi = ctx.cu_F_phi.reshape(dim, K)
     cu_F_a = ctx.cu_F_a.reshape(dim, K)
     cu_a = ctx.cu_a.reshape(dim, K)
-    cu_w = cp.empty((dim, K), dtype=fl_pr)
+    # The scattered-operand buffer only exists on the copy+scatter path;
+    # the compact template issues the SpMMs on the state buffers directly.
+    cu_w = None if compact else cp.empty((dim, K), dtype=fl_pr)
 
     cu_phc[:] = cp.asarray(phi.reshape(dim, K), dtype=fl_pr)
 
@@ -3104,21 +3331,34 @@ def _etd2_secant_driver_cuda(
 
     def eval_F(xbuf, Fbuf, ri_b, Df_PG_b, D0_G_b):
         """Fbuf <- off-diagonal + coupling remainder at xbuf; returns
-        the gathered x_PG. SpMMs act on w = xbuf + T Pi xbuf."""
+        the gathered x_PG. SpMMs act on w = xbuf + T Pi xbuf, either as
+        the scattered operand or as F(x) + the compact coupling term."""
         X3 = xbuf.reshape(n_k, N, K)
         XG = X3[:, g_idx, :]
         YG = lmm(T_P, XG)
-        cp.copyto(cu_w, xbuf)
-        W3 = cu_w.reshape(n_k, N, K)
-        W3[ixPG] = W3[ixPG] + YG
+        if compact:
+            spmm_in = xbuf
+        else:
+            cp.copyto(cu_w, xbuf)
+            W3 = cu_w.reshape(n_k, N, K)
+            W3[ixPG] = W3[ixPG] + YG
+            spmm_in = cu_w
         if not int_off_empty:
-            cp.copyto(Fbuf, ctx.cu_int_off @ cu_w)
+            cp.copyto(Fbuf, ctx.cu_int_off @ spmm_in)
         else:
             Fbuf.fill(0)
         if not dec_off_empty:
-            cp.copyto(cu_dec_tmp, ctx.cu_dec_off @ cu_w)
+            cp.copyto(cu_dec_tmp, ctx.cu_dec_off @ spmm_in)
             cp.multiply(cu_dec_tmp, ri_b, out=cu_dec_tmp)
             Fbuf += cu_dec_tmp
+        if compact:
+            YGc = YG.reshape(n_c, K)
+            if cu_int_G is not None:
+                Fbuf += cu_int_G @ YGc
+            if cu_dec_G is not None:
+                gtmp = cu_dec_G @ YGc
+                gtmp *= ri_b
+                Fbuf += gtmp
         x_PG = XG[P]
         SPxP = x_PG + lmm(T_PP, x_PG)
         w_PG = x_PG + YG
@@ -3479,6 +3719,10 @@ class CudaEtd2MultiRHSContext:
         self.cu_dec_off = (
             cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
         )
+        # Host CSRs kept for column-restricted derivations
+        # (_compact_coupling_ops); shared references, not copies.
+        self._host_int_off = int_off if int_off.nnz else None
+        self._host_dec_off = dec_off if dec_off.nnz else None
         # Diagonals stay on device in fp64-precision arithmetic; we cast
         # down to fl_pr for the phi/eD pipeline (sufficient — the Mac fp32
         # stability test holds at 1e-4 rel-err with the same arithmetic).

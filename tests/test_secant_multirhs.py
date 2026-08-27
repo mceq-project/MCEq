@@ -281,6 +281,62 @@ def test_mkl_secant_gemm_flag_matches_numpy(secant_48mode_problem, monkeypatch):
                 m.close()
 
 
+@pytest.mark.parametrize("use_mkl", [False, True])
+def test_secant_compact_coupling_matches_scatter(
+    secant_48mode_problem, monkeypatch, use_mkl
+):
+    """config.secant_compact_coupling applies the coupling through
+    column-restricted operators; results must agree with the scatter
+    path at round-off-reordering tolerance on numpy and MKL."""
+    if use_mkl and not config.has_mkl:
+        pytest.skip("MKL not available")
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+
+    # Scatter-path references, flag off (the default).
+    ref_shared, _ = solv_numpy_etd2_secant_multirhs(
+        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
+        p["phi0"], [], ops,
+    )
+    ref_carousel = _single_axis_columns(p, p["paths"], ops)
+
+    monkeypatch.setattr(config, "secant_compact_coupling", True)
+    dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
+    if use_mkl:
+        d_int, d_dec, int_off, dec_off = _etd_split_cache(
+            p["int_m"], p["dec_m"]
+        )
+        mkl_int = MklSparseMatrix(int_off.tocsr()) if int_off.nnz else None
+        mkl_dec = MklSparseMatrix(dec_off.tocsr()) if dec_off.nnz else None
+        try:
+            shared, _ = solv_mkl_etd2_secant_multirhs(
+                nsteps, p["dX"], p["rho_inv"], mkl_int, mkl_dec,
+                d_int, d_dec, p["phi0"], [], ops,
+            )
+            carousel = solv_mkl_etd2_secant_carousel(
+                mkl_int, mkl_dec, d_int, d_dec, dX_c, rho_c, phi_initial,
+                schedule, p["phi0"], ops,
+            )
+        finally:
+            for m in (mkl_int, mkl_dec):
+                if m is not None:
+                    m.close()
+    else:
+        shared, _ = solv_numpy_etd2_secant_multirhs(
+            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
+            p["phi0"], [], ops,
+        )
+        carousel = solv_numpy_etd2_secant_carousel(
+            p["int_m"], p["dec_m"], dX_c, rho_c, phi_initial, schedule,
+            p["phi0"], ops,
+        )
+
+    np.testing.assert_allclose(shared, ref_shared, rtol=RTOL, atol=ATOL)
+    np.testing.assert_allclose(carousel, ref_carousel, rtol=RTOL, atol=ATOL)
+    assert np.count_nonzero(carousel[:, 2]) == 0
+
+
 def _cuda_available():
     try:
         import cupy as cp
@@ -346,6 +402,48 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
     np.testing.assert_allclose(
         cuda_carousel, np.stack(cuda_single, axis=1), rtol=2e-11, atol=2e-12
     )
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
+def test_cuda_secant_compact_coupling_matches_scatter(
+    secant_48mode_problem, monkeypatch
+):
+    """The compact template on the CUDA driver agrees with the numpy
+    scatter-path references at BLAS-swap tolerance."""
+    from MCEq.solvers import (
+        CudaEtd2MultiRHSContext,
+        solv_cuda_etd2_secant_carousel,
+        solv_cuda_etd2_secant_multirhs,
+    )
+
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+    ref_shared, _ = solv_numpy_etd2_secant_multirhs(
+        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
+        [], ops,
+    )
+    ref_carousel = _single_axis_columns(p, p["paths"], ops)
+
+    monkeypatch.setattr(config, "secant_compact_coupling", True)
+    d_int, d_dec, int_off, dec_off = _etd_split_cache(p["int_m"], p["dec_m"])
+    multi_ctx = CudaEtd2MultiRHSContext(
+        int_off.tocsr(), dec_off.tocsr(), d_int, d_dec, K=p["K"],
+        device_id=0, fp_precision=64,
+    )
+    cuda_shared, _ = solv_cuda_etd2_secant_multirhs(
+        nsteps, p["dX"], p["rho_inv"], multi_ctx, p["phi0"], [], ops
+    )
+    np.testing.assert_allclose(cuda_shared, ref_shared, rtol=2e-11, atol=2e-12)
+
+    dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=p["K"])
+    cuda_carousel = solv_cuda_etd2_secant_carousel(
+        multi_ctx, dX_c, rho_c, phi_initial, schedule, p["phi0"], ops
+    )
+    np.testing.assert_allclose(
+        cuda_carousel, ref_carousel, rtol=2e-11, atol=2e-12
+    )
+    assert np.count_nonzero(cuda_carousel[:, 2]) == 0
 
 
 # ---------------------------------------------------------------------------
