@@ -601,8 +601,39 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     return phc_v.copy(), np.array(grid_sol)
 
 
-def _secant_phi_factors(ZB):
-    """Elementwise phi1/phi2 with Taylor patches for a block argument."""
+def _secant_phi_factors(ZB, out=None, work=None):
+    """Elementwise phi1/phi2 with Taylor patches for a block argument.
+
+    ``out=(exp, phi1, phi2)`` and ``work=(scratch, large)`` let the hot
+    secant loop reuse its block-sized arrays instead of allocating six
+    temporaries per step. The no-argument form keeps the small standalone
+    helper convenient for tests and callers outside the driver.
+    """
+    if out is not None:
+        eDB, phi1, phi2 = out
+        scratch, large = work
+        np.expm1(ZB, out=scratch)
+
+        # Taylor branches, evaluated for the whole block and overwritten
+        # by the quotient on entries outside the small-argument patch.
+        np.multiply(ZB, _INV_6, out=phi1)
+        np.add(phi1, 0.5, out=phi1)
+        np.multiply(ZB, phi1, out=phi1)
+        np.add(phi1, 1.0, out=phi1)
+        np.greater(np.abs(ZB, out=eDB), _PHI1_SMALL, out=large)
+        np.divide(scratch, ZB, out=phi1, where=large)
+
+        np.multiply(ZB, _INV_24, out=phi2)
+        np.add(phi2, _INV_6, out=phi2)
+        np.multiply(ZB, phi2, out=phi2)
+        np.add(phi2, 0.5, out=phi2)
+        np.greater(eDB, _PHI2_SMALL, out=large)
+        np.subtract(scratch, ZB, out=eDB)
+        np.multiply(ZB, ZB, out=scratch)
+        np.divide(eDB, scratch, out=phi2, where=large)
+        np.exp(ZB, out=eDB)
+        return out
+
     safe = np.where(ZB == 0.0, 1.0, ZB)
     e1 = np.expm1(ZB)
     phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe,
@@ -612,7 +643,7 @@ def _secant_phi_factors(ZB):
     return np.exp(ZB), phi1, phi2
 
 
-def _secant_left_matmul(matrix, plane):
+def _secant_left_matmul(matrix, plane, out=None):
     """Apply a mode-space matrix to the leading axis of a >= 2-D plane.
 
     The batched secant kernels carry a logical ``(mode, state[, lane])``
@@ -620,12 +651,15 @@ def _secant_left_matmul(matrix, plane):
     one dense GEMM instead of one call per lane. NumPy/CuPy agnostic.
     """
     trailing = plane.shape[1:]
-    return (matrix @ plane.reshape(plane.shape[0], -1)).reshape(
-        (matrix.shape[0],) + trailing
-    )
+    result_shape = (matrix.shape[0],) + trailing
+    plane_2d = plane.reshape(plane.shape[0], -1)
+    if out is None:
+        return (matrix @ plane_2d).reshape(result_shape)
+    np.matmul(matrix, plane_2d, out=out.reshape(matrix.shape[0], -1))
+    return out
 
 
-def _mkl_left_matmul(matrix, plane):
+def _mkl_left_matmul(matrix, plane, out=None):
     """MKL ``cblas_dgemm`` variant of :func:`_secant_left_matmul`.
 
     Same contract, but the GEMM is issued through the already loaded
@@ -643,7 +677,12 @@ def _mkl_left_matmul(matrix, plane):
     )
     m, kk = A.shape
     n = B.shape[1]
-    C = np.empty((m, n), dtype=np.float64)
+    if out is None:
+        C = np.empty((m, n), dtype=np.float64)
+    else:
+        C = out.reshape(m, n)
+        if C.dtype != np.float64 or not C.flags.c_contiguous:
+            raise ValueError("_mkl_left_matmul: out must be C-contiguous fp64")
     config.mkl.cblas_dgemm(
         101, 111, 111, m, n, kk,                       # row-major, NN
         1.0, A.ctypes.data_as(POINTER(c_double)), kk,
@@ -864,6 +903,32 @@ def _etd2_secant_driver(
     ixPG = np.ix_(P, g_idx)
     tail = (K,) if batched else ()
     lmm = _secant_left_matmul if left_matmul is None else left_matmul
+    n_P, n_g = len(P), len(g_idx)
+    pg_shape = (n_P, n_g) + tail
+    xg_shape = (n_k, n_g) + tail
+    coupled_idx = (np.asarray(P)[:, None] * N + np.asarray(g_idx)[None]).ravel()
+    coupled_shape = (len(coupled_idx),) + tail
+    diag_tail = (K,) if per_lane else ()
+
+    # Reused gather/GEMM workspaces. Previously these expressions created
+    # roughly twenty 0.3--5.6 MB temporaries per step. Fixed buffers also
+    # give cblas_dgemm stable output addresses and avoid allocator traffic.
+    XG = np.empty(xg_shape, dtype=np.float64)
+    YG = np.empty(pg_shape, dtype=np.float64)
+    x_PG = np.empty(pg_shape, dtype=np.float64)
+    F_PG = np.empty(pg_shape, dtype=np.float64)
+    a_PG = np.empty(pg_shape, dtype=np.float64)
+    mode_tmp = np.empty(pg_shape, dtype=np.float64)
+    pg_tmp = np.empty(pg_shape, dtype=np.float64)
+    Df_PG = np.empty((n_P, n_g) + diag_tail, dtype=np.float64)
+    D0_G = np.empty((n_g,) + diag_tail, dtype=np.float64)
+    factor_shape = (n_P, n_g) + diag_tail
+    ZB = np.empty(factor_shape, dtype=np.float64)
+    eDB = np.empty(factor_shape, dtype=np.float64)
+    phi1B = np.empty(factor_shape, dtype=np.float64)
+    phi2B = np.empty(factor_shape, dtype=np.float64)
+    factor_scratch = np.empty(factor_shape, dtype=np.float64)
+    factor_large = np.empty(factor_shape, dtype=bool)
 
     # Persistent buffers — fixed addresses for the ctypes backends;
     # padding slots stay zero throughout (zero rows/cols there).
@@ -894,13 +959,21 @@ def _etd2_secant_driver(
     a_v = a[:dim]
     w_v = w[:dim] if w is not None else None
 
-    def eval_F(xbuf, x_v, Fbuf, F_v, ri, Df_PG_b, D0_G_b):
+    def gather_PG(state, out):
+        np.take(state, coupled_idx, axis=0, out=out.reshape(coupled_shape))
+
+    def block_action(factors, source, out):
+        lmm(Vi, source, out=mode_tmp)
+        np.multiply(factors, mode_tmp, out=mode_tmp)
+        lmm(V, mode_tmp, out=out)
+
+    def eval_F(xbuf, x_v, Fbuf, F_v, ri, Df_PG_b, D0_G_b, x_PG_out):
         """F <- off-diagonal + coupling remainder of the operator at x
         (SpMVs act on w = x + T Pi x, either as the scattered operand or
         as F(x) + the compact coupling term); returns the gathered x_PG."""
         x2 = x_v.reshape((n_k, N) + tail)
-        XG = x2[:, g_idx]  # (n_k, n_g[, K])
-        YG = lmm(T_P, XG)  # coupling u on (P, g[, K])
+        np.take(x2, g_idx, axis=1, out=XG)
+        lmm(T_P, XG, out=YG)
         if apply_off_G is None:
             np.copyto(w_v, x_v)
             w_v.reshape((n_k, N) + tail)[ixPG] += YG
@@ -908,12 +981,15 @@ def _etd2_secant_driver(
         else:
             apply_off(xbuf, Fbuf, ri)
             apply_off_G(YG, Fbuf, ri)
-        x_PG = XG[P]
-        SPxP = x_PG + lmm(T_PP, x_PG)
-        w_PG = x_PG + YG
-        delta = Df_PG_b * w_PG - D0_G_b * SPxP
-        F_v.reshape((n_k, N) + tail)[ixPG] += delta
-        return x_PG
+        np.take(XG, P, axis=0, out=x_PG_out)
+        lmm(T_PP, x_PG_out, out=pg_tmp)
+        np.add(x_PG_out, pg_tmp, out=pg_tmp)
+        np.add(x_PG_out, YG, out=YG)
+        np.multiply(Df_PG_b, YG, out=YG)
+        np.multiply(D0_G_b, pg_tmp, out=pg_tmp)
+        np.subtract(YG, pg_tmp, out=YG)
+        F_v.reshape((n_k, N) + tail)[ixPG] += YG
+        return x_PG_out
 
     if schedule is not None:
         sol_pixel = np.empty((dim, schedule.K_total), dtype=np.float64)
@@ -951,54 +1027,71 @@ def _etd2_secant_driver(
                 any_frozen = False
             # Diag factors are (dim, K) per-lane, (dim,) otherwise.
             D2 = D.reshape((n_k, N) + tail if per_lane else (n_k, N))
-            Df_PG = D2[ixPG]  # full diag on coupled plane
-            D0_G = D2[0, g_idx]  # k-shared part (kappa = 0)
+            np.take(
+                D, coupled_idx, axis=0,
+                out=Df_PG.reshape((len(coupled_idx),) + diag_tail),
+            )
+            np.take(D2[0], g_idx, axis=0, out=D0_G)
 
             # block factors for the exact slot: f(h * D0_i * lam_j)
             if per_lane:
-                ZB = lam[:, None, None] * (h * D0_G)[None]
+                np.multiply(lam[:, None, None], D0_G[None], out=ZB)
+                np.multiply(ZB, h[None, None, :], out=ZB)
             else:
-                ZB = lam[:, None] * (h * D0_G)[None]
-            eDB, phi1B, phi2B = _secant_phi_factors(ZB)
+                np.multiply(lam[:, None], D0_G[None], out=ZB)
+                ZB *= h
+            _secant_phi_factors(
+                ZB, out=(eDB, phi1B, phi2B),
+                work=(factor_scratch, factor_large),
+            )
             if batched and not per_lane:
                 Df_PG_b = Df_PG[:, :, None]
                 D0_G_b = D0_G[None, :, None]
-                eDB = eDB[:, :, None]
-                phi1B = phi1B[:, :, None]
-                phi2B = phi2B[:, :, None]
+                eDB_b = eDB[:, :, None]
+                phi1B_b = phi1B[:, :, None]
+                phi2B_b = phi2B[:, :, None]
             else:
                 Df_PG_b = Df_PG
                 D0_G_b = D0_G[None]
+                eDB_b, phi1B_b, phi2B_b = eDB, phi1B, phi2B
 
-            x_PG = eval_F(phc, phc_v, F_phi, F_phi_v, ri, Df_PG_b, D0_G_b)
-            F_PG = F_phi_v.reshape((n_k, N) + tail)[ixPG]
+            eval_F(
+                phc, phc_v, F_phi, F_phi_v, ri, Df_PG_b, D0_G_b, x_PG
+            )
+            gather_PG(F_phi_v, F_PG)
 
             # a = eD * phc + h * phi1 * F_phi, block-corrected on (P, g)
             np.multiply(eD_b, phc_v, out=a_v)
             np.multiply(phi1_b, F_phi_v, out=scratch)
             scratch *= h_b
             np.add(a_v, scratch, out=a_v)
-            a_PG = lmm(V, eDB * lmm(Vi, x_PG)) + h_pg * lmm(
-                V, phi1B * lmm(Vi, F_PG)
-            )
+            block_action(eDB_b, x_PG, a_PG)
+            block_action(phi1B_b, F_PG, pg_tmp)
+            np.multiply(pg_tmp, h_pg, out=pg_tmp)
+            np.add(a_PG, pg_tmp, out=a_PG)
             if any_frozen:
                 # A padded/harvested carousel lane is a strict identity
                 # map; pin it so V/Vi round-off cannot drift the tail.
                 a_PG[..., frozen] = x_PG[..., frozen]
             a_v.reshape((n_k, N) + tail)[ixPG] = a_PG
 
-            eval_F(a, a_v, F_a, F_a_v, ri, Df_PG_b, D0_G_b)
-            Fa_PG = F_a_v.reshape((n_k, N) + tail)[ixPG]
+            eval_F(
+                a, a_v, F_a, F_a_v, ri, Df_PG_b, D0_G_b, mode_tmp
+            )
+            gather_PG(F_a_v, YG)
 
             # phc = a + h * phi2 * (F_a - F_phi), block-corrected on (P, g)
             np.subtract(F_a_v, F_phi_v, out=scratch)
             scratch *= h_b
             np.multiply(scratch, phi2_b, out=scratch)
             np.add(a_v, scratch, out=phc_v)
-            phc_PG = a_PG + h_pg * lmm(V, phi2B * lmm(Vi, Fa_PG - F_PG))
+            np.subtract(YG, F_PG, out=pg_tmp)
+            block_action(phi2B_b, pg_tmp, pg_tmp)
+            np.multiply(pg_tmp, h_pg, out=pg_tmp)
+            np.add(a_PG, pg_tmp, out=pg_tmp)
             if any_frozen:
-                phc_PG[..., frozen] = x_PG[..., frozen]
-            phc_v.reshape((n_k, N) + tail)[ixPG] = phc_PG
+                pg_tmp[..., frozen] = x_PG[..., frozen]
+            phc_v.reshape((n_k, N) + tail)[ixPG] = pg_tmp
 
             if schedule is not None:
                 # Harvest lanes whose pixel just finished, BEFORE the
@@ -2733,6 +2826,7 @@ def _mkl_compact_apply_off_G(mkl_int_off, mkl_dec_off, sec_ops, dim, K,
         mkl_int_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
     if mkl_dec_G is not None:
         mkl_dec_G.set_mm_hint(K, expected_calls=expected_calls, layout=101)
+    YGr = np.empty((n_c, K), dtype=np.float64)
 
     def apply_off_G(YG, out, ri):
         # YG is a fresh array per call — no pointer caching here.
@@ -2751,7 +2845,7 @@ def _mkl_compact_apply_off_G(mkl_int_off, mkl_dec_off, sec_ops, dim, K,
             # Lane scaling commutes with the left product: scale the
             # small coupled plane instead of a full-state temporary,
             # then accumulate with beta = 1.
-            YGr = YGc * ri
+            np.multiply(YGc, ri, out=YGr)
             Br_p = YGr.ctypes.data_as(POINTER(c_double))
             mkl_dec_G.gemm_ctargs(
                 1.0, K, Br_p, K, C_p, K, beta=1.0, layout=101
@@ -3288,6 +3382,7 @@ def _etd2_secant_driver_cuda(
     # The scattered-operand buffer only exists on the copy+scatter path;
     # the compact template issues the SpMMs on the state buffers directly.
     cu_w = None if compact else cp.empty((dim, K), dtype=fl_pr)
+    cu_YGri = cp.empty((n_c, K), dtype=fl_pr) if compact else None
 
     cu_phc[:] = cp.asarray(phi.reshape(dim, K), dtype=fl_pr)
 
@@ -3363,7 +3458,8 @@ def _etd2_secant_driver_cuda(
             if cu_int_G is not None:
                 Fbuf += cu_int_G @ YGc
             if cu_dec_G is not None:
-                Fbuf += cu_dec_G @ (YGc * ri_b)
+                cp.multiply(YGc, ri_b, out=cu_YGri)
+                Fbuf += cu_dec_G @ cu_YGri
         x_PG = XG[P]
         SPxP = x_PG + lmm(T_PP, x_PG)
         w_PG = x_PG + YG
