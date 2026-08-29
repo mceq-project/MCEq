@@ -263,60 +263,6 @@ def test_mkl_secant_multirhs_and_carousel_match_numpy(secant_48mode_problem):
                 m.close()
 
 
-@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_mkl_secant_gemm_flag_matches_numpy(secant_48mode_problem, monkeypatch):
-    """config.secant_mkl_gemm routes the dense GEMMs through cblas_dgemm;
-    results must agree with the numpy-BLAS path at BLAS-swap tolerance."""
-    from MCEq.solvers import _mkl_left_matmul, _secant_left_matmul
-
-    monkeypatch.setattr(config, "secant_mkl_gemm", True)
-
-    # Unit check on the batched (mode, column, lane) contract, including
-    # a strided plane (the driver's low-E block view) and a strided out.
-    rng = np.random.default_rng(7)
-    matrix = rng.standard_normal((12, 48))
-    plane = rng.standard_normal((48, 9, 3))[:, :4]
-    out = np.empty((12, 9, 3))[:, :4]
-    np.testing.assert_allclose(
-        _mkl_left_matmul(matrix, plane, out=out),
-        _secant_left_matmul(matrix, plane),
-        rtol=1e-13,
-        atol=0,
-    )
-
-    p = secant_48mode_problem
-    ops = _secant_ops(p["n_k"])
-    nsteps = len(p["dX"])
-    mkl_int, mkl_dec, d_int, d_dec = _mkl_operators(p, ops)
-    try:
-        numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"], [], ops,
-        )
-        mkl_shared, _ = solv_mkl_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], mkl_int, mkl_dec, d_int, d_dec,
-            p["phi0"], [], ops,
-        )
-        np.testing.assert_allclose(
-            mkl_shared, numpy_shared, rtol=RTOL, atol=ATOL
-        )
-
-        dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
-        mkl_carousel = solv_mkl_etd2_secant_carousel(
-            mkl_int, mkl_dec, d_int, d_dec, dX_c, rho_c, phi_initial,
-            schedule, p["phi0"], ops,
-        )
-        reference = _single_axis_columns(p, p["paths"], ops)
-        np.testing.assert_allclose(
-            mkl_carousel, reference, rtol=RTOL, atol=ATOL
-        )
-        assert np.count_nonzero(mkl_carousel[:, 2]) == 0
-    finally:
-        for m in (mkl_int, mkl_dec):
-            if m is not None:
-                m.close()
-
-
 def _cuda_available():
     try:
         import cupy as cp

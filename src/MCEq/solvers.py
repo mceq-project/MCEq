@@ -747,51 +747,6 @@ def _secant_left_matmul(matrix, plane, out=None):
     return out
 
 
-def _mkl_left_matmul(matrix, plane, out=None):
-    """MKL ``cblas_dgemm`` variant of :func:`_secant_left_matmul`.
-
-    Same contract, the GEMM issued through the already loaded ``mkl_rt``
-    instead of numpy's linked BLAS; strided operands pass through their
-    leading dimensions. fp64 host arrays only.
-    """
-    from ctypes import POINTER, c_double
-
-    A = np.ascontiguousarray(matrix, dtype=np.float64)
-    trailing = plane.shape[1:]
-    B = plane.reshape(plane.shape[0], -1)
-    m, kk = A.shape
-    n = B.shape[1]
-    C = np.empty((m, n), dtype=np.float64) if out is None else out.reshape(m, n)
-    for name, M in (("plane", B), ("out", C)):
-        if M.dtype != np.float64 or M.strides[1] != 8 or M.strides[0] % 8:
-            raise ValueError(f"_mkl_left_matmul: {name} must be fp64 with unit inner stride")
-    config.mkl.cblas_dgemm(
-        101, 111, 111, m, n, kk,                       # row-major, NN
-        1.0, A.ctypes.data_as(POINTER(c_double)), kk,
-        B.ctypes.data_as(POINTER(c_double)), B.strides[0] // 8,
-        0.0, C.ctypes.data_as(POINTER(c_double)), C.strides[0] // 8,
-    )
-    return C.reshape((m,) + trailing)
-
-
-def _resolve_secant_left_matmul():
-    """Dense-GEMM hook for the MKL secant routes.
-
-    Returns :func:`_mkl_left_matmul` when ``config.secant_mkl_gemm`` is
-    set (registering the ``cblas_dgemm`` argtypes first), else None —
-    the driver then uses the numpy default.
-    """
-    if not getattr(config, "secant_mkl_gemm", False):
-        return None
-    if config.mkl is None:
-        raise RuntimeError(
-            "config.secant_mkl_gemm is set but the MKL library is not "
-            "loaded. Call config.set_mkl_threads(...) first."
-        )
-    _set_mkl_argtypes(config.mkl)
-    return _mkl_left_matmul
-
-
 def _secant_blas_thread_limit(batched):
     """Context capping OpenBLAS threads for the batched secant GEMMs.
 
@@ -826,19 +781,18 @@ def _secant_blas_thread_limit(batched):
 class _SecantHostBackend:
     """Stage execution on host arrays for :func:`_etd2_secant_driver`.
 
-    numpy elementwise kernels throughout; the SpMM is the ``apply_off``
-    closure of the route (scipy or MKL) and the MKL routes may swap the
-    mode-transform GEMM for :func:`_mkl_left_matmul`.
+    numpy elementwise kernels and BLAS GEMMs throughout; the SpMM is the
+    ``apply_off`` closure of the route (scipy or MKL).
     """
 
     xp = np
     dtype = np.float64
+    left_matmul = staticmethod(_secant_left_matmul)
 
-    def __init__(self, d_int, d_dec, apply_off, left_matmul=None):
+    def __init__(self, d_int, d_dec, apply_off):
         self.d_int = np.asarray(d_int, dtype=np.float64)
         self.d_dec = np.asarray(d_dec, dtype=np.float64)
         self.apply_off = apply_off
-        self.left_matmul = left_matmul or _secant_left_matmul
 
     def bind(self, dim, K, per_lane):
         if self.d_int.shape[0] != dim:
@@ -1371,9 +1325,7 @@ def _mkl_secant_backend(mkl_int_off, mkl_dec_off, d_int, d_dec, K, expected_call
             np.multiply(dec_buf, ri, out=dec_buf)
             np.add(out, dec_buf, out=out)
 
-    return _SecantHostBackend(
-        d_int, d_dec, apply_off, left_matmul=_resolve_secant_left_matmul()
-    )
+    return _SecantHostBackend(d_int, d_dec, apply_off)
 
 
 def solv_mkl_etd2_secant(
@@ -2324,16 +2276,6 @@ def _set_mkl_argtypes(mkl):
             POINTER(fl32), c_int, c_int, fl32, POINTER(fl32), c_int,
         ]
         mkl.mkl_sparse_s_mm.restype = c_int
-
-    # dense fp64 GEMM for the secant mode-coupling transforms
-    mkl.cblas_dgemm.argtypes = [
-        c_int, c_int, c_int,            # layout, transa, transb
-        c_int, c_int, c_int,            # m, n, k
-        fl64, POINTER(fl64), c_int,     # alpha, A, lda
-        POINTER(fl64), c_int,           # B, ldb
-        fl64, POINTER(fl64), c_int,     # beta, C, ldc
-    ]
-    mkl.cblas_dgemm.restype = None
 
     _MKL_ARGTYPES_SET = True
 
