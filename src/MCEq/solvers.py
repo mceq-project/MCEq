@@ -959,8 +959,14 @@ def _etd2_secant_driver(
     a_v = a[:dim]
     w_v = w[:dim] if w is not None else None
 
+    # All take() index sets below are in range by construction; mode="clip"
+    # skips the intermediate buffer numpy allocates for mode="raise" with
+    # out=, so the gathers are genuinely allocation-free (2-3x faster).
     def gather_PG(state, out):
-        np.take(state, coupled_idx, axis=0, out=out.reshape(coupled_shape))
+        np.take(
+            state, coupled_idx, axis=0, out=out.reshape(coupled_shape),
+            mode="clip",
+        )
 
     def block_action(factors, source, out):
         lmm(Vi, source, out=mode_tmp)
@@ -972,7 +978,7 @@ def _etd2_secant_driver(
         (SpMVs act on w = x + T Pi x, either as the scattered operand or
         as F(x) + the compact coupling term); returns the gathered x_PG."""
         x2 = x_v.reshape((n_k, N) + tail)
-        np.take(x2, g_idx, axis=1, out=XG)
+        np.take(x2, g_idx, axis=1, out=XG, mode="clip")
         lmm(T_P, XG, out=YG)
         if apply_off_G is None:
             np.copyto(w_v, x_v)
@@ -981,7 +987,7 @@ def _etd2_secant_driver(
         else:
             apply_off(xbuf, Fbuf, ri)
             apply_off_G(YG, Fbuf, ri)
-        np.take(XG, P, axis=0, out=x_PG_out)
+        np.take(XG, P, axis=0, out=x_PG_out, mode="clip")
         lmm(T_PP, x_PG_out, out=pg_tmp)
         np.add(x_PG_out, pg_tmp, out=pg_tmp)
         np.add(x_PG_out, YG, out=YG)
@@ -1030,16 +1036,19 @@ def _etd2_secant_driver(
             np.take(
                 D, coupled_idx, axis=0,
                 out=Df_PG.reshape((len(coupled_idx),) + diag_tail),
+                mode="clip",
             )
-            np.take(D2[0], g_idx, axis=0, out=D0_G)
+            np.take(D2[0], g_idx, axis=0, out=D0_G, mode="clip")
 
             # block factors for the exact slot: f(h * D0_i * lam_j)
+            # Multiply in the reference order lam * (h * D0) so the
+            # buffered form stays bit-identical to the allocating one.
             if per_lane:
-                np.multiply(lam[:, None, None], D0_G[None], out=ZB)
-                np.multiply(ZB, h[None, None, :], out=ZB)
+                np.multiply(D0_G[None], h[None, None, :], out=ZB)
+                np.multiply(lam[:, None, None], ZB, out=ZB)
             else:
-                np.multiply(lam[:, None], D0_G[None], out=ZB)
-                ZB *= h
+                np.multiply(D0_G[None], h, out=ZB)
+                np.multiply(lam[:, None], ZB, out=ZB)
             _secant_phi_factors(
                 ZB, out=(eDB, phi1B, phi2B),
                 work=(factor_scratch, factor_large),
