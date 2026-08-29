@@ -1716,6 +1716,16 @@ class MCEqRun:
         import MCEq.solvers
         from MCEq.solvers import _etd_split_cache
 
+        if sec_ops is not None:
+            # fp32 + secant is excluded by _resolve_batch_secant.
+            mkl_int_off, mkl_dec_off, d_int, d_dec = self._secant_kernel_operators(
+                sec_ops, "mkl"
+            )
+            return MCEq.solvers.solv_mkl_etd2_secant_multirhs(
+                nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec,
+                phi0, grid_idcs, sec_ops,
+            )
+
         if dtype == np.float64:
             cache_attr = "_mkl_etd2_cache_multirhs"
             matrix_cls = MCEq.solvers.MklSparseMatrix
@@ -1748,12 +1758,6 @@ class MCEqRun:
                     if old is not None:
                         old.close()
         c = getattr(self, cache_attr)
-        if sec_ops is not None:
-            # fp32 + secant is excluded by _resolve_batch_secant.
-            return MCEq.solvers.solv_mkl_etd2_secant_multirhs(
-                nsteps, dX, rho_inv, c["mkl_int_off"], c["mkl_dec_off"],
-                c["d_int"], c["d_dec"], phi0, grid_idcs, sec_ops,
-            )
         return solver(
             nsteps,
             dX,
@@ -1781,6 +1785,14 @@ class MCEqRun:
 
         fp_precision = 32 if dtype == np.float32 else 64
         dim, K = phi0.shape
+        if sec_ops is not None:
+            ctx = self._secant_kernel_operators(
+                sec_ops, "cuda", K=K, fp_precision=fp_precision,
+                device_id=int(getattr(config, "cuda_device_id", 0)),
+            )
+            return MCEq.solvers.solv_cuda_etd2_secant_multirhs(
+                nsteps, dX, rho_inv, ctx, phi0, grid_idcs, sec_ops
+            )
         cache_key = (fp_precision, K)
         cache = getattr(self, "_cuda_etd2_multirhs_cache", None)
         if cache is None:
@@ -1813,10 +1825,6 @@ class MCEqRun:
             }
             entry = cache[cache_key]
         ctx = entry["ctx"]
-        if sec_ops is not None:
-            return MCEq.solvers.solv_cuda_etd2_secant_multirhs(
-                nsteps, dX, rho_inv, ctx, phi0, grid_idcs, sec_ops
-            )
         return MCEq.solvers.solv_cuda_etd2_multirhs(
             nsteps,
             dX,
@@ -2558,6 +2566,20 @@ class MCEqRun:
                     f"_dispatch_carousel: cuda dtype must be float32/64, got {dtype}"
                 )
             fp_precision = 32 if dtype == np.float32 else 64
+            device_id = int(getattr(config, "cuda_device_id", 0))
+            phi_init_typed = np.asarray(phi_initial, dtype=dtype)
+            phi0_typed = np.asarray(phi0_per_pixel, dtype=dtype)
+            dX_typed = np.asarray(dX_c, dtype=dtype)
+            ri_typed = np.asarray(rho_inv_c, dtype=dtype)
+            if sec_ops is not None:
+                ctx = self._secant_kernel_operators(
+                    sec_ops, "cuda", K=K_pipe, fp_precision=fp_precision,
+                    device_id=device_id,
+                )
+                return MCEq.solvers.solv_cuda_etd2_secant_carousel(
+                    ctx, dX_typed, ri_typed, phi_init_typed, schedule,
+                    phi0_typed, sec_ops,
+                )
             cache_key = (fp_precision, K_pipe)
             cache = getattr(self, "_cuda_etd2_multirhs_cache", None)
             if cache is None:
@@ -2572,7 +2594,6 @@ class MCEqRun:
                 d_int, d_dec, int_off, dec_off = _etd_split_cache(
                     self.int_m, self.dec_m
                 )
-                device_id = int(getattr(config, "cuda_device_id", 0))
                 ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
                     int_off, dec_off, d_int, d_dec,
                     K=K_pipe, device_id=device_id,
@@ -2581,23 +2602,21 @@ class MCEqRun:
                 cache[cache_key] = {"int_m": self.int_m, "dec_m": self.dec_m, "ctx": ctx}
                 entry = cache[cache_key]
             ctx = entry["ctx"]
-            phi_init_typed = np.asarray(phi_initial, dtype=dtype)
-            phi0_typed = np.asarray(phi0_per_pixel, dtype=dtype)
-            dX_typed = np.asarray(dX_c, dtype=dtype)
-            ri_typed = np.asarray(rho_inv_c, dtype=dtype)
-            if sec_ops is not None:
-                sol = MCEq.solvers.solv_cuda_etd2_secant_carousel(
-                    ctx, dX_typed, ri_typed, phi_init_typed, schedule,
-                    phi0_typed, sec_ops,
-                )
-            else:
-                sol = MCEq.solvers.solv_cuda_etd2_carousel(
-                    ctx, dX_typed, ri_typed, phi_init_typed, schedule, phi0_typed
-                )
-            return sol
+            return MCEq.solvers.solv_cuda_etd2_carousel(
+                ctx, dX_typed, ri_typed, phi_init_typed, schedule, phi0_typed
+            )
         if kc == "mkl_etd2":
             from MCEq.solvers import _etd_split_cache
 
+            if sec_ops is not None:
+                mkl_int_off, mkl_dec_off, d_int, d_dec = self._secant_kernel_operators(
+                    sec_ops, "mkl"
+                )
+                sol = MCEq.solvers.solv_mkl_etd2_secant_carousel(
+                    mkl_int_off, mkl_dec_off, d_int, d_dec, dX_c, rho_inv_c,
+                    phi_initial, schedule, phi0_per_pixel, sec_ops,
+                )
+                return np.asarray(sol, dtype=np.dtype(dtype))
             cache_attr = "_mkl_etd2_cache_multirhs"
             cached = getattr(self, cache_attr, None)
             if (
@@ -2626,17 +2645,10 @@ class MCEqRun:
                         if old is not None:
                             old.close()
             c = getattr(self, cache_attr)
-            if sec_ops is not None:
-                sol = MCEq.solvers.solv_mkl_etd2_secant_carousel(
-                    c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
-                    dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-                    sec_ops,
-                )
-            else:
-                sol = MCEq.solvers.solv_mkl_etd2_carousel(
-                    c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
-                    dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-                )
+            sol = MCEq.solvers.solv_mkl_etd2_carousel(
+                c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
+                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+            )
             return np.asarray(sol, dtype=np.dtype(dtype))
         if kc in ("accelerate_etd2", "spacc_etd2"):
             import MCEq.spacc as spacc
@@ -2947,17 +2959,89 @@ class MCEqRun:
         return None
 
     def _build_secant_ops(self):
-        """Build the constant sec(theta) kernel operator set for the
-        current geometry (see :mod:`MCEq.secant`)."""
+        """The constant sec(theta) operator set for the current geometry
+        (see :mod:`MCEq.secant`), built once per (geometry, ``secant_*``
+        parameters) and reused across solves — the kernels' operator
+        caches key on its identity."""
         from MCEq.secant import build_secant_kernel_ops
 
-        return build_secant_kernel_ops(
-            self._mceq_db.k_grid,
-            self._energy_grid.c,
-            self.dim_states // self.dim,
-            config,
-            theta_cap_deg=config.secant_theta_cap(),
+        k_grid = np.asarray(self._mceq_db.k_grid)
+        e_centers = np.asarray(self._energy_grid.c)
+        n_species = self.dim_states // self.dim
+        key = (
+            hash(k_grid.tobytes()),
+            hash(e_centers.tobytes()),
+            n_species,
+            config.secant_theta_cap(),
+            config.secant_theta_row_kmax,
+            config.secant_theta_lam_rel,
+            config.secant_theta_w_flat,
+            getattr(config, "secant_theta_e_max", None),
         )
+        cached = getattr(self, "_secant_ops_cache", None)
+        if cached is None or cached[0] != key:
+            ops = build_secant_kernel_ops(
+                k_grid, e_centers, n_species, config,
+                theta_cap_deg=config.secant_theta_cap(),
+            )
+            self._secant_ops_cache = cached = (key, ops)
+        return cached[1]
+
+    def _secant_kernel_operators(
+        self, sec_ops, backend, K=1, fp_precision=64, device_id=0
+    ):
+        """Operators of the secant kernels, in their low-E-first layout.
+
+        :func:`MCEq.solvers.secant_split` permutes the diagonal /
+        off-diagonal split of ``int_m`` / ``dec_m`` once. This returns it
+        for ``backend="numpy"``, wrapped in MKL CSR handles for ``"mkl"``,
+        and as a :class:`~MCEq.solvers.CudaEtd2MultiRHSContext` of ``K``
+        lanes for ``"cuda"`` (K = 1 is the single-axis solve). Cached on
+        the instance against the identity of the matrices and of the
+        operator set; MKL handles of a rotated cache are closed.
+        """
+        import MCEq.solvers
+
+        cache = getattr(self, "_secant_operator_cache", None)
+        if (
+            cache is None
+            or cache["int_m"] is not self.int_m
+            or cache["dec_m"] is not self.dec_m
+            or cache["sec_ops"] is not sec_ops
+        ):
+            if cache is not None:
+                for m in cache["mkl"] or ():
+                    if m is not None:
+                        m.close()
+            cache = {
+                "int_m": self.int_m,
+                "dec_m": self.dec_m,
+                "sec_ops": sec_ops,
+                "split": MCEq.solvers.secant_split(self.int_m, self.dec_m, sec_ops),
+                "mkl": None,
+                "cuda": {},
+            }
+            self._secant_operator_cache = cache
+        d_int, d_dec, int_off, dec_off = cache["split"]
+        if backend == "numpy":
+            return cache["split"]
+        if backend == "mkl":
+            if cache["mkl"] is None:
+                cache["mkl"] = tuple(
+                    MCEq.solvers.MklSparseMatrix(off) if off.nnz else None
+                    for off in (int_off, dec_off)
+                )
+            return cache["mkl"] + (d_int, d_dec)
+        if backend == "cuda":
+            key = (int(fp_precision), int(K), int(device_id))
+            ctx = cache["cuda"].get(key)
+            if ctx is None:
+                ctx = cache["cuda"][key] = MCEq.solvers.CudaEtd2MultiRHSContext(
+                    int_off, dec_off, d_int, d_dec, K=int(K),
+                    device_id=int(device_id), fp_precision=int(fp_precision),
+                )
+            return ctx
+        raise ValueError(f"_secant_kernel_operators: unknown backend {backend!r}")
 
     def _build_kernel_dispatch(self, nsteps, dX, rho_inv, phi0, grid_idcs):
         """Resolve ``config.kernel_config`` to ``(kernel, args)``.
@@ -3104,6 +3188,15 @@ class MCEqRun:
         if kc in ("mkl", "mkl_etd2"):
             from MCEq.solvers import MklSparseMatrix, _etd_split_cache
 
+            if secant_on:
+                sec_ops = self._build_secant_ops()
+                mkl_int_off, mkl_dec_off, d_int, d_dec = self._secant_kernel_operators(
+                    sec_ops, "mkl"
+                )
+                return MCEq.solvers.solv_mkl_etd2_secant, (
+                    nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec,
+                    phi0, grid_idcs, sec_ops,
+                )
             # Cache the diagonal/off-diagonal split AND its MKL handle
             # wrappers, keyed against ``int_m`` / ``dec_m`` identity. When
             # either matrix is rebuilt we deterministically free the old
@@ -3148,19 +3241,6 @@ class MCEqRun:
                         if old is not None:
                             old.close()  # idempotent
             c = self._mkl_etd2_cache
-            if secant_on:
-                return MCEq.solvers.solv_mkl_etd2_secant, (
-                    nsteps,
-                    dX,
-                    rho_inv,
-                    c["mkl_int_off"],
-                    c["mkl_dec_off"],
-                    c["d_int"],
-                    c["d_dec"],
-                    phi0,
-                    grid_idcs,
-                    self._build_secant_ops(),
-                )
             return MCEq.solvers.solv_mkl_etd2, (
                 nsteps,
                 dX,
@@ -3176,6 +3256,15 @@ class MCEqRun:
         if kc in ("cuda", "cuda_etd2"):
             from MCEq.solvers import CudaEtd2Context, _etd_split_cache
 
+            if secant_on:
+                sec_ops = self._build_secant_ops()
+                ctx = self._secant_kernel_operators(
+                    sec_ops, "cuda", K=1, fp_precision=config.cuda_fp_precision,
+                    device_id=self._cuda_device,
+                )
+                return MCEq.solvers.solv_cuda_etd2_secant, (
+                    nsteps, dX, rho_inv, ctx, phi0, grid_idcs, sec_ops,
+                )
             cached = getattr(self, "_cuda_etd2_cache", None)
             if (
                 cached is None
@@ -3210,16 +3299,6 @@ class MCEqRun:
                     "ctx": ctx,
                 }
             ctx = self._cuda_etd2_cache["ctx"]
-            if secant_on:
-                return MCEq.solvers.solv_cuda_etd2_secant, (
-                    nsteps,
-                    dX,
-                    rho_inv,
-                    ctx,
-                    phi0,
-                    grid_idcs,
-                    self._build_secant_ops(),
-                )
             return MCEq.solvers.solv_cuda_etd2, (
                 nsteps,
                 dX,

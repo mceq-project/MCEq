@@ -20,9 +20,10 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.solvers import (
     MklSparseMatrix,
-    _etd_split_cache,
     compile_carousel_schedule,
     schedule_lpt,
+    secant_layout,
+    secant_split,
     solv_mkl_etd2_secant_carousel,
     solv_mkl_etd2_secant_multirhs,
     solv_numpy_etd2_secant,
@@ -136,6 +137,43 @@ def _carousel_inputs(problem, K_pipe):
     )
 
 
+def _mkl_operators(problem, sec_ops):
+    """MKL CSR handles + diagonals of the secant-layout split."""
+    d_int, d_dec, int_off, dec_off = secant_split(
+        problem["int_m"], problem["dec_m"], sec_ops
+    )
+    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
+    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
+    return mkl_int, mkl_dec, d_int, d_dec
+
+
+def test_secant_layout_and_split(secant_48mode_problem):
+    """Stage 0: in the permuted state the coupled plane is the corner
+    block, and the permuted operators act on it as the originals act on
+    the original state (bit-identical CSR SpMM: row order preserved)."""
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    lay = secant_layout(ops, p["dim"])
+    x = p["phi0"]
+    xp = x[lay.perm]
+    corner = xp.reshape(lay.n_k, lay.N, p["K"])[: lay.n_P, : lay.n_g]
+    plane = x.reshape(lay.n_k, lay.N, p["K"])[np.ix_(ops["P"], ops["low_e_idx"])]
+    np.testing.assert_array_equal(corner, plane)
+    assert np.array_equal(xp[lay.inv_perm], x)
+
+    d_int, d_dec, int_off, dec_off = secant_split(p["int_m"], p["dec_m"], ops)
+    assert np.array_equal(d_int, p["int_m"].diagonal()[lay.perm])
+    for m, off in ((p["int_m"], int_off), (p["dec_m"], dec_off)):
+        ref = (m - sp.diags(m.diagonal())) @ x
+        np.testing.assert_array_equal((off @ xp)[lay.inv_perm], ref)
+    # The cache serves the same objects while int_m / dec_m / layout stand.
+    assert secant_split(p["int_m"], p["dec_m"], ops)[2] is int_off
+
+    bad = dict(ops, P=np.array([0, 2, 3]))
+    with pytest.raises(ValueError):
+        secant_layout(bad, p["dim"])
+
+
 @pytest.mark.parametrize("operator_scale", [0.7, 1.0])
 def test_numpy_secant_multirhs_matches_repeated_single(
     secant_48mode_problem, operator_scale
@@ -195,9 +233,7 @@ def test_mkl_secant_multirhs_and_carousel_match_numpy(secant_48mode_problem):
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
     nsteps = len(p["dX"])
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(p["int_m"], p["dec_m"])
-    mkl_int = MklSparseMatrix(int_off.tocsr()) if int_off.nnz else None
-    mkl_dec = MklSparseMatrix(dec_off.tocsr()) if dec_off.nnz else None
+    mkl_int, mkl_dec, d_int, d_dec = _mkl_operators(p, ops)
     try:
         numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
             nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
@@ -235,12 +271,14 @@ def test_mkl_secant_gemm_flag_matches_numpy(secant_48mode_problem, monkeypatch):
 
     monkeypatch.setattr(config, "secant_mkl_gemm", True)
 
-    # Unit check on the batched (mode, state, lane) contract.
+    # Unit check on the batched (mode, column, lane) contract, including
+    # a strided plane (the driver's low-E block view) and a strided out.
     rng = np.random.default_rng(7)
     matrix = rng.standard_normal((12, 48))
-    plane = rng.standard_normal((48, 4, 3))
+    plane = rng.standard_normal((48, 9, 3))[:, :4]
+    out = np.empty((12, 9, 3))[:, :4]
     np.testing.assert_allclose(
-        _mkl_left_matmul(matrix, plane),
+        _mkl_left_matmul(matrix, plane, out=out),
         _secant_left_matmul(matrix, plane),
         rtol=1e-13,
         atol=0,
@@ -249,9 +287,7 @@ def test_mkl_secant_gemm_flag_matches_numpy(secant_48mode_problem, monkeypatch):
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
     nsteps = len(p["dX"])
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(p["int_m"], p["dec_m"])
-    mkl_int = MklSparseMatrix(int_off.tocsr()) if int_off.nnz else None
-    mkl_dec = MklSparseMatrix(dec_off.tocsr()) if dec_off.nnz else None
+    mkl_int, mkl_dec, d_int, d_dec = _mkl_operators(p, ops)
     try:
         numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
             nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
@@ -281,62 +317,6 @@ def test_mkl_secant_gemm_flag_matches_numpy(secant_48mode_problem, monkeypatch):
                 m.close()
 
 
-@pytest.mark.parametrize("use_mkl", [False, True])
-def test_secant_compact_coupling_matches_scatter(
-    secant_48mode_problem, monkeypatch, use_mkl
-):
-    """config.secant_compact_coupling applies the coupling through
-    column-restricted operators; results must agree with the scatter
-    path at round-off-reordering tolerance on numpy and MKL."""
-    if use_mkl and not config.has_mkl:
-        pytest.skip("MKL not available")
-    p = secant_48mode_problem
-    ops = _secant_ops(p["n_k"])
-    nsteps = len(p["dX"])
-
-    # Scatter-path references, flag off (the default).
-    ref_shared, _ = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-        p["phi0"], [], ops,
-    )
-    ref_carousel = _single_axis_columns(p, p["paths"], ops)
-
-    monkeypatch.setattr(config, "secant_compact_coupling", True)
-    dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
-    if use_mkl:
-        d_int, d_dec, int_off, dec_off = _etd_split_cache(
-            p["int_m"], p["dec_m"]
-        )
-        mkl_int = MklSparseMatrix(int_off.tocsr()) if int_off.nnz else None
-        mkl_dec = MklSparseMatrix(dec_off.tocsr()) if dec_off.nnz else None
-        try:
-            shared, _ = solv_mkl_etd2_secant_multirhs(
-                nsteps, p["dX"], p["rho_inv"], mkl_int, mkl_dec,
-                d_int, d_dec, p["phi0"], [], ops,
-            )
-            carousel = solv_mkl_etd2_secant_carousel(
-                mkl_int, mkl_dec, d_int, d_dec, dX_c, rho_c, phi_initial,
-                schedule, p["phi0"], ops,
-            )
-        finally:
-            for m in (mkl_int, mkl_dec):
-                if m is not None:
-                    m.close()
-    else:
-        shared, _ = solv_numpy_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"], [], ops,
-        )
-        carousel = solv_numpy_etd2_secant_carousel(
-            p["int_m"], p["dec_m"], dX_c, rho_c, phi_initial, schedule,
-            p["phi0"], ops,
-        )
-
-    np.testing.assert_allclose(shared, ref_shared, rtol=RTOL, atol=ATOL)
-    np.testing.assert_allclose(carousel, ref_carousel, rtol=RTOL, atol=ATOL)
-    assert np.count_nonzero(carousel[:, 2]) == 0
-
-
 def _cuda_available():
     try:
         import cupy as cp
@@ -361,9 +341,7 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
     nsteps = len(p["dX"])
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(p["int_m"], p["dec_m"])
-    int_off = int_off.tocsr()
-    dec_off = dec_off.tocsr()
+    d_int, d_dec, int_off, dec_off = secant_split(p["int_m"], p["dec_m"], ops)
 
     multi_ctx = CudaEtd2MultiRHSContext(
         int_off, dec_off, d_int, d_dec, K=p["K"], device_id=0, fp_precision=64
@@ -402,48 +380,6 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
     np.testing.assert_allclose(
         cuda_carousel, np.stack(cuda_single, axis=1), rtol=2e-11, atol=2e-12
     )
-
-
-@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
-def test_cuda_secant_compact_coupling_matches_scatter(
-    secant_48mode_problem, monkeypatch
-):
-    """The compact template on the CUDA driver agrees with the numpy
-    scatter-path references at BLAS-swap tolerance."""
-    from MCEq.solvers import (
-        CudaEtd2MultiRHSContext,
-        solv_cuda_etd2_secant_carousel,
-        solv_cuda_etd2_secant_multirhs,
-    )
-
-    p = secant_48mode_problem
-    ops = _secant_ops(p["n_k"])
-    nsteps = len(p["dX"])
-    ref_shared, _ = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
-        [], ops,
-    )
-    ref_carousel = _single_axis_columns(p, p["paths"], ops)
-
-    monkeypatch.setattr(config, "secant_compact_coupling", True)
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(p["int_m"], p["dec_m"])
-    multi_ctx = CudaEtd2MultiRHSContext(
-        int_off.tocsr(), dec_off.tocsr(), d_int, d_dec, K=p["K"],
-        device_id=0, fp_precision=64,
-    )
-    cuda_shared, _ = solv_cuda_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], multi_ctx, p["phi0"], [], ops
-    )
-    np.testing.assert_allclose(cuda_shared, ref_shared, rtol=2e-11, atol=2e-12)
-
-    dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=p["K"])
-    cuda_carousel = solv_cuda_etd2_secant_carousel(
-        multi_ctx, dX_c, rho_c, phi_initial, schedule, p["phi0"], ops
-    )
-    np.testing.assert_allclose(
-        cuda_carousel, ref_carousel, rtol=2e-11, atol=2e-12
-    )
-    assert np.count_nonzero(cuda_carousel[:, 2]) == 0
 
 
 # ---------------------------------------------------------------------------

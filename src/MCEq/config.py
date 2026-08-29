@@ -413,15 +413,6 @@ secant_blas_threads = 4
 #: results at round-off level, so the default preserves bit-identity
 #: between the MKL and numpy secant routes.
 secant_mkl_gemm = False
-#: apply the secant coupling through column-restricted operators instead
-#: of the scattered state copy: F(x + scatter(YG)) = F(x) + off[:, idx] @ YG,
-#: with idx the coupled (mode, low-E-column) state indices. Removes the
-#: full-state ``w`` copy and the fancy-index scatter from every driver
-#: stage on all three backends (numpy, MKL, CUDA) at the price of one
-#: extra compact SpMM (~10-15% of the off-diagonal nnz). Same arithmetic
-#: reordered — results differ at round-off; default off preserves
-#: bit-identity with the scatter path.
-secant_compact_coupling = False
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
