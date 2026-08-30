@@ -166,8 +166,8 @@ def test_secant_layout_and_split(secant_48mode_problem):
     for m, off in ((p["int_m"], int_off), (p["dec_m"], dec_off)):
         ref = (m - sp.diags(m.diagonal())) @ x
         np.testing.assert_array_equal((off @ xp)[lay.inv_perm], ref)
-    # The cache serves the same objects while int_m / dec_m / layout stand.
-    assert secant_split(p["int_m"], p["dec_m"], ops)[2] is int_off
+    # (Caching of the compiled operator is MCEqRun._compiled_operator's
+    # job; compile_operator / secant_split are pure.)
 
     bad = dict(ops, P=np.array([0, 2, 3]))
     with pytest.raises(ValueError):
