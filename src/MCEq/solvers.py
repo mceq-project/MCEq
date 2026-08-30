@@ -1,3 +1,4 @@
+from ctypes import POINTER, c_double
 from types import SimpleNamespace
 
 import numpy as np
@@ -691,10 +692,16 @@ class MklApplyOff:
 # --- backends ------------------------------------------------------------
 
 
-def _dptr(arr):
-    from ctypes import POINTER, c_double
+_C_DOUBLE_P = POINTER(c_double)
 
-    return arr.ctypes.data_as(POINTER(c_double))
+#: Below this many state elements the fused C post-apply does not pay for
+#: its ctypes call (4 ufunc passes ≈ 7 µs vs 19 µs at dim = 4182, K = 1;
+#: 0.18 vs 0.10 ms at dim = 171360, K = 1; 4.8 vs 1.9 ms at K = 8).
+_FUSED_MIN_ELEMENTS = 1 << 16
+
+
+def _dptr(arr):
+    return arr.ctypes.data_as(_C_DOUBLE_P)
 
 
 def _rowmajor_post_apply():
@@ -742,6 +749,8 @@ class HostBackend:
         )
         self._scratch = np.empty((dim, K), dtype=np.float64)
         self._block = None
+        self._fused = self._post is not None and dim * K >= _FUSED_MIN_ELEMENTS
+        self._h1 = np.empty(1, dtype=np.float64)
         self._apply_off.bind(dim, K, nsteps)
 
     def coupling(self):
@@ -779,14 +788,15 @@ class HostBackend:
         per_lane = factor.ndim == 2 and factor.shape[1] == K and K > 1
         f_row, f_col = (K, 1) if per_lane else (1, 0)
         if np.ndim(h) == 0:
-            h_arr, h_stride = np.array([h], dtype=np.float64), 0
+            self._h1[0] = h
+            h_arr, h_stride = self._h1, 0
         else:
             h_arr, h_stride = np.ascontiguousarray(h, dtype=np.float64), 1
         return dim, K, _dptr(h_arr), h_stride, f_row, f_col, h_arr
 
     def predictor(self, eD, x, phi1, F, h, out):
         """``out = eD x + h phi1 F`` — one fused pass, or four ufunc passes."""
-        if self._post is not None:
+        if self._fused:
             dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(eD, h, out)
             self._post[0](
                 dim, K, h_p, h_s, _dptr(eD), _dptr(phi1), f_row, f_col,
@@ -801,7 +811,7 @@ class HostBackend:
 
     def corrector(self, a, F_a, F, phi2, h, out):
         """``out = a + h phi2 (F_a - F)`` — one fused pass, or four ufunc passes."""
-        if self._post is not None:
+        if self._fused:
             dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(phi2, h, out)
             self._post[1](
                 dim, K, h_p, h_s, _dptr(phi2), f_row, f_col,

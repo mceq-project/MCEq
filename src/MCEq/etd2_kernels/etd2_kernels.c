@@ -212,6 +212,13 @@ void etd2_post_apply1_rowmajor(
     const double *eD, const double *phi1, int f_row, int f_col,
     const double *x, const double *F, double *a)
 {
+    if (K == 1)
+    {   /* single axis: one flat pass, no lane loop */
+        const double h0 = h[0];
+        for (int i = 0; i < dim; ++i)
+            a[i] = eD[i] * x[i] + h0 * phi1[i] * F[i];
+        return;
+    }
     for (int i = 0; i < dim; ++i)
     {
         const size_t r = (size_t)i * K;
@@ -232,6 +239,13 @@ void etd2_post_apply2_rowmajor(
     const double *phi2, int f_row, int f_col,
     const double *a, const double *F_a, const double *F, double *x)
 {
+    if (K == 1)
+    {
+        const double h0 = h[0];
+        for (int i = 0; i < dim; ++i)
+            x[i] = a[i] + h0 * phi2[i] * (F_a[i] - F[i]);
+        return;
+    }
     for (int i = 0; i < dim; ++i)
     {
         const size_t r = (size_t)i * K;
