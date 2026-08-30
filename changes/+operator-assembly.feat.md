@@ -12,4 +12,6 @@ the batched CUDA routes now honour `cuda_gpu_id` like the single-axis solve. The
 routes use row-major SpMM on C-ordered `(dim, K)` buffers, which measured 1.3-2x faster
 than the former column-major tiled SpMM; block (BSR) storage is dropped from the driver
 (`config.mkl_bsr_blocksize` removed; `numpy_bsr_blocksize` only serves the rho-stack
-kernels). Not yet on the driver: the Accelerate kernels and the MKL fp32 multi-RHS kernel.
+kernels). The host predictor / corrector run as fused row-major C kernels
+(`etd2_post_apply{1,2}_rowmajor`, 2.5x the numpy ufunc chains at 2D K=8) with a ufunc
+fallback. Not yet on the driver: the Accelerate kernels and the MKL fp32 multi-RHS kernel.

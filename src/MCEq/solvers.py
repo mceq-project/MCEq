@@ -691,6 +691,26 @@ class MklApplyOff:
 # --- backends ------------------------------------------------------------
 
 
+def _dptr(arr):
+    from ctypes import POINTER, c_double
+
+    return arr.ctypes.data_as(POINTER(c_double))
+
+
+def _rowmajor_post_apply():
+    """The fused fp64 predictor / corrector of ``MCEq.etd2_kernels`` for the
+    row-major ``(dim, K)`` state, or ``None`` when the extension is missing
+    (the host backend then falls back to numpy ufuncs)."""
+    try:
+        from MCEq.etd2_kernels import (
+            etd2_post_apply1_rowmajor,
+            etd2_post_apply2_rowmajor,
+        )
+    except ImportError:
+        return None
+    return etd2_post_apply1_rowmajor, etd2_post_apply2_rowmajor
+
+
 class HostBackend:
     """Stage execution on host arrays for :func:`etd2_driver`.
 
@@ -709,6 +729,7 @@ class HostBackend:
         self.name = apply_off.name
         self.d_int, self.d_dec = op.d_int, op.d_dec
         self._apply_off = apply_off
+        self._post = _rowmajor_post_apply()
 
     def bind(self, dim, K, per_lane, nsteps):
         if self.op.dim != dim:
@@ -751,8 +772,27 @@ class HostBackend:
         _secant_phi_factors(ZB, out=(eDB, phi1B, phi2B), work=(scratch, large))
         return eDB, phi1B, phi2B
 
+    def _fused_args(self, factor, h, out):
+        """Strides of the fused C post-apply for ``(dim,)`` vs ``(dim, K)``
+        factors and scalar vs ``(K,)`` step sizes (see ``etd2_kernels.c``)."""
+        dim, K = out.shape
+        per_lane = factor.ndim == 2 and factor.shape[1] == K and K > 1
+        f_row, f_col = (K, 1) if per_lane else (1, 0)
+        if np.ndim(h) == 0:
+            h_arr, h_stride = np.array([h], dtype=np.float64), 0
+        else:
+            h_arr, h_stride = np.ascontiguousarray(h, dtype=np.float64), 1
+        return dim, K, _dptr(h_arr), h_stride, f_row, f_col, h_arr
+
     def predictor(self, eD, x, phi1, F, h, out):
-        """``out = eD x + h phi1 F``."""
+        """``out = eD x + h phi1 F`` — one fused pass, or four ufunc passes."""
+        if self._post is not None:
+            dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(eD, h, out)
+            self._post[0](
+                dim, K, h_p, h_s, _dptr(eD), _dptr(phi1), f_row, f_col,
+                _dptr(x), _dptr(F), _dptr(out),
+            )
+            return
         s = self._scratch
         np.multiply(eD, x, out=out)
         np.multiply(phi1, F, out=s)
@@ -760,7 +800,14 @@ class HostBackend:
         np.add(out, s, out=out)
 
     def corrector(self, a, F_a, F, phi2, h, out):
-        """``out = a + h phi2 (F_a - F)``."""
+        """``out = a + h phi2 (F_a - F)`` — one fused pass, or four ufunc passes."""
+        if self._post is not None:
+            dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(phi2, h, out)
+            self._post[1](
+                dim, K, h_p, h_s, _dptr(phi2), f_row, f_col,
+                _dptr(a), _dptr(F_a), _dptr(F), _dptr(out),
+            )
+            return
         s = self._scratch
         np.subtract(F_a, F, out=s)
         s *= h

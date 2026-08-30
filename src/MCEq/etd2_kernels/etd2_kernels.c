@@ -195,3 +195,51 @@ void etd2_post_apply2_multipath_f32(
         }
     }
 }
+
+/* ---- row-major (dim, K) state, the layout of MCEq.solvers.etd2_driver ----
+ *
+ * The lane axis is contiguous. Factors eD / phi1 / phi2 are either (dim,)
+ * shared across lanes (f_row = 1, f_col = 0) or (dim, K) per lane
+ * (f_row = K, f_col = 1); h is a scalar (h_stride = 0) or a (K,) lane row
+ * (h_stride = 1). One fused pass replaces the 3-4 ufunc passes of the
+ * numpy formulation. */
+
+/* a = eD * x + h * phi1 * F */
+MCEQ_EXPORT
+void etd2_post_apply1_rowmajor(
+    int dim, int K,
+    const double *h, int h_stride,
+    const double *eD, const double *phi1, int f_row, int f_col,
+    const double *x, const double *F, double *a)
+{
+    for (int i = 0; i < dim; ++i)
+    {
+        const size_t r = (size_t)i * K;
+        const size_t fi = (size_t)i * f_row;
+        for (int k = 0; k < K; ++k)
+        {
+            const size_t f = fi + (size_t)k * f_col;
+            a[r + k] = eD[f] * x[r + k] + h[k * h_stride] * phi1[f] * F[r + k];
+        }
+    }
+}
+
+/* x = a + h * phi2 * (F_a - F) */
+MCEQ_EXPORT
+void etd2_post_apply2_rowmajor(
+    int dim, int K,
+    const double *h, int h_stride,
+    const double *phi2, int f_row, int f_col,
+    const double *a, const double *F_a, const double *F, double *x)
+{
+    for (int i = 0; i < dim; ++i)
+    {
+        const size_t r = (size_t)i * K;
+        const size_t fi = (size_t)i * f_row;
+        for (int k = 0; k < K; ++k)
+        {
+            const size_t f = fi + (size_t)k * f_col;
+            x[r + k] = a[r + k] + h[k * h_stride] * phi2[f] * (F_a[r + k] - F[r + k]);
+        }
+    }
+}
