@@ -36,68 +36,58 @@ atmosphere at θ = 89° in ~1300 steps. See
 :doc:`/mceq_v1.x_v2_diff` for the full derivation, validation, and
 the EM-cascade caveat.
 
-Available kernels
-=================
+Architecture
+============
 
-.. list-table::
-   :header-rows: 1
-   :widths: 20 18 12 50
+The solver is layered like the matrix build:
 
-   * - Kernel
-     - Backend
-     - Default
-     - Notes
-   * - :func:`solv_numpy_etd2`
-     - scipy CSR / BSR
-     - everywhere
-     - Pure-Python fallback. Off-diagonals stored as BSR
-       (:py:data:`config.numpy_bsr_blocksize` = 11) for ~2× faster
-       SpMV than scipy CSR.
-   * - :func:`solv_spacc_etd2`
-     - Apple Accelerate (vecLib)
-     - macOS
-     - Picked by ``kernel_config = "auto"`` on macOS. Off-diagonals
-       wrapped in :class:`~MCEq.spacc.SpaccMatrix`.
-   * - :func:`solv_mkl_etd2`
-     - Intel MKL sparse BLAS
-     - Linux/Windows when ``libmkl_rt`` is found
-     - Picked by ``kernel_config = "auto"`` when MKL is present.
-       Off-diagonals stored as BSR
-       (:py:data:`config.mkl_bsr_blocksize` = 6) — ~1.5× faster
-       than MKL CSR; ~12× faster than ``numpy_etd2`` on the
-       benchmark in §8.4.
-   * - :func:`solv_cuda_etd2`
-     - NVIDIA cuSPARSE via cupy
-     - never auto-selected
-     - Pick explicitly with ``config.kernel_config = "cuda_etd2"``.
-       cuSPARSE BSR is not exposed by cupy 13, so this stays on
-       CSR. Roughly on par with MKL for the SIBYLL21 system on a
-       modern GPU; wins on much larger state vectors.
+1. :class:`MCEq.core.MatrixBuilder` produces the constant operator as two
+   sparse matrices, ``int_m`` (:math:`A`) and ``dec_m`` (:math:`B`);
+   :mod:`MCEq.secant` produces the constant sec(θ) mode-coupling operators.
+2. :func:`MCEq.operator_assembly.compile_operator` assembles a
+   :class:`~MCEq.operator_assembly.CompiledOperator` — the diagonal /
+   off-diagonal split as CSR in the kernel's state layout (the low-E-first
+   layout when the sec(θ) transport is on), the layout itself, and the
+   coupling operators. Host-only and backend-agnostic; every backend sums
+   the same products in the same order, so the cross-backend agreement of
+   the kernels (≤ 1e-11 relative in fp64) is a property of this object.
+3. A backend binds the compiled operator to its library: :func:`numpy_backend`
+   (scipy CSR SpMM), :func:`mkl_backend` (MKL sparse BLAS handles,
+   row-major SpMM over the ``(dim, K)`` state) or :func:`cuda_backend`
+   (cuSPARSE via cupy, fp64 or fp32 with fp64 diagonal factors). The
+   backend owns the handles / device buffers and executes the stages of the
+   step on its array module — nothing else differs between backends.
+4. :func:`etd2_driver` is the one step loop. It runs the single-axis solve
+   (``K = 1``), the shared-path multi-RHS solve (``(dim, K)`` state, one
+   path) and the LPT carousel (``(nsteps, K)`` per-lane paths with harvest /
+   reset events, see :func:`schedule_lpt` and :func:`compile_carousel_schedule`),
+   with or without the sec(θ) coupling. Its docstring lists the numbered
+   stages of a step.
 
-The auto-selection logic lives in :mod:`MCEq.config` (Apple
-Accelerate → MKL → numpy in that order). Set
-``config.kernel_config`` explicitly to override.
+:class:`MCEq.core.MCEqRun` caches one compiled operator per (matrices,
+coupling) and one backend per (``kernel_config``, precision, coupling);
+``close()`` releases them. ``kernel_config`` selects the backend:
+``numpy_etd2`` (always available), ``mkl_etd2`` (Linux/Windows when
+``libmkl_rt`` is found; the ``"auto"`` choice), ``cuda_etd2`` (explicit
+opt-in) and ``accelerate_etd2`` (macOS; the ``"auto"`` choice there). The
+Accelerate kernels (:func:`solv_spacc_etd2` and siblings) and the MKL fp32
+multi-RHS kernel are not on the driver yet and keep their own step loops.
 
-BSR off-diagonal storage
-========================
+The ``solv_<backend>_etd2[_secant][_multirhs|_carousel]`` names are thin
+entry points that bind the matrices / handles / device operator a caller
+holds to the corresponding backend and run the driver.
 
-The interaction matrix :math:`C` is **block-sparse with each non-empty
-block (`n_E × n_E`) structurally upper-triangular** — kinematics
-guarantees a particle of energy :math:`E` only produces secondaries
-of energy :math:`E' \le E`. Storing the off-diagonals in BSR rather
-than CSR lets scipy and MKL use vectorised dense-block microkernels
-instead of the gather-scatter CSR loop. Empirically tuned defaults:
+Sparse storage
+==============
 
-* ``numpy_bsr_blocksize = 11`` (scipy benefits from larger blocks;
-  ``b = 11`` tiles the 121-bin macro-blocks neatly).
-* ``mkl_bsr_blocksize = 6`` (MKL specialises its microkernel for
-  ``b ∈ [2, 7]``; ``b ≥ 8`` falls into a generic path that's slower
-  than CSR).
-
-Both knobs accept ``None`` for a CSR fallback. Padding is handled
-automatically (the matrix is zero-padded up to the next multiple of
-``blocksize``; the kernel allocates working buffers at the padded
-length).
+The off-diagonals are CSR on every backend. Block (BSR) storage was
+measured on 2026-08-30 against the 1D SIBYLL and the 2D FLUKA operators:
+on the 2D operators it is slower than CSR at every K; on the 1D operators
+it gains 15–20 % on the single SpMV alone and loses at K > 1, so it was
+dropped from the driver. MKL's row-major SpMM over the C-ordered ``(dim, K)``
+state runs 1.3–2× faster than the column-major tiled SpMM the former
+multi-RHS kernels used. ``config.numpy_bsr_blocksize`` remains for the
+numpy EM ρ-stack kernels only.
 
 Reference/API
 =============

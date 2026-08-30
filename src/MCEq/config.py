@@ -149,21 +149,12 @@ floatlen = None
 #: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
 
-#: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
-#: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
-#: with MKL >= 2024 (see ``docs/mceq_v1.x_v2_diff.md`` §8.4). MKL appears
-#: to specialise its BSR microkernel for ``b in [2, 7]``; ``b >= 8`` falls
-#: into a generic path that's slower than CSR for these matrices. Set
-#: ``None`` to fall back to CSR (useful for debugging or if a future MKL
-#: regresses BSR perf).
-mkl_bsr_blocksize = 6
-
-#: Block size for the numpy ETD2 BSR off-diagonal storage. ``11`` is the
-#: empirically-tuned default — ~2x faster than CSR on SIBYLL21 matrices
-#: via scipy's BSR matvec. scipy's BSR kernel benefits from larger blocks
-#: than MKL's (the C++ template's per-block overhead is amortised better),
-#: and ``b = 11`` happens to tile the 121-energy-bin macro-blocks neatly
-#: (121 = 11**2). Set ``None`` to fall back to CSR.
+#: Block size for the BSR off-diagonal storage of the numpy EM rho-stack
+#: kernels (``solv_numpy_etd2_rho_stack*``); ``None`` selects CSR. The
+#: ETD2 driver itself runs on CSR for every backend: on the 2D operators
+#: block storage is slower than CSR, on the 1D SIBYLL operators it gains
+#: ~15-20 % on the SpMV alone at K = 1 and loses at K > 1 (2026-08-30
+#: micro-bench, runs/2026-08-30_operator-assembly in mceq-em-integration).
 numpy_bsr_blocksize = 11
 
 # =========================================================================
