@@ -194,7 +194,6 @@ class MCEqParticle:
         self.cs = cs_db[self.pdg_id[0]]
         if sum(self.cs) > 0:
             self.can_interact = True
-            # self._interaction_threshold()
         else:
             self.can_interact = False
 
@@ -455,19 +454,7 @@ class MCEqParticle:
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            xl_dist = (
-                en
-                * xl_grid
-                * cupy.asnumpy(m[: eidx + 1, eidx])
-                / self._energy_grid.w[: eidx + 1]
-            )
-        else:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
+        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -493,19 +480,7 @@ class MCEqParticle:
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            xl_dist = (
-                en
-                * xl_grid
-                * cupy.asnumpy(m[: eidx + 1, eidx])
-                / self._energy_grid.w[: eidx + 1]
-            )
-        else:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
+        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -530,92 +505,8 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
-        else:
-            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
+        elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
-
-    def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
-        r"""Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close
-        to ``energy`` (lab. not kinetic) for hadron-air collisions.
-
-        The function respects modifications applied via :func:`_set_mod_pprod`.
-
-        Args:
-            energy (float): approximate interaction lab. energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
-            verbose (bool): print out the closest energy
-
-        Returns:
-            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
-        """
-        if not hasattr(self, "_ptav_sib23c"):
-            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
-            import pickle
-            from os.path import join
-
-            self._ptav_sib23c = pickle.load(
-                open(join(config.data_dir, "sibyll23c_aux.ppd"), "rb")
-            )[0]
-
-        def xF(xL, Elab, ppdg):
-            m = {2212: 0.938, 211: 0.139, 321: 0.493}
-            mp = m[2212]
-
-            Ecm = np.sqrt(2 * Elab * mp + 2 * mp**2)
-            Esec = xL * Elab
-            betacm = np.sqrt((Elab - mp) / (Elab + mp))
-            gammacm = (Elab + mp) / Ecm
-            avpt = self._ptav_sib23c[ppdg](
-                np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)] ** 2)
-            )
-
-            xf = (
-                2
-                * (
-                    -betacm * gammacm * Esec
-                    + gammacm * np.sqrt(Esec**2 - m[np.abs(ppdg)] ** 2 - avpt**2)
-                )
-                / Ecm
-            )
-            dxl_dxf = 1.0 / (
-                2
-                * (
-                    -betacm * gammacm * Elab
-                    + xL
-                    * Elab**2
-                    * gammacm
-                    / np.sqrt((xL * Elab) ** 2 - m[np.abs(ppdg)] ** 2 - avpt**2)
-                )
-                / Ecm
-            )
-
-            return xf, dxl_dxf
-
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
-        en = self._energy_grid.c[eidx] + self.mass
-        info(2, "Nearest energy, index: ", en, eidx, condition=verbose)
-        m = self.hadr_yields[sec_pdg]
-        xl_grid = (self._energy_grid.c[: eidx + 1] + self.mass) / en
-        xl_dist = (
-            xl_grid
-            * en
-            * m[: eidx + 1, eidx]
-            / np.diag(self._energy_grid.w)[: eidx + 1]
-        )
-        xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)
-        xf_dist = xl_dist * dxl_dxf
-
-        if pos_only:
-            xf_dist = xf_dist[xf_grid >= 0]
-            xf_grid = xf_grid[xf_grid >= 0]
-            return xf_grid, xf_dist
-
-        return xf_grid, xf_dist
 
     def _critical_energy(self):
         """Returns critical energy where decay and interaction
@@ -627,23 +518,6 @@ class MCEqParticle:
             self.E_crit = np.inf
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
-
-    def _interaction_threshold(self):
-        """Finds minimal energy grid idx where interaction cross sections
-        becomes > 0.
-
-        Only for interacting particles.
-        """
-        if self.can_interact:
-            self.int_idx = (self.cs != 0).argmax()
-            info(
-                10,
-                "Interaction threshold for {0} is {1:5.3f} GeV".format(
-                    self.name, self._energy_grid.c[self.int_idx]
-                ),
-            )
-        else:
-            self.int_idx = 0
 
     def _apply_force_resonance(self):
         """Flag this particle as a resonance if it appears in

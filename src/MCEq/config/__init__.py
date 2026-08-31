@@ -590,6 +590,12 @@ def set_mkl_threads(nthreads):
 _publish_thread_env(mkl_threads)
 
 
+#: Take the energy grid from the EM database instead of the hadronic one.
+#: Only meaningful for a standalone EM cascade, where there is no hadronic DB
+#: to define it.
+em_standalone_grid = False
+
+
 # Compatibility layer for dictionary access to config attributes
 # This is deprecated and will be removed in future
 
@@ -652,3 +658,12 @@ def secant_mode(is_2d):
     if isinstance(flag, str) and flag.lower() == "auto":
         return "auto"
     return "require" if flag else "off"
+
+
+# Grouped views over the names above, one per layer of the plan's section 2.2.
+# They read and write through to this module, so a component handed
+# `config.grid` still sees a later `config.e_min = ...`.
+from . import groups as _groups  # noqa: E402
+
+globals().update(_groups.build())
+GROUP_OF = _groups.FLAT_TO_GROUP

@@ -307,7 +307,6 @@ _INV_24 = 1.0 / 24.0
 # ``sparse_matrix_product_dense_double`` peaks at K ≈ 32–64 on the M3 Pro
 # (3.0–3.2× /RHS) then drops to ≈ 1.4× at K ≥ 128. Splitting larger K
 # requests into 64-column tiles restores the peak operating point at all K.
-# Override via ``config.accelerate_spmm_tile``.
 _SPACC_SPMM_TILE = 64
 
 
@@ -2745,7 +2744,7 @@ def _cuda_etd2_kernels():
 # K = 64 (the EPYC AVX2/AVX-512 microkernels stay cache-friendly for
 # larger K), but we keep the same tiling shape for parity with the
 # Accelerate kernel — micro-bench in :doc:`runs/2026-05-23_multirhs-satori-gpu`
-# can tune this if needed. Override via ``config.mkl_spmm_tile``.
+# can tune this if needed.
 _MKL_SPMM_TILE = 64
 
 
@@ -2782,7 +2781,7 @@ def solv_mkl_etd2_multirhs_f32(
         if m is not None:
             n_padded = max(n_padded, m.n_padded)
 
-    tile = getattr(config, "mkl_spmm_tile", None) or _MKL_SPMM_TILE
+    tile = _MKL_SPMM_TILE
     tile = max(1, min(int(tile), K))
 
     phc = np.zeros((n_padded, K), dtype=np.float32, order="F")
@@ -2985,7 +2984,7 @@ def solv_spacc_etd2_multirhs(
     # restores the peak operating point for any caller-requested K. Per-step
     # buffers stay (dim, K); only the SpMM call site is tiled. Setting tile
     # ≥ K disables tiling (single call, original behaviour).
-    tile = getattr(config, "accelerate_spmm_tile", None) or _SPACC_SPMM_TILE
+    tile = _SPACC_SPMM_TILE
     tile = max(1, min(int(tile), K))
 
     # Persistent column-major buffers — gemm reads/writes through raw
@@ -3152,7 +3151,7 @@ def solv_spacc_etd2_multirhs_f32(
     if K < 1:
         raise ValueError(f"K must be >= 1, got {K}")
 
-    tile = getattr(config, "accelerate_spmm_tile", None) or _SPACC_SPMM_TILE
+    tile = _SPACC_SPMM_TILE
     tile = max(1, min(int(tile), K))
 
     # fp32 column-major buffers.
@@ -3305,7 +3304,7 @@ def solv_spacc_etd2_carousel(
             f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
         )
 
-    tile = getattr(config, "accelerate_spmm_tile", None) or _SPACC_SPMM_TILE
+    tile = _SPACC_SPMM_TILE
     tile = max(1, min(int(tile), K))
 
     phc = np.asfortranarray(phi_initial.astype(np.float64, copy=True))
