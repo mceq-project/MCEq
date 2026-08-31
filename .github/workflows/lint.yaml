@@ -1,0 +1,51 @@
+name: Lint
+
+# Structural gates for the layered-architecture refactor: the import-layer
+# contracts in .importlinter and the 600-line module-size limit. Both are
+# static — grimp parses the sources and never imports MCEq — so this job needs
+# no compiler, no database and no wheel, and runs in seconds on one Python.
+#
+# Deliberately not here: ruff. It is red at this commit (10 errors and 23 files
+# to reformat under the pre-commit-pinned version) and is enforced by
+# .pre-commit-config.yaml; turning it into a required check is its own change.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/**
+      - mceq_config/**
+      - scripts/**
+      - .importlinter
+      - pyproject.toml
+      - .github/workflows/lint.yaml
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  structure:
+    name: import layers + module size
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the lint group
+        run: uv pip install --system --group lint
+
+      - name: Module size
+        run: python scripts/check_module_size.py
+
+      # lint-imports is the console script; `python -m importlinter.cli` exits 0
+      # without running anything, because the package defines no __main__.
+      - name: Import layer contracts
+        run: PYTHONPATH=src:. lint-imports --no-cache

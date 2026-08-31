@@ -8,6 +8,7 @@ on:
     paths:
       - src/**
       - tests/**
+      - conftest.py
       - pyproject.toml
       - CMakeLists.txt
       - .github/workflows/test.yaml

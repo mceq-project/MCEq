@@ -44,6 +44,14 @@ test = [
     # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
     # Requires Python >= 3.10; on 3.9 the MSIS21 smoke test importorskips.
     "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1 ; python_version >= '3.10'",
+    # threadpoolctl is a runtime dependency; the golden harness also uses it to
+    # pin the OpenBLAS pool, which the single-axis secant route is sensitive to.
+    "threadpoolctl",
+]
+lint = [
+    # Layer contracts (.importlinter). 2.14 is the first release with
+    # acyclic_siblings; grimp 3.16 and import-linter 2.14 need Python >= 3.10.
+    "import-linter>=2.14 ; python_version >= '3.10'",
 ]
 docs = [
     # Core
@@ -116,6 +124,17 @@ name = "Documentation Updates"
 
 [tool.towncrier.fragment.feat]
 name="New Features"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# No addopts: the CI invocation in .github/workflows/_run_tests.yml passes its
+# own -m/-n arguments, and an addopts marker expression would silently compose
+# with them. golden_slow is deselected by the root conftest instead.
+markers = [
+    "golden: regression against a stored golden section under tests/golden/data",
+    "golden_slow: golden section costing minutes or a database CI does not carry (needs --run-golden-slow)",
+    "cuda: requires a usable CUDA device, not merely an importable cupy",
+]
 
 [tool.coverage.report]
 exclude_lines = [
