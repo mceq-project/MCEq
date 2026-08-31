@@ -149,21 +149,12 @@ floatlen = None
 #: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
 
-#: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
-#: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
-#: with MKL >= 2024 (see ``docs/mceq_v1.x_v2_diff.md`` §8.4). MKL appears
-#: to specialise its BSR microkernel for ``b in [2, 7]``; ``b >= 8`` falls
-#: into a generic path that's slower than CSR for these matrices. Set
-#: ``None`` to fall back to CSR (useful for debugging or if a future MKL
-#: regresses BSR perf).
-mkl_bsr_blocksize = 6
-
-#: Block size for the numpy ETD2 BSR off-diagonal storage. ``11`` is the
-#: empirically-tuned default — ~2x faster than CSR on SIBYLL21 matrices
-#: via scipy's BSR matvec. scipy's BSR kernel benefits from larger blocks
-#: than MKL's (the C++ template's per-block overhead is amortised better),
-#: and ``b = 11`` happens to tile the 121-energy-bin macro-blocks neatly
-#: (121 = 11**2). Set ``None`` to fall back to CSR.
+#: Block size for the BSR off-diagonal storage of the numpy EM rho-stack
+#: kernels (``solv_numpy_etd2_rho_stack*``); ``None`` selects CSR. The
+#: ETD2 driver itself runs on CSR for every backend: on the 2D operators
+#: block storage is slower than CSR, on the 1D SIBYLL operators it gains
+#: ~15-20 % on the SpMV alone at K = 1 and loses at K > 1 (2026-08-30
+#: micro-bench, runs/2026-08-30_operator-assembly in mceq-em-integration).
 numpy_bsr_blocksize = 11
 
 # =========================================================================
@@ -368,10 +359,11 @@ muon_multiple_scattering = True
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
 #: the Hankel modes), independent of the axis' zenith angle.
-#: "auto" (default): applied on every single-axis solve() with a 2D
-#: database; the multi-RHS/carousel entry points fall back to the
-#: paraxial transport with a warning. True: required (entry points
-#: without the coupling raise). False: off. Ignored on 1D databases.
+#: "auto" (default): applied on every solve with a 2D database where
+#: the coupling is implemented (single-axis and batched entry points on
+#: the numpy/MKL/CUDA kernels); unsupported configurations fall back to
+#: the paraxial transport with a warning. True: required (unsupported
+#: configurations raise). False: off. Ignored on 1D databases.
 secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
@@ -395,6 +387,15 @@ secant_theta_w_flat = 1.0
 #: <0.1% above 10 GeV, so the default excludes energies where it is
 #: numerically irrelevant. None applies it to all energies.
 secant_theta_e_max = 31.6
+#: OpenBLAS thread cap for the batched secant drivers' dense mode-
+#: coupling GEMMs. The batched (dim, K) planes cross OpenBLAS's GEMM
+#: threading threshold and its default all-cores fan-out is pure
+#: contention on these skinny (n_P x n_g*K) shapes — 66x slower than 4
+#: threads on a 48-core EPYC. Applied via threadpoolctl around the
+#: batched step loop (no-op if threadpoolctl is not installed;
+#: single-axis solves stay below the threshold and are not touched).
+#: MKL's pool is controlled separately by ``mkl_threads``.
+secant_blas_threads = 4
 
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)

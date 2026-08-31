@@ -126,6 +126,25 @@ _lib.etd2_post_apply2_multipath_f32.argtypes = [
     POINTER(c_float),
 ]
 
+# row-major (dim, K) state of MCEq.solvers.etd2_driver; factor / h strides
+# select the (dim,) vs (dim, K) and scalar vs (K,) forms.
+_lib.etd2_post_apply1_rowmajor.restype = None
+_lib.etd2_post_apply1_rowmajor.argtypes = [
+    c_int, c_int,
+    POINTER(c_double), c_int,
+    POINTER(c_double), POINTER(c_double), c_int, c_int,
+    POINTER(c_double), POINTER(c_double), POINTER(c_double),
+]
+_lib.etd2_post_apply2_rowmajor.restype = None
+_lib.etd2_post_apply2_rowmajor.argtypes = [
+    c_int, c_int,
+    POINTER(c_double), c_int,
+    POINTER(c_double), c_int, c_int,
+    POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double),
+]
+
+etd2_post_apply1_rowmajor = _lib.etd2_post_apply1_rowmajor
+etd2_post_apply2_rowmajor = _lib.etd2_post_apply2_rowmajor
 etd2_post_apply1_multirhs = _lib.etd2_post_apply1_multirhs
 etd2_post_apply2_multirhs = _lib.etd2_post_apply2_multirhs
 etd2_post_apply1_multipath = _lib.etd2_post_apply1_multipath
@@ -137,6 +156,8 @@ etd2_post_apply1_multipath_f32 = _lib.etd2_post_apply1_multipath_f32
 etd2_post_apply2_multipath_f32 = _lib.etd2_post_apply2_multipath_f32
 
 __all__ = [
+    "etd2_post_apply1_rowmajor",
+    "etd2_post_apply2_rowmajor",
     "etd2_post_apply1_multirhs",
     "etd2_post_apply2_multirhs",
     "etd2_post_apply1_multipath",
