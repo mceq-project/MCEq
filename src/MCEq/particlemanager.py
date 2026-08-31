@@ -4,7 +4,6 @@ import numpy as np
 import six
 from particletools.tables import PYTHIAParticleData
 
-from MCEq import config
 from MCEq.misc import average_A_target, getAZN, info, print_in_rows
 
 info(5, "Initialization of PYTHIAParticleData object")
@@ -45,6 +44,8 @@ class MCEqParticle:
       egrid (np.array, optional): energy grid (centers)
       cs_db (object, optional): reference to an instance of
                                 :class:`InteractionYields`
+      physics: settings group (``config.physics``) holding the decay and
+               resonance filters. :class:`ParticleManager` passes its own.
     """
 
     def __init__(
@@ -54,8 +55,18 @@ class MCEqParticle:
         energy_grid=None,
         cs_db=None,
         init_pdata_defaults=True,
-        A_target=average_A_target(),
+        A_target=None,
+        *,
+        physics=None,
     ):
+        if physics is None:
+            from MCEq import config
+
+            physics = config.physics
+        #: settings group this particle reads its filters from
+        self._physics = physics
+        if A_target is None:
+            A_target = average_A_target(physics.interaction_medium)
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
@@ -86,7 +97,7 @@ class MCEqParticle:
         #: (bool) particle is interacting projectile
         self.is_projectile = False
         #: (bool) particle is stable
-        self.is_stable = False or pdg_id in config.adv_set["disable_decays"]
+        self.is_stable = pdg_id in physics.filters["disable_decays"]
         #: (bool) can_interact
         self.can_interact = False
         #: (bool) has continuous losses dE/dX defined
@@ -161,7 +172,8 @@ class MCEqParticle:
         #: (bool) particle is stable
         #: TODO the exclusion of neutron decays is a hotfix
         self.is_stable = (
-            not self.ctau < np.inf or self.pdg_id[0] in config.adv_set["disable_decays"]
+            not self.ctau < np.inf
+            or self.pdg_id[0] in self._physics.filters["disable_decays"]
         )
 
     def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
@@ -405,7 +417,7 @@ class MCEqParticle:
         return self.cs
 
     def inverse_interaction_length(self):
-        """Returns inverse interaction length for A_target given by config.
+        """Returns inverse interaction length for this particle's ``A_target``.
 
         Returns:
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
@@ -521,8 +533,8 @@ class MCEqParticle:
 
     def _apply_force_resonance(self):
         """Flag this particle as a resonance if it appears in
-        ``config.adv_set["force_resonance"]`` and is not in
-        ``config.standard_particles``.
+        ``physics.filters["force_resonance"]`` and is not in
+        ``physics.standard_particles``.
 
         A resonance particle is folded into other particles' interaction /
         decay matrices at build time (via ``MatrixBuilder._follow_chains``)
@@ -531,8 +543,8 @@ class MCEqParticle:
         """
         pid = abs(self.pdg_id[0])
         self.is_resonance = (
-            pid in config.adv_set["force_resonance"]
-            and pid not in config.standard_particles
+            pid in self._physics.filters["force_resonance"]
+            and pid not in self._physics.standard_particles
         )
 
     def __eq__(self, other):
@@ -568,14 +580,31 @@ class MCEqParticle:
 class ParticleManager:
     """Database for objects of :class:`MCEqParticle`.
 
+    ``physics`` is the settings group (``config.physics``) that this manager and
+    every particle it builds read their filters and switches from.
+
     Authors:
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
 
     def __init__(
-        self, pdg_id_list, energy_grid, cs_db, medium=config.interaction_medium
+        self,
+        pdg_id_list,
+        energy_grid,
+        cs_db,
+        medium=None,
+        *,
+        physics=None,
     ):
+        from MCEq import config
+
+        physics = config.physics if physics is None else physics
+        # Resolved here rather than as a signature default: a default binds when
+        # this module is first imported, which happens lazily from MCEqRun, so
+        # whether a caller's `config.interaction_medium` was seen depended on
+        # whether it was written before that import.
+        medium = physics.interaction_medium if medium is None else medium
         # (dict) Dimension of primary grid
         self._energy_grid = energy_grid
         # Particle index shortcuts
@@ -610,6 +639,8 @@ class ParticleManager:
         self._cs_db = cs_db
         # Medium
         self._medium = medium
+        # Settings group, handed on to every MCEqParticle built here
+        self._physics = physics
         # Dictionary to save te tracking particle config
         self.tracking_relations = []
         # Save the tracking relations requested by default tracking
@@ -680,7 +711,11 @@ class ParticleManager:
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
-            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
+            elif (
+                self._physics.generic_losses_all_charged
+                and p.is_charged
+                and not p.is_em
+            ):
                 # Stopping power dEdX is almost the same for all charged particles.
                 # What changes is gamm*beta. We interpolate the dEdX tables
                 # stored for protons to different energy grids.
@@ -917,6 +952,7 @@ class ParticleManager:
                 self._energy_grid,
                 self._cs_db,
                 A_target=average_A_target(self._medium),
+                physics=self._physics,
             )
             for pdg, hel in particles
         ]
@@ -1011,7 +1047,7 @@ class ParticleManager:
 
         info(10, "Restoring tracking particle setup")
 
-        if not self.tracking_relations and config.enable_default_tracking:
+        if not self.tracking_relations and self._physics.enable_default_tracking:
             self._init_default_tracking()
             return
 
@@ -1046,8 +1082,9 @@ class ParticleManager:
             )
 
         # Track prompt leptons
+        prompt_ctau = self._physics.prompt_ctau
         self.track_leptons_from(
-            [p.pdg_id for p in self.all_particles if p.ctau < config.prompt_ctau],
+            [p.pdg_id for p in self.all_particles if p.ctau < prompt_ctau],
             "prcas_",
             exclude_em=True,
             use_helicities=False,

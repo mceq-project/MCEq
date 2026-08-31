@@ -129,7 +129,7 @@ forbidden_modules =
     MCEq.charm_models
 
 # -------------------------------------------------------------- C5: config
-# The plan's rule "no module below the driver imports MCEq.config": nine direct
+# The plan's rule "no module below the driver imports MCEq.config": the direct
 # edges today, one per line below. Indirect chains are reported too (the default
 # `allow_indirect_imports = False`), which costs nothing here because an ignored
 # import is cut from the graph globally, and which keeps catching a chain such as
@@ -169,10 +169,6 @@ ignore_imports =
     MCEq.data -> MCEq.config
 # particlemanager.py:7 -- Phase 4
     MCEq.particlemanager -> MCEq.config
-# ddm.py:10 -- Phase 4
-    MCEq.ddm -> MCEq.config
-# secant.py:124 -- Phase 5
-    MCEq.secant -> MCEq.config
 # download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level from
 # the module. Phase 4 moves it under `data` and it takes a DataPaths group then.
     MCEq.download -> MCEq.config

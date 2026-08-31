@@ -38,6 +38,7 @@ def etd2_nonuniform_path(
     dX_min=None,
     fd_span=None,
     int_grid=None,
+    step=None,
 ):
     """Build a non-uniform integration path for ETD2 kernels.
 
@@ -53,25 +54,35 @@ def etd2_nonuniform_path(
     Args:
       density_model: object with ``r_X2rho(X)`` and ``max_X``.
       X_start (float | None): starting depth in g/cm^2; ``None`` →
-        ``config.X_start``.
+        ``step.X_start``.
       eps (float | None): within-step ``rho_inv`` variation tolerance;
-        ``None`` → ``config.etd2_path["eps"]``.
+        ``None`` → ``step.etd2_path["eps"]``.
       dX_max (float | None): cap on step size (off-diagonal stability
-        cliff); ``None`` → ``config.etd2_path["dX_max"]``.
+        cliff); ``None`` → ``step.etd2_path["dX_max"]``.
       dX_min (float | None): floor on step size; ``None`` →
-        ``config.etd2_path["dX_min"]``.
+        ``step.etd2_path["dX_min"]``.
       fd_span (float | None): forward-FD probe span; ``None`` →
-        ``config.etd2_path["fd_span"]``.
+        ``step.etd2_path["fd_span"]``.
       int_grid (np.ndarray | None): X values at which to record snapshots.
         Steps are truncated to land exactly on each ``int_grid`` entry.
+      step: the ``solver`` setting group (``X_start``, ``etd2_path``);
+        ``None`` → ``MCEq.config.solver``. Read here, when the path is
+        planned — a live instance's next ``solve()`` does not see a write
+        made after the path was built, because
+        ``MCEqRun._calculate_integration_path`` caches on the unresolved
+        keyword arguments.
 
     Returns:
       (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
       kernel-dispatch contract used by ``MCEqRun.integration_path``.
     """
+    if step is None:
+        from MCEq import config
+
+        step = config.solver
     if X_start is None:
-        X_start = config.X_start
-    p = config.etd2_path
+        X_start = step.X_start
+    p = step.etd2_path
     if eps is None:
         eps = p["eps"]
     if dX_max is None:

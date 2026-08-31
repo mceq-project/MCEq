@@ -1,7 +1,5 @@
 import numpy as np
 
-from MCEq import config
-
 
 class EarthGeometry:
     r"""A model of the Earth's geometry, approximating it
@@ -87,6 +85,16 @@ class EarthGeometry:
         ax.yaxis.set_ticks_position("left")
         plt.show()
 
+    Args:
+      r_E (float): radius Earth [m]
+      h_atm (float): top of the atmosphere [m]
+      h_obs (float): observation level height [m]
+
+    The arguments are in metres, the units of the ``environment`` settings
+    they default to; the attributes below and :func:`set_h_obs` are in cm.
+    Each argument left at ``None`` is read from :mod:`MCEq.config` at
+    construction, so a caller that passes all three never touches config.
+
     Attributes:
       h_obs (float): observation level height [cm]
       h_atm (float): top of the atmosphere [cm]
@@ -96,9 +104,17 @@ class EarthGeometry:
 
     """
 
-    def __init__(self):
-        self.h_obs = config.h_obs * 1e2  # cm
-        self.h_atm = config.h_atm * 1e2  # cm
+    def __init__(self, r_E=None, h_atm=None, h_obs=None):
+        if r_E is None or h_atm is None or h_obs is None:
+            from MCEq import config
+
+            env = config.environment
+            r_E = env.r_E if r_E is None else r_E
+            h_atm = env.h_atm if h_atm is None else h_atm
+            h_obs = env.h_obs if h_obs is None else h_obs
+
+        self.h_obs = h_obs * 1e2  # cm
+        self.h_atm = h_atm * 1e2  # cm
         if self.h_obs < 0 or self.h_obs > self.h_atm:
             raise ValueError(
                 f"Observation height must be between 0 and {self.h_atm:.2e} cm."
@@ -107,7 +123,7 @@ class EarthGeometry:
             raise ValueError(
                 f"Top of atmosphere must be above observation height ({self.h_atm:.2e} cm > {self.h_obs:.2e} cm)."
             )
-        self.r_E = config.r_E * 1e2  # cm
+        self.r_E = r_E * 1e2  # cm
         self.r_top = self.r_E + self.h_atm
         self.r_obs = self.r_E + self.h_obs
         self.theta_max_rad = max(np.pi / 2.0, np.pi - np.arcsin(self.r_E / self.r_obs))

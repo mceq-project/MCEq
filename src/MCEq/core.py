@@ -348,11 +348,16 @@ class MCEqRun:
             "he_le_transition", le_config.get("he_le_transition", 80.0)
         )
         he_le_trwidth = kwargs.pop("he_le_trwidth", le_config.get("he_le_trwidth", 0.3))
+        # Group views, not snapshots: a config write after construction is seen.
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=self.medium,
             low_energy_model=low_energy_model,
             he_le_transition=he_le_transition,
             he_le_trwidth=he_le_trwidth,
+            paths=config.paths,
+            grid=config.grid,
+            physics=config.physics,
+            em=config.em,
         )
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
@@ -362,7 +367,9 @@ class MCEqRun:
         self.theta_deg = theta_deg
 
         #: Interface to interaction tables of the HDF5 database
-        self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
+        self._interactions = MCEq.data.Interactions(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._int_cs = MCEq.data.InteractionCrossSections(
@@ -370,10 +377,14 @@ class MCEqRun:
         )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db)
+        self._cont_losses = MCEq.data.ContinuousLosses(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: Interface to decay tables of the HDF5 database
-        self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
+        self._decays = MCEq.data.Decays(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: Particle manager (initialized/updated in set_interaction_model)
         self.pman = None
@@ -799,7 +810,11 @@ class MCEqRun:
             self._particle_list = self._interactions.particles + self._decays.particles
             # Create particle database
             self.pman = ParticleManager(
-                self._particle_list, self._energy_grid, self._int_cs, self.medium
+                self._particle_list,
+                self._energy_grid,
+                self._int_cs,
+                self.medium,
+                physics=config.physics,
             )
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
@@ -2560,8 +2575,9 @@ class MCEqRun:
                 k_grid,
                 e_centers,
                 n_species,
-                config,
+                config.secant,
                 theta_cap_deg=config.secant_theta_cap(),
+                paths=config.paths,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]

@@ -77,11 +77,17 @@ def _try_tqdm():
         return _NoTqdm
 
 
-def _cache_dir() -> Path:
-    """Return ``<config.data_dir>/gtracr_cutoffs/``; create if missing."""
-    from MCEq import config
+def _cache_dir(paths=None) -> Path:
+    """Return ``<paths.data_dir>/gtracr_cutoffs/``; create if missing.
 
-    d = Path(config.data_dir) / "gtracr_cutoffs"
+    ``paths`` is a ``config.paths`` group; ``None`` reads the global one.
+    """
+    if paths is None:
+        from MCEq import config
+
+        paths = config.paths
+
+    d = Path(paths.data_dir) / "gtracr_cutoffs"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -166,10 +172,11 @@ def get_cutoff_map(
     max_rigidity: float = 55.0,
     delta_rigidity: float = 0.5,
     force_rebuild: bool = False,
+    paths=None,
 ) -> np.ndarray:
     """Return a rigidity-cutoff map ``R_c[zen, az]`` in GV.
 
-    Hits a per-installation cache under ``config.data_dir/gtracr_cutoffs/``;
+    Hits a per-installation cache under ``paths.data_dir/gtracr_cutoffs/``;
     if absent, runs gtracr with a tqdm progress bar and writes the file.
 
     Args:
@@ -182,6 +189,8 @@ def get_cutoff_map(
         iter_num: number of MC trajectories. Production maps use 30 000.
         min_rigidity, max_rigidity, delta_rigidity: rigidity scan in GV.
         force_rebuild: ignore the cache; always run gtracr.
+        paths: a ``config.paths`` group locating the cache; ``None`` reads
+            the global one.
 
     Returns:
         ``(n_zen, n_az)`` array of rigidity cutoffs in GV.
@@ -216,7 +225,7 @@ def get_cutoff_map(
     n_zen = int(zen_centres.size)
     n_az = int(az_centres.size)
 
-    cache_dir = _cache_dir()
+    cache_dir = _cache_dir(paths)
     cache_file = cache_dir / (
         f"gtracr_cutoffs_{location_name}_{bfield_type}_v{CACHE_VERSION}_{key_hash}.npz"
     )
@@ -353,6 +362,7 @@ def build_phi0_with_cutoff(
     primary_model,
     rc_GV_per_pixel: np.ndarray,
     mass_groups=_DEFAULT_MASS_GROUPS,
+    physics=None,
 ) -> np.ndarray:
     """Build a ``(dim_states, K)`` phi0 with rigidity cutoff applied.
 
@@ -362,8 +372,14 @@ def build_phi0_with_cutoff(
     threshold the species contributes zero. Above, the standard
     proton+neutron superposition is applied as in
     :meth:`MCEqRun.set_primary_model`.
+
+    ``physics`` is a ``config.physics`` group supplying
+    ``minimal_primary_energy``; ``None`` reads the global one.
     """
-    from MCEq import config as cfg
+    if physics is None:
+        from MCEq import config
+
+        physics = config.physics
 
     K = int(rc_GV_per_pixel.size)
     e_grid = mceq._energy_grid.c
@@ -373,7 +389,7 @@ def build_phi0_with_cutoff(
     n_mass = mceq.pman[(2112, 0)].mass
     e_tot_nucleon = e_grid + 0.5 * (p_mass + n_mass)
 
-    minimal_energy = cfg.minimal_primary_energy
+    minimal_energy = physics.minimal_primary_energy
     min_idx = int(np.argmin(np.abs(e_tot_nucleon - minimal_energy)))
 
     phi0 = np.zeros((mceq.dim_states, K), dtype=np.float64)
