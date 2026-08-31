@@ -2227,3 +2227,40 @@ def test_cuda_phi_compute_f64diag_accuracy():
             f"{name}: fp64-internal diag kernel rel err {rel.max():.2e} "
             f"exceeds fp32-roundoff budget 5e-7"
         )
+
+
+def test_msis_condition_paths_are_fork_reproducible():
+    """A forked path build reproduces the serial one on an MSIS atmosphere.
+
+    `cNRLMSISE00` memoised on altitude alone, which made the azimuth-averaged
+    `MSIS00LocationCentered` spline depend on the order the directions were
+    evaluated in; a worker pool changes that order, which is what used to look
+    like nrlmsise-00 not being fork-safe.
+    """
+    import numpy as np
+
+    from MCEq.core import MCEqRun
+
+    mceq = MCEqRun(
+        interaction_model="SIBYLL21",
+        theta_deg=0.0,
+        primary_model=None,
+        density_model=("MSIS00_IC", ("SouthPole", "January")),
+        build_matrices=False,
+    )
+    try:
+        conditions = [
+            {"zenith_deg": zenith, "azimuth_deg": azimuth, "density_model": None}
+            for zenith in (20.0, 60.0)
+            for azimuth in (0.0, 90.0, 180.0)
+        ]
+        serial = mceq._build_condition_paths(conditions, path_workers=0)
+        forked = mceq._build_condition_paths(conditions, path_workers=4)
+
+        assert len(serial) == len(forked) == len(conditions)
+        for one, other in zip(serial, forked):
+            assert one[0] == other[0]
+            assert np.array_equal(one[1], other[1])
+            assert np.array_equal(one[2], other[2])
+    finally:
+        mceq.close()

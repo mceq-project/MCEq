@@ -25,7 +25,9 @@ else:
 # its own CoW copy of the density model, so per-worker
 # ``set_zenith_azimuth`` mutations stay process-local. Only used when
 # ``solve_fullsky(path_workers=N>0)`` is requested *and* the atmosphere
-# is not azimuth-symmetric (MSIS location-centered case).
+# is not azimuth-symmetric (MSIS location-centered case). Every atmosphere
+# is fork-reproducible; the paths a worker returns are bitwise equal to the
+# serial ones.
 _PATH_WORKER_MCEQ = None
 
 
@@ -1795,9 +1797,8 @@ class MCEqRun:
           carousel_K (int | None): pipeline width for the LPT scheduler
             (heterogeneous batches only). ``None`` → ``min(K, 128)``.
           path_workers (int): fork-pool size for a parallel path build
-            (heterogeneous batches only). Must be 0 with MSIS00-based
-            atmospheres (not fork-safe) and with ``density_model``
-            overrides; fine with MSIS21/CORSIKA zenith/azimuth batches.
+            (heterogeneous batches only). Must be 0 with ``density_model``
+            overrides; every atmosphere is fork-reproducible.
           X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
             non-uniform path knobs forwarded to
             :meth:`_calculate_integration_path`; same semantics as
@@ -2049,12 +2050,9 @@ class MCEqRun:
           X_start, eps, dX_max, dX_min, fd_span: ETD2 path knobs, see
             :meth:`solve`.
           path_workers (int): fork-pool size for a parallel path build.
-            Only allowed without ``density_model`` overrides and with a
-            fork-safe atmosphere (MSIS00 is rejected — the nrlmsise-00
-            Fortran library has SAVE state that drifts ~1e-7 relative
-            under fork CoW; the pure-Python MSIS21 tree is fork-safe and
-            is the production user of this pool, see
-            results/allsky-orca-msis21.md).
+            Only allowed without ``density_model`` overrides. A worker's
+            paths are bitwise equal to the serial ones on every
+            atmosphere, MSIS00 included.
 
         Returns:
           list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
@@ -2088,15 +2086,6 @@ class MCEqRun:
                     "path_workers > 1 supports only zenith/azimuth batches "
                     "on the active atmosphere; build density_model "
                     "overrides serially (path_workers=0)."
-                )
-            from MCEq.geometry.density_profiles import MSIS00Atmosphere
-
-            if isinstance(self.density_model, MSIS00Atmosphere):
-                raise ValueError(
-                    "path_workers > 1 is not safe with MSIS-based "
-                    "atmospheres (nrlmsise-00 is not fork-safe; "
-                    "paths drift by ~1e-7 relative and are not "
-                    "reproducible). Use path_workers=0 for MSIS."
                 )
 
         def dm_key_of(c):
@@ -2332,9 +2321,8 @@ class MCEqRun:
                 knobs.
             return_pixel_index: also return the ``(K, 2)`` mapping
                 ``(i_zen, i_az)`` for reshaping back to grid.
-            path_workers: fork-pool size for parallel path build. Must
-                be 0 with MSIS00 (not fork-safe); any value ≥ 1 is fine
-                with MSIS21 and CORSIKA-style atmospheres.
+            path_workers: fork-pool size for parallel path build. Any
+                value >= 1 is fine on every atmosphere.
             geomagnetic_cutoff: override the constructor-level toggle for
                 this call. ``None`` means "use ``self.geomagnetic_cutoff``"
                 (auto-detect from the atmosphere if also ``None``).
