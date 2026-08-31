@@ -1,5 +1,7 @@
 from __future__ import print_function
 
+import pytest
+
 
 def test_msis(msis_expected_file):
     from ctypes import byref, c_double, c_int, pointer
@@ -169,3 +171,50 @@ def test_msis(msis_expected_file):
     # print(outbuf)
 
     assert outbuf.strip() == result_expected.strip()
+
+
+def test_msis00_setters_invalidate_the_altitude_memo():
+    """`_retrieve_result` memoises on altitude alone.
+
+    Every setter that changes latitude, longitude or day of year therefore has
+    to clear it, or a repeated `get_density(h)` at the same altitude returns
+    the previous state's value.
+    """
+    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
+
+    msis = cNRLMSISE00()
+    msis.set_location("SouthPole")
+    msis.set_season("January")
+
+    h_cm = 2.0e6
+    january = msis.get_density(h_cm)
+
+    msis.set_doy(200)
+    assert msis.get_density(h_cm) != january
+
+    msis.set_season("January")
+    assert msis.get_density(h_cm) == january
+
+    msis.set_location("Karlsruhe")
+    assert msis.get_density(h_cm) != january
+
+
+def test_msis00_azimuth_average_covers_every_direction():
+    """The averaged density is the mean over the directions, not the first one."""
+    import numpy as np
+
+    from MCEq.geometry.density_profiles import MSIS00IceCubeCentered
+
+    atm = MSIS00IceCubeCentered("SouthPole", "January")
+    atm.set_theta(60.0)
+    if not getattr(atm, "_azimuth_avg_coords", None):
+        pytest.skip("no azimuth averaging at this zenith")
+
+    h_cm = 2.0e6
+    per_direction = []
+    for lat, lon in atm._azimuth_avg_coords:
+        atm._msis.set_location_coord(latitude=lat, longitude=lon)
+        per_direction.append(atm._msis.get_density(h_cm))
+
+    assert min(per_direction) < max(per_direction)
+    assert atm.get_density(h_cm) == pytest.approx(np.mean(per_direction), rel=1e-12)

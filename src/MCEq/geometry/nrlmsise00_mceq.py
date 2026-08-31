@@ -99,18 +99,33 @@ class cNRLMSISE00(NRLMSISE00Base):
             raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
         self.inp.g_lat = c_double(latitude)
         self.inp.g_long = c_double(longitude)
+        self._invalidate()
 
     def set_season(self, tag):
         if tag not in self.month2doy:
             raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
         info(5, "Season", tag, "doy=", self.month2doy[tag])
         self.inp.doy = self.month2doy[tag]
+        self._invalidate()
 
     def set_doy(self, doy):
         if doy < 0 or doy > 365:
             raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
         info(5, "day of year", doy)
         self.inp.doy = c_int(doy)
+        self._invalidate()
+
+    def _invalidate(self):
+        """Drop the altitude memo of :meth:`_retrieve_result`.
+
+        The memo keys on altitude alone, so every setter that changes latitude,
+        longitude or day of year has to clear it: without this a
+        ``get_density(h)`` repeated at the same altitude returns the previous
+        location's or season's value (measured 12.5 % low for a doy change from
+        1 to 200 at 20 km, and it is what corrupts the azimuth-averaged
+        ``MSIS00LocationCentered.get_density``).
+        """
+        self.last_alt = None
 
     def _retrieve_result(self, altitude_cm):
         if self.last_alt == altitude_cm:
