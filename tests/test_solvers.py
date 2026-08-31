@@ -365,16 +365,19 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     sol_numpy, _ = solv_numpy_etd2_multirhs(
         nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
     )
-    mkl_int32 = (
-        MklSparseMatrixF32(int_off.astype(np.float32)) if int_off.nnz else None
-    )
-    mkl_dec32 = (
-        MklSparseMatrixF32(dec_off.astype(np.float32)) if dec_off.nnz else None
-    )
+    mkl_int32 = MklSparseMatrixF32(int_off.astype(np.float32)) if int_off.nnz else None
+    mkl_dec32 = MklSparseMatrixF32(dec_off.astype(np.float32)) if dec_off.nnz else None
     try:
         sol_mkl32, _ = solv_mkl_etd2_multirhs_f32(
-            nsteps, dX, rho_inv, mkl_int32, mkl_dec32,
-            d_int, d_dec, phi0_multi, [],
+            nsteps,
+            dX,
+            rho_inv,
+            mkl_int32,
+            mkl_dec32,
+            d_int,
+            d_dec,
+            phi0_multi,
+            [],
         )
         rel_l2 = np.linalg.norm(sol_mkl32 - sol_numpy) / max(
             np.linalg.norm(sol_numpy), 1e-30
@@ -604,9 +607,7 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
         rel_grid = np.linalg.norm(grid_cuda - grid_numpy) / max(
             np.linalg.norm(grid_numpy), 1e-30
         )
-        assert rel_grid < 1e-10, (
-            f"cuda multirhs grid snapshots rel-L2 = {rel_grid:.3e}"
-        )
+        assert rel_grid < 1e-10, f"cuda multirhs grid snapshots rel-L2 = {rel_grid:.3e}"
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
@@ -658,9 +659,7 @@ def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
         device_id=config.cuda_gpu_id,
         fp_precision=32,
     )
-    sol_cuda32, _ = solv_cuda_etd2_multirhs(
-        nsteps, dX, rho_inv, ctx, phi0_multi, []
-    )
+    sol_cuda32, _ = solv_cuda_etd2_multirhs(nsteps, dX, rho_inv, ctx, phi0_multi, [])
     rel_l2 = np.linalg.norm(sol_cuda32 - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
     )
@@ -1576,9 +1575,7 @@ def test_solve_fullsky_2d_phi0_tiled_matches_1d(mceq_sib21):
         phi0_1d = mceq_sib21._phi0.copy()
 
         sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid)
-        phi0_2d = np.broadcast_to(
-            phi0_1d[:, None], (mceq_sib21.dim_states, K)
-        ).copy()
+        phi0_2d = np.broadcast_to(phi0_1d[:, None], (mceq_sib21.dim_states, K)).copy()
         sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
 
         assert sol_2d.shape == sol_1d.shape
@@ -1710,8 +1707,8 @@ class _StubMCEq:
         self.int_m = sp.csr_matrix(m)
         self.pman = _StubPMan(
             [
-                _StubParticle(True, 0, 1),   # e- (EM)
-                _StubParticle(True, 1, 2),   # e+ (EM)
+                _StubParticle(True, 0, 1),  # e- (EM)
+                _StubParticle(True, 1, 2),  # e+ (EM)
                 _StubParticle(False, 2, 3),  # hadron
                 _StubParticle(False, 3, 4),
                 _StubParticle(False, 4, 5),
@@ -1958,11 +1955,11 @@ def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
         mceq_sib21.set_zenith_azimuth(20.0)
         theta_before = mceq_sib21.density_model.theta_deg
 
-        seasons = [("CORSIKA", ("BK_USStd", None)),
-                   ("CORSIKA", ("PL_SouthPole", "January"))]
-        conditions = [
-            {"zenith_deg": 60.0, "density_model": dm} for dm in seasons
+        seasons = [
+            ("CORSIKA", ("BK_USStd", None)),
+            ("CORSIKA", ("PL_SouthPole", "January")),
         ]
+        conditions = [{"zenith_deg": 60.0, "density_model": dm} for dm in seasons]
         res = mceq_sib21.solve_batch(conditions=conditions)
 
         assert mceq_sib21.density_model is dm_before, (
@@ -2007,9 +2004,7 @@ def test_solve_batch_phi0_shape_validation(mceq_sib21):
     with pytest.raises(ValueError, match="first axis"):
         mceq_sib21.solve_batch(np.zeros((dim - 1, 2)))
     with pytest.raises(ValueError, match="second axis"):
-        mceq_sib21.solve_batch(
-            np.zeros((dim, 3)), conditions=[{"zenith_deg": 0.0}] * 2
-        )
+        mceq_sib21.solve_batch(np.zeros((dim, 3)), conditions=[{"zenith_deg": 0.0}] * 2)
     with pytest.raises(ValueError, match="must be 1-D or 2-D"):
         mceq_sib21.solve_batch(np.zeros((dim, 2, 2)))
     with pytest.raises(ValueError, match="unknown keys"):
@@ -2076,7 +2071,9 @@ def test_batch_result_get_solution_matches_serial(mceq_sib21):
             mceq_sib21.set_zenith_azimuth(float(zen))
             mceq_sib21.solve()
             for pname, mag in [
-                ("total_mu+", 0), ("conv_numu", 3), ("pr_antinumu", 0),
+                ("total_mu+", 0),
+                ("conv_numu", 3),
+                ("pr_antinumu", 0),
             ]:
                 ref = mceq_sib21.get_solution(pname, mag=mag)
                 got_k = res.get_solution(pname, k=k, mag=mag)
@@ -2092,7 +2089,9 @@ def test_batch_result_get_solution_matches_serial(mceq_sib21):
         ref_int = mceq_sib21.get_solution("total_mu-", integrate=True)
         np.testing.assert_allclose(
             res.get_solution("total_mu-", k=1, integrate=True),
-            ref_int, rtol=1e-12, atol=0,
+            ref_int,
+            rtol=1e-12,
+            atol=0,
         )
 
         # Selector errors
@@ -2125,12 +2124,11 @@ def test_batch_result_skymap(mceq_sib21):
         for i_zen in range(2):
             for i_az in range(2):
                 ref = res.get_solution(
-                    "total_numu", pixel=(i_zen, i_az),
+                    "total_numu",
+                    pixel=(i_zen, i_az),
                     return_as="kinetic energy",
                 )[e_idx]
-                np.testing.assert_allclose(
-                    smap[i_zen, i_az], ref, rtol=1e-12, atol=0
-                )
+                np.testing.assert_allclose(smap[i_zen, i_az], ref, rtol=1e-12, atol=0)
 
         # skymap on a non-fullsky result raises
         res_batch = mceq_sib21.solve_batch(
@@ -2154,9 +2152,7 @@ def test_solve_fullsky_2d_phi0_explicit_cutoff_warns(mceq_sib21):
             (mceq_sib21.dim_states, 2),
         ).copy()
         with pytest.warns(UserWarning, match="NOT applied"):
-            mceq_sib21.solve_fullsky(
-                zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True
-            )
+            mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True)
     finally:
         config.kernel_config = saved_kernel
 
@@ -2222,9 +2218,7 @@ def test_cuda_phi_compute_f64diag_accuracy():
     outs64 = [cp.empty((dim, K), cp.float64) for _ in range(3)]
     Kset.phi_compute_multipath(*args64, *outs64)
 
-    for name, mixed, ref in zip(
-        ("eD", "phi1", "phi2"), outs_mixed, outs64
-    ):
+    for name, mixed, ref in zip(("eD", "phi1", "phi2"), outs_mixed, outs64):
         m = cp.asnumpy(mixed).astype(np.float64)
         r = cp.asnumpy(ref)
         mask = np.abs(r) > 1e-15 * np.abs(r).max()

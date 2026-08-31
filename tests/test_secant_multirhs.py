@@ -183,16 +183,28 @@ def test_numpy_secant_multirhs_matches_repeated_single(
     snapshots = [1, 5]
     nsteps = len(p["dX"])
     batched, batched_grid = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
-        snapshots, ops,
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        snapshots,
+        ops,
     )
 
     reference = []
     reference_grid = []
     for rhs in range(p["K"]):
         col, grid = solv_numpy_etd2_secant(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"][:, rhs], snapshots, ops,
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"][:, rhs],
+            snapshots,
+            ops,
         )
         reference.append(col)
         reference_grid.append(grid)
@@ -200,9 +212,7 @@ def test_numpy_secant_multirhs_matches_repeated_single(
     reference_grid = np.stack(reference_grid, axis=2)
 
     np.testing.assert_allclose(batched, reference, rtol=RTOL, atol=ATOL)
-    np.testing.assert_allclose(
-        batched_grid, reference_grid, rtol=RTOL, atol=ATOL
-    )
+    np.testing.assert_allclose(batched_grid, reference_grid, rtol=RTOL, atol=ATOL)
     # The zero/cutoff-like column stays exactly zero (no cross-talk).
     assert np.count_nonzero(batched[:, 2]) == 0
 
@@ -216,8 +226,14 @@ def test_numpy_secant_carousel_matches_independent_paths(
 
     dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
     carousel = solv_numpy_etd2_secant_carousel(
-        p["int_m"], p["dec_m"], dX_c, rho_c, phi_initial, schedule,
-        p["phi0"], ops,
+        p["int_m"],
+        p["dec_m"],
+        dX_c,
+        rho_c,
+        phi_initial,
+        schedule,
+        p["phi0"],
+        ops,
     )
 
     np.testing.assert_allclose(carousel, reference, rtol=RTOL, atol=ATOL)
@@ -236,26 +252,44 @@ def test_mkl_secant_multirhs_and_carousel_match_numpy(secant_48mode_problem):
     mkl_int, mkl_dec, d_int, d_dec = _mkl_operators(p, ops)
     try:
         numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"], [], ops,
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"],
+            [],
+            ops,
         )
         mkl_shared, _ = solv_mkl_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], mkl_int, mkl_dec, d_int, d_dec,
-            p["phi0"], [], ops,
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            mkl_int,
+            mkl_dec,
+            d_int,
+            d_dec,
+            p["phi0"],
+            [],
+            ops,
         )
-        np.testing.assert_allclose(
-            mkl_shared, numpy_shared, rtol=RTOL, atol=ATOL
-        )
+        np.testing.assert_allclose(mkl_shared, numpy_shared, rtol=RTOL, atol=ATOL)
 
         dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
         mkl_carousel = solv_mkl_etd2_secant_carousel(
-            mkl_int, mkl_dec, d_int, d_dec, dX_c, rho_c, phi_initial,
-            schedule, p["phi0"], ops,
+            mkl_int,
+            mkl_dec,
+            d_int,
+            d_dec,
+            dX_c,
+            rho_c,
+            phi_initial,
+            schedule,
+            p["phi0"],
+            ops,
         )
         reference = _single_axis_columns(p, p["paths"], ops)
-        np.testing.assert_allclose(
-            mkl_carousel, reference, rtol=RTOL, atol=ATOL
-        )
+        np.testing.assert_allclose(mkl_carousel, reference, rtol=RTOL, atol=ATOL)
         assert np.count_nonzero(mkl_carousel[:, 2]) == 0
     finally:
         for m in (mkl_int, mkl_dec):
@@ -296,8 +330,14 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
         nsteps, p["dX"], p["rho_inv"], multi_ctx, p["phi0"], [], ops
     )
     numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
-        [], ops,
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        [],
+        ops,
     )
     np.testing.assert_allclose(cuda_shared, numpy_shared, rtol=2e-11, atol=2e-12)
 
@@ -306,9 +346,7 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
         multi_ctx, dX_c, rho_c, phi_initial, schedule, p["phi0"], ops
     )
     numpy_reference = _single_axis_columns(p, p["paths"], ops)
-    np.testing.assert_allclose(
-        cuda_carousel, numpy_reference, rtol=2e-11, atol=2e-12
-    )
+    np.testing.assert_allclose(cuda_carousel, numpy_reference, rtol=2e-11, atol=2e-12)
     assert np.count_nonzero(cuda_carousel[:, 2]) == 0
 
     # The carousel must also agree with the single-axis CUDA kernel run

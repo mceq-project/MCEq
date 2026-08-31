@@ -44,9 +44,6 @@ test = [
     # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
     # Requires Python >= 3.10; on 3.9 the MSIS21 smoke test importorskips.
     "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1 ; python_version >= '3.10'",
-    # threadpoolctl is a runtime dependency; the golden harness also uses it to
-    # pin the OpenBLAS pool, which the single-axis secant route is sensitive to.
-    "threadpoolctl",
 ]
 lint = [
     # Layer contracts (.importlinter). 2.14 is the first release with
@@ -82,8 +79,12 @@ Documentation = "https://mceq.readthedocs.io/en/latest"
 Homepage = "https://github.com/afedynitch/MCEq"
 Issues = "https://github.com/afedynitch/MCEq/issues"
 
+[tool.ruff]
+# Notebooks are user-facing demonstrations, not library code, and one of them
+# does not even parse as Python source. Excluded from both check and format.
+exclude = ["docs/examples/**", "examples/**"]
+
 [tool.ruff.lint]
-exclude = ["docs/examples/**"]
 
 extend-select = [
     "I", # enable isort

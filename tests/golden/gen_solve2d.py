@@ -50,23 +50,16 @@ The section costs 57 s on mkl_etd2: 5.1 construct, 1.8 single, 5.9 multi-RHS,
 # ruff: noqa: E402  -- the OpenBLAS pool is sized before numpy loads.
 from __future__ import annotations
 
-import contextlib
 import copy
-import os
 import pathlib
 import time
 
-#: OpenBLAS pool size for the section. The single-axis (K = 1) secant route is
-#: not covered by `solvers._secant_blas_thread_limit` (armed only for K > 1),
-#: so its dense mode-coupling GEMMs run at the ambient pool, and OpenBLAS
-#: switches microkernel between 1 and >= 2 threads: 4.6e-9 max-relative on the
-#: stitched state. 2, 4, 8 and 48 threads all agree bitwise.
-OPENBLAS_THREADS = 4
-
-#: OpenBLAS sizes its pool when the library loads, so this assignment only
-#: takes effect when this module is imported before numpy. `build()` also pins
-#: the pool through threadpoolctl, which takes effect either way.
-os.environ.setdefault("OPENBLAS_NUM_THREADS", str(OPENBLAS_THREADS))
+#: Thread count for every BLAS pool. `config.set_mkl_threads` applies it to MKL
+#: and OpenBLAS alike, so the dense mode-coupling GEMMs of the secant routes are
+#: capped on both the single-axis and the batched route. OpenBLAS switches
+#: microkernel between 1 and >= 2 threads (4.6e-9 max-relative on the stitched
+#: state); 2, 4, 8, 16 and 48 threads all agree bitwise above that.
+BLAS_THREADS = 4
 
 import numpy as np
 
@@ -139,7 +132,6 @@ CONFIG_PINS = {
     "secant_theta_lam_rel": 1e-9,
     "secant_theta_w_flat": 1.0,
     "secant_theta_e_max": 31.6,
-    "secant_blas_threads": OPENBLAS_THREADS,
 }
 
 #: e+/e- stay out of the system: with them in, the 2D ETD2 solve diverges above
@@ -230,26 +222,6 @@ def _require_db(config):
     return path
 
 
-@contextlib.contextmanager
-def _openblas_pool(n_threads):
-    """Pin the OpenBLAS pool for the solves, yielding the sizes in force.
-
-    MKL's pool is left alone: its thread count does not move any key of this
-    section, and capping it would slow the sparse products.
-    """
-    try:
-        from threadpoolctl import ThreadpoolController
-    except ImportError:
-        yield None
-        return
-    with ThreadpoolController().select(internal_api="openblas").limit(limits=n_threads):
-        yield [
-            info["num_threads"]
-            for info in ThreadpoolController().info()
-            if info["internal_api"] == "openblas"
-        ]
-
-
 def _mode_blocks(state, n_k):
     """View a stitched state as `(n_k, dim_states, ...)`.
 
@@ -338,6 +310,7 @@ def build():
     db_path = _require_db(config)
 
     saved_config = {key: getattr(config, key) for key in CONFIG_PINS}
+    saved_config["mkl_threads"] = config.mkl_threads
     saved_adv_set = copy.deepcopy(config.adv_set)
     arrays = {}
     seconds = {}
@@ -350,187 +323,183 @@ def build():
 
         from MCEq.core import MCEqRun
 
-        with _openblas_pool(OPENBLAS_THREADS) as openblas_threads:
+        config.set_mkl_threads(BLAS_THREADS)
+        started = time.perf_counter()
+        mceq = MCEqRun(
+            interaction_model=INTERACTION_MODEL,
+            primary_model=None,
+            theta_deg=SINGLE_THETA,
+            density_model=CONFIG_PINS["density_model"],
+        )
+        seconds["construct"] = time.perf_counter() - started
+        try:
+            n_k = int(mceq._mceq_db.n_k)
+
+            # --- the constant sec(theta) operator set ------------------
+            ops = mceq._build_secant_ops()
+            arrays["ops/k_grid"] = np.asarray(mceq._mceq_db.k_grid)
+            arrays["ops/e_grid"] = np.asarray(mceq.e_grid)
+            arrays["ops/n_k"] = np.asarray(n_k)
+            arrays["ops/P"] = np.asarray(ops["P"])
+            arrays["ops/T_P"] = np.asarray(ops["T_P"])
+            arrays["ops/T_PP"] = np.asarray(ops["T_PP"])
+            arrays["ops/low_e_idx"] = np.asarray(ops["low_e_idx"])
+            # V, Vi and lam themselves are not goldened: eig returns the
+            # near-degenerate eigenvalues in a microkernel-dependent order
+            # and the column signs of V are arbitrary.
+            arrays["ops/lam_sorted"] = np.sort(np.asarray(ops["lam"]))
+            secant_cache = _secant_cache_entry(config, ops)
+
+            # --- multi-RHS columns, then the canonical primary ---------
+            columns = []
+            for energy in MULTIRHS_ENERGIES:
+                mceq.set_single_primary_particle(E=energy, pdg_id=PRIMARY_PDG)
+                columns.append(np.copy(mceq._phi0))
+            columns.append(np.zeros_like(columns[0]))
+            phi0_matrix = np.stack(columns, axis=1)
+            mceq.set_single_primary_particle(E=PRIMARY_ENERGY, pdg_id=PRIMARY_PDG)
+            # phi0 lands under state/ because set_single_primary_particle
+            # equalises three moments through scipy.linalg.solve, i.e.
+            # LAPACK, so it is not one of the BLAS-free operator reads.
+            arrays["state/phi0"] = np.copy(mceq._phi0)
+            arrays["state/phi0_matrix_l2"] = np.linalg.norm(phi0_matrix, axis=0)
+
+            # --- 1. single axis, K = 1 ---------------------------------
             started = time.perf_counter()
-            mceq = MCEqRun(
-                interaction_model=INTERACTION_MODEL,
-                primary_model=None,
-                theta_deg=SINGLE_THETA,
-                density_model=CONFIG_PINS["density_model"],
-            )
-            seconds["construct"] = time.perf_counter() - started
-            try:
-                n_k = int(mceq._mceq_db.n_k)
+            mceq.solve(int_grid=INT_GRID, **PATH)
+            seconds["single"] = time.perf_counter() - started
 
-                # --- the constant sec(theta) operator set ------------------
-                ops = mceq._build_secant_ops()
-                arrays["ops/k_grid"] = np.asarray(mceq._mceq_db.k_grid)
-                arrays["ops/e_grid"] = np.asarray(mceq.e_grid)
-                arrays["ops/n_k"] = np.asarray(n_k)
-                arrays["ops/P"] = np.asarray(ops["P"])
-                arrays["ops/T_P"] = np.asarray(ops["T_P"])
-                arrays["ops/T_PP"] = np.asarray(ops["T_PP"])
-                arrays["ops/low_e_idx"] = np.asarray(ops["low_e_idx"])
-                # V, Vi and lam themselves are not goldened: eig returns the
-                # near-degenerate eigenvalues in a microkernel-dependent order
-                # and the column signs of V are arbitrary.
-                arrays["ops/lam_sorted"] = np.sort(np.asarray(ops["lam"]))
-                secant_cache = _secant_cache_entry(config, ops)
+            nsteps, dX, rho_inv, grid_idcs = mceq.integration_path
+            arrays["path/single_nsteps"] = np.asarray(nsteps)
+            arrays["path/single_dX"] = np.asarray(dX)
+            arrays["path/single_rho_inv"] = np.asarray(rho_inv)
+            arrays["path/single_grid_idcs"] = np.asarray(grid_idcs)
+            arrays["path/int_grid"] = np.asarray(INT_GRID)
 
-                # --- multi-RHS columns, then the canonical primary ---------
-                columns = []
-                for energy in MULTIRHS_ENERGIES:
-                    mceq.set_single_primary_particle(E=energy, pdg_id=PRIMARY_PDG)
-                    columns.append(np.copy(mceq._phi0))
-                columns.append(np.zeros_like(columns[0]))
-                phi0_matrix = np.stack(columns, axis=1)
-                mceq.set_single_primary_particle(E=PRIMARY_ENERGY, pdg_id=PRIMARY_PDG)
-                # phi0 lands under state/ because set_single_primary_particle
-                # equalises three moments through scipy.linalg.solve, i.e.
-                # LAPACK, so it is not one of the BLAS-free operator reads.
-                arrays["state/phi0"] = np.copy(mceq._phi0)
-                arrays["state/phi0_matrix_l2"] = np.linalg.norm(phi0_matrix, axis=0)
-
-                # --- 1. single axis, K = 1 ---------------------------------
-                started = time.perf_counter()
-                mceq.solve(int_grid=INT_GRID, **PATH)
-                seconds["single"] = time.perf_counter() - started
-
-                nsteps, dX, rho_inv, grid_idcs = mceq.integration_path
-                arrays["path/single_nsteps"] = np.asarray(nsteps)
-                arrays["path/single_dX"] = np.asarray(dX)
-                arrays["path/single_rho_inv"] = np.asarray(rho_inv)
-                arrays["path/single_grid_idcs"] = np.asarray(grid_idcs)
-                arrays["path/int_grid"] = np.asarray(INT_GRID)
-
-                peaks["single"] = _check_stable("single", mceq._solution)
-                digests["single"] = array_digest(mceq._solution)
-                _record_state(arrays, "single", mceq._solution, n_k)
-                for index, snapshot in enumerate(mceq.grid_sol):
-                    _record_state(
-                        arrays, f"single_grid{index}", snapshot, n_k, monopole=False
-                    )
-                for name in SPECIES:
-                    arrays[f"spectrum/single_{name}"] = mceq.get_solution(
-                        name, mag=SPECTRUM_MAG
-                    )
-                    arrays[f"spectrum/single_grid_{name}"] = np.stack(
-                        [
-                            mceq.get_solution(name, mag=SPECTRUM_MAG, grid_idx=index)
-                            for index in range(len(INT_GRID))
-                        ]
-                    )
-
-                # --- 2. shared-path multi-RHS, K = 8 -----------------------
-                started = time.perf_counter()
-                multirhs = mceq.solve_batch(phi0_matrix, int_grid=INT_GRID, **PATH)
-                seconds["multirhs"] = time.perf_counter() - started
-
-                peaks["multirhs"] = _check_stable("multirhs", multirhs.sol)
-                digests["multirhs"] = array_digest(multirhs.sol)
-                _record_state(arrays, "multirhs", multirhs.sol, n_k)
-                for index, snapshot in enumerate(multirhs.grid_sol):
-                    _record_state(
-                        arrays, f"multirhs_grid{index}", snapshot, n_k, monopole=False
-                    )
-                _record_batch_spectra(
-                    arrays,
-                    "multirhs",
-                    multirhs,
-                    [{"k": k} for k in range(multirhs.K)],
+            peaks["single"] = _check_stable("single", mceq._solution)
+            digests["single"] = array_digest(mceq._solution)
+            _record_state(arrays, "single", mceq._solution, n_k)
+            for index, snapshot in enumerate(mceq.grid_sol):
+                _record_state(
+                    arrays, f"single_grid{index}", snapshot, n_k, monopole=False
                 )
-                for name in SPECIES:
-                    arrays[f"spectrum/multirhs_grid_{name}"] = np.stack(
-                        [
-                            multirhs.get_solution(
-                                name, k=0, mag=SPECTRUM_MAG, grid_idx=index
-                            )
-                            for index in range(len(INT_GRID))
-                        ]
-                    )
-                # A zero right-hand side stays zero: the cascade is linear.
-                assert not np.any(multirhs.sol[:, -1]), "zero column picked up flux"
-
-                # --- 3. LPT carousel over 12 zeniths, K_pipe = 8 -----------
-                started = time.perf_counter()
-                carousel = mceq.solve_batch(
-                    conditions=[{"zenith_deg": z} for z in CAROUSEL_ZENITHS],
-                    carousel_K=CAROUSEL_K,
-                    **PATH,
+            for name in SPECIES:
+                arrays[f"spectrum/single_{name}"] = mceq.get_solution(
+                    name, mag=SPECTRUM_MAG
                 )
-                seconds["carousel"] = time.perf_counter() - started
-
-                arrays["path/carousel_zeniths"] = np.asarray(CAROUSEL_ZENITHS)
-                arrays["path/carousel_nsteps_per_col"] = np.asarray(
-                    carousel.nsteps_per_col
-                )
-                peaks["carousel"] = _check_stable("carousel", carousel.sol)
-                digests["carousel"] = array_digest(carousel.sol)
-                _record_state(arrays, "carousel", carousel.sol, n_k)
-                _record_batch_spectra(
-                    arrays,
-                    "carousel",
-                    carousel,
-                    [{"k": k} for k in range(carousel.K)],
-                )
-
-                # --- 4. full sky, 2 zeniths x 2 azimuths -------------------
-                started = time.perf_counter()
-                fullsky = mceq.solve_fullsky(
-                    np.asarray(SKY_ZENITH),
-                    np.asarray(SKY_AZIMUTH),
-                    carousel_K=SKY_CAROUSEL_K,
-                    geomagnetic_cutoff=False,  # never reach for gtracr
-                    **PATH,
-                )
-                seconds["fullsky"] = time.perf_counter() - started
-
-                arrays["path/fullsky_zenith_grid"] = np.asarray(fullsky.zenith_grid)
-                arrays["path/fullsky_azimuth_grid"] = np.asarray(fullsky.azimuth_grid)
-                arrays["path/fullsky_pixel_index"] = np.asarray(fullsky.pixel_index)
-                arrays["path/fullsky_nsteps_per_col"] = np.asarray(
-                    fullsky.nsteps_per_col
-                )
-                peaks["fullsky"] = _check_stable("fullsky", fullsky.sol)
-                digests["fullsky"] = array_digest(fullsky.sol)
-                _record_state(arrays, "fullsky", fullsky.sol, n_k)
-                # Selecting by pixel rather than by k pins that column_index
-                # flattens (i_zen, i_az) with azimuth innermost.
-                _record_batch_spectra(
-                    arrays,
-                    "fullsky",
-                    fullsky,
+                arrays[f"spectrum/single_grid_{name}"] = np.stack(
                     [
-                        {"pixel": (i_zen, i_az)}
-                        for i_zen in range(len(SKY_ZENITH))
-                        for i_az in range(len(SKY_AZIMUTH))
-                    ],
+                        mceq.get_solution(name, mag=SPECTRUM_MAG, grid_idx=index)
+                        for index in range(len(INT_GRID))
+                    ]
                 )
-                for name in SPECIES:
-                    arrays[f"spectrum/fullsky_skymap_{name}"] = fullsky.skymap(
-                        name, SKYMAP_ENERGY, mag=SPECTRUM_MAG
-                    )
-                azimuth_degenerate = all(
-                    np.array_equal(
-                        fullsky.sol[:, i_zen * len(SKY_AZIMUTH)],
-                        fullsky.sol[:, i_zen * len(SKY_AZIMUTH) + i_az],
-                    )
+
+            # --- 2. shared-path multi-RHS, K = 8 -----------------------
+            started = time.perf_counter()
+            multirhs = mceq.solve_batch(phi0_matrix, int_grid=INT_GRID, **PATH)
+            seconds["multirhs"] = time.perf_counter() - started
+
+            peaks["multirhs"] = _check_stable("multirhs", multirhs.sol)
+            digests["multirhs"] = array_digest(multirhs.sol)
+            _record_state(arrays, "multirhs", multirhs.sol, n_k)
+            for index, snapshot in enumerate(multirhs.grid_sol):
+                _record_state(
+                    arrays, f"multirhs_grid{index}", snapshot, n_k, monopole=False
+                )
+            _record_batch_spectra(
+                arrays,
+                "multirhs",
+                multirhs,
+                [{"k": k} for k in range(multirhs.K)],
+            )
+            for name in SPECIES:
+                arrays[f"spectrum/multirhs_grid_{name}"] = np.stack(
+                    [
+                        multirhs.get_solution(
+                            name, k=0, mag=SPECTRUM_MAG, grid_idx=index
+                        )
+                        for index in range(len(INT_GRID))
+                    ]
+                )
+            # A zero right-hand side stays zero: the cascade is linear.
+            assert not np.any(multirhs.sol[:, -1]), "zero column picked up flux"
+
+            # --- 3. LPT carousel over 12 zeniths, K_pipe = 8 -----------
+            started = time.perf_counter()
+            carousel = mceq.solve_batch(
+                conditions=[{"zenith_deg": z} for z in CAROUSEL_ZENITHS],
+                carousel_K=CAROUSEL_K,
+                **PATH,
+            )
+            seconds["carousel"] = time.perf_counter() - started
+
+            arrays["path/carousel_zeniths"] = np.asarray(CAROUSEL_ZENITHS)
+            arrays["path/carousel_nsteps_per_col"] = np.asarray(carousel.nsteps_per_col)
+            peaks["carousel"] = _check_stable("carousel", carousel.sol)
+            digests["carousel"] = array_digest(carousel.sol)
+            _record_state(arrays, "carousel", carousel.sol, n_k)
+            _record_batch_spectra(
+                arrays,
+                "carousel",
+                carousel,
+                [{"k": k} for k in range(carousel.K)],
+            )
+
+            # --- 4. full sky, 2 zeniths x 2 azimuths -------------------
+            started = time.perf_counter()
+            fullsky = mceq.solve_fullsky(
+                np.asarray(SKY_ZENITH),
+                np.asarray(SKY_AZIMUTH),
+                carousel_K=SKY_CAROUSEL_K,
+                geomagnetic_cutoff=False,  # never reach for gtracr
+                **PATH,
+            )
+            seconds["fullsky"] = time.perf_counter() - started
+
+            arrays["path/fullsky_zenith_grid"] = np.asarray(fullsky.zenith_grid)
+            arrays["path/fullsky_azimuth_grid"] = np.asarray(fullsky.azimuth_grid)
+            arrays["path/fullsky_pixel_index"] = np.asarray(fullsky.pixel_index)
+            arrays["path/fullsky_nsteps_per_col"] = np.asarray(fullsky.nsteps_per_col)
+            peaks["fullsky"] = _check_stable("fullsky", fullsky.sol)
+            digests["fullsky"] = array_digest(fullsky.sol)
+            _record_state(arrays, "fullsky", fullsky.sol, n_k)
+            # Selecting by pixel rather than by k pins that column_index
+            # flattens (i_zen, i_az) with azimuth innermost.
+            _record_batch_spectra(
+                arrays,
+                "fullsky",
+                fullsky,
+                [
+                    {"pixel": (i_zen, i_az)}
                     for i_zen in range(len(SKY_ZENITH))
                     for i_az in range(len(SKY_AZIMUTH))
+                ],
+            )
+            for name in SPECIES:
+                arrays[f"spectrum/fullsky_skymap_{name}"] = fullsky.skymap(
+                    name, SKYMAP_ENERGY, mag=SPECTRUM_MAG
                 )
+            azimuth_degenerate = all(
+                np.array_equal(
+                    fullsky.sol[:, i_zen * len(SKY_AZIMUTH)],
+                    fullsky.sol[:, i_zen * len(SKY_AZIMUTH) + i_az],
+                )
+                for i_zen in range(len(SKY_ZENITH))
+                for i_az in range(len(SKY_AZIMUTH))
+            )
 
-                backends = sorted(str(key) for key in mceq._backend_cache)
-                sizes = {
-                    "dim": int(mceq.dim),
-                    "dim_states": int(mceq.dim_states),
-                    "n_k": n_k,
-                    "stitched": int(mceq.dim_states) * n_k,
-                    "n_coupled_modes": int(np.size(ops["P"])),
-                    "n_low_e_columns": int(np.size(ops["low_e_idx"])),
-                    "n_species": len(mceq.pman.cascade_particles),
-                }
-            finally:
-                mceq.close()
+            backends = sorted(str(key) for key in mceq._backend_cache)
+            sizes = {
+                "dim": int(mceq.dim),
+                "dim_states": int(mceq.dim_states),
+                "n_k": n_k,
+                "stitched": int(mceq.dim_states) * n_k,
+                "n_coupled_modes": int(np.size(ops["P"])),
+                "n_low_e_columns": int(np.size(ops["low_e_idx"])),
+                "n_species": len(mceq.pman.cascade_particles),
+            }
+        finally:
+            mceq.close()
 
         seconds["total"] = sum(seconds.values())
 
@@ -576,7 +545,7 @@ def build():
                 "db_path": str(db_path),
                 "backends_executed": backends,
                 "kernel_config_executed": config.kernel_config,
-                "openblas_threads": openblas_threads,
+                "blas_threads": BLAS_THREADS,
                 "path_knobs": dict(PATH),
                 "int_grid": INT_GRID,
                 "multirhs_energies": list(MULTIRHS_ENERGIES),
@@ -597,6 +566,7 @@ def build():
             },
         )
     finally:
+        config.set_mkl_threads(saved_config.pop("mkl_threads"))
         for key, value in saved_config.items():
             setattr(config, key, value)
         config.adv_set.clear()

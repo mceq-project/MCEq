@@ -1,13 +1,12 @@
 name: Lint
 
-# Structural gates for the layered-architecture refactor: the import-layer
-# contracts in .importlinter and the 600-line module-size limit. Both are
-# static — grimp parses the sources and never imports MCEq — so this job needs
-# no compiler, no database and no wheel, and runs in seconds on one Python.
+# Static gates: ruff, the import-layer contracts in .importlinter and the
+# 600-line module-size limit. None of them imports MCEq — grimp and ast parse
+# the sources — so the job needs no compiler, no database and no wheel, and
+# runs in seconds on one Python.
 #
-# Deliberately not here: ruff. It is red at this commit (10 errors and 23 files
-# to reformat under the pre-commit-pinned version) and is enforced by
-# .pre-commit-config.yaml; turning it into a required check is its own change.
+# ruff is pinned to the version .pre-commit-config.yaml uses, so a contributor
+# who ran the hooks cannot be failed here by a newer release.
 
 on:
   workflow_dispatch:
@@ -16,6 +15,8 @@ on:
       - src/**
       - mceq_config/**
       - scripts/**
+      - tests/**
+      - conftest.py
       - .importlinter
       - pyproject.toml
       - .github/workflows/lint.yaml
@@ -29,7 +30,7 @@ concurrency:
 
 jobs:
   structure:
-    name: import layers + module size
+    name: ruff + import layers + module size
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,6 +39,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      # Pinned to .pre-commit-config.yaml's rev so the hooks and CI agree.
+      - name: Ruff
+        run: |
+          uvx ruff@0.14.13 check --no-cache .
+          uvx ruff@0.14.13 format --no-cache --check .
 
       - name: Install the lint group
         run: uv pip install --system --group lint

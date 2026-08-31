@@ -130,17 +130,31 @@ _lib.etd2_post_apply2_multipath_f32.argtypes = [
 # select the (dim,) vs (dim, K) and scalar vs (K,) forms.
 _lib.etd2_post_apply1_rowmajor.restype = None
 _lib.etd2_post_apply1_rowmajor.argtypes = [
-    c_int, c_int,
-    POINTER(c_double), c_int,
-    POINTER(c_double), POINTER(c_double), c_int, c_int,
-    POINTER(c_double), POINTER(c_double), POINTER(c_double),
+    c_int,
+    c_int,
+    POINTER(c_double),
+    c_int,
+    POINTER(c_double),
+    POINTER(c_double),
+    c_int,
+    c_int,
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
 ]
 _lib.etd2_post_apply2_rowmajor.restype = None
 _lib.etd2_post_apply2_rowmajor.argtypes = [
-    c_int, c_int,
-    POINTER(c_double), c_int,
-    POINTER(c_double), c_int, c_int,
-    POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double),
+    c_int,
+    c_int,
+    POINTER(c_double),
+    c_int,
+    POINTER(c_double),
+    c_int,
+    c_int,
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
 ]
 
 etd2_post_apply1_rowmajor = _lib.etd2_post_apply1_rowmajor

@@ -75,7 +75,12 @@ def secant_layout(sec_ops, dim):
     inv_perm = np.empty_like(perm)
     inv_perm[perm] = np.arange(dim)
     return SimpleNamespace(
-        n_k=n_k, N=N, n_P=len(P), n_g=len(g), perm=perm, inv_perm=inv_perm,
+        n_k=n_k,
+        N=N,
+        n_P=len(P),
+        n_g=len(g),
+        perm=perm,
+        inv_perm=inv_perm,
         coupled=True,
     )
 
@@ -140,8 +145,13 @@ class CompiledOperator:
         if sec_ops is None:
             return cls(d_int, d_dec, int_off, dec_off, identity_layout(dim), None, None)
         return cls(
-            d_int, d_dec, int_off, dec_off, secant_layout(sec_ops, dim),
-            secant_coupling(sec_ops), sec_ops,
+            d_int,
+            d_dec,
+            int_off,
+            dec_off,
+            secant_layout(sec_ops, dim),
+            secant_coupling(sec_ops),
+            sec_ops,
         )
 
 

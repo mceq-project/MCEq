@@ -524,10 +524,12 @@ def _secant_phi_factors(ZB, out=None, work=None):
 
     safe = np.where(ZB == 0.0, 1.0, ZB)
     e1 = np.expm1(ZB)
-    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe,
-                    1.0 + ZB * (0.5 + ZB * _INV_6))
-    phi2 = np.where(np.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
-                    0.5 + ZB * (_INV_6 + ZB * _INV_24))
+    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6))
+    phi2 = np.where(
+        np.abs(ZB) > _PHI2_SMALL,
+        (e1 - ZB) / (safe * safe),
+        0.5 + ZB * (_INV_6 + ZB * _INV_24),
+    )
     return np.exp(ZB), phi1, phi2
 
 
@@ -535,10 +537,14 @@ def _cuda_secant_phi_factors(cp, fl_pr, ZB):
     """cupy form of :func:`_secant_phi_factors` (cupy ufuncs take no ``where``)."""
     safe = cp.where(ZB == 0.0, fl_pr(1.0), ZB)
     e1 = cp.expm1(ZB)
-    phi1B = cp.where(cp.abs(ZB) > _PHI1_SMALL, e1 / safe,
-                     1.0 + ZB * (0.5 + ZB * _INV_6))
-    phi2B = cp.where(cp.abs(ZB) > _PHI2_SMALL, (e1 - ZB) / (safe * safe),
-                     0.5 + ZB * (_INV_6 + ZB * _INV_24))
+    phi1B = cp.where(
+        cp.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6)
+    )
+    phi2B = cp.where(
+        cp.abs(ZB) > _PHI2_SMALL,
+        (e1 - ZB) / (safe * safe),
+        0.5 + ZB * (_INV_6 + ZB * _INV_24),
+    )
     return cp.exp(ZB), phi1B, phi2B
 
 
@@ -557,40 +563,6 @@ def _secant_left_matmul(matrix, plane, out=None):
         return (matrix @ plane_2d).reshape(result_shape)
     np.matmul(matrix, plane_2d, out=out.reshape(matrix.shape[0], -1))
     return out
-
-
-def _secant_blas_thread_limit(batched):
-    """Context capping OpenBLAS threads for the batched secant GEMMs.
-
-    The coupled-plane mode transforms are skinny dense GEMMs
-    (``(n_P, n_k) @ (n_k, n_g * K)``). Single-axis planes stay below
-    OpenBLAS's GEMM threading threshold, but the batched planes cross it
-    and the default all-cores fan-out is pure thread contention on these
-    shapes (66x slower than 4 threads at K = 8 on a 48-core EPYC). Cap
-    the OpenBLAS pool at ``config.secant_blas_threads`` for the step
-    loop; MKL's pool (``config.mkl_threads``) is left alone.
-    """
-    import contextlib
-
-    if not batched:
-        return contextlib.nullcontext()
-    try:
-        from threadpoolctl import ThreadpoolController
-    except ImportError:
-        info(
-            1,
-            "threadpoolctl is not installed — the batched secant mode-"
-            "coupling GEMMs may hit severe OpenBLAS thread contention "
-            "on many-core hosts.",
-        )
-        return contextlib.nullcontext()
-    limit = int(getattr(config, "secant_blas_threads", 4))
-    return ThreadpoolController().select(internal_api="openblas").limit(
-        limits=limit
-    )
-
-
-# --- sparse library bindings of the off-diagonal SpMM ----------------------
 
 
 class ScipyApplyOff:
@@ -662,7 +634,9 @@ class MklApplyOff:
             m.gemv_ctargs(alpha, self._ptr(x), beta, self._ptr(out))
         else:
             K = self.K
-            m.gemm_ctargs(alpha, K, self._ptr(x), K, self._ptr(out), K, beta=beta, layout=101)
+            m.gemm_ctargs(
+                alpha, K, self._ptr(x), K, self._ptr(out), K, beta=beta, layout=101
+            )
 
     def __call__(self, x, out, ri):
         if self._pad:
@@ -799,8 +773,17 @@ class HostBackend:
         if self._fused:
             dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(eD, h, out)
             self._post[0](
-                dim, K, h_p, h_s, _dptr(eD), _dptr(phi1), f_row, f_col,
-                _dptr(x), _dptr(F), _dptr(out),
+                dim,
+                K,
+                h_p,
+                h_s,
+                _dptr(eD),
+                _dptr(phi1),
+                f_row,
+                f_col,
+                _dptr(x),
+                _dptr(F),
+                _dptr(out),
             )
             return
         s = self._scratch
@@ -814,8 +797,17 @@ class HostBackend:
         if self._fused:
             dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(phi2, h, out)
             self._post[1](
-                dim, K, h_p, h_s, _dptr(phi2), f_row, f_col,
-                _dptr(a), _dptr(F_a), _dptr(F), _dptr(out),
+                dim,
+                K,
+                h_p,
+                h_s,
+                _dptr(phi2),
+                f_row,
+                f_col,
+                _dptr(a),
+                _dptr(F_a),
+                _dptr(F),
+                _dptr(out),
             )
             return
         s = self._scratch
@@ -940,13 +932,16 @@ class CudaBackend:
         )
         shape = (dim, K) if per_lane else (dim,)
         self._factors = tuple(cp.empty(shape, dtype=dtype) for _ in range(3))
-        self._D = None if per_lane else tuple(cp.empty(dim, dtype=dtype) for _ in range(2))
+        self._D = (
+            None if per_lane else tuple(cp.empty(dim, dtype=dtype) for _ in range(2))
+        )
 
     def coupling(self):
         c = self.op.coupling
         if self._coupling is None:
             self._coupling = tuple(
-                self.cp.asarray(m, dtype=self.dtype) for m in (c.T_P, c.T_PP, c.V, c.Vi, c.lam)
+                self.cp.asarray(m, dtype=self.dtype)
+                for m in (c.T_P, c.T_PP, c.V, c.Vi, c.lam)
             )
         return self._coupling
 
@@ -977,9 +972,13 @@ class CudaBackend:
         fp32 = self.dtype is cp.float32
         if self._per_lane:
             kernel = (
-                Kset.phi_compute_multipath_f64diag if fp32 else Kset.phi_compute_multipath
+                Kset.phi_compute_multipath_f64diag
+                if fp32
+                else Kset.phi_compute_multipath
             )
-            kernel(d_int[:, None], d_dec[:, None], h[None, :], ri[None, :], eD, phi1, phi2)
+            kernel(
+                d_int[:, None], d_dec[:, None], h[None, :], ri[None, :], eD, phi1, phi2
+            )
             return eD, phi1, phi2
         if fp32:
             Kset.phi_compute_multipath_f64diag(d_int, d_dec, h, ri, eD, phi1, phi2)
@@ -1016,7 +1015,9 @@ class CudaBackend:
 
 def cuda_backend(op, device_id=0, fp_precision=64):
     """Device backend; uploads the compiled operator's split once."""
-    dev = CudaOperator(op.int_off, op.dec_off, op.d_int, op.d_dec, device_id, fp_precision)
+    dev = CudaOperator(
+        op.int_off, op.dec_off, op.d_int, op.d_dec, device_id, fp_precision
+    )
     return CudaBackend(dev, op)
 
 
@@ -1099,9 +1100,13 @@ def etd2_driver(
         raise ValueError("etd2_driver: (nsteps, K) dX requires a (dim, K) state")
     if schedule is not None:
         if not per_lane:
-            raise ValueError("etd2_driver: a carousel schedule requires (T, K) dX / rho_inv")
+            raise ValueError(
+                "etd2_driver: a carousel schedule requires (T, K) dX / rho_inv"
+            )
         if grid_idcs:
-            raise ValueError("etd2_driver: carousel runs do not support int_grid snapshots")
+            raise ValueError(
+                "etd2_driver: carousel runs do not support int_grid snapshots"
+            )
         if phi0_per_pixel.shape != (dim, schedule.K_total):
             raise ValueError(
                 "etd2_driver: phi0_per_pixel must be (dim, K_total) "
@@ -1180,9 +1185,7 @@ def etd2_driver(
     start = time()
 
     # See module-level :data:`_EM_BLOWUP_CAVEAT` for the errstate contract.
-    with _secant_blas_thread_limit(coupled and K > 1), np.errstate(
-        over="ignore", invalid="ignore"
-    ):
+    with np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. diagonal factors of the full state and of the exact slot
             if per_lane:
@@ -1272,7 +1275,9 @@ def etd2_driver(
     grid = np.array([])
     if grid_sol:
         grid = xp.stack(grid_sol)
-        grid = be.to_host(grid if lay.inv_perm is None else grid[:, xp.asarray(lay.inv_perm)])
+        grid = be.to_host(
+            grid if lay.inv_perm is None else grid[:, xp.asarray(lay.inv_perm)]
+        )
     if not batched:
         sol = sol[:, 0]
         if grid.size:
@@ -1318,11 +1323,19 @@ def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 solv_numpy_etd2_multirhs = _multirhs(solv_numpy_etd2, phi_pos=5)
 
 
-def solv_numpy_etd2_carousel(int_m, dec_m, dX, rho_inv, phi_initial, schedule, phi0_per_pixel):
+def solv_numpy_etd2_carousel(
+    int_m, dec_m, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
+):
     """ETD2RK LPT carousel on scipy sparse (see :func:`compile_carousel_schedule`)."""
     be = numpy_backend(compile_operator(int_m, dec_m))
     return etd2_driver(
-        schedule.T, dX, rho_inv, be, phi_initial, [], schedule=schedule,
+        schedule.T,
+        dX,
+        rho_inv,
+        be,
+        phi_initial,
+        [],
+        schedule=schedule,
         phi0_per_pixel=phi0_per_pixel,
     )
 
@@ -1341,12 +1354,20 @@ def solv_numpy_etd2_secant_carousel(
 ):
     be = numpy_backend(compile_operator(int_m, dec_m, sec_ops))
     return etd2_driver(
-        schedule.T, dX, rho_inv, be, phi_initial, [], schedule=schedule,
+        schedule.T,
+        dX,
+        rho_inv,
+        be,
+        phi_initial,
+        [],
+        schedule=schedule,
         phi0_per_pixel=phi0_per_pixel,
     )
 
 
-def solv_mkl_etd2(nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec, phi, grid_idcs):
+def solv_mkl_etd2(
+    nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec, phi, grid_idcs
+):
     """ETD2RK on MKL sparse BLAS handles of the off-diagonals (CSR or BSR)."""
     be = HostBackend(_host_op(d_int, d_dec), MklApplyOff(mkl_int_off, mkl_dec_off))
     return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
@@ -1356,11 +1377,25 @@ solv_mkl_etd2_multirhs = _multirhs(solv_mkl_etd2, phi_pos=7)
 
 
 def solv_mkl_etd2_carousel(
-    mkl_int_off, mkl_dec_off, d_int, d_dec, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
 ):
     be = HostBackend(_host_op(d_int, d_dec), MklApplyOff(mkl_int_off, mkl_dec_off))
     return etd2_driver(
-        schedule.T, dX, rho_inv, be, phi_initial, [], schedule=schedule,
+        schedule.T,
+        dX,
+        rho_inv,
+        be,
+        phi_initial,
+        [],
+        schedule=schedule,
         phi0_per_pixel=phi0_per_pixel,
     )
 
@@ -1370,7 +1405,9 @@ def solv_mkl_etd2_secant(
 ):
     """ETD2RK with the sec(theta) coupling on MKL handles of the
     :func:`secant_split` off-diagonals."""
-    be = HostBackend(_host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off))
+    be = HostBackend(
+        _host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off)
+    )
     return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
 
 
@@ -1378,18 +1415,36 @@ solv_mkl_etd2_secant_multirhs = _multirhs(solv_mkl_etd2_secant, phi_pos=7)
 
 
 def solv_mkl_etd2_secant_carousel(
-    mkl_int_off, mkl_dec_off, d_int, d_dec, dX, rho_inv, phi_initial,
-    schedule, phi0_per_pixel, sec_ops,
+    mkl_int_off,
+    mkl_dec_off,
+    d_int,
+    d_dec,
+    dX,
+    rho_inv,
+    phi_initial,
+    schedule,
+    phi0_per_pixel,
+    sec_ops,
 ):
-    be = HostBackend(_host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off))
+    be = HostBackend(
+        _host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off)
+    )
     return etd2_driver(
-        schedule.T, dX, rho_inv, be, phi_initial, [], schedule=schedule,
+        schedule.T,
+        dX,
+        rho_inv,
+        be,
+        phi_initial,
+        [],
+        schedule=schedule,
         phi0_per_pixel=phi0_per_pixel,
     )
 
 
 def _cuda_be(ctx, sec_ops=None):
-    d_int, d_dec = (ctx.cp.asnumpy(d).astype(np.float64) for d in (ctx.cu_d_int, ctx.cu_d_dec))
+    d_int, d_dec = (
+        ctx.cp.asnumpy(d).astype(np.float64) for d in (ctx.cu_d_int, ctx.cu_d_dec)
+    )
     return CudaBackend(ctx, _host_op(d_int, d_dec, sec_ops))
 
 
@@ -1403,7 +1458,13 @@ solv_cuda_etd2_multirhs = _multirhs(solv_cuda_etd2, phi_pos=4)
 
 def solv_cuda_etd2_carousel(ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel):
     return etd2_driver(
-        schedule.T, dX, rho_inv, _cuda_be(ctx), phi_initial, [], schedule=schedule,
+        schedule.T,
+        dX,
+        rho_inv,
+        _cuda_be(ctx),
+        phi_initial,
+        [],
+        schedule=schedule,
         phi0_per_pixel=phi0_per_pixel,
     )
 
@@ -1421,8 +1482,14 @@ def solv_cuda_etd2_secant_carousel(
     ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel, sec_ops
 ):
     return etd2_driver(
-        schedule.T, dX, rho_inv, _cuda_be(ctx, sec_ops), phi_initial, [],
-        schedule=schedule, phi0_per_pixel=phi0_per_pixel,
+        schedule.T,
+        dX,
+        rho_inv,
+        _cuda_be(ctx, sec_ops),
+        phi_initial,
+        [],
+        schedule=schedule,
+        phi0_per_pixel=phi0_per_pixel,
     )
 
 
@@ -1438,21 +1505,21 @@ def solv_cuda_etd2_secant_carousel(
 #
 # Design: ../mceq-em-integration/wiki/methods/multi-rhs-lpt-carousel.md
 # ---------------------------------------------------------------------------
-from collections import namedtuple
+from collections import namedtuple  # noqa: E402  (section-local, see banner)
 
 CarouselSchedule = namedtuple(
     "CarouselSchedule",
     [
-        "T",                # int — makespan (outer loop iters)
-        "K",                # int — pipeline width (slots)
-        "K_total",          # int — total pixels packed
-        "slot_assignments", # list[list[int]] — per-slot pixel ids in run order
-        "reset_t_starts",   # (T+1,) int32 — CSR ptrs into reset_j / reset_pixel
-        "reset_j",          # (R,) int32 — slot id of each reset event
-        "reset_pixel",      # (R,) int32 — pixel id whose phi0 to load
+        "T",  # int — makespan (outer loop iters)
+        "K",  # int — pipeline width (slots)
+        "K_total",  # int — total pixels packed
+        "slot_assignments",  # list[list[int]] — per-slot pixel ids in run order
+        "reset_t_starts",  # (T+1,) int32 — CSR ptrs into reset_j / reset_pixel
+        "reset_j",  # (R,) int32 — slot id of each reset event
+        "reset_pixel",  # (R,) int32 — pixel id whose phi0 to load
         "record_t_starts",  # (T+1,) int32 — CSR ptrs into record_j / record_pixel
-        "record_j",         # (K_total,) int32 — slot id of each harvest event
-        "record_pixel",     # (K_total,) int32 — pixel id to record into
+        "record_j",  # (K_total,) int32 — slot id of each harvest event
+        "record_pixel",  # (K_total,) int32 — pixel id to record into
     ],
 )
 
@@ -1999,25 +2066,53 @@ def _set_mkl_argtypes(mkl):
 
     # fp64
     mkl.mkl_sparse_d_mv.argtypes = [
-        c_int, fl64, c_void_p, _MklMatrixDescr,
-        POINTER(fl64), fl64, POINTER(fl64),
+        c_int,
+        fl64,
+        c_void_p,
+        _MklMatrixDescr,
+        POINTER(fl64),
+        fl64,
+        POINTER(fl64),
     ]
     mkl.mkl_sparse_d_mv.restype = c_int
     mkl.mkl_sparse_d_mm.argtypes = [
-        c_int, fl64, c_void_p, _MklMatrixDescr, c_int,
-        POINTER(fl64), c_int, c_int, fl64, POINTER(fl64), c_int,
+        c_int,
+        fl64,
+        c_void_p,
+        _MklMatrixDescr,
+        c_int,
+        POINTER(fl64),
+        c_int,
+        c_int,
+        fl64,
+        POINTER(fl64),
+        c_int,
     ]
     mkl.mkl_sparse_d_mm.restype = c_int
     # fp32
     if hasattr(mkl, "mkl_sparse_s_mv"):
         mkl.mkl_sparse_s_mv.argtypes = [
-            c_int, fl32, c_void_p, _MklMatrixDescr,
-            POINTER(fl32), fl32, POINTER(fl32),
+            c_int,
+            fl32,
+            c_void_p,
+            _MklMatrixDescr,
+            POINTER(fl32),
+            fl32,
+            POINTER(fl32),
         ]
         mkl.mkl_sparse_s_mv.restype = c_int
         mkl.mkl_sparse_s_mm.argtypes = [
-            c_int, fl32, c_void_p, _MklMatrixDescr, c_int,
-            POINTER(fl32), c_int, c_int, fl32, POINTER(fl32), c_int,
+            c_int,
+            fl32,
+            c_void_p,
+            _MklMatrixDescr,
+            c_int,
+            POINTER(fl32),
+            c_int,
+            c_int,
+            fl32,
+            POINTER(fl32),
+            c_int,
         ]
         mkl.mkl_sparse_s_mm.restype = c_int
 
@@ -2055,7 +2150,7 @@ class MklSparseMatrix:
     """
 
     def __init__(self, csr, expected_calls=200, blocksize=None):
-        from ctypes import POINTER, Structure, byref, c_int, c_void_p
+        from ctypes import POINTER, byref, c_int, c_void_p
         from ctypes import c_double as fl_pr
 
         if config.mkl is None:
@@ -2314,7 +2409,7 @@ class MklSparseMatrixF32:
     """
 
     def __init__(self, csr, expected_calls=200):
-        from ctypes import POINTER, Structure, byref, c_int, c_void_p
+        from ctypes import POINTER, byref, c_int, c_void_p
         from ctypes import c_float as fl_pr
 
         if config.mkl is None:
@@ -2772,13 +2867,23 @@ def solv_mkl_etd2_multirhs_f32(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, phc_tile_ptrs[t], n_padded,
-                        F_phi_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        phc_tile_ptrs[t],
+                        n_padded,
+                        F_phi_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
             _post1(n_padded, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
@@ -2788,16 +2893,28 @@ def solv_mkl_etd2_multirhs_f32(
                 nrhs = tile_widths[t]
                 if not int_off_empty:
                     mkl_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        1.0,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
                 if not dec_off_empty:
                     mkl_dec_off.gemm_ctargs(
-                        ri, nrhs, a_tile_ptrs[t], n_padded,
-                        F_a_tile_ptrs[t], n_padded, beta=1.0,
+                        ri,
+                        nrhs,
+                        a_tile_ptrs[t],
+                        n_padded,
+                        F_a_tile_ptrs[t],
+                        n_padded,
+                        beta=1.0,
                     )
 
-            _post2(n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
+            _post2(
+                n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
+            )
 
             if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
                 grid_sol.append(np.copy(phc[:dim, :]))
@@ -3182,7 +3299,7 @@ def solv_spacc_etd2_carousel(
     dim = phi_initial.shape[0]
     if dX.shape != (T, K) or rho_inv.shape != (T, K):
         raise ValueError(
-            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T,K}; "
+            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T, K}; "
             f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
         )
     if phi_initial.shape != (dim, K):

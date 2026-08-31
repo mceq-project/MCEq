@@ -776,8 +776,9 @@ def test_force_resonance_folds_non_standard_particle():
     saved_std = list(config.standard_particles)
     config.adv_set["force_resonance"] = [3122]
     config.adv_set["disabled_particles"] = []
-    config.standard_particles = [pid for pid in config.standard_particles
-                                 if abs(pid) != 3122]
+    config.standard_particles = [
+        pid for pid in config.standard_particles if abs(pid) != 3122
+    ]
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -992,7 +993,7 @@ def test_msis21_atmosphere_smoke():
     """
     pytest.importorskip("nrlmsis")
     atm = dprof.MSIS21Atmosphere("SouthPole", season="January")
-    rho_low = atm.get_density(2.0e5)   # 2 km in cm
+    rho_low = atm.get_density(2.0e5)  # 2 km in cm
     rho_high = atm.get_density(3.0e6)  # 30 km in cm
     assert rho_low > 0.0
     assert rho_high > 0.0

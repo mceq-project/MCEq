@@ -26,7 +26,6 @@ GENERATORS = {
     "paths": "gen_paths",
     "solve1d": "gen_solve1d",
     "species": "gen_species",
-    "rhostack": "gen_rhostack",
     "solve2d": "gen_solve2d",
 }
 
@@ -38,7 +37,9 @@ class SectionUnavailable(RuntimeError):
 def load_generator(section: str):
     module = importlib.import_module(f".{GENERATORS[section]}", __package__)
     if module.SECTION != section:
-        raise RuntimeError(f"{module.__name__}.SECTION is {module.SECTION!r}, expected {section!r}")
+        raise RuntimeError(
+            f"{module.__name__}.SECTION is {module.SECTION!r}, expected {section!r}"
+        )
     return module
 
 
@@ -62,7 +63,9 @@ def regenerate(section: str):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sections", nargs="*", choices=[*SECTIONS, []], default=[])
-    parser.add_argument("--list", action="store_true", help="list section names and exit")
+    parser.add_argument(
+        "--list", action="store_true", help="list section names and exit"
+    )
     args = parser.parse_args(argv)
 
     if args.list:

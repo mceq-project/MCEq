@@ -190,9 +190,14 @@ class MSIS21Atmosphere(EarthsAtmosphere):
     def _calc_one(self, h_cm):
         z_km = max(float(h_cm) / 1e5, 0.0)
         return self._model.calc(
-            day=self._doy, utsec=self._sec, z=z_km,
-            lat=self._lat, lon=self._lon,
-            sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+            day=self._doy,
+            utsec=self._sec,
+            z=z_km,
+            lat=self._lat,
+            lon=self._lon,
+            sfluxavg=self._f107a,
+            sflux=self._f107,
+            ap=self._ap,
         )
 
     def get_density(self, h_cm):
@@ -243,15 +248,20 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         now = time()
         result = self._model.calc_altitude_array(
-            day=self._doy, utsec=self._sec, z=z_km_vec,
-            lat=self._lat, lon=self._lon,
-            sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+            day=self._doy,
+            utsec=self._sec,
+            z=z_km_vec,
+            lat=self._lat,
+            lon=self._lon,
+            sfluxavg=self._f107a,
+            sflux=self._f107,
+            ap=self._ap,
         )
-        rho_vec = result.densities[0] * 1.0e-3   # kg/m³ → g/cm³
+        rho_vec = result.densities[0] * 1.0e-3  # kg/m³ → g/cm³
 
         info(5, f".. nrlmsis2.1 vectorised call took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
 
         self._max_X = X_int[-1]
         self._min_X = X_int[0]
@@ -388,21 +398,35 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         lat0 = np.deg2rad(self._detector_latitude)
         lon0 = np.deg2rad(self._detector_longitude)
 
-        P_det = np.array([
-            r_det * np.cos(lat0) * np.cos(lon0),
-            r_det * np.cos(lat0) * np.sin(lon0),
-            r_det * np.sin(lat0),
-        ])
-        d_ENU = np.array([
-            np.sin(theta) * np.sin(alpha),  # East
-            np.sin(theta) * np.cos(alpha),  # North
-            np.cos(theta),                  # Up
-        ])
-        T = np.array([
-            [-np.sin(lon0), -np.sin(lat0) * np.cos(lon0), np.cos(lat0) * np.cos(lon0)],
-            [ np.cos(lon0), -np.sin(lat0) * np.sin(lon0), np.cos(lat0) * np.sin(lon0)],
-            [          0.0,                 np.cos(lat0),                np.sin(lat0)],
-        ])
+        P_det = np.array(
+            [
+                r_det * np.cos(lat0) * np.cos(lon0),
+                r_det * np.cos(lat0) * np.sin(lon0),
+                r_det * np.sin(lat0),
+            ]
+        )
+        d_ENU = np.array(
+            [
+                np.sin(theta) * np.sin(alpha),  # East
+                np.sin(theta) * np.cos(alpha),  # North
+                np.cos(theta),  # Up
+            ]
+        )
+        T = np.array(
+            [
+                [
+                    -np.sin(lon0),
+                    -np.sin(lat0) * np.cos(lon0),
+                    np.cos(lat0) * np.cos(lon0),
+                ],
+                [
+                    np.cos(lon0),
+                    -np.sin(lat0) * np.sin(lon0),
+                    np.cos(lat0) * np.sin(lon0),
+                ],
+                [0.0, np.cos(lat0), np.sin(lat0)],
+            ]
+        )
         d_ECEF = T @ d_ENU
 
         # Larger root = surface crossing on the source side; valid for
@@ -473,9 +497,14 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
             rho_sum = np.zeros(n_steps)
             for lat, lon in self._azimuth_avg_coords:
                 res = self._model.calc_altitude_array(
-                    day=self._doy, utsec=self._sec, z=z_km_vec,
-                    lat=float(lat), lon=float(lon),
-                    sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+                    day=self._doy,
+                    utsec=self._sec,
+                    z=z_km_vec,
+                    lat=float(lat),
+                    lon=float(lon),
+                    sfluxavg=self._f107a,
+                    sflux=self._f107,
+                    ap=self._ap,
                 )
                 rho_sum += res.densities[0]
             rho_vec = rho_sum / len(self._azimuth_avg_coords) * 1.0e-3
@@ -487,15 +516,20 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
                 f"(lat={self._lat:.2f}, lon={self._lon:.2f})",
             )
             res = self._model.calc_altitude_array(
-                day=self._doy, utsec=self._sec, z=z_km_vec,
-                lat=self._lat, lon=self._lon,
-                sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+                day=self._doy,
+                utsec=self._sec,
+                z=z_km_vec,
+                lat=self._lat,
+                lon=self._lon,
+                sfluxavg=self._f107a,
+                sflux=self._f107,
+                ap=self._ap,
             )
             rho_vec = res.densities[0] * 1.0e-3
 
         info(5, f".. spline build took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
 
         self._max_X = X_int[-1]
         self._min_X = X_int[0]
@@ -522,9 +556,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         grazing window and far-side conventions.
         """
         if theta_deg < 0.0 or theta_deg > self.max_theta:
-            raise ValueError(
-                f"Zenith angle {theta_deg} not in [0, {self.max_theta}]."
-            )
+            raise ValueError(f"Zenith angle {theta_deg} not in [0, {self.max_theta}].")
 
         # Below-horizon dip of the local surface seen from the detector:
         # rays with theta <= 90 + dip still exit through the near-side

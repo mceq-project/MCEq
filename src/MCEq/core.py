@@ -123,15 +123,11 @@ class MCEqBatchResult:
         """
         n_selected = sum(x is not None for x in (k, pixel, zenith))
         if n_selected > 1:
-            raise ValueError(
-                "column_index: provide only one of k, pixel, or zenith"
-            )
+            raise ValueError("column_index: provide only one of k, pixel, or zenith")
         if k is not None:
             k = int(k)
             if not -self.K <= k < self.K:
-                raise IndexError(
-                    f"column_index: k={k} out of range for K={self.K}"
-                )
+                raise IndexError(f"column_index: k={k} out of range for K={self.K}")
             return k % self.K
 
         if pixel is not None or zenith is not None:
@@ -153,8 +149,7 @@ class MCEqBatchResult:
             match = np.flatnonzero(np.isclose(self.zenith_grid, zenith))
             if match.size == 0:
                 raise ValueError(
-                    f"column_index: zenith {zenith} not in grid "
-                    f"{self.zenith_grid}"
+                    f"column_index: zenith {zenith} not in grid {self.zenith_grid}"
                 )
             i_zen = int(match[0])
             if azimuth is None:
@@ -222,8 +217,7 @@ class MCEqBatchResult:
         else:
             if self.grid_sol is None or len(self.grid_sol) == 0:
                 raise Exception(
-                    "Solution has not been computed on a grid. "
-                    "Re-run with int_grid."
+                    "Solution has not been computed on a grid. Re-run with int_grid."
                 )
             if grid_idx >= len(self.grid_sol):
                 state = self.grid_sol[-1][:, col]
@@ -256,9 +250,7 @@ class MCEqBatchResult:
           (np.ndarray[n_zen, n_az]): flux map, kinetic-energy units.
         """
         if self.zenith_grid is None:
-            raise ValueError(
-                "skymap() is only available on solve_fullsky results"
-            )
+            raise ValueError("skymap() is only available on solve_fullsky results")
         e_grid = self._mceq.e_grid
         if not e_grid[0] <= kin_energy <= e_grid[-1]:
             raise ValueError(
@@ -293,9 +285,7 @@ class MCEqBatchResult:
     def __repr__(self):
         parts = [f"K={self.sol.shape[1]}"]
         if self.zenith_grid is not None:
-            parts.append(
-                f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}"
-            )
+            parts.append(f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}")
         if self.grid_sol is not None and len(self.grid_sol):
             parts.append(f"n_snapshots={len(self.grid_sol)}")
         return f"MCEqBatchResult({', '.join(parts)})"
@@ -354,9 +344,7 @@ class MCEqRun:
         he_le_transition = kwargs.pop(
             "he_le_transition", le_config.get("he_le_transition", 80.0)
         )
-        he_le_trwidth = kwargs.pop(
-            "he_le_trwidth", le_config.get("he_le_trwidth", 0.3)
-        )
+        he_le_trwidth = kwargs.pop("he_le_trwidth", le_config.get("he_le_trwidth", 0.3))
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=self.medium,
             low_energy_model=low_energy_model,
@@ -1199,8 +1187,7 @@ class MCEqRun:
 
             # response matrix: one column per primary energy
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries],
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
                 axis=1,
             )
             res = mceq.solve_batch(phi0)
@@ -1591,7 +1578,11 @@ class MCEqRun:
         start = time()
 
         self._solution, self.grid_sol = self._run_etd2(
-            nsteps, dX, rho_inv, phi0, grid_idcs,
+            nsteps,
+            dX,
+            rho_inv,
+            phi0,
+            grid_idcs,
             sec_ops=self._resolve_secant("solve"),
         )
 
@@ -1700,7 +1691,11 @@ class MCEqRun:
             phi0 = np.copy(self._phi0)
 
         self._solution, self.grid_sol = self._run_etd2(
-            nsteps, dX, rho_inv, phi0, grid_idcs,
+            nsteps,
+            dX,
+            rho_inv,
+            phi0,
+            grid_idcs,
             sec_ops=self._resolve_secant("solve"),
         )
 
@@ -1763,15 +1758,17 @@ class MCEqRun:
 
             # K single primaries (response matrix) at the current angle
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries], axis=1)
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
+                axis=1,
+            )
             res = mceq.solve_batch(phi0)
 
             # one spectrum through 12 months x 3 zeniths
             conditions = [
-                {"zenith_deg": z,
-                 "density_model": ("MSIS21", ("SouthPole", month))}
-                for month in months for z in (0.0, 30.0, 60.0)]
+                {"zenith_deg": z, "density_model": ("MSIS21", ("SouthPole", month))}
+                for month in months
+                for z in (0.0, 30.0, 60.0)
+            ]
             res = mceq.solve_batch(conditions=conditions)
             res.get_solution("conv_numu", k=5, mag=3)
 
@@ -1840,8 +1837,7 @@ class MCEqRun:
             n_cols = phi0_arr.shape[1]
         else:
             raise ValueError(
-                f"solve_batch: phi0 must be 1-D or 2-D, "
-                f"got shape {phi0_arr.shape}"
+                f"solve_batch: phi0 must be 1-D or 2-D, got shape {phi0_arr.shape}"
             )
 
         if conditions is not None:
@@ -1869,9 +1865,7 @@ class MCEqRun:
         # same amplitude, so tile the rows across the n_k blocks — the
         # exact analogue of the np.tile in solve().
         if self._mceq_db.is_2d:
-            phi0_mat = np.ascontiguousarray(
-                np.tile(phi0_mat, (self._mceq_db.n_k, 1))
-            )
+            phi0_mat = np.ascontiguousarray(np.tile(phi0_mat, (self._mceq_db.n_k, 1)))
 
         # --- build integration paths -------------------------------------
         path_kwargs = dict(
@@ -1880,8 +1874,7 @@ class MCEqRun:
         if conditions is None:
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be "
-                    "strictly increasing."
+                    "The X values in int_grid are required to be strictly increasing."
                 )
             self._calculate_integration_path(int_grid, grid_var, **path_kwargs)
             paths = [self.integration_path] * K
@@ -1918,7 +1911,12 @@ class MCEqRun:
             # zenith).
             phi0_typed = phi0_mat.astype(dtype, copy=True)
             sol, grid_sol = self._run_etd2(
-                nsteps, dX, rho_inv, phi0_typed, grid_idcs, dtype=dtype,
+                nsteps,
+                dX,
+                rho_inv,
+                phi0_typed,
+                grid_idcs,
+                dtype=dtype,
                 sec_ops=sec_ops,
             )
             legacy = (sol, grid_sol)
@@ -1944,10 +1942,15 @@ class MCEqRun:
             info(
                 2,
                 f"solve_batch: carousel route K={K} K_pipe={K_pipe} T={T} "
-                f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
+                f"sum_nsteps={sum_ns} waste={waste * 100:.2f}%",
             )
             sol = self._run_etd2_carousel(
-                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype,
+                dX_c,
+                ri_c,
+                phi_init,
+                sched,
+                phi0_mat,
+                dtype=dtype,
                 sec_ops=sec_ops,
             )
             grid_sol = None
@@ -2419,11 +2422,11 @@ class MCEqRun:
             )
         if cutoff_flag and not phi0_is_2d:
             from MCEq.geometry.gtracr_cutoff import (
-                build_phi0_with_cutoff, get_cutoff_map,
+                build_phi0_with_cutoff,
+                get_cutoff_map,
             )
-            az_centres = (
-                azimuth_grid if azimuth_grid is not None else np.array([0.0])
-            )
+
+            az_centres = azimuth_grid if azimuth_grid is not None else np.array([0.0])
             primary = getattr(self, "pmodel", None)
             if primary is None:
                 info(
@@ -2434,7 +2437,10 @@ class MCEqRun:
             else:
                 ck = dict(cutoff_kwargs or {})
                 rc_grid = get_cutoff_map(
-                    self.density_model, zenith_grid, az_centres, **ck,
+                    self.density_model,
+                    zenith_grid,
+                    az_centres,
+                    **ck,
                 )
                 # Pixel order: (i_zen, i_az) flattened with az inner.
                 rc_flat = rc_grid.flatten(order="C")
@@ -2562,7 +2568,10 @@ class MCEqRun:
         cached = getattr(self, "_secant_ops_cache", None)
         if cached is None or cached[0] != key:
             ops = build_secant_kernel_ops(
-                k_grid, e_centers, n_species, config,
+                k_grid,
+                e_centers,
+                n_species,
+                config,
                 theta_cap_deg=config.secant_theta_cap(),
             )
             self._secant_ops_cache = cached = (key, ops)
@@ -2644,18 +2653,24 @@ class MCEqRun:
                 import MCEq.spacc as spacc
 
                 cls = spacc.SpaccMatrixF32 if kind == "spacc_f32" else spacc.SpaccMatrix
-            handles = tuple(cls(off) if off.nnz else None for off in (op.int_off, op.dec_off))
+            handles = tuple(
+                cls(off) if off.nnz else None for off in (op.int_off, op.dec_off)
+            )
 
             def close():
                 for m in handles:
                     if m is not None:
                         m.close()
 
-            h = SimpleNamespace(op=op, int_off=handles[0], dec_off=handles[1], close=close)
+            h = SimpleNamespace(
+                op=op, int_off=handles[0], dec_off=handles[1], close=close
+            )
             cache[kind] = h
         return h
 
-    def _run_etd2(self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None):
+    def _run_etd2(
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
+    ):
         """One integration path for a ``(dim,)`` or ``(dim, K)`` state —
         the single-axis and the shared-path multi-RHS route."""
         import MCEq.solvers as solvers
@@ -2672,8 +2687,14 @@ class MCEqRun:
                 else solvers.solv_numpy_etd2_rho_stack
             )
             return kernel(
-                nsteps, dX, rho_inv, int_m_stack, self._em_rho_grid, self.dec_m,
-                phi0, grid_idcs,
+                nsteps,
+                dX,
+                rho_inv,
+                int_m_stack,
+                self._em_rho_grid,
+                self.dec_m,
+                phi0,
+                grid_idcs,
             )
         if kc == "accelerate_etd2":
             f32 = dtype == np.float32
@@ -2685,14 +2706,28 @@ class MCEqRun:
             else:
                 kernel = solvers.solv_spacc_etd2_multirhs
             return kernel(
-                nsteps, dX, rho_inv, h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                phi0, grid_idcs,
+                nsteps,
+                dX,
+                rho_inv,
+                h.int_off,
+                h.dec_off,
+                h.op.d_int,
+                h.op.d_dec,
+                phi0,
+                grid_idcs,
             )
         if dtype == np.float32 and kc in ("mkl", "mkl_etd2"):
             h = self._legacy_handles("mkl_f32")
             return solvers.solv_mkl_etd2_multirhs_f32(
-                nsteps, dX, rho_inv, h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                phi0, grid_idcs,
+                nsteps,
+                dX,
+                rho_inv,
+                h.int_off,
+                h.dec_off,
+                h.op.d_int,
+                h.op.d_dec,
+                phi0,
+                grid_idcs,
             )
         if dtype == np.float32 and kc == "numpy_etd2":
             raise NotImplementedError(
@@ -2707,8 +2742,14 @@ class MCEqRun:
         return sol, grid_sol
 
     def _run_etd2_carousel(
-        self, dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-        dtype=np.float64, sec_ops=None,
+        self,
+        dX_c,
+        rho_inv_c,
+        phi_initial,
+        schedule,
+        phi0_per_pixel,
+        dtype=np.float64,
+        sec_ops=None,
     ):
         """One LPT carousel launch (per-lane paths); returns the
         ``(dim, K_total)`` final states in pixel order."""
@@ -2718,14 +2759,27 @@ class MCEqRun:
         if kc in ("accelerate_etd2", "spacc_etd2"):
             h = self._legacy_handles("spacc")
             sol = solvers.solv_spacc_etd2_carousel(
-                h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+                h.int_off,
+                h.dec_off,
+                h.op.d_int,
+                h.op.d_dec,
+                dX_c,
+                rho_inv_c,
+                phi_initial,
+                schedule,
+                phi0_per_pixel,
             )
         else:
             be = self._etd2_backend(sec_ops, dtype)
             sol = solvers.etd2_driver(
-                schedule.T, dX_c, rho_inv_c, be, phi_initial, [],
-                schedule=schedule, phi0_per_pixel=phi0_per_pixel,
+                schedule.T,
+                dX_c,
+                rho_inv_c,
+                be,
+                phi_initial,
+                [],
+                schedule=schedule,
+                phi0_per_pixel=phi0_per_pixel,
             )
         return np.asarray(sol, dtype=np.dtype(dtype))
 
@@ -2740,7 +2794,6 @@ class MCEqRun:
             except Exception:
                 pass
         self.__dict__.pop("_operator_cache", None)
-
 
     def __del__(self):
         # Best-effort cleanup; never raise from __del__.

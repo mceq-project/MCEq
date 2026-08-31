@@ -230,7 +230,9 @@ def db_stanza() -> dict:
     return out
 
 
-def make_provenance(section: str, *, note: str = "", tolerances=None, extra=None) -> dict:
+def make_provenance(
+    section: str, *, note: str = "", tolerances=None, extra=None
+) -> dict:
     """Assemble the `__provenance__` payload for one section."""
     import subprocess
 
@@ -375,7 +377,9 @@ def _summarise(exp, act):
     denom = np.linalg.norm(ef)
     rel = float(np.linalg.norm(af - ef) / denom) if denom else float("inf")
     with np.errstate(divide="ignore", invalid="ignore"):
-        maxrel = float(np.nanmax(np.abs(af - ef) / np.where(ef == 0, np.nan, np.abs(ef))))
+        maxrel = float(
+            np.nanmax(np.abs(af - ef) / np.where(ef == 0, np.nan, np.abs(ef)))
+        )
     return f"rel-L2 {rel:.3e}, max elementwise {maxrel:.3e}"
 
 

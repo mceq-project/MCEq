@@ -203,8 +203,14 @@ def get_cutoff_map(
 
     location_name, lat, lon = _gtracr_location_from_atmosphere(density_model)
     key_str, key_hash = _cache_key(
-        location_name, bfield_type, date, particle_altitude,
-        iter_num, min_rigidity, max_rigidity, delta_rigidity,
+        location_name,
+        bfield_type,
+        date,
+        particle_altitude,
+        iter_num,
+        min_rigidity,
+        max_rigidity,
+        delta_rigidity,
     )
 
     n_zen = int(zen_centres.size)
@@ -212,8 +218,7 @@ def get_cutoff_map(
 
     cache_dir = _cache_dir()
     cache_file = cache_dir / (
-        f"gtracr_cutoffs_{location_name}_{bfield_type}_v{CACHE_VERSION}_"
-        f"{key_hash}.npz"
+        f"gtracr_cutoffs_{location_name}_{bfield_type}_v{CACHE_VERSION}_{key_hash}.npz"
     )
 
     if cache_file.exists() and not force_rebuild:
@@ -227,6 +232,7 @@ def get_cutoff_map(
         # from explicit coordinates.
         try:
             from gtracr.location import Location
+
             known_locs = {
                 "IceCube": "IceCube",
                 "ORCA": "ORCA",
@@ -235,8 +241,7 @@ def get_cutoff_map(
             if location_name in known_locs:
                 gmrc_loc = location_name
             else:
-                gmrc_loc = Location(name=location_name,
-                                    latitude=lat, longitude=lon)
+                gmrc_loc = Location(name=location_name, latitude=lat, longitude=lon)
         except Exception:
             gmrc_loc = location_name  # fall back to gtracr default lookup
 
@@ -268,7 +273,8 @@ def get_cutoff_map(
         wall = _time.monotonic() - t0
 
         g_az, g_zen, g_rc = gmrc.bin_results(
-            nbins_azimuth=_NATIVE_N_AZ, nbins_zenith=_NATIVE_N_ZEN,
+            nbins_azimuth=_NATIVE_N_AZ,
+            nbins_zenith=_NATIVE_N_ZEN,
         )
 
         # Gap-fill any NaN bins with nearest-neighbour
@@ -282,7 +288,9 @@ def get_cutoff_map(
                     f"increase iter_num"
                 )
             idx = distance_transform_edt(
-                mask, return_distances=False, return_indices=True,
+                mask,
+                return_distances=False,
+                return_indices=True,
             )
             g_rc = g_rc[tuple(idx)]
 
@@ -310,8 +318,11 @@ def get_cutoff_map(
     az_pad = np.concatenate([[g_az[-1] - 360.0], g_az, [g_az[0] + 360.0]])
     r_pad = np.concatenate([g_rc[:, -1:], g_rc, g_rc[:, :1]], axis=1)
     interp = RegularGridInterpolator(
-        (g_zen, az_pad), r_pad,
-        method="linear", bounds_error=False, fill_value=None,
+        (g_zen, az_pad),
+        r_pad,
+        method="linear",
+        bounds_error=False,
+        fill_value=None,
     )
     z_q = np.clip(zen_centres, g_zen[0], g_zen[-1])
     a_q = np.mod(az_centres, 360.0)
@@ -329,11 +340,11 @@ def get_cutoff_map(
 # own per-species rigidity awareness.
 _DEFAULT_MASS_GROUPS = (
     # (corsika_id, Z, A)
-    (14, 1, 1),       # p
-    (402, 2, 4),      # He
-    (1206, 6, 12),    # C-N-O
-    (2814, 14, 28),   # Si
-    (5426, 26, 54),   # Fe
+    (14, 1, 1),  # p
+    (402, 2, 4),  # He
+    (1206, 6, 12),  # C-N-O
+    (2814, 14, 28),  # Si
+    (5426, 26, 54),  # Fe
 )
 
 
@@ -393,8 +404,6 @@ def build_phi0_with_cutoff(
     for k in range(K):
         phi0[p.lidx + min_idx : p.uidx, k] = 1e-4 * p_flux_2d[min_idx:, k]
         if has_neutrons:
-            phi0[nproj.lidx + min_idx : nproj.uidx, k] = (
-                1e-4 * n_flux_2d[min_idx:, k]
-            )
+            phi0[nproj.lidx + min_idx : nproj.uidx, k] = 1e-4 * n_flux_2d[min_idx:, k]
 
     return phi0

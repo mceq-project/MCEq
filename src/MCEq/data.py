@@ -573,8 +573,11 @@ class HDF5Backend:
                 # are inert for a γ/e± cascade. Skip them so they never hit the
                 # dim_full reshape against the EM grid.
                 int_index = {
-                    "parents": [], "particles": [], "relations": {},
-                    "index_d": {}, "description": None,
+                    "parents": [],
+                    "particles": [],
+                    "relations": {},
+                    "index_d": {},
+                    "description": None,
                 }
             else:
                 int_index = self._gen_db_dictionary(
@@ -653,8 +656,11 @@ class HDF5Backend:
             # γ/e± cascade (the only decaying secondaries are sub-permille
             # muons from γ→μ⁺μ⁻). Skip them.
             return {
-                "parents": [], "particles": [], "relations": defaultdict(list),
-                "index_d": {}, "description": None,
+                "parents": [],
+                "particles": [],
+                "relations": defaultdict(list),
+                "index_d": {},
+                "description": None,
             }
 
         with h5py.File(self.had_fname, "r") as mceq_db:
@@ -751,9 +757,7 @@ class HDF5Backend:
         for projectile, le_cs in le_index["index_d"].items():
             if projectile in blended:
                 continue
-            he_cs = self._mapped_cross_section(
-                he_index["index_d"], projectile, mname
-            )
+            he_cs = self._mapped_cross_section(he_index["index_d"], projectile, mname)
             blended[projectile] = (
                 le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
             )
@@ -772,16 +776,17 @@ class HDF5Backend:
             with h5py.File(self.had_fname, "r") as mceq_db:
                 cs_root = mceq_db["cross_sections"]
                 direct_medium = medium if medium in cs_root else None
-                direct = (
-                    direct_medium is not None and mname in cs_root[direct_medium]
-                )
+                direct = direct_medium is not None and mname in cs_root[direct_medium]
                 if not direct and config.fallback_to_air_cs and "air" in cs_root:
                     if mname in cs_root["air"]:
                         medium = "air"
                         direct = True
                 if not direct:
                     for fallback in ("DPMJETIII191", "DPMJETIII193"):
-                        if direct_medium is not None and fallback in cs_root[direct_medium]:
+                        if (
+                            direct_medium is not None
+                            and fallback in cs_root[direct_medium]
+                        ):
                             info(5, f"{mname} cross sections replaced by {fallback}.")
                             mname = fallback
                             break

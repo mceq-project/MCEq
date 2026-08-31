@@ -145,7 +145,11 @@ floatlen = None
 #: numpy is linked to MKL. Default is ``min(16, os.cpu_count())``: MKL's
 #: sparse SpMV scales near-linearly to ~16 threads on the SIBYLL21
 #: matrices, then plateaus / regresses on most servers due to memory
-#: bandwidth and NUMA effects. Override after import for full control:
+#: bandwidth and NUMA effects. The same count is applied to every BLAS pool
+#: MCEq can reach, OpenBLAS included, because the dense mode-coupling GEMMs of
+#: the secant routes are skinny ((n_P, n_k) @ (n_k, n_g*K)) and an all-cores
+#: fan-out on those shapes is pure contention — 66x slower than a capped pool
+#: at K = 8 on a 48-core host. Override after import for full control:
 #: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
 
@@ -387,16 +391,6 @@ secant_theta_w_flat = 1.0
 #: <0.1% above 10 GeV, so the default excludes energies where it is
 #: numerically irrelevant. None applies it to all energies.
 secant_theta_e_max = 31.6
-#: OpenBLAS thread cap for the batched secant drivers' dense mode-
-#: coupling GEMMs. The batched (dim, K) planes cross OpenBLAS's GEMM
-#: threading threshold and its default all-cores fan-out is pure
-#: contention on these skinny (n_P x n_g*K) shapes — 66x slower than 4
-#: threads on a 48-core EPYC. Applied via threadpoolctl around the
-#: batched step loop (no-op if threadpoolctl is not installed;
-#: single-axis solves stay below the threshold and are not touched).
-#: MKL's pool is controlled separately by ``mkl_threads``.
-secant_blas_threads = 4
-
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
@@ -548,8 +542,18 @@ def _load_mkl():
     mkl = cdll.LoadLibrary(mkl_path)
 
 
+#: Handle of the process-wide BLAS limit, kept alive by :func:`set_mkl_threads`.
+_blas_limiter = None
+
+
 def set_mkl_threads(nthreads):
-    """Set the MKL thread count (loads ``libmkl_rt`` on the first call).
+    """Set the thread count of every BLAS pool MCEq can reach.
+
+    MKL through ``mkl_set_num_threads`` (loading ``libmkl_rt`` on the first
+    call) and, when threadpoolctl is available, every other pool it finds —
+    OpenBLAS above all, which is what numpy links against in most wheels.
+    One process-wide setting, applied once: the solver never adjusts a pool
+    around an individual step loop.
 
     Idempotent on the library side: only ``mkl_set_num_threads`` is
     called on subsequent invocations. The cached cdll handle is
@@ -563,12 +567,33 @@ def set_mkl_threads(nthreads):
     mkl_threads = nthreads
     if mkl is not None:
         mkl.mkl_set_num_threads(byref(c_int(nthreads)))
-        if debug_level >= 5:
-            print(f"MKL threads limited to {nthreads}")
+    global _blas_limiter
+    # numpy loads its BLAS lazily, on the first call rather than at import, so a
+    # limit applied before that leaves the pool at its all-cores default. One
+    # tiny product brings the library in first.
+    import numpy as np
+
+    np.dot(np.ones((2, 2)), np.ones((2, 2)))
+
+    try:
+        from threadpoolctl import threadpool_limits
+    except ImportError:
+        if debug_level >= 2:
+            print(
+                "threadpoolctl is not installed; only MKL's pool is limited, and "
+                "the dense secant GEMMs may contend on a many-core host."
+            )
+    else:
+        # threadpool_limits restores the previous limits when the object is
+        # collected, so the handle is kept for the life of the process.
+        if _blas_limiter is not None:
+            _blas_limiter.unregister()
+        _blas_limiter = threadpool_limits(limits=nthreads, user_api="blas")
+    if debug_level >= 5:
+        print(f"BLAS threads limited to {nthreads}")
 
 
-if has_mkl:
-    set_mkl_threads(mkl_threads)
+set_mkl_threads(mkl_threads)
 
 
 # Compatibility layer for dictionary access to config attributes

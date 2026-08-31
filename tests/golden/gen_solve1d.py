@@ -288,9 +288,9 @@ def build():
         # _get_solution_from_state resolves it per call, so unifying the two is
         # a behaviour change that no array value can reveal: at mag=0 the
         # kinetic- and total-energy branches return the same numbers.
-        bound_default = inspect.signature(MCEqRun.get_solution).parameters[
-            "return_as"
-        ].default
+        bound_default = (
+            inspect.signature(MCEqRun.get_solution).parameters["return_as"].default
+        )
         assert bound_default == CONFIG_PINS["return_as"], (
             f"MCEq.core was imported with config.return_as={bound_default!r}; "
             f"the weighted keys of this section are only reproducible at "

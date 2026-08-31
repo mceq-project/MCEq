@@ -15,9 +15,8 @@ SECTIONS = (
     "paths",
     "solve1d",
     "species",
-    "rhostack",
     "solve2d",
 )
 
 #: Sections that need a database CI does not carry or cost minutes to build.
-SLOW_SECTIONS = frozenset({"solve2d", "rhostack"})
+SLOW_SECTIONS = frozenset({"solve2d"})

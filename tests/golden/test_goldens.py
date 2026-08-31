@@ -11,8 +11,6 @@ the whole suite is pinned to one xdist worker.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from . import SECTIONS, SLOW_SECTIONS
@@ -46,26 +44,6 @@ def cuda_available():
         return False
 
 
-@pytest.fixture(autouse=True)
-def _pin_openblas():
-    """Pin the OpenBLAS pool for the duration of a golden test.
-
-    The single-axis (K=1) secant route is not covered by
-    `solvers._secant_blas_thread_limit`, so its dense coupling GEMMs run at the
-    ambient pool, and OpenBLAS switches microkernel between 1 and >=2 threads
-    (4.6e-9 max-relative). A runner that exports OPENBLAS_NUM_THREADS=1 would
-    otherwise fail a bitwise comparison.
-    """
-    try:
-        from threadpoolctl import threadpool_limits
-    except ImportError:
-        yield
-        return
-    limit = max(2, int(os.environ.get("OPENBLAS_NUM_THREADS", "2")))
-    with threadpool_limits(limits=limit, user_api="blas"):
-        yield
-
-
 def _build(section):
     module = load_generator(section)
     try:
@@ -83,8 +61,12 @@ def _check_database_identity(section, golden_prov, produced_prov):
     checkouts; without this a swapped database surfaces as a few hundred
     unexplained rel-L2 lines instead of one sentence.
     """
-    stored = {k: v.get("sha256") for k, v in (golden_prov.get("databases") or {}).items()}
-    current = {k: v.get("sha256") for k, v in (produced_prov.get("databases") or {}).items()}
+    stored = {
+        k: v.get("sha256") for k, v in (golden_prov.get("databases") or {}).items()
+    }
+    current = {
+        k: v.get("sha256") for k, v in (produced_prov.get("databases") or {}).items()
+    }
     for name, digest in stored.items():
         if digest and current.get(name) and digest != current[name]:
             pytest.fail(

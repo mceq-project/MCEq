@@ -1,5 +1,6 @@
 import pytest
-from MCEq.particlemanager import ParticleManager, MCEqParticle
+
+from MCEq.particlemanager import MCEqParticle, ParticleManager
 
 
 @pytest.fixture
@@ -63,7 +64,7 @@ def test_particle_manager_creation(energy_grid, cs_db):
     pdg_list = [(211, 0), (111, 0)]
     pm = ParticleManager(pdg_list, energy_grid, cs_db)
     print(pm)
-    print('1', pm.pdg2pref)
+    print("1", pm.pdg2pref)
     assert len(pm.cascade_particles) == 2
     assert pm.n_cparticles == 2
     assert pm.dim_states == energy_grid.d * 2
