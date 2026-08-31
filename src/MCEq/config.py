@@ -568,12 +568,17 @@ def set_mkl_threads(nthreads):
     if mkl is not None:
         mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     global _blas_limiter
-    # numpy loads its BLAS lazily, on the first call rather than at import, so a
-    # limit applied before that leaves the pool at its all-cores default. One
-    # tiny product brings the library in first.
-    import numpy as np
-
-    np.dot(np.ones((2, 2)), np.ones((2, 2)))
+    # A BLAS library reads its thread count when it loads, and numpy loads its
+    # own lazily on the first product. Publishing the environment covers every
+    # pool that is not in the process yet, without paying for a warm-up call.
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[var] = str(nthreads)
 
     try:
         from threadpoolctl import threadpool_limits
@@ -585,7 +590,8 @@ def set_mkl_threads(nthreads):
             )
     else:
         # threadpool_limits restores the previous limits when the object is
-        # collected, so the handle is kept for the life of the process.
+        # collected, so the handle is kept for the life of the process. It only
+        # reaches libraries already loaded; the environment above covers the rest.
         if _blas_limiter is not None:
             _blas_limiter.unregister()
         _blas_limiter = threadpool_limits(limits=nthreads, user_api="blas")
