@@ -7,6 +7,7 @@ import six
 
 import MCEq.data
 from MCEq import config
+from MCEq.download import ensure_db_available
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.operator_assembly import compile_operator
 from MCEq.particlemanager import ParticleManager
@@ -329,7 +330,7 @@ class MCEqRun:
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-        config.ensure_db_available()
+        ensure_db_available()
         if config.enable_em and config.muon_helicity_dependence:
             # Helicity L/R muon variants add semi-Lagrangian rows without
             # diagonal damping that destabilize the EM system

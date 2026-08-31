@@ -1,4 +1,3 @@
-import importlib
 import os
 import pathlib
 import platform
@@ -6,6 +5,8 @@ import sys
 import warnings
 
 from MCEq import base_path
+
+from . import detect
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -128,7 +129,7 @@ em_air_density = None
 #:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (requires cupy and
 #:                       a CUDA-capable GPU; recommended for large state
 #:                       vectors and many solve() calls).
-kernel_config = "auto"
+_kernel_config_request = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -461,65 +462,38 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: versions, using `from mceq_config import config`. The future versions
 #: will access the module attributes directly.
 
-#: Autodetect best solver
-#: determine shared library extension and MKL path
-pf = platform.platform()
-has_accelerate = False
+#: Platform and backend detection resolve on first read, through the module
+#: ``__getattr__`` below: importing MCEq must not dlopen a BLAS, probe a GPU or
+#: decide which kernel will run. Reading any of ``has_mkl``, ``has_cuda``,
+#: ``has_accelerate``, ``mkl_path`` or ``kernel_config`` caches the answer as a
+#: real module attribute, so the cost is paid once and later reads are ordinary
+#: attribute lookups.
 
-prefix = pathlib.Path(sys.prefix)
-if "Linux" in pf:
-    mkl_libs = list((prefix / "lib").glob("libmkl_rt*"))
-    mkl_path = mkl_libs[0] if mkl_libs else prefix / "lib" / "libmkl_rt.so"
-elif "macOS" in pf:
-    mkl_path = prefix / "lib" / "libmkl_rt.dylib"
-    has_accelerate = True
-else:
-    # Windows or unknown OS: search for mkl_rt*.dll in Library/bin and lib
-    mkl_path = None
-    mkl_dirs = [prefix / "Library" / "bin", prefix / "lib"]
-    mkl_candidates = []
-    for d in mkl_dirs:
-        if d.exists():
-            mkl_candidates.extend(d.glob("mkl_rt*.dll"))
-    if mkl_candidates:
-        mkl_path = mkl_candidates[0]
-    else:
-        # fallback to default path
-        mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
-
-    mkl_path = os.fspath(mkl_path)
-
-# mkl library handler
+#: ``libmkl_rt`` handle, populated by :func:`_load_mkl`.
 mkl = None
 
-has_mkl = bool(pathlib.Path(mkl_path).is_file())
+_LAZY = {
+    "has_mkl": lambda: detect.has_mkl(),
+    "has_cuda": lambda: detect.has_cuda(),
+    "has_accelerate": lambda: detect.has_accelerate(),
+    "mkl_path": lambda: detect.mkl_library_path(),
+    "kernel_config": lambda: detect.resolve_kernel(_kernel_config_request),
+    "pf": lambda: platform.platform(),
+    "prefix": lambda: pathlib.Path(sys.prefix),
+}
 
-# Look for cupy module
-has_cuda = importlib.util.find_spec("cupy") is not None
 
-# Pick the fastest available ETD2RK kernel. CUDA is intentionally not
-# auto-selected: spinning up a GPU context has nontrivial cost and a
-# matching cupy install is not always present on machines that have a
-# GPU. Apple Accelerate wins on macOS, Intel MKL wins on x86 Linux /
-# Windows when present, otherwise we fall back to plain numpy.
-if kernel_config == "auto":
-    if has_accelerate:
-        kernel_config = "accelerate_etd2"
-    elif has_mkl:
-        kernel_config = "mkl_etd2"
-    else:
-        kernel_config = "numpy_etd2"
-else:
-    kc = kernel_config.lower()
-    if kc in ("cuda", "cuda_etd2") and not has_cuda:
-        raise Exception("CUDA unavailable. Make sure cupy is installed.")
-    elif kc in ("mkl", "mkl_etd2") and not has_mkl:
-        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
-    elif kc in ("accelerate", "accelerate_etd2") and not has_accelerate:
-        raise Exception("Accelerate unavailable. Only on MacOS.")
+def __getattr__(name):
+    probe = _LAZY.get(name)
+    if probe is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = probe()
+    globals()[name] = value  # subsequent reads bypass this hook
+    return value
 
-if debug_level >= 2:
-    print(f"Auto-detected {kernel_config} solver.")
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
 
 
 def _load_mkl():
@@ -535,11 +509,33 @@ def _load_mkl():
     every wrapper sees the same symbol table.
     """
     global mkl
-    if mkl is not None or not has_mkl:
+    if mkl is not None or not detect.has_mkl():
         return
     from ctypes import cdll
 
-    mkl = cdll.LoadLibrary(mkl_path)
+    mkl = cdll.LoadLibrary(detect.mkl_library_path())
+
+
+#: Environment variables every BLAS MCEq can reach reads when it loads.
+_THREAD_ENV = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def _publish_thread_env(nthreads):
+    """Announce the thread count to BLAS libraries not yet in the process.
+
+    A BLAS reads its thread count once, when it loads, and numpy loads its own
+    lazily on the first product. Publishing costs microseconds and needs no
+    library present, which is why it is the only part of the thread setting
+    that runs at import.
+    """
+    for var in _THREAD_ENV:
+        os.environ[var] = str(nthreads)
 
 
 #: Handle of the process-wide BLAS limit, kept alive by :func:`set_mkl_threads`.
@@ -568,17 +564,7 @@ def set_mkl_threads(nthreads):
     if mkl is not None:
         mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     global _blas_limiter
-    # A BLAS library reads its thread count when it loads, and numpy loads its
-    # own lazily on the first product. Publishing the environment covers every
-    # pool that is not in the process yet, without paying for a warm-up call.
-    for var in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-    ):
-        os.environ[var] = str(nthreads)
+    _publish_thread_env(nthreads)
 
     try:
         from threadpoolctl import threadpool_limits
@@ -599,7 +585,9 @@ def set_mkl_threads(nthreads):
         print(f"BLAS threads limited to {nthreads}")
 
 
-set_mkl_threads(mkl_threads)
+# Only the environment is published at import: the dlopen and the threadpoolctl
+# pass happen on the first explicit set_mkl_threads, or never.
+_publish_thread_env(mkl_threads)
 
 
 # Compatibility layer for dictionary access to config attributes
@@ -630,88 +618,6 @@ class MCEqConfigCompatibility(dict):
 
 
 config = MCEqConfigCompatibility(globals())
-
-
-class FileIntegrityCheck:
-    """
-    A class to check a file integrity against provided checksum
-
-    Attributes
-    ----------
-    filename : str
-        path to the file
-    checksum : str
-        hex of sha256 checksum
-    Methods
-    -------
-    succeeded():
-        returns True if checksum and calculated checksum of the file are equal
-
-    get_file_checksum():
-        returns checksum of the file
-    """
-
-    import hashlib
-
-    def __init__(self, filename, checksum=""):
-        self.filename = filename
-        self.checksum = checksum
-        self.sha256_hash = self.hashlib.sha256()
-        self.hash_is_calculated = False
-
-    def _calculate_hash(self):
-        if not self.hash_is_calculated:
-            try:
-                with open(self.filename, "rb") as file:
-                    for byte_block in iter(lambda: file.read(4096), b""):
-                        self.sha256_hash.update(byte_block)
-                self.hash_is_calculated = True
-            except OSError as ex:
-                print(f"FileIntegrityCheck: {ex}")
-
-    def succeeded(self):
-        self._calculate_hash()
-        return self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum
-
-    def get_file_checksum(self):
-        self._calculate_hash()
-        return self.sha256_hash.hexdigest()
-
-
-def _download_file(url, outfile):
-    """Downloads the MCEq database from github"""
-
-    import math
-
-    import requests
-    from tqdm import tqdm
-
-    # Streaming, so we can iterate over the response.
-    r = requests.get(url, stream=True)
-
-    # Total size in bytes.
-    total_size = int(r.headers.get("content-length", 0))
-    block_size = 1024 * 1024
-    wrote = 0
-    with open(outfile, "wb") as f:
-        for data in tqdm(
-            r.iter_content(block_size),
-            total=math.ceil(total_size // block_size),
-            unit="MB",
-            unit_scale=True,
-        ):
-            wrote = wrote + len(data)
-            f.write(data)
-    if total_size != 0 and wrote != total_size:
-        raise Exception("ERROR, something went wrong")
-
-
-# Download database file from github
-base_url = "https://github.com/afedynitch/MCEq/releases/download/"
-release_tag = "builds_on_azure/"
-# sha256 checksum of the default database file
-# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
-file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
 
 def secant_theta_cap():
@@ -746,38 +652,3 @@ def secant_mode(is_2d):
     if isinstance(flag, str) and flag.lower() == "auto":
         return "auto"
     return "require" if flag else "off"
-
-
-def ensure_db_available():
-    """Download the MCEq database if not already present.
-
-    Called by MCEqRun.__init__ so that the download is deferred until the
-    database is actually needed.  This allows tests (and other callers) to
-    override ``config.mceq_db_fname`` before a download is attempted.
-
-    The integrity check only applies to the default database; non-default
-    files are accepted as-is if they exist.
-    """
-    import os
-
-    _url = base_url + release_tag + mceq_db_fname
-    filepath = data_dir / mceq_db_fname
-    if filepath.exists():
-        is_complete = (
-            FileIntegrityCheck(filepath, file_checksum).succeeded()
-            if mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
-            else True
-        )
-    else:
-        is_complete = False
-
-    if not is_complete:
-        print(f"Downloading MCEq database file {mceq_db_fname}.")
-        if debug_level >= 2:
-            print(_url)
-        _download_file(_url, filepath)
-
-    old_db = data_dir / "mceq_db_lext_dpm191.h5"
-    if old_db.exists():
-        print(f"Removing previous database {old_db.name}.")
-        os.unlink(old_db)

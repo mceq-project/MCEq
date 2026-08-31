@@ -2153,11 +2153,7 @@ class MklSparseMatrix:
         from ctypes import POINTER, byref, c_int, c_void_p
         from ctypes import c_double as fl_pr
 
-        if config.mkl is None:
-            raise RuntimeError(
-                "MklSparseMatrix: MKL library is not loaded. "
-                "Call config.set_mkl_threads(...) first."
-            )
+        config._load_mkl()
         if not sp.isspmatrix_csr(csr):
             raise TypeError(
                 f"MklSparseMatrix expects a CSR matrix, got {type(csr).__name__}"
@@ -2412,11 +2408,7 @@ class MklSparseMatrixF32:
         from ctypes import POINTER, byref, c_int, c_void_p
         from ctypes import c_float as fl_pr
 
-        if config.mkl is None:
-            raise RuntimeError(
-                "MklSparseMatrixF32: MKL library is not loaded. "
-                "Call config.set_mkl_threads(...) first."
-            )
+        config._load_mkl()
         if not sp.isspmatrix_csr(csr):
             raise TypeError(
                 f"MklSparseMatrixF32 expects a CSR matrix, got {type(csr).__name__}"

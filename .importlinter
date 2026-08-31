@@ -50,6 +50,7 @@ layers =
     operator_assembly : secant : (operators)
     particlemanager : (species)
     data
+    download
     config
     misc : (util)
 exhaustive = True
@@ -172,6 +173,9 @@ ignore_imports =
     MCEq.ddm -> MCEq.config
 # secant.py:124 -- Phase 5
     MCEq.secant -> MCEq.config
+# download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level from
+# the module. Phase 4 moves it under `data` and it takes a DataPaths group then.
+    MCEq.download -> MCEq.config
 
 # ------------------------------------------------------- C6: legacy shim
 # `mceq_config` replaces itself in sys.modules with MCEq.config. It exists for
