@@ -76,7 +76,11 @@ import numpy as np
 from scipy.sparse import eye
 import MCEq.spacc as spacc
 
-matrices = [spacc.SpaccMatrix(eye(5, format="coo")) for _ in range(5)]
+# Five live matrices, half the SIZE_MSTORE pool, so the m2 below still has a
+# free slot. One is fp32: the slot is typed at creation, so the fp32 family
+# has its own create/free round trip through the same pool.
+matrices = [spacc.SpaccMatrix(eye(5, format="coo")) for _ in range(4)]
+matrices.append(spacc.SpaccMatrix(eye(5, format="coo"), dtype=np.float32))
 # Explicit deletion; the GC will also call __del__ on gc collect/exit
 for m in matrices:
     del m

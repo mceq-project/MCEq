@@ -386,20 +386,21 @@ def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
 
 
 def test_resolve_batch_secant_tri_state():
-    # Supported backends build one constant operator set.
-    for kernel in ("numpy_etd2", "mkl_etd2", "cuda_etd2"):
+    # Every kernel builds one constant operator set at fp64: the coupled
+    # route is driver code plus the apply_off binding.
+    for kernel in ("numpy_etd2", "mkl_etd2", "accelerate_etd2", "cuda_etd2"):
         assert _resolve_for("auto", kernel) == {"marker": True}
         assert _resolve_for(True, kernel) == {"marker": True}
     # 1D databases and explicit False stay paraxial without building.
     assert _resolve_for("auto", "numpy_etd2", is_2d=False) is None
     assert _resolve_for(False, "numpy_etd2") is None
-    # Unsupported configurations downgrade under "auto", raise under
-    # "require": accelerate backend, fp32 outside cuda.
-    assert _resolve_for("auto", "accelerate_etd2") is None
+    # fp32 state buffers outside cuda are the one remaining blocker: they
+    # downgrade under "auto" and raise under "require".
     assert _resolve_for("auto", "mkl_etd2", dtype=np.float32) is None
+    assert _resolve_for("auto", "accelerate_etd2", dtype=np.float32) is None
     assert _resolve_for(True, "cuda_etd2", dtype=np.float32) == {"marker": True}
     for kwargs in (
-        {"kernel": "accelerate_etd2"},
+        {"kernel": "accelerate_etd2", "dtype": np.float32},
         {"kernel": "mkl_etd2", "dtype": np.float32},
     ):
         with pytest.raises(NotImplementedError):

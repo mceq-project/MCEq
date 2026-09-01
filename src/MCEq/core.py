@@ -2420,26 +2420,23 @@ class MCEqRun:
     # ``config.kernel_config`` binds it; ``etd2_driver`` runs every route on
     # it. Both objects are cached here against the identity of their inputs.
     # fp32 is a dtype the backends carry, not a kernel family of its own.
-    # Accelerate is the one kernel set not on the driver yet; it keeps its
-    # own handles.
 
     def _resolve_secant(self, caller, dtype=np.float64):
         """The sec(theta) operator set for a solve, or ``None`` for the
         paraxial transport.
 
         One constant set serves every column of every batch (the cap is
-        not zenith dependent). Configurations without a secant route —
-        the Accelerate backend, fp32 state buffers outside cuda — fall
-        back to the paraxial transport under ``"auto"`` and raise under
-        ``"require"``.
+        not zenith dependent). The coupled route is driver code plus the
+        ``apply_off`` binding, so every kernel carries it at fp64; the one
+        configuration without a secant route — fp32 state buffers outside
+        cuda — falls back to the paraxial transport under ``"auto"`` and
+        raises under ``"require"``.
         """
         mode = config.secant_mode(self._mceq_db.is_2d)
         if mode == "off":
             return None
         kc = config.kernel_config.lower()
         blockers = []
-        if kc not in ("numpy_etd2", "mkl", "mkl_etd2", "cuda", "cuda_etd2"):
-            blockers.append(f"kernel_config = {config.kernel_config}")
         if np.dtype(dtype) == np.float32 and kc not in ("cuda", "cuda_etd2"):
             blockers.append("fp32 state buffers outside cuda_etd2")
         if not blockers:
@@ -2447,8 +2444,8 @@ class MCEqRun:
         why = " and ".join(blockers)
         if mode == "require":
             raise NotImplementedError(
-                f"{caller}: secant_theta_transport is implemented for the "
-                "numpy_etd2, mkl_etd2 (fp64) and cuda_etd2 kernels — "
+                f"{caller}: secant_theta_transport is implemented on every "
+                "kernel at fp64, and at fp32 only on cuda_etd2 — "
                 f"not with {why}"
             )
         info(
@@ -2512,9 +2509,9 @@ class MCEqRun:
 
     def _etd2_backend(self, sec_ops=None, dtype=np.float64):
         """The step-loop backend of ``config.kernel_config`` bound to the
-        compiled operator: scipy CSR, MKL handles or the device upload.
-        Cached per (kernel, precision, coupling); a backend whose operator
-        or device rotated is closed and rebuilt.
+        compiled operator: scipy CSR, MKL or Accelerate handles, or the
+        device upload. Cached per (kernel, precision, coupling); a backend
+        whose operator or device rotated is closed and rebuilt.
         """
         import MCEq.solvers as solvers
 
@@ -2534,6 +2531,8 @@ class MCEqRun:
         if be is None:
             if kc == "numpy_etd2":
                 be = solvers.numpy_backend(op, fp_precision=fp)
+            elif kc in ("accelerate", "accelerate_etd2"):
+                be = solvers.accelerate_backend(op, fp_precision=fp)
             elif kc in ("mkl", "mkl_etd2"):
                 be = solvers.mkl_backend(op, fp_precision=fp)
             elif on_cuda:
@@ -2548,38 +2547,6 @@ class MCEqRun:
             cache[key] = be
         return be
 
-    def _legacy_handles(self, kind):
-        """Sparse handles of the paraxial operator for the kernels not yet on
-        :func:`~MCEq.solvers.etd2_driver`: Accelerate, ``"spacc"`` and
-        ``"spacc_f32"``. Cached and closed like the backends."""
-        from types import SimpleNamespace
-
-        import MCEq.spacc as spacc
-
-        op = self._compiled_operator()
-        cache = self.__dict__.setdefault("_backend_cache", {})
-        h = cache.get(kind)
-        if h is not None and h.op is not op:
-            h.close()
-            del cache[kind]
-            h = None
-        if h is None:
-            cls = spacc.SpaccMatrixF32 if kind == "spacc_f32" else spacc.SpaccMatrix
-            handles = tuple(
-                cls(off) if off.nnz else None for off in (op.int_off, op.dec_off)
-            )
-
-            def close():
-                for m in handles:
-                    if m is not None:
-                        m.close()
-
-            h = SimpleNamespace(
-                op=op, int_off=handles[0], dec_off=handles[1], close=close
-            )
-            cache[kind] = h
-        return h
-
     def _run_etd2(
         self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
     ):
@@ -2587,29 +2554,7 @@ class MCEqRun:
         the single-axis and the shared-path multi-RHS route."""
         import MCEq.solvers as solvers
 
-        kc = config.kernel_config.lower()
         dtype = np.dtype(dtype)
-        batched = phi0.ndim == 2
-        if kc == "accelerate_etd2":
-            f32 = dtype == np.float32
-            h = self._legacy_handles("spacc_f32" if f32 else "spacc")
-            if not batched:
-                kernel = solvers.solv_spacc_etd2
-            elif f32:
-                kernel = solvers.solv_spacc_etd2_multirhs_f32
-            else:
-                kernel = solvers.solv_spacc_etd2_multirhs
-            return kernel(
-                nsteps,
-                dX,
-                rho_inv,
-                h.int_off,
-                h.dec_off,
-                h.op.d_int,
-                h.op.d_dec,
-                phi0,
-                grid_idcs,
-            )
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
         if dtype != np.float64:
@@ -2631,32 +2576,17 @@ class MCEqRun:
         ``(dim, K_total)`` final states in pixel order."""
         import MCEq.solvers as solvers
 
-        kc = config.kernel_config.lower()
-        if kc in ("accelerate_etd2", "spacc_etd2"):
-            h = self._legacy_handles("spacc")
-            sol = solvers.solv_spacc_etd2_carousel(
-                h.int_off,
-                h.dec_off,
-                h.op.d_int,
-                h.op.d_dec,
-                dX_c,
-                rho_inv_c,
-                phi_initial,
-                schedule,
-                phi0_per_pixel,
-            )
-        else:
-            be = self._etd2_backend(sec_ops, dtype)
-            sol = solvers.etd2_driver(
-                schedule.T,
-                dX_c,
-                rho_inv_c,
-                be,
-                phi_initial,
-                [],
-                schedule=schedule,
-                phi0_per_pixel=phi0_per_pixel,
-            )
+        be = self._etd2_backend(sec_ops, dtype)
+        sol = solvers.etd2_driver(
+            schedule.T,
+            dX_c,
+            rho_inv_c,
+            be,
+            phi_initial,
+            [],
+            schedule=schedule,
+            phi0_per_pixel=phi0_per_pixel,
+        )
         return np.asarray(sol, dtype=np.dtype(dtype))
 
     def close(self):

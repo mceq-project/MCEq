@@ -2,8 +2,8 @@
 
 Asserts that all available ETD2RK backends produce identical solutions on
 the stitched (n_k * dim_states) operator built from a 2D database. v2's
-existing ``test_solv_spacc_etd2_matches_numpy_etd2_real`` covers the 1D
-path; the 2D matrix is just a bigger CSR — the kernels are
+existing ``test_solve_etd2_accelerate_matches_numpy_etd2_real`` covers the
+1D path; the 2D matrix is just a bigger CSR — the driver is
 dimension-agnostic, so equality should hold to round-off.
 
 On macOS only the numpy ↔ Accelerate equivalence runs; the MKL and CUDA

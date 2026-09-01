@@ -6,39 +6,49 @@ from MCEq import config
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_spacc_matrix_creation(toy_solver_problem):
-    """SpaccMatrix should be created from a scipy sparse matrix without error."""
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_spacc_matrix_creation(toy_solver_problem, dtype):
+    """SpaccMatrix should be created from a scipy sparse matrix without error.
+
+    Both entry-point families of ``MCEq.spacc._SPACC_TYPES``: the mstore slot
+    is typed at creation, so fp32 goes through ``create_sparse_matrix_f32``.
+    """
     import MCEq.spacc as spacc
 
     int_m = toy_solver_problem[3]
-    sm = spacc.SpaccMatrix(int_m)
+    sm = spacc.SpaccMatrix(int_m, dtype=dtype)
     assert sm.store_id is not None
     assert sm.store_id >= 0
     assert sm.dim_rows == int_m.shape[0]
     assert sm.dim_cols == int_m.shape[1]
     assert sm.nnz == int_m.nnz
+    assert sm.dtype == np.dtype(dtype)
+    assert sm.data.dtype == np.dtype(dtype)
+    sm.close()
 
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_spacc_gemv_matches_scipy(toy_solver_problem):
+@pytest.mark.parametrize(("dtype", "rtol"), [(np.float64, 1e-12), (np.float32, 1e-5)])
+def test_spacc_gemv_matches_scipy(toy_solver_problem, dtype, rtol):
     """gemv_npargs should produce the same result as scipy sparse dot."""
     import MCEq.spacc as spacc
 
     int_m = toy_solver_problem[3]
-    sm = spacc.SpaccMatrix(int_m)
+    sm = spacc.SpaccMatrix(int_m, dtype=dtype)
 
     size = int_m.shape[0]
-    x = np.ones(size)
-    y = np.zeros(size)
+    x = np.ones(size, dtype=dtype)
+    y = np.zeros(size, dtype=dtype)
     alpha = 2.0
 
     sm.gemv_npargs(alpha, x, y)
 
-    expected = alpha * int_m.dot(x)
-    assert np.allclose(y, expected, rtol=1e-12), (
+    expected = alpha * int_m.dot(np.ones(size))
+    assert np.allclose(y, expected, rtol=rtol), (
         f"gemv result {y} does not match scipy result {expected}"
     )
+    sm.close()
 
 
 @pytest.mark.xdist_group("spacc")
@@ -103,8 +113,8 @@ def test_solve_etd2_numpy_runs(toy_solver_problem):
 
     The toy fixture has only diagonal int_m / dec_m, so ETD2 collapses to
     phi <- exp(h*D) * phi (no off-diagonal stages). We don't compare against
-    a reference here — full-fixture equivalence is covered by the spacc-vs-
-    numpy tests below.
+    a reference here — full-fixture equivalence is covered by the
+    accelerate-vs-numpy tests below.
     """
     from MCEq.solvers import solve_etd2
 
@@ -199,7 +209,7 @@ def test_solve_etd2_numpy_multirhs_matches_single_rhs_toy(K):
 def test_solve_multirhs_dtype_float32():
     """End-to-end fp32 dispatch through MCEqRun.solve_multirhs.
 
-    Compares the fp32 spacc multirhs path to the fp64 reference at K=4
+    Compares the fp32 Accelerate multi-RHS path to the fp64 reference at K=4
     on the real SIBYLL21 config; asserts per-cell relative error stays
     below the empirically established 1e-4 budget for the production
     particle set (e± disabled — they're the ``_EM_BLOWUP_CAVEAT`` rows
@@ -302,7 +312,7 @@ def test_solve_etd2_rejects_unknown_backend():
     from MCEq.solvers import solve_etd2
 
     int_m = sp.csr_matrix(-0.1 * np.eye(3))
-    with pytest.raises(ValueError, match="cuda, mkl, numpy"):
+    with pytest.raises(ValueError, match="accelerate, cuda, mkl, numpy"):
         solve_etd2(
             1, np.ones(1), np.ones(1), int_m, int_m, np.ones(3), [], backend="opencl"
         )
@@ -389,20 +399,19 @@ def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-@pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
-    """Spacc multi-RHS columns match numpy multi-RHS columns within fp64 eps.
+@pytest.mark.parametrize("K", [1, 4, 16, 70])
+def test_solve_etd2_accelerate_multirhs_matches_numpy_multirhs_toy(K):
+    """Accelerate multi-RHS columns match numpy multi-RHS columns within fp64 eps.
 
-    Both kernels evaluate identical math (Cox–Matthews ETD2 with the same
-    diagonal split and accumulated SpMM); the only difference is the
-    sparse SpMM backend (scipy CSR vs Apple Accelerate
-    ``sparse_matrix_product_dense_double``). Differences are at the few
-    ULP level and the test uses np.allclose with a tight tolerance.
+    Both runs are the same driver over the same operator; the only
+    difference is the ``apply_off`` binding (scipy CSR vs Apple Accelerate
+    ``sparse_matrix_product_dense_double`` on column-major staging).
+    Differences are at the few ULP level and the test uses np.allclose with
+    a tight tolerance. K = 70 crosses the 64-column SpMM tile boundary.
     """
     import scipy.sparse as sp
 
-    from MCEq.solvers import solv_spacc_etd2_multirhs, solve_etd2
-    from MCEq.spacc import SpaccMatrix
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -420,37 +429,16 @@ def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    # Pre-split for spacc — solv_spacc_etd2_multirhs expects SpaccMatrix-wrapped
-    # off-diagonals plus plain numpy diagonals, like the single-RHS spacc kernel.
-    from MCEq.operator_assembly import split_diagonal
-
-    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
-    spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
-    spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
-
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
     sol_numpy, _ = solve_etd2(
         nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="numpy"
     )
-    sol_spacc, _ = solv_spacc_etd2_multirhs(
-        nsteps,
-        dX,
-        rho_inv,
-        spacc_int,
-        spacc_dec,
-        d_int,
-        d_dec,
-        phi0_multi,
-        grid_idcs,
+    sol_spacc, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="accelerate"
     )
 
     np.testing.assert_allclose(sol_spacc, sol_numpy, rtol=5e-13, atol=0)
-
-    if spacc_int is not None:
-        spacc_int.close()
-    if spacc_dec is not None:
-        spacc_dec.close()
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
@@ -801,60 +789,45 @@ def test_solve_etd2_numpy_second_order_convergence():
 
 
 # ---------------------------------------------------------------------------
-# ETD2 (spacc / Apple Accelerate) tests
+# ETD2 (Apple Accelerate) tests
 # ---------------------------------------------------------------------------
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solv_spacc_etd2_matches_numpy_etd2_toy(toy_solver_problem):
+def test_solve_etd2_accelerate_matches_numpy_etd2_toy(toy_solver_problem):
     """Trivial-matrix smoke test.
 
     The toy fixture has purely diagonal int_m/dec_m, so both off-diagonals
-    are empty (nnz=0). The kernel should detect that and skip the SpMV
+    are empty (nnz=0). The binding should detect that and skip the SpMV
     calls; the result is just the integrating-factor `exp(h*D) * phi` per
     step. This catches the empty-matrix code path without requiring a
     full MCEqRun.
     """
-    import MCEq.spacc as spacc
-    from MCEq.solvers import solv_spacc_etd2, solve_etd2, split_diagonal
+    from MCEq.solvers import solve_etd2
 
     nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
 
     sol_numpy, _ = solve_etd2(
         nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs, backend="numpy"
     )
-
-    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
-    # int_off / dec_off may be empty here; the kernel should handle that.
-    spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz > 0 else None
-    spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz > 0 else None
-    sol_spacc, _ = solv_spacc_etd2(
-        nsteps,
-        dX,
-        rho_inv,
-        spacc_int_off,
-        spacc_dec_off,
-        d_int,
-        d_dec,
-        phi.copy(),
-        grid_idcs,
+    sol_spacc, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs, backend="accelerate"
     )
     assert sol_spacc == pytest.approx(sol_numpy, rel=1e-12, abs=1e-15), (
-        "spacc_etd2 differs from numpy_etd2 on toy diagonal-only problem"
+        "accelerate differs from numpy on toy diagonal-only problem"
     )
 
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
+def test_solve_etd2_accelerate_matches_numpy_etd2_real(mceq_sib21):
     """Equivalence test on real MCEq matrices with non-trivial off-diagonals.
 
     Builds a uniform mid-point sampled path at theta=60 with the default
-    (no-mixing) particle treatment, runs both kernels on that fixed path,
+    (no-mixing) particle treatment, runs both backends on that fixed path,
     asserts agreement to ~1e-12 — the 4 SpMVs/step are the same operation
     in both backends, so equality is essentially arithmetic round-off.
     """
-    import MCEq.spacc as spacc
-    from MCEq.solvers import solv_spacc_etd2, solve_etd2, split_diagonal
+    from MCEq.solvers import solve_etd2
 
     mceq_sib21.set_theta_deg(60.0)
 
@@ -885,30 +858,29 @@ def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
         backend="numpy",
     )
 
-    d_int, d_dec, int_off, dec_off = split_diagonal(mceq_sib21.int_m, mceq_sib21.dec_m)
+    from MCEq.operator_assembly import split_diagonal
+
+    _, _, int_off, dec_off = split_diagonal(mceq_sib21.int_m, mceq_sib21.dec_m)
     assert int_off.nnz > 0 and dec_off.nnz > 0, (
         "real matrices should have non-empty off-diagonals"
     )
-    spacc_int_off = spacc.SpaccMatrix(int_off)
-    spacc_dec_off = spacc.SpaccMatrix(dec_off)
-    sol_spacc, _ = solv_spacc_etd2(
+    sol_spacc, _ = solve_etd2(
         nsteps,
         dX,
         rho_inv,
-        spacc_int_off,
-        spacc_dec_off,
-        d_int,
-        d_dec,
+        mceq_sib21.int_m,
+        mceq_sib21.dec_m,
         phi0.copy(),
         grid_idcs,
+        backend="accelerate",
     )
 
-    assert np.all(np.isfinite(sol_spacc)), "spacc_etd2 produced non-finite values"
+    assert np.all(np.isfinite(sol_spacc)), "accelerate produced non-finite values"
     rel_l2 = np.linalg.norm(sol_spacc - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
     )
     assert rel_l2 < 1e-12, (
-        f"spacc_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < 1e-12)"
+        f"accelerate vs numpy rel-L2 = {rel_l2:.3e} (expected < 1e-12)"
     )
 
 

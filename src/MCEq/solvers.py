@@ -228,20 +228,21 @@ _PHI2_SMALL = 1e-3
 _INV_6 = 1.0 / 6.0
 _INV_24 = 1.0 / 24.0
 
-# Default K-tile size for the Accelerate Sparse BLAS SpMM kernel in
-# :func:`solv_spacc_etd2_multirhs`. The K-to-1000 bench shows
+# K-tile size of the Accelerate Sparse BLAS SpMM in :class:`SpaccApplyOff`.
+# The K-to-1000 bench (runs/2026-05-21_multi-rhs-etd2-prototype) shows
 # ``sparse_matrix_product_dense_double`` peaks at K ≈ 32–64 on the M3 Pro
-# (3.0–3.2× /RHS) then drops to ≈ 1.4× at K ≥ 128. Splitting larger K
-# requests into 64-column tiles restores the peak operating point at all K.
+# (3.0–3.2× /RHS) then drops to ≈ 1.4× at K ≥ 128 — Accelerate's internal
+# SpMM tiling stops being cache-friendly past ~64 columns. Splitting larger
+# K requests into 64-column tiles restores the peak operating point at all K.
 _SPACC_SPMM_TILE = 64
 
 
 def _etd_step_buffers(dim):
     """Allocate the per-step scratch arrays the ETD kernels need.
 
-    Centralized here so both the numpy and the spacc kernels share an
-    identical layout — they're hot loops, and any allocation inside them
-    dominates the SpMVs once those are running on Accelerate / a tuned BLAS.
+    Centralized here so every backend shares an identical layout — this is
+    a hot loop, and any allocation inside it dominates the SpMVs once those
+    are running on Accelerate / MKL / a tuned BLAS.
     """
     return {
         "D": np.empty(dim, dtype=np.float64),
@@ -401,7 +402,8 @@ def _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs):
 # The ETD2RK driver and its backends.
 #
 # One step loop serves every route — paraxial and sec(theta)-coupled, single
-# axis, shared-path multi-RHS and the LPT carousel — on numpy, MKL and CUDA.
+# axis, shared-path multi-RHS and the LPT carousel — on numpy, MKL,
+# Accelerate and CUDA.
 # :func:`MCEq.operator_assembly.compile_operator` prepares the operator; a
 # backend object places it on its library / device and executes the stages
 # of :func:`etd2_driver` there. Nothing else differs between backends.
@@ -633,6 +635,117 @@ class MklApplyOff:
                 m.close()
 
 
+#: ctypes scalar per state dtype for the Accelerate pointer arguments —
+#: the whole of the fp64/fp32 difference in :class:`SpaccApplyOff`. The
+#: entry-point families themselves are picked by
+#: :data:`MCEq.spacc._SPACC_TYPES` when the handle is built.
+_SPACC_CTYPES = {np.dtype(np.float64): c_double, np.dtype(np.float32): c_float}
+
+
+class SpaccApplyOff:
+    """``out = int_off x + ri dec_off x`` through Apple Accelerate Sparse BLAS.
+
+    Accelerate's SpMM is column-major and accumulating (``C += alpha M B``,
+    no beta) while the driver's ``(dim, K)`` buffers are row-major, so the
+    operand and the result are staged through Fortran-ordered scratch
+    allocated once in :meth:`bind`. At K = 1 the two layouts are the same
+    bytes and the driver's own pointers go straight to the SpMV. The SpMM
+    runs one call per :data:`_SPACC_SPMM_TILE` columns: a column block of a
+    Fortran-ordered buffer is contiguous, so a tile is that column's
+    pointer with ``ldb = ldc = dim``. A scalar ``ri`` is fused into the dec
+    SpMM's alpha; a ``(K,)`` lane row scales a separate accumulator.
+    ``owns`` closes the handles with the binding. ``dtype`` is the state
+    precision and matches the handles'.
+    """
+
+    name = "accelerate"
+
+    def __init__(self, spacc_int_off, spacc_dec_off, owns=False, dtype=np.float64):
+        self.int_off, self.dec_off = (
+            m if m is not None and m.nnz else None
+            for m in (spacc_int_off, spacc_dec_off)
+        )
+        self.handles = [m for m in (self.int_off, self.dec_off) if m is not None]
+        self.owns = owns
+        self.dtype = np.dtype(dtype)
+
+    def bind(self, dim, K, nsteps):
+        self.dim = dim
+        self.K = K
+        self._ptr_type = POINTER(_SPACC_CTYPES[self.dtype])
+        self._ptrs = {}
+        self._staged = K > 1
+        if self._staged:
+            self._x_f, self._out_f, self._dec = (
+                np.empty((dim, K), dtype=self.dtype, order="F") for _ in range(3)
+            )
+            tile = max(1, min(_SPACC_SPMM_TILE, K))
+
+            def at(buf, c0):
+                """Pointer to column ``c0`` of a Fortran-ordered buffer; the
+                returned ctypes object keeps the view alive."""
+                return buf[:, c0:].ctypes.data_as(self._ptr_type)
+
+            self._tiles = [
+                (
+                    min(tile, K - c0),
+                    at(self._x_f, c0),
+                    at(self._out_f, c0),
+                    at(self._dec, c0),
+                )
+                for c0 in range(0, K, tile)
+            ]
+        else:
+            self._dec = np.empty((dim, 1), dtype=self.dtype)
+            self._dec_p = self._ptr(self._dec)
+
+    def _ptr(self, arr):
+        p = self._ptrs.get(id(arr))
+        if p is None:
+            p = self._ptrs[id(arr)] = arr.ctypes.data_as(self._ptr_type)
+        return p
+
+    def _spmm(self, m, alpha, into_dec):
+        """``target += alpha m operand`` on the staged operand, where the
+        target is the result accumulator or, with ``into_dec``, the dec one.
+
+        One SpMV at K = 1, one accumulating SpMM per column tile above it."""
+        if self._staged:
+            dim = self.dim
+            for nrhs, x_p, out_p, dec_p in self._tiles:
+                m.gemm_ctargs(alpha, nrhs, x_p, dim, dec_p if into_dec else out_p, dim)
+        else:
+            m.gemv_ctargs(alpha, self._x_p, self._dec_p if into_dec else self._out_p)
+
+    def __call__(self, x, out, ri):
+        if self._staged:
+            np.copyto(self._x_f, x)  # row-major state -> column-major operand
+            acc = self._out_f
+        else:
+            self._x_p, self._out_p = self._ptr(x), self._ptr(out)
+            acc = out
+        # Accelerate accumulates and takes no beta, so each chain zeroes its
+        # accumulator instead of passing beta = 0 on the first call.
+        acc.fill(0.0)
+        if self.int_off is not None:
+            self._spmm(self.int_off, 1.0, False)
+        if self.dec_off is not None:
+            if np.ndim(ri) == 0:
+                self._spmm(self.dec_off, float(ri), False)
+            else:
+                self._dec.fill(0.0)
+                self._spmm(self.dec_off, 1.0, True)
+                np.multiply(self._dec, ri, out=self._dec)
+                np.add(acc, self._dec, out=acc)
+        if self._staged:
+            np.copyto(out, self._out_f)
+
+    def close(self):
+        if self.owns:
+            for m in self.handles:
+                m.close()
+
+
 # --- backends ------------------------------------------------------------
 
 
@@ -666,7 +779,8 @@ class HostBackend:
     """Stage execution on host arrays for :func:`etd2_driver`.
 
     numpy elementwise kernels and BLAS GEMMs throughout; the SpMM is the
-    ``apply_off`` binding of the sparse library (scipy or MKL). ``op`` is
+    ``apply_off`` binding of the sparse library (scipy, MKL or Apple
+    Accelerate). ``op`` is
     the :class:`~MCEq.operator_assembly.CompiledOperator` the binding was
     built from — it carries the layout and the coupling operators.
 
@@ -847,6 +961,23 @@ def mkl_backend(op, expected_calls=2000, fp_precision=64):
         for off in (op.int_off, op.dec_off)
     )
     return HostBackend(op, MklApplyOff(*handles, owns=True, dtype=dtype), dtype)
+
+
+def accelerate_backend(op, fp_precision=64):
+    """Host backend on Apple Accelerate Sparse BLAS; owns the handles it
+    creates.
+
+    The import is local because ``MCEq.spacc`` loads ``libspacc`` at import
+    and only macOS builds carry one.
+    """
+    from MCEq.spacc import SpaccMatrix
+
+    dtype = _state_dtype(fp_precision)
+    handles = tuple(
+        SpaccMatrix(off, dtype=dtype) if off.nnz else None
+        for off in (op.int_off, op.dec_off)
+    )
+    return HostBackend(op, SpaccApplyOff(*handles, owns=True, dtype=dtype), dtype)
 
 
 class CudaOperator:
@@ -1296,6 +1427,9 @@ _BACKENDS = {
     "mkl": lambda op, device_id, fp_precision: mkl_backend(
         op, fp_precision=fp_precision
     ),
+    "accelerate": lambda op, device_id, fp_precision: accelerate_backend(
+        op, fp_precision=fp_precision
+    ),
     "cuda": cuda_backend,
 }
 
@@ -1330,7 +1464,7 @@ def solve_etd2(
       phi: initial state, ``(dim,)`` or ``(dim, K)``; the solution has the
         same rank.
       grid_idcs: step indices to snapshot.
-      backend: ``"numpy"``, ``"mkl"`` or ``"cuda"``.
+      backend: ``"numpy"``, ``"mkl"``, ``"accelerate"`` or ``"cuda"``.
       sec_ops: sec(theta) operator set of :mod:`MCEq.secant`, or ``None``
         for the paraxial transport.
       schedule, phi0_per_pixel: LPT carousel of
@@ -2028,650 +2162,3 @@ def _cuda_etd2_kernels():
 
         _CUDA_ETD2_KERNELS = _build_cuda_etd2_kernels(cp)
     return _CUDA_ETD2_KERNELS
-
-
-# --------------------------------------------------------------------
-# Apple Accelerate Sparse BLAS kernels
-#
-# The one kernel family still off :func:`etd2_driver`: column-major
-# ``(dim, K)`` state, tiled SpMM, ``MCEq.spacc`` C post-apply, and an
-# fp32 sibling of its own. They carry their own sparse handles
-# (``MCEqRun._legacy_handles``) until Accelerate becomes an ``apply_off``
-# binding of :class:`HostBackend` like scipy and MKL.
-# --------------------------------------------------------------------
-def solv_spacc_etd2_multirhs(
-    nsteps,
-    dX,
-    rho_inv,
-    spacc_int_off,
-    spacc_dec_off,
-    d_int,
-    d_dec,
-    phi,
-    grid_idcs,
-):
-    """ETD2RK on Apple Accelerate Sparse BLAS — multi-RHS variant.
-
-    Same Cox–Matthews update as :func:`solv_spacc_etd2` and
-    :func:`etd2_driver`, but the four per-step SpMVs are
-    promoted to SpMMs through Accelerate's
-    ``sparse_matrix_product_dense_double`` (wrapped as
-    :meth:`MCEq.spacc.SpaccMatrix.gemm_ctargs`).
-
-    State layout is column-major ``(dim, K)`` Fortran-contiguous; Apple
-    Accelerate's SpMM API expects column-major dense buffers and walks
-    columns with leading dimension ``ldB = ldC = dim``.
-
-    The Accelerate sparse handle re-optimises the matrix layout on
-    construction (see :class:`MCEq.spacc.SpaccMatrix`); reusing the same
-    handle across all SpMVs/SpMMs in a solve is what amortises that cost.
-    Pre-existing handles are reused via ``MCEqRun``'s backend cache.
-
-    Args:
-      nsteps, dX, rho_inv: same as :func:`solv_spacc_etd2`.
-      spacc_int_off, spacc_dec_off: :class:`SpaccMatrix` wrappers; may be
-        ``None`` if the underlying off-diagonal has zero nnz.
-      d_int, d_dec (np.ndarray): diagonals (length ``dim``).
-      phi (np.ndarray[dim, K]): initial states, column-major (Fortran-
-        contiguous). The function ``np.asfortranarray``s the input if
-        needed.
-      grid_idcs (list[int]): step indices at which to record snapshots.
-
-    Returns:
-      (np.ndarray[dim, K], np.ndarray[len(grid_idcs), dim, K]): final
-      state matrix and stacked snapshots; the final state is a copy
-      (column-major).
-    """
-    from ctypes import POINTER, c_double, sizeof
-
-    if phi.ndim != 2:
-        raise ValueError(
-            f"solv_spacc_etd2_multirhs: phi must be 2-D (dim, K), got shape {phi.shape}"
-        )
-    dim, K = phi.shape
-    if K < 1:
-        raise ValueError(f"K must be >= 1, got {K}")
-
-    # K-tile size for the Accelerate SpMM call. The bench at
-    # runs/2026-05-21_multi-rhs-etd2-prototype shows per-RHS throughput peaking
-    # at K ≈ 32–64 (3.0–3.2× /RHS) then falling off a cliff at K ≥ 128 (≈ 1.4×).
-    # Hypothesis: Accelerate's internal SpMM tile sizing for
-    # ``sparse_matrix_product_dense_double`` does not stay cache-friendly past
-    # ~64 columns. Tiling the call into chunks of ``_SPACC_SPMM_TILE`` columns
-    # restores the peak operating point for any caller-requested K. Per-step
-    # buffers stay (dim, K); only the SpMM call site is tiled. Setting tile
-    # ≥ K disables tiling (single call, original behaviour).
-    tile = _SPACC_SPMM_TILE
-    tile = max(1, min(int(tile), K))
-
-    # Persistent column-major buffers — gemm reads/writes through raw
-    # ctypes pointers, so the backing storage must keep its address
-    # across the loop. Fortran-order arrays are column-major with leading
-    # dimension == number of rows.
-    phc = np.asfortranarray(phi.astype(np.float64, copy=True))
-    F_phi = np.zeros((dim, K), dtype=np.float64, order="F")
-    F_a = np.zeros((dim, K), dtype=np.float64, order="F")
-    a = np.empty((dim, K), dtype=np.float64, order="F")
-    bufs = _etd_step_buffers(dim)
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-    # scratch_NK was the elementwise scratch for the un-fused ufunc post-apply
-    # chains; the fused C kernels write directly into ``a`` / ``phc``, so we
-    # no longer need a separate (dim, K) scratch buffer here.
-
-    # Precompute per-tile pointer offsets. Fortran-contiguous (dim, K) has
-    # column-major layout — column c starts at byte ``c * dim * sizeof(double)``
-    # from the buffer base. We materialise the per-tile pointer-arithmetic
-    # offsets once outside the hot loop so the per-step inner loop is just
-    # ctypes addition + SpMM dispatch.
-    dbl = sizeof(c_double)
-    tile_starts = list(range(0, K, tile))
-    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
-    n_tiles = len(tile_starts)
-
-    phc_addr = phc.ctypes.data
-    F_phi_addr = F_phi.ctypes.data
-    F_a_addr = F_a.ctypes.data
-    a_addr = a.ctypes.data
-
-    def _ptrs_at(addr, c0):
-        return c_double.from_address(addr + c0 * dim * dbl)
-
-    # Pre-built per-tile pointer pairs. ``c_double.from_address(addr)`` returns
-    # a ctypes scalar referencing the byte at ``addr``; passing it where the
-    # binding expects ``POINTER(c_double)`` lets ctypes auto-box it (verified
-    # against the existing gemm binding in MCEq.spacc).
-    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
-    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
-    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
-    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
-
-    # Whole-buffer pointers for the fused post-apply C kernels — those
-    # operate on the whole (dim, K) block, not per-tile.
-    phc_p_full = phc.ctypes.data_as(POINTER(c_double))
-    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_double))
-    F_a_p_full = F_a.ctypes.data_as(POINTER(c_double))
-    a_p_full = a.ctypes.data_as(POINTER(c_double))
-    eD_p = eD.ctypes.data_as(POINTER(c_double))
-    phi1_p = phi1.ctypes.data_as(POINTER(c_double))
-    phi2_p = phi2.ctypes.data_as(POINTER(c_double))
-
-    # Fused post-apply C kernels. Replace the 4-ufunc post_apply chains
-    # with one stride-1 pass per stage — see :mod:`MCEq.spacc.spacc.c`
-    # ``etd2_post_apply{1,2}_multirhs``.
-    from MCEq.spacc import etd2_post_apply1_multirhs as _post1
-    from MCEq.spacc import etd2_post_apply2_multirhs as _post2
-
-    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
-    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
-
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps):
-            h = dX[k]
-            ri = rho_inv[k]
-
-            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
-
-            # F_phi = int_off @ phc + ri * dec_off @ phc  (accumulating SpMM)
-            # K-tile: each call processes a contiguous slice of ``tile``
-            # columns. The accumulating semantics of gemm(C += α·A·B) work
-            # per-tile against the same fresh-zero F_phi buffer.
-            F_phi.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], dim, F_phi_tile_ptrs[t], dim
-                    )
-                if not dec_off_empty:
-                    spacc_dec_off.gemm_ctargs(
-                        ri, nrhs, phc_tile_ptrs[t], dim, F_phi_tile_ptrs[t], dim
-                    )
-
-            # a = eD[:, None] * phc + h * phi1[:, None] * F_phi  (fused)
-            _post1(dim, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
-
-            # F_a = int_off @ a + ri * dec_off @ a
-            F_a.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], dim, F_a_tile_ptrs[t], dim
-                    )
-                if not dec_off_empty:
-                    spacc_dec_off.gemm_ctargs(
-                        ri, nrhs, a_tile_ptrs[t], dim, F_a_tile_ptrs[t], dim
-                    )
-
-            # phc = a + h * phi2[:, None] * (F_a - F_phi)  (fused)
-            _post2(dim, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc))
-                grid_step += 1
-
-    info(
-        2,
-        f"Performance (spacc multirhs K={K}): "
-        f"{1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration "
-        f"({1e3 * (time() - start) / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
-    )
-
-    return phc.copy(), np.array(grid_sol)
-
-
-def solv_spacc_etd2_multirhs_f32(
-    nsteps,
-    dX,
-    rho_inv,
-    spacc_int_off,
-    spacc_dec_off,
-    d_int,
-    d_dec,
-    phi,
-    grid_idcs,
-):
-    """fp32 sibling of :func:`solv_spacc_etd2_multirhs`.
-
-    Same ETD2 Cox–Matthews update; all state and per-step buffers live
-    in float32. The sparse off-diagonals come in as
-    :class:`MCEq.spacc.SpaccMatrixF32` wrappers (the caller is
-    responsible for constructing fp32 handles via
-    ``sparse_matrix_create_float``). The diagonal vectors ``d_int`` /
-    ``d_dec`` are still computed in fp64 by the caller (the diag-factor
-    pipeline needs fp64 because ``exp(h·D)`` saturates fp32 fast at
-    high zenith); we cast them to fp32 only for the final multiplication
-    against the fp32 state buffers.
-
-    Precision budget on real SIBYLL21 vs the fp64 reference is verified
-    in ``test_solv_spacc_etd2_multirhs_f32_stability``: per-particle
-    relative error stays below 1e-4 across all species.
-    """
-    from ctypes import POINTER, c_float, sizeof
-
-    if phi.ndim != 2:
-        raise ValueError(
-            f"solv_spacc_etd2_multirhs_f32: phi must be 2-D (dim, K), "
-            f"got shape {phi.shape}"
-        )
-    dim, K = phi.shape
-    if K < 1:
-        raise ValueError(f"K must be >= 1, got {K}")
-
-    tile = _SPACC_SPMM_TILE
-    tile = max(1, min(int(tile), K))
-
-    # fp32 column-major buffers.
-    phc = np.asfortranarray(phi.astype(np.float32, copy=True))
-    F_phi = np.zeros((dim, K), dtype=np.float32, order="F")
-    F_a = np.zeros((dim, K), dtype=np.float32, order="F")
-    a = np.empty((dim, K), dtype=np.float32, order="F")
-
-    # Diag-factor pipeline runs in fp64 against the fp64 ``d_int``/``d_dec``;
-    # we cast eD/phi1/phi2 to fp32 once per step for the fused post-apply.
-    bufs = _etd_step_buffers(dim)
-    eD_f64 = bufs["eD"]
-    phi1_f64 = bufs["phi1"]
-    phi2_f64 = bufs["phi2"]
-    eD_f32 = np.empty(dim, dtype=np.float32)
-    phi1_f32 = np.empty(dim, dtype=np.float32)
-    phi2_f32 = np.empty(dim, dtype=np.float32)
-
-    flt = sizeof(c_float)
-    tile_starts = list(range(0, K, tile))
-    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
-    n_tiles = len(tile_starts)
-
-    phc_addr = phc.ctypes.data
-    F_phi_addr = F_phi.ctypes.data
-    F_a_addr = F_a.ctypes.data
-    a_addr = a.ctypes.data
-
-    def _ptrs_at(addr, c0):
-        return c_float.from_address(addr + c0 * dim * flt)
-
-    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
-    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
-    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
-    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
-
-    phc_p_full = phc.ctypes.data_as(POINTER(c_float))
-    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_float))
-    F_a_p_full = F_a.ctypes.data_as(POINTER(c_float))
-    a_p_full = a.ctypes.data_as(POINTER(c_float))
-    eD_p = eD_f32.ctypes.data_as(POINTER(c_float))
-    phi1_p = phi1_f32.ctypes.data_as(POINTER(c_float))
-    phi2_p = phi2_f32.ctypes.data_as(POINTER(c_float))
-
-    from MCEq.spacc import etd2_post_apply1_multirhs_f32 as _post1
-    from MCEq.spacc import etd2_post_apply2_multirhs_f32 as _post2
-
-    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
-    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
-
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps):
-            h = float(dX[k])
-            ri = float(rho_inv[k])
-
-            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
-            eD_f32[:] = eD_f64
-            phi1_f32[:] = phi1_f64
-            phi2_f32[:] = phi2_f64
-
-            # F_phi = int_off @ phc + ri * dec_off @ phc (accumulating SpMM f32)
-            F_phi.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], dim, F_phi_tile_ptrs[t], dim
-                    )
-                if not dec_off_empty:
-                    spacc_dec_off.gemm_ctargs(
-                        ri, nrhs, phc_tile_ptrs[t], dim, F_phi_tile_ptrs[t], dim
-                    )
-
-            _post1(dim, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
-
-            F_a.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], dim, F_a_tile_ptrs[t], dim
-                    )
-                if not dec_off_empty:
-                    spacc_dec_off.gemm_ctargs(
-                        ri, nrhs, a_tile_ptrs[t], dim, F_a_tile_ptrs[t], dim
-                    )
-
-            _post2(dim, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full)
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc))
-                grid_step += 1
-
-    info(
-        2,
-        f"Performance (spacc multirhs f32 K={K}): "
-        f"{1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration "
-        f"({1e3 * (time() - start) / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
-    )
-
-    return phc.copy(), np.array(grid_sol)
-
-
-def solv_spacc_etd2_carousel(
-    spacc_int_off,
-    spacc_dec_off,
-    d_int,
-    d_dec,
-    dX,
-    rho_inv,
-    phi_initial,
-    schedule,
-    phi0_per_pixel,
-):
-    """ETD2RK carousel on Apple Accelerate Sparse BLAS.
-
-    Step body identical to :func:`solv_spacc_etd2_multipath`. After
-    each step boundary, harvest pixels that just finished, then reset
-    those slots to the next pixel's phi0. See the schedule stage of
-    :func:`etd2_driver` for the algorithm; the only
-    backend-specific bit is the SpMM dispatch and the (dim, K)
-    column-major buffer layout that Accelerate expects.
-    """
-    from ctypes import POINTER, c_double, sizeof
-
-    T = schedule.T
-    K = schedule.K
-    K_total = schedule.K_total
-    dim = phi_initial.shape[0]
-    if dX.shape != (T, K) or rho_inv.shape != (T, K):
-        raise ValueError(
-            f"solv_spacc_etd2_carousel: dX/rho_inv must be (T,K)={T, K}; "
-            f"got dX={dX.shape}, rho_inv={rho_inv.shape}"
-        )
-    if phi_initial.shape != (dim, K):
-        raise ValueError(
-            f"solv_spacc_etd2_carousel: phi_initial must be (dim,K)="
-            f"({dim},{K}); got {phi_initial.shape}"
-        )
-    if phi0_per_pixel.shape != (dim, K_total):
-        raise ValueError(
-            f"solv_spacc_etd2_carousel: phi0_per_pixel must be "
-            f"(dim,K_total)=({dim},{K_total}); got {phi0_per_pixel.shape}"
-        )
-
-    tile = _SPACC_SPMM_TILE
-    tile = max(1, min(int(tile), K))
-
-    phc = np.asfortranarray(phi_initial.astype(np.float64, copy=True))
-    F_phi = np.zeros((dim, K), dtype=np.float64, order="F")
-    F_a = np.zeros((dim, K), dtype=np.float64, order="F")
-    a = np.empty((dim, K), dtype=np.float64, order="F")
-    dec_phc = np.zeros((dim, K), dtype=np.float64, order="F")
-    dec_a = np.zeros((dim, K), dtype=np.float64, order="F")
-
-    diag = {}
-    for key in ("D", "hD", "eD", "phi1", "phi2", "scratch", "abs_hD"):
-        diag[key] = np.empty((dim, K), dtype=np.float64, order="F")
-    for key in ("mask1", "mask2"):
-        diag[key] = np.empty((dim, K), dtype=bool, order="F")
-
-    eD = diag["eD"]
-    phi1 = diag["phi1"]
-    phi2 = diag["phi2"]
-
-    dbl = sizeof(c_double)
-    tile_starts = list(range(0, K, tile))
-    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
-    n_tiles = len(tile_starts)
-
-    phc_addr = phc.ctypes.data
-    F_phi_addr = F_phi.ctypes.data
-    F_a_addr = F_a.ctypes.data
-    a_addr = a.ctypes.data
-    dec_phc_addr = dec_phc.ctypes.data
-    dec_a_addr = dec_a.ctypes.data
-
-    def _ptrs_at(addr, c0):
-        return c_double.from_address(addr + c0 * dim * dbl)
-
-    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
-    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
-    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
-    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
-    dec_phc_tile_ptrs = [_ptrs_at(dec_phc_addr, c0) for c0 in tile_starts]
-    dec_a_tile_ptrs = [_ptrs_at(dec_a_addr, c0) for c0 in tile_starts]
-
-    phc_p_full = phc.ctypes.data_as(POINTER(c_double))
-    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_double))
-    F_a_p_full = F_a.ctypes.data_as(POINTER(c_double))
-    a_p_full = a.ctypes.data_as(POINTER(c_double))
-    eD_p = eD.ctypes.data_as(POINTER(c_double))
-    phi1_p = phi1.ctypes.data_as(POINTER(c_double))
-    phi2_p = phi2.ctypes.data_as(POINTER(c_double))
-
-    from MCEq.spacc import etd2_post_apply1_multipath as _post1
-    from MCEq.spacc import etd2_post_apply2_multipath as _post2
-
-    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
-    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
-
-    sol_pixel = np.empty((dim, K_total), dtype=np.float64)
-
-    rs = schedule.reset_t_starts
-    rj = schedule.reset_j
-    rp = schedule.reset_pixel
-    cs = schedule.record_t_starts
-    cj = schedule.record_j
-    cp = schedule.record_pixel
-
-    from time import time
-
-    start = time()
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(T):
-            h_K = dX[k]
-            ri_K = rho_inv[k]
-
-            _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, diag)
-
-            F_phi.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], dim, F_phi_tile_ptrs[t], dim
-                    )
-            if not dec_off_empty:
-                dec_phc.fill(0.0)
-                for t in range(n_tiles):
-                    nrhs = tile_widths[t]
-                    spacc_dec_off.gemm_ctargs(
-                        1.0, nrhs, phc_tile_ptrs[t], dim, dec_phc_tile_ptrs[t], dim
-                    )
-                dec_phc *= ri_K[None, :]
-                np.add(F_phi, dec_phc, out=F_phi)
-
-            h_K_p = h_K.ctypes.data_as(POINTER(c_double))
-            _post1(dim, K, h_K_p, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
-
-            F_a.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    spacc_int_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], dim, F_a_tile_ptrs[t], dim
-                    )
-            if not dec_off_empty:
-                dec_a.fill(0.0)
-                for t in range(n_tiles):
-                    nrhs = tile_widths[t]
-                    spacc_dec_off.gemm_ctargs(
-                        1.0, nrhs, a_tile_ptrs[t], dim, dec_a_tile_ptrs[t], dim
-                    )
-                dec_a *= ri_K[None, :]
-                np.add(F_a, dec_a, out=F_a)
-
-            _post2(
-                dim, K, h_K_p, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
-            )
-
-            for r in range(cs[k], cs[k + 1]):
-                sol_pixel[:, cp[r]] = phc[:, cj[r]]
-            for r in range(rs[k], rs[k + 1]):
-                phc[:, rj[r]] = phi0_per_pixel[:, rp[r]]
-
-    elapsed = time() - start
-    info(
-        2,
-        f"Performance (spacc carousel K={K}, K_total={K_total}, T={T}): "
-        f"{1e3 * elapsed / float(T):6.2f}ms/iteration "
-        f"({1e3 * elapsed / float(T) / float(K):6.2f}ms/iter/slot)",
-    )
-
-    return sol_pixel
-
-
-def solv_spacc_etd2(
-    nsteps,
-    dX,
-    rho_inv,
-    spacc_int_off,
-    spacc_dec_off,
-    d_int,
-    d_dec,
-    phi,
-    grid_idcs,
-):
-    """ETD2RK on Apple Accelerate via the spacc bindings.
-
-    Pre-split kernel: takes the off-diagonal matrices already wrapped as
-    :class:`MCEq.spacc.SpaccMatrix` instances and the diagonal vectors as
-    plain numpy arrays. The diagonal/off-diagonal split is constant in X
-    so the caller (``MCEqRun.solve``) builds it once per ``solve()`` call.
-
-    Per step (mirrors ``etd2_driver``):
-
-      F_phi = int_off @ phc + ri * dec_off @ phc           (2 SpMVs)
-      a     = exp(h*D) * phc + h * phi1(h*D) * F_phi
-      F_a   = int_off @ a   + ri * dec_off @ a             (2 SpMVs)
-      phc   = a + h * phi2(h*D) * (F_a - F_phi)
-
-    Implementation note: ``SpaccMatrix.gemv_ctargs`` performs ``y = α·M·x + y``
-    via raw ctypes pointers. The buffers backing those pointers must stay
-    at the same address across the whole loop, so we pre-allocate ``phc``,
-    ``F_phi``, ``F_a``, ``a`` once and use ``np.copyto`` / ``ndarray.fill``
-    to update them in place. Rebinding any of those names (e.g. ``a = ...``)
-    would silently break — the ctypes pointer would still point at the old
-    buffer.
-
-    Args:
-      nsteps (int): number of integration steps
-      dX (np.ndarray[nsteps]): step sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (np.ndarray[nsteps]): :math:`\\rho^{-1}(X_i)` per step
-      spacc_int_off (SpaccMatrix): off-diagonal of A = int_m
-      spacc_dec_off (SpaccMatrix): off-diagonal of B = dec_m
-      d_int (np.ndarray): diagonal of A
-      d_dec (np.ndarray): diagonal of B
-      phi (np.ndarray): initial state :math:`\\Phi(X_0)`
-      grid_idcs (list[int]): step indices at which to record snapshots
-
-    Returns:
-      (np.ndarray, np.ndarray): final state and stacked snapshots.
-    """
-    from ctypes import POINTER, c_double
-
-    dim = phi.shape[0]
-    # Persistent buffers — ctypes pointers must remain valid across the loop,
-    # so every per-step update writes into these in place (never rebinds).
-    phc = np.copy(phi).astype(np.float64, copy=False)
-    F_phi = np.zeros(dim, dtype=np.float64)
-    F_a = np.zeros(dim, dtype=np.float64)
-    a = np.empty(dim, dtype=np.float64)
-    bufs = _etd_step_buffers(dim)
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-    scratch = bufs["scratch"]
-
-    phc_p = phc.ctypes.data_as(POINTER(c_double))
-    F_phi_p = F_phi.ctypes.data_as(POINTER(c_double))
-    F_a_p = F_a.ctypes.data_as(POINTER(c_double))
-    a_p = a.ctypes.data_as(POINTER(c_double))
-
-    int_off_empty = (spacc_int_off is None) or (spacc_int_off.nnz == 0)
-    dec_off_empty = (spacc_dec_off is None) or (spacc_dec_off.nnz == 0)
-
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    # See module-level :data:`_EM_BLOWUP_CAVEAT`.
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps):
-            h = dX[k]
-            ri = rho_inv[k]
-
-            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
-
-            # F_phi = int_off @ phc + ri * dec_off @ phc
-            F_phi.fill(0.0)
-            if not int_off_empty:
-                spacc_int_off.gemv_ctargs(1.0, phc_p, F_phi_p)
-            if not dec_off_empty:
-                spacc_dec_off.gemv_ctargs(ri, phc_p, F_phi_p)
-
-            # a = eD * phc + h * phi1 * F_phi
-            np.multiply(eD, phc, out=a)
-            np.multiply(phi1, F_phi, out=scratch)
-            scratch *= h
-            np.add(a, scratch, out=a)
-
-            # F_a = int_off @ a + ri * dec_off @ a
-            F_a.fill(0.0)
-            if not int_off_empty:
-                spacc_int_off.gemv_ctargs(1.0, a_p, F_a_p)
-            if not dec_off_empty:
-                spacc_dec_off.gemv_ctargs(ri, a_p, F_a_p)
-
-            # phc = a + h * phi2 * (F_a - F_phi)  (in-place into phc)
-            np.subtract(F_a, F_phi, out=scratch)
-            scratch *= h
-            np.multiply(scratch, phi2, out=scratch)
-            np.add(a, scratch, out=phc)
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc))
-                grid_step += 1
-
-    info(
-        2,
-        f"Performance: {1e3 * (time() - start) / float(nsteps):6.2f}ms/iteration",
-    )
-
-    return phc, np.array(grid_sol)
