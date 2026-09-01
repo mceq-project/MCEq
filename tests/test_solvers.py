@@ -344,16 +344,12 @@ def test_solve_etd2_mkl_multirhs_matches_numpy_multirhs_toy(K):
 
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 @pytest.mark.parametrize("K", [1, 4])
-def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
-    """fp32 MKL multi-RHS holds 1e-4 rel-L2 vs numpy fp64 reference."""
+@pytest.mark.parametrize("backend", ["numpy", "mkl"])
+def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
+    """The host backends at fp32 hold 1e-4 rel-L2 vs the fp64 reference."""
     import scipy.sparse as sp
 
-    from MCEq.solvers import (
-        MklSparseMatrixF32,
-        solv_mkl_etd2_multirhs_f32,
-        solve_etd2,
-        split_diagonal,
-    )
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -370,37 +366,25 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
     sol_numpy, _ = solve_etd2(
         nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, [], backend="numpy"
     )
-    mkl_int32 = MklSparseMatrixF32(int_off.astype(np.float32)) if int_off.nnz else None
-    mkl_dec32 = MklSparseMatrixF32(dec_off.astype(np.float32)) if dec_off.nnz else None
-    try:
-        sol_mkl32, _ = solv_mkl_etd2_multirhs_f32(
-            nsteps,
-            dX,
-            rho_inv,
-            mkl_int32,
-            mkl_dec32,
-            d_int,
-            d_dec,
-            phi0_multi,
-            [],
-        )
-        rel_l2 = np.linalg.norm(sol_mkl32 - sol_numpy) / max(
-            np.linalg.norm(sol_numpy), 1e-30
-        )
-        assert rel_l2 < 1e-4, (
-            f"mkl multirhs f32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
-        )
-    finally:
-        if mkl_int32 is not None:
-            mkl_int32.close()
-        if mkl_dec32 is not None:
-            mkl_dec32.close()
+    sol_f32, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_multi,
+        [],
+        backend=backend,
+        fp_precision=32,
+    )
+    assert sol_f32.dtype == np.float64  # the driver hands back fp64
+    rel_l2 = np.linalg.norm(sol_f32 - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
+    assert rel_l2 < 1e-4, f"{backend} fp32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
 
 
 @pytest.mark.xdist_group("spacc")
@@ -2024,12 +2008,13 @@ def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 def test_cuda_phi_compute_f64diag_accuracy():
-    """The fp32-pipeline diag-factor kernel (fp32 buffers, fp64-internal
-    arithmetic) must reproduce the fp64 phi factors to fp32 roundoff.
+    """The diag-factor kernel takes fp64 inputs and does fp64 arithmetic
+    whatever the output dtype, so its fp32 outputs are the fp64 phi
+    factors to fp32 roundoff.
 
     The pure-fp32 phi1/phi2 cancellations ((e-1)/hd, (e-1-hd)/hd^2)
     lose 3-7 digits around the Taylor-switch thresholds; this test locks
-    in the fp64-internal fix so a regression to fp32 arithmetic (or a
+    in the fp64-internal contract so a regression to fp32 arithmetic (or a
     threshold recalibration that reopens the cancellation band) fails
     loudly.
     """
@@ -2047,16 +2032,15 @@ def test_cuda_phi_compute_f64diag_accuracy():
     h = rng.uniform(0.05, 15.0, (1, K))
     ri = rng.lognormal(mean=8.0, sigma=2.0, size=(1, K))
 
-    args32 = [
-        cp.asarray(a, dtype=cp.float32)
+    args64 = [
+        cp.asarray(a, dtype=cp.float64)
         for a in (d_int.reshape(dim, 1), d_dec.reshape(dim, 1), h, ri)
     ]
     outs_mixed = [cp.empty((dim, K), cp.float32) for _ in range(3)]
-    Kset.phi_compute_multipath_f64diag(*args32, *outs_mixed)
+    Kset.phi_compute_multipath(*args64, *outs_mixed)
 
-    # fp64 reference from the same (fp32-quantised) inputs, so the
-    # comparison isolates kernel arithmetic from input quantisation.
-    args64 = [a.astype(cp.float64) for a in args32]
+    # fp64 reference from the same inputs, so the comparison isolates the
+    # output cast from the arithmetic.
     outs64 = [cp.empty((dim, K), cp.float64) for _ in range(3)]
     Kset.phi_compute_multipath(*args64, *outs64)
 

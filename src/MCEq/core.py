@@ -1723,13 +1723,12 @@ class MCEqRun:
             Only supported for shared-path batches (``conditions=None``).
           grid_var (str): only ``"X"`` is supported.
           dtype (np.float32 | np.float64): precision of the state
-            buffers. fp32 is wired for ``accelerate_etd2`` /
-            ``cuda_etd2`` / ``mkl_etd2`` shared-path batches and the
-            ``cuda_etd2`` carousel; the diagonal-factor pipeline
-            (``exp(h·D)``, φ₁, φ₂) is always computed in fp64 on every
-            backend (fp32 φ-functions suffer catastrophic
-            cancellation), so relative error vs fp64 is ≤ 1e-4 for the
-            production particle set on all fp32 routes.
+            buffers, on every backend and every route. The diagonal-factor
+            pipeline (``exp(h·D)``, φ₁, φ₂) is always computed in fp64
+            (fp32 φ-functions suffer catastrophic cancellation) and cast
+            once on the way out, so relative error vs fp64 is ≤ 1e-4 for
+            the production particle set on all fp32 routes. See
+            ``MCEq.solvers._PRECISION_CONTRACT``.
           carousel_K (int | None): pipeline width for the LPT scheduler
             (heterogeneous batches only). ``None`` → ``min(K, 128)``.
           path_workers (int): fork-pool size for a parallel path build
@@ -2420,8 +2419,9 @@ class MCEqRun:
     # operator set) into one CompiledOperator; a backend of
     # ``config.kernel_config`` binds it; ``etd2_driver`` runs every route on
     # it. Both objects are cached here against the identity of their inputs.
-    # Two kernels are not on the driver yet and keep their own handles:
-    # Accelerate (all routes) and the MKL fp32 multi-RHS kernel.
+    # fp32 is a dtype the backends carry, not a kernel family of its own.
+    # Accelerate is the one kernel set not on the driver yet; it keeps its
+    # own handles.
 
     def _resolve_secant(self, caller, dtype=np.float64):
         """The sec(theta) operator set for a solve, or ``None`` for the
@@ -2520,7 +2520,7 @@ class MCEqRun:
 
         kc = config.kernel_config.lower()
         on_cuda = kc in ("cuda", "cuda_etd2")
-        fp = 32 if (on_cuda and np.dtype(dtype) == np.float32) else 64
+        fp = 32 if np.dtype(dtype) == np.float32 else 64
         op = self._compiled_operator(sec_ops)
         cache = self.__dict__.setdefault("_backend_cache", {})
         key = (kc, fp, op.coupled)
@@ -2533,9 +2533,9 @@ class MCEqRun:
             be = None
         if be is None:
             if kc == "numpy_etd2":
-                be = solvers.numpy_backend(op)
+                be = solvers.numpy_backend(op, fp_precision=fp)
             elif kc in ("mkl", "mkl_etd2"):
-                be = solvers.mkl_backend(op)
+                be = solvers.mkl_backend(op, fp_precision=fp)
             elif on_cuda:
                 be = solvers.cuda_backend(
                     op, device_id=self._cuda_device, fp_precision=fp
@@ -2550,10 +2550,11 @@ class MCEqRun:
 
     def _legacy_handles(self, kind):
         """Sparse handles of the paraxial operator for the kernels not yet on
-        :func:`~MCEq.solvers.etd2_driver`: Accelerate (``"spacc"`` /
-        ``"spacc_f32"``) and the MKL fp32 multi-RHS kernel (``"mkl_f32"``).
-        Cached and closed like the backends."""
+        :func:`~MCEq.solvers.etd2_driver`: Accelerate, ``"spacc"`` and
+        ``"spacc_f32"``. Cached and closed like the backends."""
         from types import SimpleNamespace
+
+        import MCEq.spacc as spacc
 
         op = self._compiled_operator()
         cache = self.__dict__.setdefault("_backend_cache", {})
@@ -2563,12 +2564,7 @@ class MCEqRun:
             del cache[kind]
             h = None
         if h is None:
-            if kind == "mkl_f32":
-                from MCEq.solvers import MklSparseMatrixF32 as cls
-            else:
-                import MCEq.spacc as spacc
-
-                cls = spacc.SpaccMatrixF32 if kind == "spacc_f32" else spacc.SpaccMatrix
+            cls = spacc.SpaccMatrixF32 if kind == "spacc_f32" else spacc.SpaccMatrix
             handles = tuple(
                 cls(off) if off.nnz else None for off in (op.int_off, op.dec_off)
             )
@@ -2613,24 +2609,6 @@ class MCEqRun:
                 h.op.d_dec,
                 phi0,
                 grid_idcs,
-            )
-        if dtype == np.float32 and kc in ("mkl", "mkl_etd2"):
-            h = self._legacy_handles("mkl_f32")
-            return solvers.solv_mkl_etd2_multirhs_f32(
-                nsteps,
-                dX,
-                rho_inv,
-                h.int_off,
-                h.dec_off,
-                h.op.d_int,
-                h.op.d_dec,
-                phi0,
-                grid_idcs,
-            )
-        if dtype == np.float32 and kc == "numpy_etd2":
-            raise NotImplementedError(
-                "solve_batch(dtype=float32) is currently wired only for "
-                "kernel_config in {'accelerate_etd2', 'cuda_etd2', 'mkl_etd2'}."
             )
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)

@@ -404,3 +404,42 @@ def test_resolve_batch_secant_tri_state():
     ):
         with pytest.raises(NotImplementedError):
             _resolve_for(True, **kwargs)
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
+def test_cuda_secant_fp32_matches_fp64(secant_48mode_problem):
+    """The coupled branch at fp32 stays within the fp32 budget of its fp64 self.
+
+    `_resolve_secant` allows fp32 only on CUDA, so this is the one reachable
+    fp32 path through the sec(theta) corner: the eigenbasis transform and the
+    block phi factors run there on fp64 diagonals writing into an fp32 state.
+    """
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+
+    def run(fp_precision):
+        sol, _ = solve_etd2(
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"],
+            [],
+            backend="cuda",
+            sec_ops=ops,
+            fp_precision=fp_precision,
+        )
+        return sol
+
+    fp64 = run(64)
+    fp32 = run(32)
+
+    # The backends compute in the requested precision and hand back fp64, so
+    # the evidence that fp32 was used is the size of the difference, not the
+    # dtype of the result: fp32 roundoff, well inside the 1e-4 budget, and not
+    # the exact agreement an ignored fp_precision would give.
+    assert np.all(np.isfinite(fp32))
+    rel = np.linalg.norm(fp32 - fp64) / np.linalg.norm(fp64)
+    assert 1e-9 < rel < 1e-4, f"cuda secant fp32 vs fp64 rel-L2 = {rel:.3e}"

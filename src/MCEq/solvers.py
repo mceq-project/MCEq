@@ -1,4 +1,4 @@
-from ctypes import POINTER, c_double
+from ctypes import POINTER, c_double, c_float
 from types import SimpleNamespace
 
 import numpy as np
@@ -407,6 +407,44 @@ def _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs):
 # of :func:`etd2_driver` there. Nothing else differs between backends.
 # ---------------------------------------------------------------------------
 
+#: The precision contract every backend implements. ``fp_precision`` (32 or
+#: 64) is one knob on the shared backends, not a kernel family of its own,
+#: and it means exactly this. Referenced from :class:`HostBackend`,
+#: :class:`CudaOperator`, :func:`etd2_driver` and :func:`solve_etd2`.
+_PRECISION_CONTRACT = """\
+The diagonals (``d_int``, ``d_dec``) and the phi factors computed from
+them (``eD``, ``phi1``, ``phi2``, and the coupled-block ``eDB`` /
+``phi1B`` / ``phi2B``) are evaluated in FP64 whatever the requested
+precision, and cast once, on the way out, to the state dtype. The state,
+the scratch buffers and the off-diagonal operator are stored in the
+requested dtype, and every stage that touches them runs there. The step
+size and ``rho_inv`` therefore reach stage 1 in FP64 and the state
+stages in the state dtype.
+
+Why: ``phi1 = (e^z - 1) / z`` and ``phi2 = (e^z - 1 - z) / z^2`` cancel
+catastrophically around the Taylor-switch thresholds, which are
+calibrated for FP64 rounding — in FP32 they lose 3-7 digits. The
+diagonals are also cheap (``O(dim)`` per step against the ``O(nnz*K)``
+SpMM), so FP64 there costs nothing measurable. The contract binds the
+*inputs* of stage 1 and not only its arithmetic: rounding the diagonals
+to FP32 first costs a factor ~100 in the accuracy of ``exp(h D)`` and
+makes two backends that otherwise hold the contract disagree by far more
+than FP32 roundoff.
+"""
+
+#: State dtype per ``fp_precision``; the one place 32/64 becomes a dtype.
+_FP_DTYPE = {32: np.float32, 64: np.float64}
+
+
+def _state_dtype(fp_precision):
+    """The state dtype of ``fp_precision`` (32 or 64)."""
+    try:
+        return _FP_DTYPE[int(fp_precision)]
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            f"fp_precision must be 32 or 64, got {fp_precision!r}"
+        ) from None
+
 
 def secant_split(int_m, dec_m, sec_ops):
     """``(d_int, d_dec, int_off, dec_off)`` of A, B in the secant layout
@@ -458,9 +496,11 @@ def _secant_phi_factors(ZB, out=None, work=None):
     return np.exp(ZB), phi1, phi2
 
 
-def _cuda_secant_phi_factors(cp, fl_pr, ZB):
-    """cupy form of :func:`_secant_phi_factors` (cupy ufuncs take no ``where``)."""
-    safe = cp.where(ZB == 0.0, fl_pr(1.0), ZB)
+def _cuda_secant_phi_factors(cp, ZB):
+    """cupy form of :func:`_secant_phi_factors` (cupy ufuncs take no ``where``).
+
+    ``ZB`` is fp64 on both backends, so the block factors are too."""
+    safe = cp.where(ZB == 0.0, 1.0, ZB)
     e1 = cp.expm1(ZB)
     phi1B = cp.where(
         cp.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6)
@@ -491,12 +531,17 @@ def _secant_left_matmul(matrix, plane, out=None):
 
 
 class ScipyApplyOff:
-    """``out = int_off x + ri dec_off x`` through scipy CSR SpMM."""
+    """``out = int_off x + ri dec_off x`` through scipy CSR SpMM.
+
+    The operator is stored in ``dtype`` so the SpMM runs at the state
+    precision (see :data:`_PRECISION_CONTRACT`)."""
 
     name = "numpy"
 
-    def __init__(self, int_off, dec_off):
-        self.int_off, self.dec_off = int_off, dec_off
+    def __init__(self, int_off, dec_off, dtype=np.float64):
+        self.int_off, self.dec_off = (
+            m.astype(dtype, copy=False) for m in (int_off, dec_off)
+        )
 
     def bind(self, dim, K, nsteps):
         pass
@@ -520,33 +565,33 @@ class MklApplyOff:
     scales a separate accumulator. BSR handles pad the operator to a
     multiple of the block size; the operand is then staged through
     padded copies. ``owns`` closes the handles with the binding.
+    ``dtype`` is the state precision and matches the handles'.
     """
 
     name = "mkl"
 
-    def __init__(self, mkl_int_off, mkl_dec_off, owns=False):
+    def __init__(self, mkl_int_off, mkl_dec_off, owns=False, dtype=np.float64):
         self.int_off, self.dec_off = (
             m if m is not None and m.nnz else None for m in (mkl_int_off, mkl_dec_off)
         )
         self.handles = [m for m in (self.int_off, self.dec_off) if m is not None]
         self.owns = owns
+        self.dtype = np.dtype(dtype)
 
     def bind(self, dim, K, nsteps):
-        from ctypes import POINTER, c_double
-
         self.K = K
         self.n_padded = max([dim] + [m.n_padded for m in self.handles])
         self.dim = dim
         if K > 1:
             for m in self.handles:
                 m.set_mm_hint(K, expected_calls=2 * nsteps, layout=101)
-        self._dec_buf = np.empty((self.n_padded, K), dtype=np.float64)
+        self._dec_buf = np.empty((self.n_padded, K), dtype=self.dtype)
         self._pad = self.n_padded != dim
         if self._pad:
-            self._x_pad = np.zeros((self.n_padded, K), dtype=np.float64)
-            self._out_pad = np.empty((self.n_padded, K), dtype=np.float64)
+            self._x_pad = np.zeros((self.n_padded, K), dtype=self.dtype)
+            self._out_pad = np.empty((self.n_padded, K), dtype=self.dtype)
         self._ptrs = {}
-        self._ptr_type = POINTER(c_double)
+        self._ptr_type = POINTER(_MKL_TYPES[self.dtype][1])
 
     def _ptr(self, arr):
         p = self._ptrs.get(id(arr))
@@ -624,52 +669,84 @@ class HostBackend:
     ``apply_off`` binding of the sparse library (scipy or MKL). ``op`` is
     the :class:`~MCEq.operator_assembly.CompiledOperator` the binding was
     built from — it carries the layout and the coupling operators.
+
+    ``dtype`` is the state precision, float64 or float32: the state, the
+    scratch buffers and ``apply_off``'s operator are stored in it, while
+    the diagonals and the phi factors are computed in fp64 and cast once,
+    in :meth:`diag_factors`. See :data:`_PRECISION_CONTRACT`.
     """
 
     xp = np
-    dtype = np.float64
     left_matmul = staticmethod(_secant_left_matmul)
 
-    def __init__(self, op, apply_off):
+    def __init__(self, op, apply_off, dtype=np.float64):
         self.op = op
         self.name = apply_off.name
+        self.dtype = np.dtype(dtype).type
         self.d_int, self.d_dec = op.d_int, op.d_dec
         self._apply_off = apply_off
         self._post = _rowmajor_post_apply()
+        self._coupling = None
 
     def bind(self, dim, K, per_lane, nsteps):
         if self.op.dim != dim:
             raise ValueError(
                 f"HostBackend: operator dim {self.op.dim} != state dim {dim}"
             )
+        fp64 = self.dtype is np.float64
         self._per_lane = per_lane
         self._bufs = (
             _etd_step_buffers_multipath(dim, K) if per_lane else _etd_step_buffers(dim)
         )
-        self._scratch = np.empty((dim, K), dtype=np.float64)
+        self._scratch = np.empty((dim, K), dtype=self.dtype)
         self._block = None
-        self._fused = self._post is not None and dim * K >= _FUSED_MIN_ELEMENTS
+        # The fused C post-apply is fp64-only; fp32 takes the ufunc passes.
+        self._fused = fp64 and self._post is not None and dim * K >= _FUSED_MIN_ELEMENTS
         self._h1 = np.empty(1, dtype=np.float64)
+        # Landing buffers for the one cast of the fp64 factors, or None at
+        # fp64 where the factor buffers are already the state dtype.
+        shape = (dim, K) if per_lane else (dim,)
+        self._factors = (
+            None if fp64 else tuple(np.empty(shape, dtype=self.dtype) for _ in range(3))
+        )
         self._apply_off.bind(dim, K, nsteps)
 
     def coupling(self):
-        c = self.op.coupling
-        return c.T_P, c.T_PP, c.V, c.Vi, c.lam
+        """``T_P, T_PP, V, Vi`` in the state dtype (they act on the state);
+        ``lam`` in fp64 (it forms the phi arguments of the exact slot)."""
+        if self._coupling is None:
+            c = self.op.coupling
+            self._coupling = tuple(
+                np.asarray(m, dtype=self.dtype) for m in (c.T_P, c.T_PP, c.V, c.Vi)
+            ) + (np.asarray(c.lam, dtype=np.float64),)
+        return self._coupling
 
     def state_buffers(self, dim, K):
-        return tuple(np.zeros((dim, K), dtype=np.float64) for _ in range(4))
+        return tuple(np.zeros((dim, K), dtype=self.dtype) for _ in range(4))
 
     def apply_off(self, x, out, ri):
         self._apply_off(x, out, ri)
 
+    def _cast_factors(self, *factors):
+        """The one cast of the fp64 factors to the state dtype; identity at
+        fp64, where the factor buffers already are the state dtype."""
+        if self._factors is None:
+            return factors
+        for src, dst in zip(factors, self._factors):
+            np.copyto(dst, src)
+        return self._factors
+
     def diag_factors(self, h, ri):
-        """``eD, phi1, phi2`` of ``h (d_int + ri d_dec)``, broadcastable to (dim, K)."""
+        """``eD, phi1, phi2`` of ``h (d_int + ri d_dec)``, broadcastable to
+        (dim, K). ``h`` and ``ri`` come in fp64 and the evaluation runs
+        there; only the result is cast."""
         b = self._bufs
         if self._per_lane:
             _etd_compute_diag_factors_multipath(h, ri, self.d_int, self.d_dec, b)
-            return b["eD"], b["phi1"], b["phi2"]
+            return self._cast_factors(b["eD"], b["phi1"], b["phi2"])
         _etd_compute_diag_factors(h, ri, self.d_int, self.d_dec, b)
-        return b["eD"][:, None], b["phi1"][:, None], b["phi2"][:, None]
+        eD, phi1, phi2 = self._cast_factors(b["eD"], b["phi1"], b["phi2"])
+        return eD[:, None], phi1[:, None], phi2[:, None]
 
     def block_factors(self, ZB):
         if self._block is None or self._block[0].shape != ZB.shape:
@@ -741,8 +818,8 @@ class HostBackend:
         np.multiply(s, phi2, out=s)
         np.add(a, s, out=out)
 
-    def asarray(self, a):
-        return np.asarray(a, dtype=np.float64)
+    def asarray(self, a, dtype=None):
+        return np.asarray(a, dtype=self.dtype if dtype is None else dtype)
 
     def to_host(self, a):
         return np.asarray(a, dtype=np.float64)
@@ -754,18 +831,22 @@ class HostBackend:
         self._apply_off.close()
 
 
-def numpy_backend(op):
+def numpy_backend(op, fp_precision=64):
     """Host backend on scipy CSR SpMM."""
-    return HostBackend(op, ScipyApplyOff(op.int_off, op.dec_off))
+    dtype = _state_dtype(fp_precision)
+    return HostBackend(op, ScipyApplyOff(op.int_off, op.dec_off, dtype), dtype)
 
 
-def mkl_backend(op, expected_calls=2000):
+def mkl_backend(op, expected_calls=2000, fp_precision=64):
     """Host backend on MKL sparse BLAS; owns the handles it creates."""
+    dtype = _state_dtype(fp_precision)
     handles = tuple(
-        MklSparseMatrix(off, expected_calls=expected_calls) if off.nnz else None
+        MklSparseMatrix(off, expected_calls=expected_calls, dtype=dtype)
+        if off.nnz
+        else None
         for off in (op.int_off, op.dec_off)
     )
-    return HostBackend(op, MklApplyOff(*handles, owns=True))
+    return HostBackend(op, MklApplyOff(*handles, owns=True, dtype=dtype), dtype)
 
 
 class CudaOperator:
@@ -773,9 +854,10 @@ class CudaOperator:
 
     Owns the cuSPARSE CSR copies of ``int_off`` / ``dec_off`` (``None``
     when empty — an empty CSR is ill-defined for some cuSPARSE versions)
-    and the diagonals, in ``fp_precision`` (32 or 64). The state and
-    scratch buffers are allocated per solve by :class:`CudaBackend`; one
-    device operator serves every K.
+    in the state dtype of ``fp_precision`` (32 or 64), and the diagonals
+    in fp64 whatever the precision — see :data:`_PRECISION_CONTRACT`. The
+    state and scratch buffers are allocated per solve by
+    :class:`CudaBackend`; one device operator serves every K.
     """
 
     def __init__(self, int_off, dec_off, d_int, d_dec, device_id, fp_precision):
@@ -791,14 +873,7 @@ class CudaOperator:
                 "CudaOperator: CuPy is not available. Install a build of "
                 "cupy matching your CUDA runtime."
             ) from e
-        if fp_precision == 32:
-            fl_pr = cp.float32
-        elif fp_precision == 64:
-            fl_pr = cp.float64
-        else:
-            raise ValueError(
-                f"CudaOperator: fp_precision must be 32 or 64, got {fp_precision}"
-            )
+        fl_pr = _state_dtype(fp_precision)
         self.cp = cp
         self.fl_pr = fl_pr
         self.fp_precision = int(fp_precision)
@@ -807,8 +882,8 @@ class CudaOperator:
         self.dim = int(d_int.shape[0])
         self.cu_int_off = cusp.csr_matrix(int_off, dtype=fl_pr) if int_off.nnz else None
         self.cu_dec_off = cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
-        self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
-        self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
+        self.cu_d_int = cp.asarray(d_int, dtype=cp.float64)
+        self.cu_d_dec = cp.asarray(d_dec, dtype=cp.float64)
 
 
 class CudaBackend:
@@ -816,9 +891,12 @@ class CudaBackend:
 
     cuSPARSE SpMM through cupyx, cublas GEMMs, and the fused
     ElementwiseKernels of :func:`_cuda_etd2_kernels`. ``dev`` is the
-    :class:`CudaOperator` of ``op``'s split. With ``fp_precision=32``
-    everything runs in fp32 except the diagonal factors, which the fused
-    kernel evaluates in fp64.
+    :class:`CudaOperator` of ``op``'s split, and carries the state dtype.
+    At ``fp_precision=32`` everything runs in fp32 except the diagonals
+    and the phi factors: those come out of fp64 inputs, are evaluated in
+    fp64 inside the kernels, and are cast on the kernels' way out — the
+    same stages in the same order as :class:`HostBackend`. See
+    :data:`_PRECISION_CONTRACT`.
     """
 
     def __init__(self, dev, op):
@@ -844,17 +922,22 @@ class CudaBackend:
         )
         shape = (dim, K) if per_lane else (dim,)
         self._factors = tuple(cp.empty(shape, dtype=dtype) for _ in range(3))
+        # D, hD and exp(hD) of the shared-path stage, in fp64.
         self._D = (
-            None if per_lane else tuple(cp.empty(dim, dtype=dtype) for _ in range(2))
+            None
+            if per_lane
+            else tuple(cp.empty(dim, dtype=cp.float64) for _ in range(3))
         )
 
     def coupling(self):
-        c = self.op.coupling
+        """``T_P, T_PP, V, Vi`` in the state dtype (they act on the state);
+        ``lam`` in fp64 (it forms the phi arguments of the exact slot)."""
         if self._coupling is None:
+            c = self.op.coupling
+            cp = self.cp
             self._coupling = tuple(
-                self.cp.asarray(m, dtype=self.dtype)
-                for m in (c.T_P, c.T_PP, c.V, c.Vi, c.lam)
-            )
+                cp.asarray(m, dtype=self.dtype) for m in (c.T_P, c.T_PP, c.V, c.Vi)
+            ) + (cp.asarray(c.lam, dtype=cp.float64),)
         return self._coupling
 
     def state_buffers(self, dim, K):
@@ -878,33 +961,28 @@ class CudaBackend:
         return out
 
     def diag_factors(self, h, ri):
+        """``eD, phi1, phi2`` of ``h (d_int + ri d_dec)``, broadcastable to
+        (dim, K). ``h`` and ``ri`` come in fp64 and the diagonals are fp64;
+        the kernels evaluate there and write the factors in the state
+        dtype, so the cast happens once, at the kernel's output."""
         cp, Kset = self.cp, self._kernels
         d_int, d_dec = self.d_int, self.d_dec
         eD, phi1, phi2 = self._factors
-        fp32 = self.dtype is cp.float32
         if self._per_lane:
-            kernel = (
-                Kset.phi_compute_multipath_f64diag
-                if fp32
-                else Kset.phi_compute_multipath
-            )
-            kernel(
+            Kset.phi_compute_multipath(
                 d_int[:, None], d_dec[:, None], h[None, :], ri[None, :], eD, phi1, phi2
             )
             return eD, phi1, phi2
-        if fp32:
-            Kset.phi_compute_multipath_f64diag(d_int, d_dec, h, ri, eD, phi1, phi2)
-        else:
-            D, hD = self._D
-            cp.multiply(d_dec, ri, out=D)
-            cp.add(D, d_int, out=D)
-            cp.multiply(D, h, out=hD)
-            cp.exp(hD, out=eD)
-            Kset.phi_compute(hD, eD, eD, phi1, phi2)
+        D, hD, eD64 = self._D
+        cp.multiply(d_dec, ri, out=D)
+        cp.add(D, d_int, out=D)
+        cp.multiply(D, h, out=hD)
+        cp.exp(hD, out=eD64)
+        Kset.phi_compute(hD, eD64, eD, phi1, phi2)
         return eD[:, None], phi1[:, None], phi2[:, None]
 
     def block_factors(self, ZB):
-        return _cuda_secant_phi_factors(self.cp, self.dtype, ZB)
+        return _cuda_secant_phi_factors(self.cp, ZB)
 
     def predictor(self, eD, x, phi1, F, h, out):
         self._kernels.post_apply1(eD, x, phi1, F, h, out)
@@ -912,8 +990,8 @@ class CudaBackend:
     def corrector(self, a, F_a, F, phi2, h, out):
         self._kernels.post_apply2(a, F_a, F, phi2, h, out)
 
-    def asarray(self, a):
-        return self.cp.asarray(a, dtype=self.dtype)
+    def asarray(self, a, dtype=None):
+        return self.cp.asarray(a, dtype=self.dtype if dtype is None else dtype)
 
     def to_host(self, a):
         return self.cp.asnumpy(a).astype(np.float64, copy=False)
@@ -998,9 +1076,15 @@ def etd2_driver(
     ``phi0_per_pixel`` turns the per-lane form into the LPT carousel and
     the return value into the ``(dim, K_total)`` per-pixel solution.
     Single-axis is K = 1 without a schedule.
+
+    Precision: the loop carries the step size and ``rho_inv`` twice, in
+    fp64 for stage 1 (``h64`` / ``ri64``, which feed the diagonals and the
+    exact slot) and in ``be.dtype`` for the stages that touch the state.
+    At fp64 they are the same values. See :data:`_PRECISION_CONTRACT`.
     """
     xp = be.xp
     dtype = be.dtype
+    fp64 = dtype == np.float64
     lay = be.op.layout
     coupled = lay.coupled
     phi = np.asarray(phi)
@@ -1037,8 +1121,10 @@ def etd2_driver(
     phc[:] = to_layout(be.asarray(phi.reshape(dim, K)))
 
     if per_lane:
-        dX_b = be.asarray(dX)
-        ri_b = be.asarray(rho_inv)
+        dX_64 = be.asarray(dX, np.float64)
+        ri_64 = be.asarray(rho_inv, np.float64)
+        dX_b = dX_64 if fp64 else be.asarray(dX)
+        ri_b = ri_64 if fp64 else be.asarray(rho_inv)
 
     if coupled:
         n_k, N, n_P, n_g = lay.n_k, lay.N, lay.n_P, lay.n_g
@@ -1101,26 +1187,28 @@ def etd2_driver(
         for k in range(nsteps):
             # 1. diagonal factors of the full state and of the exact slot
             if per_lane:
-                h, ri = dX_b[k], ri_b[k]  # (K,) lane rows
+                h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows, fp64
+                h, ri = dX_b[k], ri_b[k]  # the same rows in the state dtype
                 h_b = h[None, :]
             else:
-                h, ri = dtype(dX[k]), dtype(rho_inv[k])
-                h_b = h
-            eD, phi1, phi2 = be.diag_factors(h, ri)
+                h64, ri64 = np.float64(dX[k]), np.float64(rho_inv[k])
+                h = h_b = dtype(h64)
+                ri = dtype(ri64)
+            eD, phi1, phi2 = be.diag_factors(h64, ri64)
             if coupled:
                 if per_lane:
                     h_c = h[None, None, :]
-                    frozen = (h == 0.0)[None, None, :]
-                    Df = d_dec_c[:, :, None] * ri + d_int_c[:, :, None]
-                    D0 = d_dec_0[:, None] * ri + d_int_0[:, None]
-                    ZB = lam[:, None, None] * (D0 * h)
+                    frozen = (h64 == 0.0)[None, None, :]
+                    Df = d_dec_c[:, :, None] * ri64 + d_int_c[:, :, None]
+                    D0 = d_dec_0[:, None] * ri64 + d_int_0[:, None]
+                    ZB = lam[:, None, None] * (D0 * h64)
                     D0_b = D0[None]
                     eDB, phi1B, phi2B = be.block_factors(ZB)
                 else:
                     h_c = h
-                    Df = (d_dec_c * ri + d_int_c)[:, :, None]
-                    D0 = d_dec_0 * ri + d_int_0
-                    ZB = lam[:, None] * (D0 * h)
+                    Df = (d_dec_c * ri64 + d_int_c)[:, :, None]
+                    D0 = d_dec_0 * ri64 + d_int_0
+                    ZB = lam[:, None] * (D0 * h64)
                     D0_b = D0[None, :, None]
                     eDB, phi1B, phi2B = (f[:, :, None] for f in be.block_factors(ZB))
 
@@ -1201,11 +1289,13 @@ def etd2_driver(
 
 
 #: Backend factories :func:`solve_etd2` binds by name. Each takes the
-#: compiled operator and the device settings; the host backends ignore
-#: the latter.
+#: compiled operator, the device and the state precision; the host
+#: backends ignore the device.
 _BACKENDS = {
-    "numpy": lambda op, device_id, fp_precision: numpy_backend(op),
-    "mkl": lambda op, device_id, fp_precision: mkl_backend(op),
+    "numpy": lambda op, device_id, fp_precision: numpy_backend(op, fp_precision),
+    "mkl": lambda op, device_id, fp_precision: mkl_backend(
+        op, fp_precision=fp_precision
+    ),
     "cuda": cuda_backend,
 }
 
@@ -1247,7 +1337,11 @@ def solve_etd2(
         :func:`compile_carousel_schedule`. With a schedule the step count is
         the schedule's own ``T`` and ``nsteps`` is ignored; the return is the
         harvested ``(dim, K_total)`` pixel matrix rather than a pair.
-      device_id, fp_precision: CUDA device and 32/64-bit precision.
+      device_id: CUDA device index; ignored by the host backends.
+      fp_precision: 32 or 64, the state precision on every backend — the
+        state, the scratch buffers and the off-diagonal operator are
+        stored in it while the diagonals and the phi factors stay fp64.
+        See :data:`_PRECISION_CONTRACT`.
 
     Returns:
       ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.
@@ -1545,32 +1639,52 @@ def _set_mkl_argtypes(mkl):
     _MKL_ARGTYPES_SET = True
 
 
+#: MKL Sparse BLAS entry-point family and ctypes scalar per state dtype —
+#: the whole of the fp64/fp32 difference in :class:`MklSparseMatrix`.
+_MKL_TYPES = {
+    np.dtype(np.float64): ("d", c_double),
+    np.dtype(np.float32): ("s", c_float),
+}
+
+
 class MklSparseMatrix:
     """Thin RAII wrapper around an Intel MKL sparse-matrix handle.
 
-    Holds a CSR view of the off-diagonal block. MKL keeps
-    raw pointers into the backing arrays, so the Python objects must outlive
-    the handle — we keep references on the wrapper.
-    ``mkl_sparse_set_mv_hint`` + ``mkl_sparse_optimize`` are called once at
-    construction so the per-solve loop reuses the optimised layout.
+    Holds a CSR view of the off-diagonal block in ``dtype``, on the
+    ``mkl_sparse_d_*`` or ``mkl_sparse_s_*`` entry points of
+    :data:`_MKL_TYPES`. MKL keeps raw pointers into the backing arrays, so
+    the Python objects must outlive the handle — we keep references on the
+    wrapper. ``mkl_sparse_set_mv_hint`` + ``mkl_sparse_optimize`` are
+    called once at construction so the per-solve loop reuses the optimised
+    layout.
 
+    CSR only: BSR was a 1.5x win at fp64 on SIBYLL21, but the BSR block
+    microkernels MKL ships are fp64-only on most builds.
 
     Args:
-      csr (scipy.sparse.csr_matrix): float64 CSR matrix with int32 indices.
+      csr (scipy.sparse.csr_matrix): CSR matrix with int32 indices; the
+        data is cast to ``dtype`` here, once.
       expected_calls (int): SpMV count hint for MKL planning.
+      dtype: float64 or float32 storage for the matrix data.
     """
 
-    def __init__(self, csr, expected_calls=200):
-        from ctypes import POINTER, byref, c_int, c_void_p
-        from ctypes import c_double as fl_pr
+    def __init__(self, csr, expected_calls=200, dtype=np.float64):
+        from ctypes import byref, c_int, c_void_p
 
         config._load_mkl()
         if not sp.isspmatrix_csr(csr):
             raise TypeError(
                 f"MklSparseMatrix expects a CSR matrix, got {type(csr).__name__}"
             )
-        if csr.dtype != np.float64:
-            raise TypeError(f"MklSparseMatrix expects float64 data, got {csr.dtype}")
+        self.dtype = np.dtype(dtype)
+        try:
+            prec, fl_pr = _MKL_TYPES[self.dtype]
+        except KeyError:
+            raise TypeError(
+                f"MklSparseMatrix expects float64 or float32 data, got {self.dtype}"
+            ) from None
+        self._prec = prec
+        self._ct = fl_pr
 
         n_orig = csr.shape[0]
         self.n_orig = n_orig
@@ -1579,10 +1693,19 @@ class MklSparseMatrix:
         mkl = config.mkl
         self._mkl = mkl
         _set_mkl_argtypes(mkl)
+        self._mv = getattr(mkl, f"mkl_sparse_{prec}_mv")
+        self._mm = getattr(mkl, f"mkl_sparse_{prec}_mm")
 
+        # A complex or integer CSR would otherwise be cast silently, dropping
+        # the imaginary part or the fractional one; only the two real float
+        # widths convert to each other meaningfully here.
+        if csr.dtype not in _MKL_TYPES:
+            raise TypeError(
+                f"MklSparseMatrix expects float64 or float32 data, got {csr.dtype}"
+            )
         indices = csr.indices.astype(np.int32, copy=False)
         indptr = csr.indptr.astype(np.int32, copy=False)
-        data = csr.data
+        data = csr.data.astype(self.dtype, copy=False)
         self._data = data
         self._indices = indices
         self._indptr = indptr
@@ -1595,7 +1718,7 @@ class MklSparseMatrix:
         pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
         pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
 
-        st = mkl.mkl_sparse_d_create_csr(
+        st = getattr(mkl, f"mkl_sparse_{prec}_create_csr")(
             byref(handle),
             c_int(0),
             c_int(n_orig),
@@ -1606,7 +1729,7 @@ class MklSparseMatrix:
             data_p,
         )
         if st != 0:
-            raise RuntimeError(f"mkl_sparse_d_create_csr failed with status {st}")
+            raise RuntimeError(f"mkl_sparse_{prec}_create_csr failed with status {st}")
         self._handle = handle
 
         descr = _MklMatrixDescr()
@@ -1626,14 +1749,14 @@ class MklSparseMatrix:
             raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
 
     def gemv_ctargs(self, alpha, x_p, beta, y_p):
-        """``y = alpha * A * x + beta * y`` via raw c_double pointers.
+        """``y = alpha * A * x + beta * y`` via raw pointers of the wrapper's
+        dtype.
 
         Mirrors :meth:`MCEq.spacc.SpaccMatrix.gemv_ctargs` so the ETD2
         kernels can be written backend-agnostic up to the gemv binding.
         """
-        from ctypes import c_double as fl_pr
-
-        st = self._mkl.mkl_sparse_d_mv(
+        fl_pr = self._ct
+        st = self._mv(
             self._operation,
             fl_pr(alpha),
             self._handle,
@@ -1643,30 +1766,30 @@ class MklSparseMatrix:
             y_p,
         )
         if st != 0:
-            raise RuntimeError(f"mkl_sparse_d_mv failed with status {st}")
+            raise RuntimeError(f"mkl_sparse_{self._prec}_mv failed with status {st}")
 
     def gemm_ctargs(self, alpha, nrhs, B_p, ldb, C_p, ldc, beta=1.0, layout=102):
-        """``C = alpha * A * B + beta * C`` via raw c_double pointers.
+        """``C = alpha * A * B + beta * C`` via raw pointers of the wrapper's
+        dtype.
 
-        Wraps ``mkl_sparse_d_mm``. The default column-major layout
-        (``layout=102``) serves the (dim, K) Fortran-contiguous buffers
-        of the multi-RHS / multipath kernels without transpose;
-        ``layout=101`` (row-major, ``ldb``/``ldc`` = K) serves the
-        C-contiguous buffers of the secant batch driver. ``ldb`` and
-        ``ldc`` are the leading dimensions; per-tile callers offset the
-        pointer instead.
+        Wraps ``mkl_sparse_{d,s}_mm``. The default column-major layout
+        (``layout=102``) serves (dim, K) Fortran-contiguous buffers
+        without transpose; ``layout=101`` (row-major, ``ldb``/``ldc`` = K)
+        serves the C-contiguous buffers of the driver. ``ldb`` and ``ldc``
+        are the leading dimensions; per-tile callers offset the pointer
+        instead.
 
         Default ``beta = 1.0`` matches :class:`MCEq.spacc.SpaccMatrix.gemm_ctargs`
         (accumulating SpMM). Caller is responsible for zeroing ``C`` before
         the first call in an accumulator chain.
         """
-        from ctypes import c_double as fl_pr
         from ctypes import c_int
 
         # SPARSE_LAYOUT_COLUMN_MAJOR = 102, SPARSE_LAYOUT_ROW_MAJOR = 101.
         # Operation enum (10 = non-transpose) comes from self._operation,
         # set in __init__.
-        st = self._mkl.mkl_sparse_d_mm(
+        fl_pr = self._ct
+        st = self._mm(
             self._operation,
             fl_pr(alpha),
             self._handle,
@@ -1680,7 +1803,7 @@ class MklSparseMatrix:
             c_int(int(ldc)),
         )
         if st != 0:
-            raise RuntimeError(f"mkl_sparse_d_mm failed with status {st}")
+            raise RuntimeError(f"mkl_sparse_{self._prec}_mm failed with status {st}")
 
     def set_mm_hint(self, nrhs, expected_calls=200, layout=102):
         """Tell MKL the SpMM-specific shape so it can re-plan.
@@ -1731,158 +1854,6 @@ class MklSparseMatrix:
         # Defer to ``close()``; both are idempotent. Guards in ``close()``
         # cover partially-initialised instances (constructor raised before
         # the handle was created).
-        try:
-            self.close()
-        except Exception:
-            pass
-
-
-class MklSparseMatrixF32:
-    """fp32 sibling of :class:`MklSparseMatrix` for the multi-RHS f32 path.
-
-    Wraps an Intel MKL fp32 sparse-matrix handle. The fp32 ETD2 multirhs
-    kernel needs the SpMM to produce fp32 directly (avoids the (dim, K) cast
-    that would otherwise dominate at K ≥ 64); MKL's ``mkl_sparse_s_*``
-    functions are the standard route.
-
-    Currently CSR-only — BSR was a 1.5× win at fp64 on SIBYLL21 but the BSR
-    block-microkernels MKL ships are fp64-only on most builds; CSR is the
-    safe default. Revisit if benches motivate it.
-
-    Args:
-      csr (scipy.sparse.csr_matrix): float32 OR float64 CSR matrix. fp64
-        input is cast down once at construction; downstream the SpMM runs
-        purely in fp32.
-      expected_calls (int): SpMV count hint for MKL planning.
-    """
-
-    def __init__(self, csr, expected_calls=200):
-        from ctypes import POINTER, byref, c_int, c_void_p
-        from ctypes import c_float as fl_pr
-
-        config._load_mkl()
-        if not sp.isspmatrix_csr(csr):
-            raise TypeError(
-                f"MklSparseMatrixF32 expects a CSR matrix, got {type(csr).__name__}"
-            )
-
-        n_orig = csr.shape[0]
-        self.n_orig = n_orig
-        self.n_padded = n_orig
-
-        mkl = config.mkl
-        self._mkl = mkl
-        _set_mkl_argtypes(mkl)
-
-        indices = csr.indices.astype(np.int32, copy=False)
-        indptr = csr.indptr.astype(np.int32, copy=False)
-        data = csr.data.astype(np.float32, copy=False)
-        self._data = data
-        self._indices = indices
-        self._indptr = indptr
-        self.nnz = csr.nnz
-
-        handle = c_void_p()
-        data_p = data.ctypes.data_as(POINTER(fl_pr))
-        ci_p = indices.ctypes.data_as(POINTER(c_int))
-        pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
-        pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
-
-        st = mkl.mkl_sparse_s_create_csr(
-            byref(handle),
-            c_int(0),
-            c_int(n_orig),
-            c_int(n_orig),
-            pb_p,
-            pe_p,
-            ci_p,
-            data_p,
-        )
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_s_create_csr failed with status {st}")
-        self._handle = handle
-
-        descr = _MklMatrixDescr()
-        descr.type = c_int(20)
-        descr.mode = c_int(121)
-        descr.diag = c_int(131)
-        self._descr = descr
-        self._operation = c_int(10)
-
-        st = mkl.mkl_sparse_set_mv_hint(
-            handle, self._operation, descr, c_int(int(expected_calls))
-        )
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_set_mv_hint failed with status {st}")
-        st = mkl.mkl_sparse_optimize(handle)
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
-
-    def gemv_ctargs(self, alpha, x_p, beta, y_p):
-        from ctypes import c_float as fl_pr
-
-        st = self._mkl.mkl_sparse_s_mv(
-            self._operation,
-            fl_pr(alpha),
-            self._handle,
-            self._descr,
-            x_p,
-            fl_pr(beta),
-            y_p,
-        )
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_s_mv failed with status {st}")
-
-    def gemm_ctargs(self, alpha, nrhs, B_p, ldb, C_p, ldc, beta=1.0):
-        """``C = alpha * A * B + beta * C`` via raw c_float pointers."""
-        from ctypes import c_float as fl_pr
-        from ctypes import c_int
-
-        st = self._mkl.mkl_sparse_s_mm(
-            self._operation,
-            fl_pr(alpha),
-            self._handle,
-            self._descr,
-            c_int(102),
-            B_p,
-            c_int(int(nrhs)),
-            c_int(int(ldb)),
-            fl_pr(beta),
-            C_p,
-            c_int(int(ldc)),
-        )
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_s_mm failed with status {st}")
-
-    def set_mm_hint(self, nrhs, expected_calls=200):
-        from ctypes import c_int
-
-        st = self._mkl.mkl_sparse_set_mm_hint(
-            self._handle,
-            self._operation,
-            self._descr,
-            c_int(102),
-            c_int(int(nrhs)),
-            c_int(int(expected_calls)),
-        )
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_set_mm_hint failed with status {st}")
-        st = self._mkl.mkl_sparse_optimize(self._handle)
-        if st != 0:
-            raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
-
-    def close(self):
-        handle = getattr(self, "_handle", None)
-        mkl = getattr(self, "_mkl", None)
-        if handle is None or mkl is None:
-            return
-        try:
-            mkl.mkl_sparse_destroy(handle)
-        except Exception:
-            pass
-        self._handle = None
-
-    def __del__(self):
         try:
             self.close()
         except Exception:
@@ -1970,23 +1941,31 @@ def _build_cuda_etd2_kernels(cp):
     (multipath) variant: pass ``h`` as a ``(1, K)`` broadcasted buffer
     instead of a Python scalar — the kernel signature is unchanged
     because ``T`` accepts both scalars and arrays.
+
+    The two diag-factor kernels take fp64 inputs and do their arithmetic
+    in double whatever ``T`` is, writing the factors in the state dtype.
+    That cast is the one place the state precision enters stage 1; see
+    :data:`_PRECISION_CONTRACT` for why the arithmetic stays in double.
     """
     phi_compute = cp.ElementwiseKernel(
-        "T hD, T eD_in",
+        "float64 hD, float64 eD_in",
         "T eD_out, T phi1, T phi2",
         f"""
-        T abs_hd = (hD >= T(0)) ? hD : -hD;
-        eD_out = eD_in;
-        if (abs_hd > T({_PHI1_SMALL!r})) {{
-            phi1 = (eD_in - T(1)) / hD;
+        double abs_hd = (hD >= 0.0) ? hD : -hD;
+        double p1, p2;
+        eD_out = (T)eD_in;
+        if (abs_hd > {_PHI1_SMALL!r}) {{
+            p1 = (eD_in - 1.0) / hD;
         }} else {{
-            phi1 = T(1) + hD * (T(0.5) + hD * T({_INV_6!r}));
+            p1 = 1.0 + hD * (0.5 + hD * {_INV_6!r});
         }}
-        if (abs_hd > T({_PHI2_SMALL!r})) {{
-            phi2 = (eD_in - T(1) - hD) / (hD * hD);
+        if (abs_hd > {_PHI2_SMALL!r}) {{
+            p2 = (eD_in - 1.0 - hD) / (hD * hD);
         }} else {{
-            phi2 = T(0.5) + hD * (T({_INV_6!r}) + hD * T({_INV_24!r}));
+            p2 = 0.5 + hD * ({_INV_6!r} + hD * {_INV_24!r});
         }}
+        phi1 = (T)p1;
+        phi2 = (T)p2;
         """,
         "mceq_etd2_phi_compute",
     )
@@ -1997,46 +1976,15 @@ def _build_cuda_etd2_kernels(cp):
     # ``d_int[:, None], d_dec[:, None], h_K[None, :], ri_K[None, :]`` to
     # broadcast onto the (dim, K) output shape.
     phi_compute_multipath = cp.ElementwiseKernel(
-        "T d_int, T d_dec, T h, T ri",
+        "float64 d_int, float64 d_dec, float64 h, float64 ri",
         "T eD, T phi1, T phi2",
         f"""
-        T D = d_int + ri * d_dec;
-        T hd = h * D;
-        T e = exp(hd);
-        eD = e;
-        T abs_hd = (hd >= T(0)) ? hd : -hd;
-        if (abs_hd > T({_PHI1_SMALL!r})) {{
-            phi1 = (e - T(1)) / hd;
-        }} else {{
-            phi1 = T(1) + hd * (T(0.5) + hd * T({_INV_6!r}));
-        }}
-        if (abs_hd > T({_PHI2_SMALL!r})) {{
-            phi2 = (e - T(1) - hd) / (hd * hd);
-        }} else {{
-            phi2 = T(0.5) + hd * (T({_INV_6!r}) + hd * T({_INV_24!r}));
-        }}
-        """,
-        "mceq_etd2_phi_compute_multipath",
-    )
-    # fp32-pipeline diag-factor kernel: float32 buffers in/out, double
-    # arithmetic inside. The phi1/phi2 cancellations ((e-1)/hd and
-    # (e-1-hd)/hd^2) lose 3-7 digits in fp32 around the Taylor-switch
-    # thresholds (which are calibrated for fp64 rounding: fp32 phi1 err
-    # up to ~8e-3, phi2 up to ~1e-1 on real MCEq diagonals); promoting
-    # the kernel-internal math to double brings all three factors to
-    # fp32 roundoff (~6e-8) for ~5% step cost on an RTX 3090 — the
-    # SpMMs dominate the step. Serves both the shared-path (scalar
-    # h/ri) and the carousel ((1, K) row) call sites via broadcasting.
-    phi_compute_multipath_f64diag = cp.ElementwiseKernel(
-        "float32 d_int, float32 d_dec, float32 h, float32 ri",
-        "float32 eD, float32 phi1, float32 phi2",
-        f"""
-        double D = (double)d_int + (double)ri * (double)d_dec;
-        double hd = (double)h * D;
+        double D = d_int + ri * d_dec;
+        double hd = h * D;
         double e = exp(hd);
-        eD = (float)e;
         double abs_hd = (hd >= 0.0) ? hd : -hd;
         double p1, p2;
+        eD = (T)e;
         if (abs_hd > {_PHI1_SMALL!r}) {{
             p1 = (e - 1.0) / hd;
         }} else {{
@@ -2047,10 +1995,10 @@ def _build_cuda_etd2_kernels(cp):
         }} else {{
             p2 = 0.5 + hd * ({_INV_6!r} + hd * {_INV_24!r});
         }}
-        phi1 = (float)p1;
-        phi2 = (float)p2;
+        phi1 = (T)p1;
+        phi2 = (T)p2;
         """,
-        "mceq_etd2_phi_compute_multipath_f64diag",
+        "mceq_etd2_phi_compute_multipath",
     )
     post_apply1 = cp.ElementwiseKernel(
         "T eD, T state, T phi1, T F_phi, T h",
@@ -2067,7 +2015,6 @@ def _build_cuda_etd2_kernels(cp):
     return SimpleNamespace(
         phi_compute=phi_compute,
         phi_compute_multipath=phi_compute_multipath,
-        phi_compute_multipath_f64diag=phi_compute_multipath_f64diag,
         post_apply1=post_apply1,
         post_apply2=post_apply2,
     )
@@ -2084,196 +2031,14 @@ def _cuda_etd2_kernels():
 
 
 # --------------------------------------------------------------------
-# MKL Sparse BLAS fp32 multi-RHS kernel
+# Apple Accelerate Sparse BLAS kernels
 #
-# The fp64 MKL routes run on :func:`etd2_driver` with :class:`MklApplyOff`.
-# This fp32 kernel (column-major, tiled SpMM, ``MCEq.etd2_kernels`` C
-# post-apply) stays until the host backend carries an fp32 state.
+# The one kernel family still off :func:`etd2_driver`: column-major
+# ``(dim, K)`` state, tiled SpMM, ``MCEq.spacc`` C post-apply, and an
+# fp32 sibling of its own. They carry their own sparse handles
+# (``MCEqRun._legacy_handles``) until Accelerate becomes an ``apply_off``
+# binding of :class:`HostBackend` like scipy and MKL.
 # --------------------------------------------------------------------
-
-# Default K-tile for the MKL Sparse BLAS SpMM call. MKL's
-# ``mkl_sparse_d_mm`` should scale better than Accelerate's beyond
-# K = 64 (the EPYC AVX2/AVX-512 microkernels stay cache-friendly for
-# larger K), but we keep the same tiling shape for parity with the
-# Accelerate kernel — micro-bench in :doc:`runs/2026-05-23_multirhs-satori-gpu`
-# can tune this if needed.
-_MKL_SPMM_TILE = 64
-
-
-def solv_mkl_etd2_multirhs_f32(
-    nsteps,
-    dX,
-    rho_inv,
-    mkl_int_off,
-    mkl_dec_off,
-    d_int,
-    d_dec,
-    phi,
-    grid_idcs,
-):
-    """fp32 sibling of the MKL route of :func:`solve_etd2`.
-
-    State + SpMM in fp32 via :class:`MklSparseMatrixF32`. The diagonal
-    pipeline still runs fp64 (exp(h·D) saturates fp32 quickly at high
-    zenith); eD/phi1/phi2 are cast down once per step for the post-apply.
-    """
-    from ctypes import POINTER, c_float, sizeof
-
-    if phi.ndim != 2:
-        raise ValueError(
-            f"solv_mkl_etd2_multirhs_f32: phi must be 2-D (dim, K), "
-            f"got shape {phi.shape}"
-        )
-    dim, K = phi.shape
-    if K < 1:
-        raise ValueError(f"K must be >= 1, got {K}")
-
-    n_padded = dim
-    for m in (mkl_int_off, mkl_dec_off):
-        if m is not None:
-            n_padded = max(n_padded, m.n_padded)
-
-    tile = _MKL_SPMM_TILE
-    tile = max(1, min(int(tile), K))
-
-    phc = np.zeros((n_padded, K), dtype=np.float32, order="F")
-    phc[:dim, :] = phi.astype(np.float32, copy=False)
-    F_phi = np.zeros((n_padded, K), dtype=np.float32, order="F")
-    F_a = np.zeros((n_padded, K), dtype=np.float32, order="F")
-    a = np.zeros((n_padded, K), dtype=np.float32, order="F")
-
-    bufs = _etd_step_buffers(dim)
-    eD_f64 = bufs["eD"]
-    phi1_f64 = bufs["phi1"]
-    phi2_f64 = bufs["phi2"]
-    eD_f32 = np.zeros(n_padded, dtype=np.float32)
-    phi1_f32 = np.zeros(n_padded, dtype=np.float32)
-    phi2_f32 = np.zeros(n_padded, dtype=np.float32)
-
-    flt = sizeof(c_float)
-    tile_starts = list(range(0, K, tile))
-    tile_widths = [min(tile, K - c0) for c0 in tile_starts]
-    n_tiles = len(tile_starts)
-
-    phc_addr = phc.ctypes.data
-    F_phi_addr = F_phi.ctypes.data
-    F_a_addr = F_a.ctypes.data
-    a_addr = a.ctypes.data
-
-    def _ptrs_at(addr, c0):
-        return c_float.from_address(addr + c0 * n_padded * flt)
-
-    phc_tile_ptrs = [_ptrs_at(phc_addr, c0) for c0 in tile_starts]
-    F_phi_tile_ptrs = [_ptrs_at(F_phi_addr, c0) for c0 in tile_starts]
-    F_a_tile_ptrs = [_ptrs_at(F_a_addr, c0) for c0 in tile_starts]
-    a_tile_ptrs = [_ptrs_at(a_addr, c0) for c0 in tile_starts]
-
-    phc_p_full = phc.ctypes.data_as(POINTER(c_float))
-    F_phi_p_full = F_phi.ctypes.data_as(POINTER(c_float))
-    F_a_p_full = F_a.ctypes.data_as(POINTER(c_float))
-    a_p_full = a.ctypes.data_as(POINTER(c_float))
-    eD_p = eD_f32.ctypes.data_as(POINTER(c_float))
-    phi1_p = phi1_f32.ctypes.data_as(POINTER(c_float))
-    phi2_p = phi2_f32.ctypes.data_as(POINTER(c_float))
-
-    from MCEq.etd2_kernels import etd2_post_apply1_multirhs_f32 as _post1
-    from MCEq.etd2_kernels import etd2_post_apply2_multirhs_f32 as _post2
-
-    int_off_empty = (mkl_int_off is None) or (mkl_int_off.nnz == 0)
-    dec_off_empty = (mkl_dec_off is None) or (mkl_dec_off.nnz == 0)
-
-    primary_nrhs = tile_widths[0]
-    if not int_off_empty:
-        mkl_int_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
-    if not dec_off_empty:
-        mkl_dec_off.set_mm_hint(primary_nrhs, expected_calls=2 * nsteps * n_tiles)
-
-    grid_sol = []
-    grid_step = 0
-
-    from time import time
-
-    start = time()
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        for k in range(nsteps):
-            h = float(dX[k])
-            ri = float(rho_inv[k])
-
-            _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs)
-            eD_f32[:dim] = eD_f64
-            phi1_f32[:dim] = phi1_f64
-            phi2_f32[:dim] = phi2_f64
-
-            F_phi.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    mkl_int_off.gemm_ctargs(
-                        1.0,
-                        nrhs,
-                        phc_tile_ptrs[t],
-                        n_padded,
-                        F_phi_tile_ptrs[t],
-                        n_padded,
-                        beta=1.0,
-                    )
-                if not dec_off_empty:
-                    mkl_dec_off.gemm_ctargs(
-                        ri,
-                        nrhs,
-                        phc_tile_ptrs[t],
-                        n_padded,
-                        F_phi_tile_ptrs[t],
-                        n_padded,
-                        beta=1.0,
-                    )
-
-            _post1(n_padded, K, h, eD_p, phi1_p, phc_p_full, F_phi_p_full, a_p_full)
-
-            F_a.fill(0.0)
-            for t in range(n_tiles):
-                nrhs = tile_widths[t]
-                if not int_off_empty:
-                    mkl_int_off.gemm_ctargs(
-                        1.0,
-                        nrhs,
-                        a_tile_ptrs[t],
-                        n_padded,
-                        F_a_tile_ptrs[t],
-                        n_padded,
-                        beta=1.0,
-                    )
-                if not dec_off_empty:
-                    mkl_dec_off.gemm_ctargs(
-                        ri,
-                        nrhs,
-                        a_tile_ptrs[t],
-                        n_padded,
-                        F_a_tile_ptrs[t],
-                        n_padded,
-                        beta=1.0,
-                    )
-
-            _post2(
-                n_padded, K, h, phi2_p, a_p_full, F_a_p_full, F_phi_p_full, phc_p_full
-            )
-
-            if grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(np.copy(phc[:dim, :]))
-                grid_step += 1
-
-    elapsed = time() - start
-    info(
-        2,
-        f"Performance (mkl multirhs f32 K={K}): "
-        f"{1e3 * elapsed / float(nsteps):6.2f}ms/iteration "
-        f"({1e3 * elapsed / float(nsteps) / float(K):6.2f}ms/iteration/RHS)",
-    )
-
-    return phc[:dim, :].copy(order="F"), np.array(grid_sol)
-
-
 def solv_spacc_etd2_multirhs(
     nsteps,
     dX,
