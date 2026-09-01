@@ -1992,7 +1992,7 @@ def test_cuda_phi_compute_f64diag_accuracy():
     """
     import cupy as cp
 
-    from MCEq.solvers import _cuda_etd2_kernels
+    from MCEq.solvers.backends.cuda import _cuda_etd2_kernels
 
     Kset = _cuda_etd2_kernels()
     rng = np.random.default_rng(11)

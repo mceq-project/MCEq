@@ -63,8 +63,10 @@ exhaustive_ignores =
     ddm
     ddm_utils
     charm_models
-# Compiled kernels and their thin wrappers. Phase 2 moves both under
-# `solvers/_kernels` and `solvers/backends`.
+# Compiled kernels and their thin wrappers. Phase 7 moves both under
+# `solvers/_kernels`; it is deferred that far because the move changes the
+# CMake install paths and the macOS build of `spacc` cannot be tested on the
+# Linux worker that carries the rest of the suite.
     etd2_kernels
     spacc
 # Leaves with no MCEq imports: the 2D Hankel transform helpers and the version
@@ -157,8 +159,13 @@ unmatched_ignore_imports_alerting = error
 ignore_imports =
 # misc.py:5 -- Phase 1
     MCEq.misc -> MCEq.config
-# solvers.py:7 -- Phase 2
-    MCEq.solvers -> MCEq.config
+# solvers/backends/mkl.py:18 `config._load_mkl()` / `config.mkl` -- the MKL
+# runtime extraction (dlopen moves into this module, detection into
+# config/detect.py) removes it.
+    MCEq.solvers.backends.mkl -> MCEq.config
+# solvers/path.py:82 `config.solver` for the step-size defaults -- removed when
+# the path takes its settings group as an argument.
+    MCEq.solvers.path -> MCEq.config
 # geometry/density_profiles.py:7 -- Phase 3
     MCEq.geometry.density_profiles -> MCEq.config
 # geometry/geometry.py:3 -- Phase 3

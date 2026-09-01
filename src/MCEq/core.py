@@ -1728,7 +1728,7 @@ class MCEqRun:
             (fp32 φ-functions suffer catastrophic cancellation) and cast
             once on the way out, so relative error vs fp64 is ≤ 1e-4 for
             the production particle set on all fp32 routes. See
-            ``MCEq.solvers._PRECISION_CONTRACT``.
+            ``MCEq.solvers.backends.base._PRECISION_CONTRACT``.
           carousel_K (int | None): pipeline width for the LPT scheduler
             (heterogeneous batches only). ``None`` → ``min(K, 128)``.
           path_workers (int): fork-pool size for a parallel path build

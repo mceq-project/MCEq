@@ -122,8 +122,8 @@ only the Python half would have desynchronised the two.
 
 Confirm with `grep -rn "etd2_post_apply\|daxpy" src/ tests/` — the only survivors
 should be the `_rowmajor` names from `MCEq.etd2_kernels` and the CUDA kernel
-names in `solvers.py`. Rebuild and re-run the suite after removing them; that is
-the whole point of doing it on a Mac.
+names in `solvers/backends/cuda.py`. Rebuild and re-run the suite after removing
+them; that is the whole point of doing it on a Mac.
 
 ## 5. Two smaller things to judge
 

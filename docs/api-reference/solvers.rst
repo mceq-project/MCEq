@@ -101,7 +101,8 @@ multi-RHS kernels used.
 Accelerate offers no row-major SpMM, so :class:`SpaccApplyOff` keeps the
 column-major staging: it copies the row-major state into Fortran-ordered
 scratch allocated once per bind, and issues one accumulating SpMM per
-64-column tile (``solvers._SPACC_SPMM_TILE``, from the K-to-1000 bench —
+64-column tile (``solvers.backends.accelerate._SPACC_SPMM_TILE``, from the
+K-to-1000 bench —
 Accelerate peaks at K ≈ 32–64 and drops to ≈ 1.4× per RHS at K ≥ 128). At
 K = 1 the two layouts are the same bytes and the driver's own buffers go
 straight to the SpMV.
