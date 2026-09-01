@@ -760,7 +760,7 @@ def numpy_backend(op):
 
 
 def mkl_backend(op, expected_calls=2000):
-    """Host backend on MKL sparse BLAS; owns the CSR handles it creates."""
+    """Host backend on MKL sparse BLAS; owns the handles it creates."""
     handles = tuple(
         MklSparseMatrix(off, expected_calls=expected_calls) if off.nnz else None
         for off in (op.int_off, op.dec_off)
@@ -809,19 +809,6 @@ class CudaOperator:
         self.cu_dec_off = cusp.csr_matrix(dec_off, dtype=fl_pr) if dec_off.nnz else None
         self.cu_d_int = cp.asarray(d_int, dtype=fl_pr)
         self.cu_d_dec = cp.asarray(d_dec, dtype=fl_pr)
-
-
-#: Name the CUDA operator carried before the backends were unified.
-CudaEtd2Context = CudaOperator
-
-
-class CudaEtd2MultiRHSContext(CudaOperator):
-    """:class:`CudaOperator` that also records the batch width it was
-    created for (kept for callers of the former multi-RHS context)."""
-
-    def __init__(self, int_off, dec_off, d_int, d_dec, K, device_id, fp_precision):
-        super().__init__(int_off, dec_off, d_int, d_dec, device_id, fp_precision)
-        self.K = int(K)
 
 
 class CudaBackend:
@@ -1210,212 +1197,82 @@ def etd2_driver(
     return sol, grid
 
 
-# --- entry points by backend and route -------------------------------------
-#
-# Every route is ``etd2_driver`` on one backend; these names bind the
-# (matrices | handles | device operator) a caller holds to that backend.
-# ``MCEqRun`` builds its backends through ``operator_assembly`` and calls
-# the driver directly.
+# --- the entry point -------------------------------------------------------
 
 
-def _host_op(d_int, d_dec, sec_ops=None):
-    return CompiledOperator.from_split(d_int, d_dec, sec_ops=sec_ops)
+#: Backend factories :func:`solve_etd2` binds by name. Each takes the
+#: compiled operator and the device settings; the host backends ignore
+#: the latter.
+_BACKENDS = {
+    "numpy": lambda op, device_id, fp_precision: numpy_backend(op),
+    "mkl": lambda op, device_id, fp_precision: mkl_backend(op),
+    "cuda": cuda_backend,
+}
 
 
-def _multirhs(single, phi_pos):
-    """The multi-RHS name of a route: the same driver call, ``(dim, K)``
-    state required (``phi`` is positional argument ``phi_pos``)."""
-
-    def kernel(*args):
-        phi = args[phi_pos]
-        if np.ndim(phi) != 2:
-            raise ValueError(
-                f"{kernel.__name__}: phi must be 2-D (dim, K), got shape {np.shape(phi)}"
-            )
-        return single(*args)
-
-    kernel.__name__ = single.__name__ + "_multirhs"
-    kernel.__doc__ = f"Shared-path multi-RHS lift of :func:`{single.__name__}`."
-    return kernel
-
-
-def solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
-    """ETD2RK on scipy sparse; ``phi`` may be ``(dim,)`` or ``(dim, K)``."""
-    be = numpy_backend(compile_operator(int_m, dec_m))
-    return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
-
-
-solv_numpy_etd2_multirhs = _multirhs(solv_numpy_etd2, phi_pos=5)
-
-
-def solv_numpy_etd2_carousel(
-    int_m, dec_m, dX, rho_inv, phi_initial, schedule, phi0_per_pixel
-):
-    """ETD2RK LPT carousel on scipy sparse (see :func:`compile_carousel_schedule`)."""
-    be = numpy_backend(compile_operator(int_m, dec_m))
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        be,
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
-
-
-def solv_numpy_etd2_secant(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs, sec_ops):
-    """ETD2RK with the sec(theta) mode coupling on scipy sparse."""
-    be = numpy_backend(compile_operator(int_m, dec_m, sec_ops))
-    return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
-
-
-solv_numpy_etd2_secant_multirhs = _multirhs(solv_numpy_etd2_secant, phi_pos=5)
-
-
-def solv_numpy_etd2_secant_carousel(
-    int_m, dec_m, dX, rho_inv, phi_initial, schedule, phi0_per_pixel, sec_ops
-):
-    be = numpy_backend(compile_operator(int_m, dec_m, sec_ops))
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        be,
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
-
-
-def solv_mkl_etd2(
-    nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec, phi, grid_idcs
-):
-    """ETD2RK on MKL sparse BLAS handles of the off-diagonals (CSR or BSR)."""
-    be = HostBackend(_host_op(d_int, d_dec), MklApplyOff(mkl_int_off, mkl_dec_off))
-    return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
-
-
-solv_mkl_etd2_multirhs = _multirhs(solv_mkl_etd2, phi_pos=7)
-
-
-def solv_mkl_etd2_carousel(
-    mkl_int_off,
-    mkl_dec_off,
-    d_int,
-    d_dec,
+def solve_etd2(
+    nsteps,
     dX,
     rho_inv,
-    phi_initial,
-    schedule,
-    phi0_per_pixel,
+    int_m,
+    dec_m,
+    phi,
+    grid_idcs=(),
+    *,
+    backend="numpy",
+    sec_ops=None,
+    schedule=None,
+    phi0_per_pixel=None,
+    device_id=0,
+    fp_precision=64,
 ):
-    be = HostBackend(_host_op(d_int, d_dec), MklApplyOff(mkl_int_off, mkl_dec_off))
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        be,
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
+    """Integrate ``dPhi/dX`` with :func:`etd2_driver` on one backend.
 
+    The single route from the matrices of ``MatrixBuilder`` to a solution:
+    compile the operator, bind ``backend`` to it, run the step loop, and
+    release the backend's library handles / device buffers. Every route the
+    driver offers is a keyword here, not a separate function.
 
-def solv_mkl_etd2_secant(
-    nsteps, dX, rho_inv, mkl_int_off, mkl_dec_off, d_int, d_dec, phi, grid_idcs, sec_ops
-):
-    """ETD2RK with the sec(theta) coupling on MKL handles of the
-    :func:`secant_split` off-diagonals."""
-    be = HostBackend(
-        _host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off)
-    )
-    return etd2_driver(nsteps, dX, rho_inv, be, phi, grid_idcs)
+    Args:
+      nsteps, dX, rho_inv: the integration path. ``dX`` / ``rho_inv`` are
+        ``(nsteps,)`` for a shared path or ``(nsteps, K)`` per lane.
+      int_m, dec_m: interaction and decay matrices in the state's own order.
+      phi: initial state, ``(dim,)`` or ``(dim, K)``; the solution has the
+        same rank.
+      grid_idcs: step indices to snapshot.
+      backend: ``"numpy"``, ``"mkl"`` or ``"cuda"``.
+      sec_ops: sec(theta) operator set of :mod:`MCEq.secant`, or ``None``
+        for the paraxial transport.
+      schedule, phi0_per_pixel: LPT carousel of
+        :func:`compile_carousel_schedule`. With a schedule the step count is
+        the schedule's own ``T`` and ``nsteps`` is ignored; the return is the
+        harvested ``(dim, K_total)`` pixel matrix rather than a pair.
+      device_id, fp_precision: CUDA device and 32/64-bit precision.
 
-
-solv_mkl_etd2_secant_multirhs = _multirhs(solv_mkl_etd2_secant, phi_pos=7)
-
-
-def solv_mkl_etd2_secant_carousel(
-    mkl_int_off,
-    mkl_dec_off,
-    d_int,
-    d_dec,
-    dX,
-    rho_inv,
-    phi_initial,
-    schedule,
-    phi0_per_pixel,
-    sec_ops,
-):
-    be = HostBackend(
-        _host_op(d_int, d_dec, sec_ops), MklApplyOff(mkl_int_off, mkl_dec_off)
-    )
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        be,
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
-
-
-def _cuda_be(ctx, sec_ops=None):
-    d_int, d_dec = (
-        ctx.cp.asnumpy(d).astype(np.float64) for d in (ctx.cu_d_int, ctx.cu_d_dec)
-    )
-    return CudaBackend(ctx, _host_op(d_int, d_dec, sec_ops))
-
-
-def solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi, grid_idcs):
-    """ETD2RK on cuSPARSE via cupy; ``ctx`` a :class:`CudaOperator`."""
-    return etd2_driver(nsteps, dX, rho_inv, _cuda_be(ctx), phi, grid_idcs)
-
-
-solv_cuda_etd2_multirhs = _multirhs(solv_cuda_etd2, phi_pos=4)
-
-
-def solv_cuda_etd2_carousel(ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel):
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        _cuda_be(ctx),
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
-
-
-def solv_cuda_etd2_secant(nsteps, dX, rho_inv, ctx, phi, grid_idcs, sec_ops):
-    """ETD2RK with the sec(theta) coupling on cuSPARSE; ``ctx`` holds the
-    :func:`secant_split` operators."""
-    return etd2_driver(nsteps, dX, rho_inv, _cuda_be(ctx, sec_ops), phi, grid_idcs)
-
-
-solv_cuda_etd2_secant_multirhs = _multirhs(solv_cuda_etd2_secant, phi_pos=4)
-
-
-def solv_cuda_etd2_secant_carousel(
-    ctx, dX, rho_inv, phi_initial, schedule, phi0_per_pixel, sec_ops
-):
-    return etd2_driver(
-        schedule.T,
-        dX,
-        rho_inv,
-        _cuda_be(ctx, sec_ops),
-        phi_initial,
-        [],
-        schedule=schedule,
-        phi0_per_pixel=phi0_per_pixel,
-    )
+    Returns:
+      ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.
+    """
+    try:
+        make_backend = _BACKENDS[backend]
+    except KeyError:
+        raise ValueError(
+            f"solve_etd2: unknown backend {backend!r}; "
+            f"choose one of {', '.join(sorted(_BACKENDS))}"
+        ) from None
+    be = make_backend(compile_operator(int_m, dec_m, sec_ops), device_id, fp_precision)
+    try:
+        return etd2_driver(
+            schedule.T if schedule is not None else nsteps,
+            dX,
+            rho_inv,
+            be,
+            phi,
+            grid_idcs,
+            schedule=schedule,
+            phi0_per_pixel=phi0_per_pixel,
+        )
+    finally:
+        be.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1691,34 +1548,19 @@ def _set_mkl_argtypes(mkl):
 class MklSparseMatrix:
     """Thin RAII wrapper around an Intel MKL sparse-matrix handle.
 
-    Holds either a CSR or BSR view of the same off-diagonal block. MKL keeps
+    Holds a CSR view of the off-diagonal block. MKL keeps
     raw pointers into the backing arrays, so the Python objects must outlive
     the handle — we keep references on the wrapper.
     ``mkl_sparse_set_mv_hint`` + ``mkl_sparse_optimize`` are called once at
     construction so the per-solve loop reuses the optimised layout.
 
-    For BSR mode, MKL requires the matrix dimension to be a multiple of
-    ``blocksize``. The wrapper pads rows/cols with zeros to satisfy that;
-    ``n_padded`` reports the padded dimension and ``n_orig`` the original
-    one. The padding rows/cols are zero, so SpMV against a length-``n_padded``
-    vector with zeros in the trailing slots is equivalent to the unpadded
-    SpMV. Callers (``solv_mkl_etd2``) allocate padded scratch buffers once
-    and slice ``[:n_orig]`` for the per-step elementwise math.
-
-    Why ``blocksize=6`` is the default: empirically the fastest block size
-    for the SIBYLL21 off-diagonals on Intel MKL — ~1.5× faster than CSR.
-    MKL appears to have a hand-tuned BSR microkernel for ``b ∈ [2, 7]``;
-    ``b ≥ 8`` falls into a generic path and is slower than CSR for these
-    matrices. See ``docs/mceq_v1.x_v2_diff.md`` §8.4.
 
     Args:
       csr (scipy.sparse.csr_matrix): float64 CSR matrix with int32 indices.
       expected_calls (int): SpMV count hint for MKL planning.
-      blocksize (int | None): If ``None``, store as CSR. If int, store as
-        BSR with that block size (auto-padding the matrix as needed).
     """
 
-    def __init__(self, csr, expected_calls=200, blocksize=None):
+    def __init__(self, csr, expected_calls=200):
         from ctypes import POINTER, byref, c_int, c_void_p
         from ctypes import c_double as fl_pr
 
@@ -1733,97 +1575,38 @@ class MklSparseMatrix:
         n_orig = csr.shape[0]
         self.n_orig = n_orig
         self.n_cols = csr.shape[1]
-        self.blocksize = blocksize
 
         mkl = config.mkl
         self._mkl = mkl
         _set_mkl_argtypes(mkl)
 
-        if blocksize is None:
-            # ----- CSR path -----
-            indices = csr.indices.astype(np.int32, copy=False)
-            indptr = csr.indptr.astype(np.int32, copy=False)
-            data = csr.data
-            self._data = data
-            self._indices = indices
-            self._indptr = indptr
-            self.nnz = csr.nnz
-            self.n_padded = n_orig
+        indices = csr.indices.astype(np.int32, copy=False)
+        indptr = csr.indptr.astype(np.int32, copy=False)
+        data = csr.data
+        self._data = data
+        self._indices = indices
+        self._indptr = indptr
+        self.nnz = csr.nnz
+        self.n_padded = n_orig
 
-            handle = c_void_p()
-            data_p = data.ctypes.data_as(POINTER(fl_pr))
-            ci_p = indices.ctypes.data_as(POINTER(c_int))
-            pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
-            pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
+        handle = c_void_p()
+        data_p = data.ctypes.data_as(POINTER(fl_pr))
+        ci_p = indices.ctypes.data_as(POINTER(c_int))
+        pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
+        pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
 
-            st = mkl.mkl_sparse_d_create_csr(
-                byref(handle),
-                c_int(0),
-                c_int(n_orig),
-                c_int(self.n_cols),
-                pb_p,
-                pe_p,
-                ci_p,
-                data_p,
-            )
-            if st != 0:
-                raise RuntimeError(f"mkl_sparse_d_create_csr failed with status {st}")
-        else:
-            # ----- BSR path -----
-            if not isinstance(blocksize, int) or blocksize < 2:
-                raise ValueError(f"blocksize must be int >= 2, got {blocksize!r}")
-            if csr.shape[0] != csr.shape[1]:
-                raise ValueError(
-                    "BSR mode requires a square matrix; rectangular "
-                    "operators are CSR-only (blocksize=None)"
-                )
-            pad = (-n_orig) % blocksize
-            if pad > 0:
-                # Append `pad` zero rows / cols at the end. CSR-pad: extend
-                # indptr with copies of the last value (no new entries).
-                indptr_padded = np.concatenate(
-                    [csr.indptr, np.full(pad, csr.indptr[-1], dtype=csr.indptr.dtype)]
-                )
-                csr = sp.csr_matrix(
-                    (csr.data, csr.indices, indptr_padded),
-                    shape=(n_orig + pad, n_orig + pad),
-                ).tocsr()
-            n_padded = csr.shape[0]
-            self.n_padded = n_padded
-
-            B = csr.tobsr(blocksize=(blocksize, blocksize))
-            data = np.ascontiguousarray(B.data, dtype=np.float64)
-            indices = B.indices.astype(np.int32, copy=False)
-            indptr = B.indptr.astype(np.int32, copy=False)
-            self._data = data
-            self._indices = indices
-            self._indptr = indptr
-            # BSR `nnz` is the total number of stored entries, not just
-            # explicit nonzeros (each block stores blocksize**2 entries).
-            self.nnz = data.size
-
-            handle = c_void_p()
-            n_blocks = c_int(n_padded // blocksize)
-            data_p = data.ctypes.data_as(POINTER(fl_pr))
-            ci_p = indices.ctypes.data_as(POINTER(c_int))
-            pb_p = indptr[:-1].ctypes.data_as(POINTER(c_int))
-            pe_p = indptr[1:].ctypes.data_as(POINTER(c_int))
-            # SPARSE_LAYOUT_ROW_MAJOR = 101 — scipy stores BSR blocks
-            # row-major within each block.
-            st = mkl.mkl_sparse_d_create_bsr(
-                byref(handle),
-                c_int(0),
-                c_int(101),
-                n_blocks,
-                n_blocks,
-                c_int(blocksize),
-                pb_p,
-                pe_p,
-                ci_p,
-                data_p,
-            )
-            if st != 0:
-                raise RuntimeError(f"mkl_sparse_d_create_bsr failed with status {st}")
+        st = mkl.mkl_sparse_d_create_csr(
+            byref(handle),
+            c_int(0),
+            c_int(n_orig),
+            c_int(self.n_cols),
+            pb_p,
+            pe_p,
+            ci_p,
+            data_p,
+        )
+        if st != 0:
+            raise RuntimeError(f"mkl_sparse_d_create_csr failed with status {st}")
         self._handle = handle
 
         descr = _MklMatrixDescr()
@@ -1986,7 +1769,6 @@ class MklSparseMatrixF32:
         n_orig = csr.shape[0]
         self.n_orig = n_orig
         self.n_padded = n_orig
-        self.blocksize = None
 
         mkl = config.mkl
         self._mkl = mkl
@@ -2329,7 +2111,7 @@ def solv_mkl_etd2_multirhs_f32(
     phi,
     grid_idcs,
 ):
-    """fp32 sibling of :func:`solv_mkl_etd2_multirhs`.
+    """fp32 sibling of the MKL route of :func:`solve_etd2`.
 
     State + SpMM in fp32 via :class:`MklSparseMatrixF32`. The diagonal
     pipeline still runs fp64 (exp(h·D) saturates fp32 quickly at high
@@ -2506,7 +2288,7 @@ def solv_spacc_etd2_multirhs(
     """ETD2RK on Apple Accelerate Sparse BLAS — multi-RHS variant.
 
     Same Cox–Matthews update as :func:`solv_spacc_etd2` and
-    :func:`solv_numpy_etd2_multirhs`, but the four per-step SpMVs are
+    :func:`etd2_driver`, but the four per-step SpMVs are
     promoted to SpMMs through Accelerate's
     ``sparse_matrix_product_dense_double`` (wrapped as
     :meth:`MCEq.spacc.SpaccMatrix.gemm_ctargs`).
@@ -2847,8 +2629,8 @@ def solv_spacc_etd2_carousel(
 
     Step body identical to :func:`solv_spacc_etd2_multipath`. After
     each step boundary, harvest pixels that just finished, then reset
-    those slots to the next pixel's phi0. See
-    :func:`solv_numpy_etd2_carousel` for the algorithm; the only
+    those slots to the next pixel's phi0. See the schedule stage of
+    :func:`etd2_driver` for the algorithm; the only
     backend-specific bit is the SpMM dispatch and the (dim, K)
     column-major buffer layout that Accelerate expects.
     """
@@ -3025,7 +2807,7 @@ def solv_spacc_etd2(
     plain numpy arrays. The diagonal/off-diagonal split is constant in X
     so the caller (``MCEqRun.solve``) builds it once per ``solve()`` call.
 
-    Per step (mirrors ``solv_numpy_etd2``):
+    Per step (mirrors ``etd2_driver``):
 
       F_phi = int_off @ phc + ri * dec_off @ phc           (2 SpMVs)
       a     = exp(h*D) * phc + h * phi1(h*D) * F_phi

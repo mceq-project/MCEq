@@ -1,0 +1,16 @@
+One entry point, `MCEq.solvers.solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi,
+grid_idcs, *, backend, sec_ops, schedule, phi0_per_pixel, device_id, fp_precision)`,
+**replaces** the twelve thin per-backend names left over from the hand-unrolled
+kernels: `solv_{numpy,mkl,cuda}_etd2` and their `_carousel`, `_secant`,
+`_secant_carousel` variants, plus the six `_multirhs` names the `_multirhs` closure
+factory generated from them. It compiles the operator, binds the named backend
+(`"numpy"`, `"mkl"`, `"cuda"`), runs `etd2_driver` and closes the backend, so the
+library handles and device buffers a solve allocates are released with it. Route and
+transport are keywords now, not separate functions. `MCEqRun` was already on
+`compile_operator` + a backend + the driver and is unchanged.
+
+The `_multirhs` lift's only behaviour, a `ValueError` on a 1-D `phi`, is **gone**: it
+guarded a name that promised a batch, and `solve_etd2` promises only that the solution
+has the rank of `phi`. The user-facing 2-D requirement is unchanged at the API boundary
+(`MCEqRun.solve_multirhs`). `mkl_backend` gained a `blocksize` argument, the only route
+to the BSR storage of `MklSparseMatrix` now that no kernel takes handles from a caller.

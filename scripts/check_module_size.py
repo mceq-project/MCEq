@@ -40,7 +40,7 @@ ALLOW = {
     "src/MCEq/geometry/density_profiles.py": 1846,  # Phase 3 -> environment/*
     "src/MCEq/geometry/msis21_atmosphere.py": 670,  # Phase 3 -> environment/*
     "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
-    "src/MCEq/solvers.py": 3130,  # Phase 2 -> solvers/* + backends/*
+    "src/MCEq/solvers.py": 2912,  # Phase 2 -> solvers/* + backends/*
 }
 
 

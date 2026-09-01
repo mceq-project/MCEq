@@ -50,9 +50,9 @@ cap — 0.28 / 0.46 / 0.57 at caps 50 / 60 / 65 deg, 1.07 at the default
 75, 2.65 at 85 (current operator, 48-mode grid) — so at production
 settings the iteration diverges, and even below the rho = 1 crossover
 (~70 deg) the stitched form showed transient blow-ups at moderate
-stiffness in prototyping. Instead the kernels
-(``solv_numpy_etd2_secant`` / ``solv_mkl_etd2_secant`` /
-``solv_cuda_etd2_secant``) treat the coupled same-(species,E) block
+stiffness in prototyping. Instead the step loop
+(``MCEq.solvers.etd2_driver``, on any backend, once this operator set is
+compiled into the ETD2 operator) treats the coupled same-(species,E) block
 ``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
 (constant, shared by every state), which is unconditionally stable at
 any cap and reproduces the S-corrected equilibrium exactly in the

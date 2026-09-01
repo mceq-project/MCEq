@@ -73,9 +73,11 @@ opt-in) and ``accelerate_etd2`` (macOS; the ``"auto"`` choice there). The
 Accelerate kernels (:func:`solv_spacc_etd2` and siblings) and the MKL fp32
 multi-RHS kernel are not on the driver yet and keep their own step loops.
 
-The ``solv_<backend>_etd2[_secant][_multirhs|_carousel]`` names are thin
-entry points that bind the matrices / handles / device operator a caller
-holds to the corresponding backend and run the driver.
+:func:`~MCEq.solvers.solve_etd2` is the entry point: it compiles the
+operator, binds the backend named by ``backend=`` and runs the driver,
+releasing the handles it created. ``MCEqRun`` does not use it — it caches
+its own operator and backend and calls :func:`~MCEq.solvers.etd2_driver`
+directly.
 
 Sparse storage
 ==============
@@ -86,8 +88,7 @@ on the 2D operators it is slower than CSR at every K; on the 1D operators
 it gains 15–20 % on the single SpMV alone and loses at K > 1, so it was
 dropped from the driver. MKL's row-major SpMM over the C-ordered ``(dim, K)``
 state runs 1.3–2× faster than the column-major tiled SpMM the former
-multi-RHS kernels used. ``MklSparseMatrix`` still accepts a ``blocksize``
-for BSR storage, but no driver path selects it.
+multi-RHS kernels used.
 
 Reference/API
 =============
