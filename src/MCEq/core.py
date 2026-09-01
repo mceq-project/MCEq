@@ -850,85 +850,6 @@ class MCEqRun:
             skip_decay_matrix=False
         )
 
-    def enable_em_density_interpolation(self, rho_grid=None):
-        """Build an int_m stack indexed by air density ρ for LPM-realistic runs.
-
-        Reads the ρ-stack written by mceq-maintenance-tools's
-        ``5_assemble_em_db --air-density-grid`` from the active EM HDF5 file
-        and rebuilds the interaction matrix once per slice.  The solver
-        kernel (currently only ``numpy_etd2``) will log-linear-interpolate
-        between bracketing slices at each integration step using ρ(X).
-
-        Default behaviour (no call) keeps the single-density legacy slice —
-        which for air showers below ~10 EeV is what the project's
-        validated CORSIKA closures use, so this method is opt-in.
-
-        Args:
-          rho_grid: 1-D array of densities (g/cm³).  Defaults to the
-            ``rho_grid`` dataset present in the EM DB.
-
-        Raises:
-          RuntimeError: when ``config.enable_em`` is False, the EM DB has
-            no ρ-stack, or the medium is not air.
-        """
-        if not config.enable_em:
-            raise RuntimeError("EM module disabled (config.enable_em is False).")
-        if self.medium != "air":
-            raise RuntimeError(
-                f"ρ-stratified EM is only available for the air medium "
-                f"(self.medium={self.medium!r})."
-            )
-        if rho_grid is None:
-            rho_grid = self._mceq_db.em_rho_grid(self.medium)
-        if rho_grid is None or len(rho_grid) < 2:
-            raise RuntimeError(
-                "No ρ-stack in the active EM database — build one with "
-                "5_assemble_em_db --air-density-grid=lo,hi,N."
-            )
-
-        info(
-            1,
-            f"Building int_m stack for {len(rho_grid)} ρ slices "
-            f"({float(rho_grid[0]):.2e} – {float(rho_grid[-1]):.2e} g/cm³)...",
-        )
-        prev_density = getattr(config, "em_air_density", None)
-        int_m_stack = []
-        try:
-            for rho in rho_grid:
-                config.em_air_density = float(rho)
-                # Force-reload EM cross sections and yield matrices for this slice.
-                self._int_cs.load(self._interactions.iam)
-                self._interactions.load(
-                    self._interactions.iam, parent_list=self._particle_list
-                )
-                self.pman.set_interaction_model(self._int_cs, self._interactions)
-                int_m_slice, _ = self.matrix_builder.construct_matrices(
-                    skip_decay_matrix=True
-                )
-                int_m_stack.append(int_m_slice)
-        finally:
-            config.em_air_density = prev_density
-            # Restore the working int_m to the previously active density slice.
-            self._int_cs.load(self._interactions.iam)
-            self._interactions.load(
-                self._interactions.iam, parent_list=self._particle_list
-            )
-            self.pman.set_interaction_model(self._int_cs, self._interactions)
-            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-                skip_decay_matrix=False
-            )
-
-        self._int_m_stack = int_m_stack
-        self._em_rho_grid = np.asarray(rho_grid, dtype=float)
-        info(1, f"int_m stack ready ({len(int_m_stack)} slices).")
-
-    def disable_em_density_interpolation(self):
-        """Drop the ρ-stack; subsequent solves use the single int_m."""
-        if hasattr(self, "_int_m_stack"):
-            del self._int_m_stack
-        if hasattr(self, "_em_rho_grid"):
-            del self._em_rho_grid
-
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
         or the interaction models change. The previous state, such as the
@@ -1747,8 +1668,7 @@ class MCEqRun:
 
         * ``conditions=None`` (default): all columns share the current
           ``(zenith, atmosphere)``. K is the number of ``phi0`` columns.
-          Supports ``int_grid`` snapshots, fp32 (non-numpy backends) and
-          the EM ρ-stack.
+          Supports ``int_grid`` snapshots and fp32 (non-numpy backends).
         * ``conditions=[...]``: one dict per batch member with optional
           keys ``zenith_deg``, ``azimuth_deg`` and ``density_model``
           (config tuple or instance); missing keys fall back to the
@@ -1938,13 +1858,6 @@ class MCEqRun:
             )
             legacy = (sol, grid_sol)
         else:
-            if getattr(self, "_int_m_stack", None) is not None:
-                raise NotImplementedError(
-                    "solve_batch: the EM ρ-stack "
-                    "(enable_em_density_interpolation) is not wired for "
-                    "heterogeneous-path (carousel) batches yet. Disable it "
-                    "or use a shared-path batch."
-                )
             from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
             if carousel_K is None:
@@ -2516,9 +2429,9 @@ class MCEqRun:
 
         One constant set serves every column of every batch (the cap is
         not zenith dependent). Configurations without a secant route —
-        the Accelerate backend, fp32 state buffers outside cuda, the EM
-        rho-stack — fall back to the paraxial transport under ``"auto"``
-        and raise under ``"require"``.
+        the Accelerate backend, fp32 state buffers outside cuda — fall
+        back to the paraxial transport under ``"auto"`` and raise under
+        ``"require"``.
         """
         mode = config.secant_mode(self._mceq_db.is_2d)
         if mode == "off":
@@ -2529,16 +2442,14 @@ class MCEqRun:
             blockers.append(f"kernel_config = {config.kernel_config}")
         if np.dtype(dtype) == np.float32 and kc not in ("cuda", "cuda_etd2"):
             blockers.append("fp32 state buffers outside cuda_etd2")
-        if getattr(self, "_int_m_stack", None) is not None:
-            blockers.append("the EM rho-stack")
         if not blockers:
             return self._build_secant_ops()
         why = " and ".join(blockers)
         if mode == "require":
             raise NotImplementedError(
                 f"{caller}: secant_theta_transport is implemented for the "
-                "numpy_etd2, mkl_etd2 (fp64) and cuda_etd2 kernels, without "
-                f"the EM rho-stack — not with {why}"
+                "numpy_etd2, mkl_etd2 (fp64) and cuda_etd2 kernels — "
+                f"not with {why}"
             )
         info(
             1,
@@ -2683,24 +2594,6 @@ class MCEqRun:
         kc = config.kernel_config.lower()
         dtype = np.dtype(dtype)
         batched = phi0.ndim == 2
-        int_m_stack = getattr(self, "_int_m_stack", None)
-        if int_m_stack is not None and kc == "numpy_etd2":
-            # EM rho-stack: per-step log-linear blend of the air block.
-            kernel = (
-                solvers.solv_numpy_etd2_rho_stack_multirhs
-                if batched
-                else solvers.solv_numpy_etd2_rho_stack
-            )
-            return kernel(
-                nsteps,
-                dX,
-                rho_inv,
-                int_m_stack,
-                self._em_rho_grid,
-                self.dec_m,
-                phi0,
-                grid_idcs,
-            )
         if kc == "accelerate_etd2":
             f32 = dtype == np.float32
             h = self._legacy_handles("spacc_f32" if f32 else "spacc")

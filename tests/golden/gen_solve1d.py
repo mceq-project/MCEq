@@ -79,7 +79,6 @@ CONFIG_PINS = {
     "em_air_density": None,
     "floatlen": None,
     "cuda_fp_precision": 64,
-    "numpy_bsr_blocksize": 11,
     "etd2_path": {"eps": 0.3, "dX_max": 20.0, "dX_min": 0.01, "fd_span": 0.01},
     "em_adaptive_step": False,
     "em_step_safety": 0.12,

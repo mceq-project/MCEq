@@ -154,14 +154,6 @@ floatlen = None
 #: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
 
-#: Block size for the BSR off-diagonal storage of the numpy EM rho-stack
-#: kernels (``solv_numpy_etd2_rho_stack*``); ``None`` selects CSR. The
-#: ETD2 driver itself runs on CSR for every backend: on the 2D operators
-#: block storage is slower than CSR, on the 1D SIBYLL operators it gains
-#: ~15-20 % on the SpMV alone at K = 1 and loses at K > 1 (2026-08-30
-#: micro-bench, runs/2026-08-30_operator-assembly in mceq-em-integration).
-numpy_bsr_blocksize = 11
-
 # =========================================================================
 # Advanced settings
 # =========================================================================

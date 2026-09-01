@@ -86,8 +86,8 @@ on the 2D operators it is slower than CSR at every K; on the 1D operators
 it gains 15–20 % on the single SpMV alone and loses at K > 1, so it was
 dropped from the driver. MKL's row-major SpMM over the C-ordered ``(dim, K)``
 state runs 1.3–2× faster than the column-major tiled SpMM the former
-multi-RHS kernels used. ``config.numpy_bsr_blocksize`` remains for the
-numpy EM ρ-stack kernels only.
+multi-RHS kernels used. ``MklSparseMatrix`` still accepts a ``blocksize``
+for BSR storage, but no driver path selects it.
 
 Reference/API
 =============

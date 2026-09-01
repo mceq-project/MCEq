@@ -144,11 +144,8 @@ def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
     """Multi-RHS ETD2 columns match K independent single-RHS solves bit-exactly.
 
     scipy's CSR ``@`` against a 2-D (n, K) RHS issues per-column SpMVs with
-    the same arithmetic as the single-RHS path; the multi-RHS kernel uses
-    CSR off-diagonals throughout (bypassing the production BSR conversion
-    which doesn't vectorise across K), so the per-column result is
-    arithmetically identical to ``solv_numpy_etd2`` with
-    ``config.numpy_bsr_blocksize = None``.
+    the same arithmetic as the single-RHS path, so the per-column result is
+    arithmetically identical to ``solv_numpy_etd2``.
     """
     import scipy.sparse as sp
 
@@ -179,31 +176,22 @@ def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
     assert sol_multi.shape == (size, K)
     assert grid_multi.shape == (len(grid_idcs), size, K)
 
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-    config.numpy_bsr_blocksize = None
-    try:
-        for k in range(K):
-            try:
-                delattr(int_m, "_etd_split_cache_v2")
-            except AttributeError:
-                pass
-            sol_k, grid_k = solv_numpy_etd2(
-                nsteps,
-                dX,
-                rho_inv,
-                int_m,
-                dec_m,
-                phi0_multi[:, k].copy(),
-                grid_idcs,
-            )
-            assert np.array_equal(sol_multi[:, k], sol_k), (
-                f"column {k} of multi-RHS solution diverges from single-RHS"
-            )
-            assert np.array_equal(grid_multi[:, :, k], grid_k), (
-                f"column {k} of multi-RHS grid snapshots diverges from single-RHS"
-            )
-    finally:
-        config.numpy_bsr_blocksize = saved_bs
+    for k in range(K):
+        sol_k, grid_k = solv_numpy_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            int_m,
+            dec_m,
+            phi0_multi[:, k].copy(),
+            grid_idcs,
+        )
+        assert np.array_equal(sol_multi[:, k], sol_k), (
+            f"column {k} of multi-RHS solution diverges from single-RHS"
+        )
+        assert np.array_equal(grid_multi[:, :, k], grid_k), (
+            f"column {k} of multi-RHS grid snapshots diverges from single-RHS"
+        )
 
 
 @pytest.mark.xdist_group("spacc")
@@ -291,9 +279,9 @@ def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
 
     from MCEq.solvers import (
         MklSparseMatrix,
-        _etd_split_cache,
         solv_mkl_etd2_multirhs,
         solv_numpy_etd2_multirhs,
+        split_diagonal,
     )
 
     rng = np.random.default_rng(7)
@@ -311,7 +299,7 @@ def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
     sol_numpy, _ = solv_numpy_etd2_multirhs(
@@ -339,9 +327,9 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
 
     from MCEq.solvers import (
         MklSparseMatrixF32,
-        _etd_split_cache,
         solv_mkl_etd2_multirhs_f32,
         solv_numpy_etd2_multirhs,
+        split_diagonal,
     )
 
     rng = np.random.default_rng(7)
@@ -359,7 +347,7 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
     sol_numpy, _ = solv_numpy_etd2_multirhs(
@@ -390,89 +378,6 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
             mkl_int32.close()
         if mkl_dec32 is not None:
             mkl_dec32.close()
-
-
-@pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_numpy_etd2_rho_stack_multirhs_matches_single_rhs_toy(K):
-    """ρ-stack multi-RHS columns match K independent single-RHS ρ-stack solves.
-
-    Toy: 2-slice ρ-stack with scaled interaction matrices, shared decay
-    matrix, ramped rho_inv. Multi-RHS columns must equal arithmetic-identical
-    single-RHS ρ-stack solves run with BSR disabled (CSR-vs-CSR comparison).
-    """
-    import scipy.sparse as sp
-
-    from MCEq.solvers import (
-        solv_numpy_etd2_rho_stack,
-        solv_numpy_etd2_rho_stack_multirhs,
-    )
-
-    rng = np.random.default_rng(11)
-    nsteps = 30
-    size = 24
-    dX = np.full(nsteps, 0.1)
-    # rho_inv spans the ρ-grid so the per-step blend exercises both slices.
-    rho_inv = np.linspace(1.0, 4.0, nsteps)
-    grid_idcs = [5, 15, 25]
-
-    A_base = rng.standard_normal((size, size)) * 0.05
-    A_base[np.abs(A_base) < 0.02] = 0.0
-    A_base -= np.diag(np.abs(A_base).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-
-    # Two distinct slices to make the per-step blend non-trivial.
-    int_m_stack = [
-        sp.csr_matrix(A_base),
-        sp.csr_matrix(A_base * 0.7),
-    ]
-    rho_grid = np.array([1e-4, 1e-3])
-    dec_m = sp.csr_matrix(B)
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    sol_multi, grid_multi = solv_numpy_etd2_rho_stack_multirhs(
-        nsteps, dX, rho_inv, int_m_stack, rho_grid, dec_m, phi0_multi, grid_idcs
-    )
-    assert sol_multi.shape == (size, K)
-    assert grid_multi.shape == (len(grid_idcs), size, K)
-
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-    config.numpy_bsr_blocksize = None
-    try:
-        for k in range(K):
-            for slice_m in int_m_stack:
-                try:
-                    delattr(slice_m, "_etd_split_cache_v2")
-                except AttributeError:
-                    pass
-            sol_k, grid_k = solv_numpy_etd2_rho_stack(
-                nsteps,
-                dX,
-                rho_inv,
-                int_m_stack,
-                rho_grid,
-                dec_m,
-                phi0_multi[:, k].copy(),
-                grid_idcs,
-            )
-            np.testing.assert_allclose(
-                sol_multi[:, k],
-                sol_k,
-                rtol=1e-12,
-                atol=0,
-                err_msg=f"column {k} of ρ-stack multi-RHS solution diverges",
-            )
-            np.testing.assert_allclose(
-                grid_multi[:, :, k],
-                grid_k,
-                rtol=1e-12,
-                atol=0,
-                err_msg=f"column {k} of ρ-stack multi-RHS grid snapshots diverges",
-            )
-    finally:
-        config.numpy_bsr_blocksize = saved_bs
 
 
 @pytest.mark.xdist_group("spacc")
@@ -510,9 +415,9 @@ def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
 
     # Pre-split for spacc — solv_spacc_etd2_multirhs expects SpaccMatrix-wrapped
     # off-diagonals plus plain numpy diagonals, like the single-RHS spacc kernel.
-    from MCEq.solvers import _etd_split_cache
+    from MCEq.operator_assembly import split_diagonal
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
     spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
 
@@ -555,9 +460,9 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
 
     from MCEq.solvers import (
         CudaEtd2MultiRHSContext,
-        _etd_split_cache,
         solv_cuda_etd2_multirhs,
         solv_numpy_etd2_multirhs,
+        split_diagonal,
     )
 
     rng = np.random.default_rng(7)
@@ -576,7 +481,7 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
 
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
@@ -623,9 +528,9 @@ def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
 
     from MCEq.solvers import (
         CudaEtd2MultiRHSContext,
-        _etd_split_cache,
         solv_cuda_etd2_multirhs,
         solv_numpy_etd2_multirhs,
+        split_diagonal,
     )
 
     rng = np.random.default_rng(7)
@@ -643,7 +548,7 @@ def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
 
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
@@ -736,9 +641,9 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
     """ETD2RK with `oversample` substeps per native step. Mirrors the
     production kernel's update rule so the convergence test exercises the
     same math."""
-    from MCEq.solvers import _etd_split_cache
+    from MCEq.operator_assembly import split_diagonal
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi = phi0.astype(np.float64).copy()
 
     PHI1_SMALL = 1e-6
@@ -910,7 +815,7 @@ def test_solv_spacc_etd2_matches_numpy_etd2_toy(toy_solver_problem):
     full MCEqRun.
     """
     import MCEq.spacc as spacc
-    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+    from MCEq.operator_assembly import solv_numpy_etd2, solv_spacc_etd2, split_diagonal
 
     nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
 
@@ -918,7 +823,7 @@ def test_solv_spacc_etd2_matches_numpy_etd2_toy(toy_solver_problem):
         nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs
     )
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     # int_off / dec_off may be empty here; the kernel should handle that.
     spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz > 0 else None
     spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz > 0 else None
@@ -949,7 +854,7 @@ def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
     in both backends, so equality is essentially arithmetic round-off.
     """
     import MCEq.spacc as spacc
-    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+    from MCEq.operator_assembly import solv_numpy_etd2, solv_spacc_etd2, split_diagonal
 
     mceq_sib21.set_theta_deg(60.0)
 
@@ -979,9 +884,7 @@ def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
         grid_idcs,
     )
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(
-        mceq_sib21.int_m, mceq_sib21.dec_m
-    )
+    d_int, d_dec, int_off, dec_off = split_diagonal(mceq_sib21.int_m, mceq_sib21.dec_m)
     assert int_off.nnz > 0 and dec_off.nnz > 0, (
         "real matrices should have non-empty off-diagonals"
     )
@@ -1074,9 +977,9 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
     """
     from MCEq.solvers import (
         MklSparseMatrix,
-        _etd_split_cache,
         solv_mkl_etd2,
         solv_numpy_etd2,
+        split_diagonal,
     )
 
     mceq = mceq_sib21_full_db
@@ -1088,7 +991,7 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
         nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
     )
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(mceq.int_m, mceq.dec_m)
     assert int_off.nnz > 0 and dec_off.nnz > 0, (
         "real matrices should have non-empty off-diagonals"
     )
@@ -1117,21 +1020,16 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
     )
 
 
-@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_numpy_etd2_empty_dec_off_bsr_padding():
-    """Regression: a pure e±/γ EM-cascade solve disables all decays, so dec_m
-    has no off-diagonal. With BSR padding on (default blocksize), the empty
-    dec_off must pad to the SAME dimension as the non-empty int_off — otherwise
-    the per-step ``dec_off.dot(phc)`` crashes on a dim mismatch (N vs N+pad).
-    This is the bug that broke native ``solve()`` on the EM-cascade DB. See
-    ``_etd_off_to_bsr``.
+def test_numpy_etd2_empty_dec_off():
+    """A pure e±/γ EM-cascade solve disables all decays, so dec_m has no
+    off-diagonal. The kernel must carry an all-zero ``dec_off`` through the
+    per-step SpMV at the same dimension as the non-empty ``int_off``.
     """
     import scipy.sparse as sp
 
-    from MCEq import config
     from MCEq.solvers import solv_numpy_etd2
 
-    dim = 50  # 50 % 11 != 0 -> BSR padding is active at the default blocksize
+    dim = 50
     rng = np.random.default_rng(0)
     int_m = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.01)
     int_m.setdiag(-0.5)
@@ -1142,12 +1040,7 @@ def test_numpy_etd2_empty_dec_off_bsr_padding():
     dX = np.full(nsteps, 0.1)
     rho_inv = np.ones(nsteps)
     phi = np.ones(dim)
-    saved = getattr(config, "numpy_bsr_blocksize", None)
-    config.numpy_bsr_blocksize = 11
-    try:
-        sol, _ = solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, [])
-    finally:
-        config.numpy_bsr_blocksize = saved
+    sol, _ = solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, [])
     assert sol.shape == (dim,)
     assert np.isfinite(sol).all()
 
@@ -1259,9 +1152,9 @@ def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
     """
     from MCEq.solvers import (
         CudaEtd2Context,
-        _etd_split_cache,
         solv_cuda_etd2,
         solv_numpy_etd2,
+        split_diagonal,
     )
 
     mceq = mceq_sib21_full_db
@@ -1273,7 +1166,7 @@ def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
         nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
     )
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(mceq.int_m, mceq.dec_m)
     ctx = CudaEtd2Context(
         int_off.tocsr(),
         dec_off.tocsr(),
@@ -1842,24 +1735,13 @@ def test_em_adaptive_step_off_matches_legacy():
 def test_solve_batch_shared_matches_solve(mceq_sib21):
     """solve_batch(conditions=None) must reproduce K back-to-back solve()
     calls bit-for-bit (the shared-path multi-RHS kernel is bit-exact vs
-    the single-RHS kernel on the CSR path — BSR reorders the SpMV
-    partial sums, so it is disabled here), including int_grid snapshots,
-    and must not mutate the instance solution state.
+    the single-RHS kernel), including int_grid snapshots, and must not
+    mutate the instance solution state.
     """
     saved_kernel = config.kernel_config
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-
-    def _clear_split_cache():
-        for m in (mceq_sib21.int_m, mceq_sib21.dec_m):
-            try:
-                delattr(m, "_etd_split_cache_v2")
-            except AttributeError:
-                pass
 
     try:
         config.kernel_config = "numpy_etd2"
-        config.numpy_bsr_blocksize = None
-        _clear_split_cache()
         mceq_sib21.set_zenith_azimuth(30.0)
         int_grid = [100.0, 400.0, 900.0]
         phi0_base = mceq_sib21.get_initial_state()
@@ -1889,8 +1771,6 @@ def test_solve_batch_shared_matches_solve(mceq_sib21):
         mceq_sib21._phi0[:] = saved_phi0
     finally:
         config.kernel_config = saved_kernel
-        config.numpy_bsr_blocksize = saved_bs
-        _clear_split_cache()
         mceq_sib21.set_zenith_azimuth(0.0)
 
 

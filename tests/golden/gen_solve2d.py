@@ -101,7 +101,6 @@ CONFIG_PINS = {
     "enable_em": False,
     "em_air_density": None,
     "floatlen": None,
-    "numpy_bsr_blocksize": 11,
     "etd2_path": {"eps": 0.3, "dX_max": 20.0, "dX_min": 0.01, "fd_span": 0.01},
     "minimal_primary_energy": 3.0,
     "enable_default_tracking": True,

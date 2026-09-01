@@ -368,18 +368,16 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
 
 # ---------------------------------------------------------------------------
 # solve_batch wiring: the tri-state resolver for the batch entry points is a
-# pure function of (config, kernel_config, dtype, rho-stack); test it unbound
-# with a stub, like the single-axis tri-state in test_2d_defaults.py.
+# pure function of (config, kernel_config, dtype); test it unbound with a
+# stub, like the single-axis tri-state in test_2d_defaults.py.
 # ---------------------------------------------------------------------------
-def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True, rho_stack=False):
+def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
     from MCEq.core import MCEqRun
 
     stub = SimpleNamespace(
         _mceq_db=SimpleNamespace(is_2d=is_2d),
         _build_secant_ops=lambda: {"marker": True},
     )
-    if rho_stack:
-        stub._int_m_stack = [None]
     saved = (config.secant_theta_transport, config.kernel_config)
     config.secant_theta_transport = flag
     config.kernel_config = kernel
@@ -398,15 +396,13 @@ def test_resolve_batch_secant_tri_state():
     assert _resolve_for("auto", "numpy_etd2", is_2d=False) is None
     assert _resolve_for(False, "numpy_etd2") is None
     # Unsupported configurations downgrade under "auto", raise under
-    # "require": accelerate backend, fp32 outside cuda, EM rho-stack.
+    # "require": accelerate backend, fp32 outside cuda.
     assert _resolve_for("auto", "accelerate_etd2") is None
     assert _resolve_for("auto", "mkl_etd2", dtype=np.float32) is None
-    assert _resolve_for("auto", "numpy_etd2", rho_stack=True) is None
     assert _resolve_for(True, "cuda_etd2", dtype=np.float32) == {"marker": True}
     for kwargs in (
         {"kernel": "accelerate_etd2"},
         {"kernel": "mkl_etd2", "dtype": np.float32},
-        {"kernel": "numpy_etd2", "rho_stack": True},
     ):
         with pytest.raises(NotImplementedError):
             _resolve_for(True, **kwargs)

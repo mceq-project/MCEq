@@ -184,7 +184,6 @@ PINNED_CONFIG_KEYS = (
     "em_step_safety",
     "em_step_dense_eig_max",
     "em_air_density",
-    "numpy_bsr_blocksize",
     "secant_theta_transport",
     "secant_theta_cap_deg",
     "secant_theta_row_kmax",

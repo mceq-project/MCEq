@@ -7,7 +7,7 @@ available), ``solv_spacc_etd2`` (Apple Accelerate, macOS),
 ``libmkl_rt`` is found, BSR(6) by default — see
 ``config.mkl_bsr_blocksize``) and ``solv_cuda_etd2`` (NVIDIA
 cuSPARSE via cupy). The numpy kernel also stores its off-diagonals
-as BSR (default block size 11, see ``config.numpy_bsr_blocksize``) —
+as BSR —
 empirically ~2x faster than CSR for the scipy SpMV. Removed config options ``integrator``, ``ode_params``,
 ``leading_process``, ``stability_margin``, ``dXmax``,
 ``hybrid_crossover``, ``adv_set["no_mixing"]``,

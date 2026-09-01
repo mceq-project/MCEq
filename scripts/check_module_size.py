@@ -33,14 +33,14 @@ LIMIT = 600
 #: Modules over budget at the Phase-0 commit (06fdd7e), with the phase that
 #: removes each entry. 8 modules, 9062 lines above the limit.
 ALLOW = {
-    "src/MCEq/config/__init__.py": 669,  # Phase 1 -> config/{schema,defaults,legacy,detect}
-    "src/MCEq/core.py": 3667,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
-    "src/MCEq/data.py": 1503,  # Phase 4 -> data/*
+    "src/MCEq/config/__init__.py": 661,  # Phase 1 -> config/{schema,defaults,legacy,detect}
+    "src/MCEq/core.py": 3560,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
+    "src/MCEq/data.py": 1486,  # Phase 4 -> data/*
     "src/MCEq/ddm.py": 870,  # Phase 4 -> models/ddm/*
     "src/MCEq/geometry/density_profiles.py": 1846,  # Phase 3 -> environment/*
     "src/MCEq/geometry/msis21_atmosphere.py": 670,  # Phase 3 -> environment/*
     "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
-    "src/MCEq/solvers.py": 3571,  # Phase 2 -> solvers/* + backends/*
+    "src/MCEq/solvers.py": 3130,  # Phase 2 -> solvers/* + backends/*
 }
 
 
