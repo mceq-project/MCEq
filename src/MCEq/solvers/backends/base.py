@@ -21,13 +21,16 @@ import numpy as np
 #: :func:`MCEq.solvers.etd2.solve_etd2`.
 _PRECISION_CONTRACT = """\
 The diagonals (``d_int``, ``d_dec``) and the phi factors computed from
-them (``eD``, ``phi1``, ``phi2``, and the coupled-block ``eDB`` /
+them (``eD``, ``h phi1``, ``h phi2``, and the coupled-block ``eDB`` /
 ``phi1B`` / ``phi2B``) are evaluated in FP64 whatever the requested
 precision, and cast once, on the way out, to the state dtype. The state,
 the scratch buffers and the off-diagonal operator are stored in the
 requested dtype, and every stage that touches them runs there. The step
-size and ``rho_inv`` therefore reach stage 1 in FP64 and the state
-stages in the state dtype.
+size and ``rho_inv`` therefore reach stage 1 in FP64; ``rho_inv`` reaches
+the SpMM in the state dtype, and the step size reaches the state stages
+only inside the phi factors, having been folded into them in FP64 (the
+sec(theta) exact slot, which scales its corner by ``h`` after the
+eigenbasis GEMMs, is the exception).
 
 Why: ``phi1 = (e^z - 1) / z`` and ``phi2 = (e^z - 1 - z) / z^2`` cancel
 catastrophically around the Taylor-switch thresholds, which are

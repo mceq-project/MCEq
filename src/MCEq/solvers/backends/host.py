@@ -1,64 +1,70 @@
-"""The host backend: numpy elementwise kernels and BLAS GEMMs.
+"""The host backend: numpy elementwise kernels, C step stages, BLAS GEMMs.
 
 :class:`HostBackend` executes every stage of
 :func:`MCEq.solvers.etd2.etd2_driver` on host arrays and delegates only the
 off-diagonal SpMM to an ``apply_off`` binding -- scipy in
 :mod:`MCEq.solvers.backends.base`, MKL in
 :mod:`MCEq.solvers.backends.mkl`, Apple Accelerate in
-:mod:`MCEq.solvers.backends.accelerate`. The optional fused fp64 predictor /
-corrector of :mod:`MCEq.etd2_kernels` is bound here too.
+:mod:`MCEq.solvers.backends.accelerate`. The factor stages are the numpy
+lowering of :mod:`MCEq.solvers.numerics`; the predictor and the corrector are
+its C lowering, :mod:`MCEq.etd2_kernels`, at both precisions and every
+problem size.
 
 Stage code shared by all three host bindings belongs here; a binding's own
 ctypes plumbing belongs in that binding's module.
 """
 
-from ctypes import POINTER, c_double
+from ctypes import POINTER, c_double, c_float
 
 import numpy as np
 
+from MCEq.solvers import numerics
 from MCEq.solvers.backends.base import ScipyApplyOff, _state_dtype
 from MCEq.solvers.numerics import (
-    _etd_compute_diag_factors,
-    _etd_compute_diag_factors_multipath,
-    _etd_step_buffers,
-    _etd_step_buffers_multipath,
-    _secant_left_matmul,
-    _secant_phi_factors,
+    diagonal_factors,
+    left_matmul,
+    phi_factors,
+    phi_work,
+    step_buffers,
 )
 
-_C_DOUBLE_P = POINTER(c_double)
-
-#: Below this many state elements the fused C post-apply does not pay for
-#: its ctypes call (4 ufunc passes ≈ 7 µs vs 19 µs at dim = 4182, K = 1;
-#: 0.18 vs 0.10 ms at dim = 171360, K = 1; 4.8 vs 1.9 ms at K = 8).
-_FUSED_MIN_ELEMENTS = 1 << 16
+#: ctypes pointer type per state dtype, for the fused C stages.
+_C_POINTER = {np.float64: POINTER(c_double), np.float32: POINTER(c_float)}
 
 
-def _dptr(arr):
-    return arr.ctypes.data_as(_C_DOUBLE_P)
+def _fused_stages(dtype):
+    """The C predictor / corrector of :mod:`MCEq.etd2_kernels` at ``dtype``,
+    or ``None`` when the extension is not built.
 
-
-def _rowmajor_post_apply():
-    """The fused fp64 predictor / corrector of ``MCEq.etd2_kernels`` for the
-    row-major ``(dim, K)`` state, or ``None`` when the extension is missing
-    (the host backend then falls back to numpy ufuncs)."""
+    Imported on demand rather than at module level: importing
+    :mod:`MCEq.solvers` must not dlopen anything (see
+    ``tests/test_solvers_import.py``). An unbuilt source tree, or a platform
+    where the extension does not compile, falls back to the numpy lowering of
+    the same table; the two agree to the bit, which
+    ``test_c_stages_match_numpy_lowering`` pins.
+    """
     try:
         from MCEq.etd2_kernels import (
-            etd2_post_apply1_rowmajor,
-            etd2_post_apply2_rowmajor,
+            etd2_corrector_f32,
+            etd2_corrector_f64,
+            etd2_predictor_f32,
+            etd2_predictor_f64,
         )
     except ImportError:
         return None
-    return etd2_post_apply1_rowmajor, etd2_post_apply2_rowmajor
+
+    if dtype is np.float64:
+        return etd2_predictor_f64, etd2_corrector_f64
+    return etd2_predictor_f32, etd2_corrector_f32
 
 
 class HostBackend:
     """Stage execution on host arrays for
     :func:`MCEq.solvers.etd2.etd2_driver`.
 
-    numpy elementwise kernels and BLAS GEMMs throughout; the SpMM is the
-    ``apply_off`` binding of the sparse library (scipy, MKL or Apple
-    Accelerate). ``op`` is
+    numpy elementwise kernels, the fused C step stages and BLAS GEMMs; the
+    SpMM is the ``apply_off`` binding of the sparse library (scipy, MKL or
+    Apple Accelerate). ``op`` is
     the :class:`~MCEq.operator_assembly.CompiledOperator` the binding was
     built from — it carries the layout and the coupling operators.
 
@@ -70,7 +76,7 @@ class HostBackend:
     """
 
     xp = np
-    left_matmul = staticmethod(_secant_left_matmul)
+    left_matmul = staticmethod(left_matmul)
 
     def __init__(self, op, apply_off, dtype=np.float64):
         self.op = op
@@ -78,8 +84,8 @@ class HostBackend:
         self.dtype = np.dtype(dtype).type
         self.d_int, self.d_dec = op.d_int, op.d_dec
         self._apply_off = apply_off
-        self._post = _rowmajor_post_apply()
         self._coupling = None
+        self._ptr_cache = {}
 
     def bind(self, dim, K, per_lane, nsteps):
         if self.op.dim != dim:
@@ -87,18 +93,18 @@ class HostBackend:
                 f"HostBackend: operator dim {self.op.dim} != state dim {dim}"
             )
         fp64 = self.dtype is np.float64
-        self._per_lane = per_lane
-        self._bufs = (
-            _etd_step_buffers_multipath(dim, K) if per_lane else _etd_step_buffers(dim)
-        )
-        self._scratch = np.empty((dim, K), dtype=self.dtype)
+        self._dim, self._K, self._per_lane = dim, K, per_lane
+        shape = (dim, K) if per_lane else (dim,)
+        self._bufs = step_buffers(shape)
         self._block = None
-        # The fused C post-apply is fp64-only; fp32 takes the ufunc passes.
-        self._fused = fp64 and self._post is not None and dim * K >= _FUSED_MIN_ELEMENTS
-        self._h1 = np.empty(1, dtype=np.float64)
+        stages = _fused_stages(self.dtype)
+        self._predict, self._correct = stages or (None, None)
+        self._ptr = _C_POINTER[self.dtype]
+        self._ptr_cache = {}
+        # Scratch for the numpy lowering, allocated only when it is what runs.
+        self._work = None if stages else np.empty((dim, K), dtype=self.dtype)
         # Landing buffers for the one cast of the fp64 factors, or None at
         # fp64 where the factor buffers are already the state dtype.
-        shape = (dim, K) if per_lane else (dim,)
         self._factors = (
             None if fp64 else tuple(np.empty(shape, dtype=self.dtype) for _ in range(3))
         )
@@ -130,86 +136,84 @@ class HostBackend:
         return self._factors
 
     def diag_factors(self, h, ri):
-        """``eD, phi1, phi2`` of ``h (d_int + ri d_dec)``, broadcastable to
-        (dim, K). ``h`` and ``ri`` come in fp64 and the evaluation runs
-        there; only the result is cast."""
+        """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)``.
+
+        ``h`` and ``ri`` come in fp64 and the evaluation runs there; only the
+        result is cast. The arrays are ``(dim,)`` for a shared integration
+        path and ``(dim, K)`` for one path per lane — the C stages take the
+        lane stride from ``per_lane``, not from the shape, so these are the
+        backend's own buffers rather than views of them."""
         b = self._bufs
-        if self._per_lane:
-            _etd_compute_diag_factors_multipath(h, ri, self.d_int, self.d_dec, b)
-            return self._cast_factors(b["eD"], b["phi1"], b["phi2"])
-        _etd_compute_diag_factors(h, ri, self.d_int, self.d_dec, b)
-        eD, phi1, phi2 = self._cast_factors(b["eD"], b["phi1"], b["phi2"])
-        return eD[:, None], phi1[:, None], phi2[:, None]
+        diagonal_factors(h, ri, self.d_int, self.d_dec, b)
+        return self._cast_factors(b["eD"], b["phi1"], b["phi2"])
 
     def block_factors(self, ZB):
+        """``eDB, phi1B, phi2B`` of the coupled plane's argument, in fp64.
+
+        No step size folded in: the exact slot applies ``h`` after the
+        eigenbasis GEMMs, where it scales the coupled corner as a whole."""
         if self._block is None or self._block[0].shape != ZB.shape:
-            self._block = tuple(np.empty(ZB.shape) for _ in range(4)) + (
-                np.empty(ZB.shape, dtype=bool),
+            self._block = tuple(np.empty(ZB.shape) for _ in range(3)) + phi_work(
+                ZB.shape
             )
-        eDB, phi1B, phi2B, scratch, large = self._block
-        _secant_phi_factors(ZB, out=(eDB, phi1B, phi2B), work=(scratch, large))
+        eDB, phi1B, phi2B = self._block[:3]
+        phi_factors(ZB, eDB, phi1B, phi2B, self._block[3:])
         return eDB, phi1B, phi2B
 
-    def _fused_args(self, factor, h, out):
-        """Strides of the fused C post-apply for ``(dim,)`` vs ``(dim, K)``
-        factors and scalar vs ``(K,)`` step sizes (see ``etd2_kernels.c``)."""
-        dim, K = out.shape
-        per_lane = factor.ndim == 2 and factor.shape[1] == K and K > 1
-        f_row, f_col = (K, 1) if per_lane else (1, 0)
-        if np.ndim(h) == 0:
-            self._h1[0] = h
-            h_arr, h_stride = self._h1, 0
-        else:
-            h_arr, h_stride = np.ascontiguousarray(h, dtype=np.float64), 1
-        return dim, K, _dptr(h_arr), h_stride, f_row, f_col, h_arr
+    def _ptrs(self, arrays):
+        """ctypes pointers to `arrays`, memoized for the life of the solve.
 
-    def predictor(self, eD, x, phi1, F, h, out):
-        """``out = eD x + h phi1 F`` — one fused pass, or four ufunc passes."""
-        if self._fused:
-            dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(eD, h, out)
-            self._post[0](
-                dim,
-                K,
-                h_p,
-                h_s,
-                _dptr(eD),
-                _dptr(phi1),
-                f_row,
-                f_col,
-                _dptr(x),
-                _dptr(F),
-                _dptr(out),
+        Every array the two stages touch is allocated once, in :meth:`bind`
+        or :meth:`state_buffers`, and handed back unchanged on every step.
+        ``ndarray.ctypes.data_as`` costs ~2.5 us per array, which is more
+        than the kernel itself at K = 1, so the pointers are built once. The
+        cache holds the array beside its pointer: that keeps the object
+        alive, so its ``id`` cannot be reused by another array, and the
+        identity check makes a stale entry impossible rather than unlikely.
+        """
+        cache = self._ptr_cache
+        out = []
+        for arr in arrays:
+            entry = cache.get(id(arr))
+            if entry is None or entry[0] is not arr:
+                entry = (arr, arr.ctypes.data_as(self._ptr))
+                cache[id(arr)] = entry
+            out.append(entry[1])
+        return out
+
+    def _bcast(self, factor):
+        """A shared-path factor as a column, so numpy broadcasts it over the
+        lane axis. The C stages take it flat and index it under ``per_lane``
+        instead, so only the numpy lowering needs this."""
+        return factor if self._per_lane or factor.ndim == 2 else factor[:, None]
+
+    def predictor(self, eD, x, hphi1, F, out):
+        """``a = eD x + hphi1 F`` — one fused pass of the C kernel, or the
+        numpy lowering of the same expression when it is not built."""
+        if self._predict is None:
+            numerics.predictor(
+                self._bcast(eD), x, self._bcast(hphi1), F, out, self._work
             )
             return
-        s = self._scratch
-        np.multiply(eD, x, out=out)
-        np.multiply(phi1, F, out=s)
-        s *= h
-        np.add(out, s, out=out)
+        self._predict(
+            self._dim,
+            self._K,
+            self._per_lane,
+            *self._ptrs((eD, hphi1, x, F, out)),
+        )
 
-    def corrector(self, a, F_a, F, phi2, h, out):
-        """``out = a + h phi2 (F_a - F)`` — one fused pass, or four ufunc passes."""
-        if self._fused:
-            dim, K, h_p, h_s, f_row, f_col, _keep = self._fused_args(phi2, h, out)
-            self._post[1](
-                dim,
-                K,
-                h_p,
-                h_s,
-                _dptr(phi2),
-                f_row,
-                f_col,
-                _dptr(a),
-                _dptr(F_a),
-                _dptr(F),
-                _dptr(out),
-            )
+    def corrector(self, a, F_a, F, hphi2, out):
+        """``x = a + hphi2 (F_a - F)`` — one fused pass of the C kernel, or
+        the numpy lowering of the same expression when it is not built."""
+        if self._correct is None:
+            numerics.corrector(a, self._bcast(hphi2), F_a, F, out, self._work)
             return
-        s = self._scratch
-        np.subtract(F_a, F, out=s)
-        s *= h
-        np.multiply(s, phi2, out=s)
-        np.add(a, s, out=out)
+        self._correct(
+            self._dim,
+            self._K,
+            self._per_lane,
+            *self._ptrs((hphi2, a, F_a, F, out)),
+        )
 
     def asarray(self, a, dtype=None):
         return np.asarray(a, dtype=self.dtype if dtype is None else dtype)
@@ -221,6 +225,7 @@ class HostBackend:
         pass
 
     def close(self):
+        self._ptr_cache = {}
         self._apply_off.close()
 
 

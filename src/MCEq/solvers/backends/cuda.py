@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from MCEq.solvers.backends.base import _state_dtype
-from MCEq.solvers.numerics import _INV_6, _INV_24, _PHI1_SMALL, _PHI2_SMALL
+from MCEq.solvers.numerics import CORRECTOR_EXPR, PHI_C_BODY, PREDICTOR_EXPR
 
 
 def _preload_nvidia_pip_libs():
@@ -87,93 +87,68 @@ _CUDA_ETD2_KERNELS = None
 def _build_cuda_etd2_kernels(cp):
     """Build the cupy ElementwiseKernel set of the CUDA backend.
 
-    Transplanted from PriNCe's etd2.py (lines 57–131). The kernels broadcast
-    the (dim,) per-step factors over the (dim, K) state via cupy's
-    ElementwiseKernel broadcasting (pass ``factor[:, None]`` at the call
-    site). Kept dtype-agnostic via the ``T`` template — cupy compiles a
-    specialisation per (input dtype combination) on first launch.
+    One kernel per driver stage, named for the stage, and every body
+    generated from the formula table of :mod:`MCEq.solvers.numerics` --
+    :data:`~MCEq.solvers.numerics.PHI_C_BODY` for the two factor stages,
+    :data:`~MCEq.solvers.numerics.PREDICTOR_EXPR` and
+    :data:`~MCEq.solvers.numerics.CORRECTOR_EXPR` for the two state stages --
+    so a change to a formula reaches this backend, the C kernels and the
+    numpy path together.
 
-    ``post_apply1`` / ``post_apply2`` also serve the per-RHS-path
-    (multipath) variant: pass ``h`` as a ``(1, K)`` broadcasted buffer
-    instead of a Python scalar — the kernel signature is unchanged
-    because ``T`` accepts both scalars and arrays.
+    The state stages are dtype-agnostic through the ``T`` template; cupy
+    compiles a specialisation per input dtype combination on first launch.
+    They broadcast a ``(dim, 1)`` shared-path factor over the ``(dim, K)``
+    state and take a ``(dim, K)`` per-lane factor as it is.
 
-    The two diag-factor kernels take fp64 inputs and do their arithmetic
-    in double whatever ``T`` is, writing the factors in the state dtype.
-    That cast is the one place the state precision enters stage 1; see
+    ``diag_factors`` takes fp64 inputs and does its arithmetic in double
+    whatever ``T`` is, writing the factors in the state dtype. That cast is
+    the one place the state precision enters stage 1; see
     :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT` for why the
-    arithmetic stays in double.
+    arithmetic stays in double. Pass ``d_int[:, None], d_dec[:, None]``
+    against scalar ``h`` / ``ri`` for a shared path, or against
+    ``h_K[None, :], ri_K[None, :]`` for one path per lane; the broadcast
+    shape is the output's.
     """
-    phi_compute = cp.ElementwiseKernel(
-        "float64 hD, float64 eD_in",
-        "T eD_out, T phi1, T phi2",
-        f"""
-        double abs_hd = (hD >= 0.0) ? hD : -hD;
-        double p1, p2;
-        eD_out = (T)eD_in;
-        if (abs_hd > {_PHI1_SMALL!r}) {{
-            p1 = (eD_in - 1.0) / hD;
-        }} else {{
-            p1 = 1.0 + hD * (0.5 + hD * {_INV_6!r});
-        }}
-        if (abs_hd > {_PHI2_SMALL!r}) {{
-            p2 = (eD_in - 1.0 - hD) / (hD * hD);
-        }} else {{
-            p2 = 0.5 + hD * ({_INV_6!r} + hD * {_INV_24!r});
-        }}
-        phi1 = (T)p1;
-        phi2 = (T)p2;
-        """,
-        "mceq_etd2_phi_compute",
-    )
-    # Per-RHS-path diag factor kernel: D = d_int + ri * d_dec ; hD = h * D ;
-    # eD = exp(hD) ; phi1, phi2 via the same analytic/Taylor branch as
-    # ``phi_compute``. Single fused kernel — saves the intermediate (dim, K)
-    # hD/eD buffers vs the staged numpy implementation. Pass
-    # ``d_int[:, None], d_dec[:, None], h_K[None, :], ri_K[None, :]`` to
-    # broadcast onto the (dim, K) output shape.
-    phi_compute_multipath = cp.ElementwiseKernel(
+    diag_factors = cp.ElementwiseKernel(
         "float64 d_int, float64 d_dec, float64 h, float64 ri",
-        "T eD, T phi1, T phi2",
+        "T eD, T hphi1, T hphi2",
         f"""
-        double D = d_int + ri * d_dec;
-        double hd = h * D;
-        double e = exp(hd);
-        double abs_hd = (hd >= 0.0) ? hd : -hd;
-        double p1, p2;
+        const double z = h * (d_int + ri * d_dec);
+        {PHI_C_BODY}
         eD = (T)e;
-        if (abs_hd > {_PHI1_SMALL!r}) {{
-            p1 = (e - 1.0) / hd;
-        }} else {{
-            p1 = 1.0 + hd * (0.5 + hd * {_INV_6!r});
-        }}
-        if (abs_hd > {_PHI2_SMALL!r}) {{
-            p2 = (e - 1.0 - hd) / (hd * hd);
-        }} else {{
-            p2 = 0.5 + hd * ({_INV_6!r} + hd * {_INV_24!r});
-        }}
-        phi1 = (T)p1;
-        phi2 = (T)p2;
+        hphi1 = (T)(h * p1);
+        hphi2 = (T)(h * p2);
         """,
-        "mceq_etd2_phi_compute_multipath",
+        "mceq_etd2_diag_factors",
     )
-    post_apply1 = cp.ElementwiseKernel(
-        "T eD, T state, T phi1, T F_phi, T h",
+    block_factors = cp.ElementwiseKernel(
+        "float64 z",
+        "float64 eDB, float64 phi1B, float64 phi2B",
+        f"""
+        {PHI_C_BODY}
+        eDB = e;
+        phi1B = p1;
+        phi2B = p2;
+        """,
+        "mceq_etd2_block_factors",
+    )
+    predictor = cp.ElementwiseKernel(
+        "T eD, T x, T hphi1, T F",
         "T a",
-        "a = eD * state + h * phi1 * F_phi;",
-        "mceq_etd2_post_apply1",
+        f"a = {PREDICTOR_EXPR};",
+        "mceq_etd2_predictor",
     )
-    post_apply2 = cp.ElementwiseKernel(
-        "T a, T F_a, T F_phi, T phi2, T h",
-        "T state",
-        "state = a + h * phi2 * (F_a - F_phi);",
-        "mceq_etd2_post_apply2",
+    corrector = cp.ElementwiseKernel(
+        "T a, T F_a, T F, T hphi2",
+        "T x",
+        f"x = {CORRECTOR_EXPR};",
+        "mceq_etd2_corrector",
     )
     return SimpleNamespace(
-        phi_compute=phi_compute,
-        phi_compute_multipath=phi_compute_multipath,
-        post_apply1=post_apply1,
-        post_apply2=post_apply2,
+        diag_factors=diag_factors,
+        block_factors=block_factors,
+        predictor=predictor,
+        corrector=corrector,
     )
 
 
@@ -185,24 +160,6 @@ def _cuda_etd2_kernels():
 
         _CUDA_ETD2_KERNELS = _build_cuda_etd2_kernels(cp)
     return _CUDA_ETD2_KERNELS
-
-
-def _cuda_secant_phi_factors(cp, ZB):
-    """cupy form of :func:`MCEq.solvers.numerics._secant_phi_factors`
-    (cupy ufuncs take no ``where``).
-
-    ``ZB`` is fp64 on both backends, so the block factors are too."""
-    safe = cp.where(ZB == 0.0, 1.0, ZB)
-    e1 = cp.expm1(ZB)
-    phi1B = cp.where(
-        cp.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6)
-    )
-    phi2B = cp.where(
-        cp.abs(ZB) > _PHI2_SMALL,
-        (e1 - ZB) / (safe * safe),
-        0.5 + ZB * (_INV_6 + ZB * _INV_24),
-    )
-    return cp.exp(ZB), phi1B, phi2B
 
 
 class CudaOperator:
@@ -279,14 +236,12 @@ class CudaBackend:
         self._dec_tmp = (
             None if self.dev.cu_dec_off is None else cp.empty((dim, K), dtype=dtype)
         )
-        shape = (dim, K) if per_lane else (dim,)
-        self._factors = tuple(cp.empty(shape, dtype=dtype) for _ in range(3))
-        # D, hD and exp(hD) of the shared-path stage, in fp64.
-        self._D = (
-            None
-            if per_lane
-            else tuple(cp.empty(dim, dtype=cp.float64) for _ in range(3))
+        # (dim, 1) for one shared integration path, (dim, K) for one per lane;
+        # either broadcasts over the state in the two elementwise stages.
+        self._factors = tuple(
+            cp.empty((dim, K if per_lane else 1), dtype=dtype) for _ in range(3)
         )
+        self._diag = (self.d_int[:, None], self.d_dec[:, None])
 
     def coupling(self):
         """``T_P, T_PP, V, Vi`` in the state dtype (they act on the state);
@@ -320,34 +275,28 @@ class CudaBackend:
         return out
 
     def diag_factors(self, h, ri):
-        """``eD, phi1, phi2`` of ``h (d_int + ri d_dec)``, broadcastable to
-        (dim, K). ``h`` and ``ri`` come in fp64 and the diagonals are fp64;
-        the kernels evaluate there and write the factors in the state
+        """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)``, broadcastable
+        to (dim, K). ``h`` and ``ri`` come in fp64 and the diagonals are
+        fp64; the kernel evaluates there and writes the factors in the state
         dtype, so the cast happens once, at the kernel's output."""
-        cp, Kset = self.cp, self._kernels
-        d_int, d_dec = self.d_int, self.d_dec
-        eD, phi1, phi2 = self._factors
+        d_int, d_dec = self._diag
         if self._per_lane:
-            Kset.phi_compute_multipath(
-                d_int[:, None], d_dec[:, None], h[None, :], ri[None, :], eD, phi1, phi2
-            )
-            return eD, phi1, phi2
-        D, hD, eD64 = self._D
-        cp.multiply(d_dec, ri, out=D)
-        cp.add(D, d_int, out=D)
-        cp.multiply(D, h, out=hD)
-        cp.exp(hD, out=eD64)
-        Kset.phi_compute(hD, eD64, eD, phi1, phi2)
-        return eD[:, None], phi1[:, None], phi2[:, None]
+            h, ri = h[None, :], ri[None, :]
+        self._kernels.diag_factors(d_int, d_dec, h, ri, *self._factors)
+        return self._factors
 
     def block_factors(self, ZB):
-        return _cuda_secant_phi_factors(self.cp, ZB)
+        """``eDB, phi1B, phi2B`` of the coupled plane's argument, in fp64.
 
-    def predictor(self, eD, x, phi1, F, h, out):
-        self._kernels.post_apply1(eD, x, phi1, F, h, out)
+        No step size folded in: the exact slot applies ``h`` after the
+        eigenbasis GEMMs, where it scales the coupled corner as a whole."""
+        return self._kernels.block_factors(ZB)
 
-    def corrector(self, a, F_a, F, phi2, h, out):
-        self._kernels.post_apply2(a, F_a, F, phi2, h, out)
+    def predictor(self, eD, x, hphi1, F, out):
+        self._kernels.predictor(eD, x, hphi1, F, out)
+
+    def corrector(self, a, F_a, F, hphi2, out):
+        self._kernels.corrector(a, F_a, F, hphi2, out)
 
     def asarray(self, a, dtype=None):
         return self.cp.asarray(a, dtype=self.dtype if dtype is None else dtype)
@@ -359,7 +308,8 @@ class CudaBackend:
         self.cp.cuda.Stream.null.synchronize()
 
     def close(self):
-        self._state = self._factors = self._D = self._dec_tmp = self._coupling = None
+        self._state = self._factors = self._diag = None
+        self._dec_tmp = self._coupling = None
 
 
 def cuda_backend(op, device_id=0, fp_precision=64):

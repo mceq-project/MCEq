@@ -108,6 +108,158 @@ def test_spacc_matrix_store_full():
 # ---------------------------------------------------------------------------
 # ETD2 (numpy_etd2) tests
 # ---------------------------------------------------------------------------
+def test_step_formula_has_one_source():
+    """The C kernels spell the step out of ``numerics``' table, not their own.
+
+    ``numerics.PREDICTOR_EXPR`` / ``CORRECTOR_EXPR`` fix the association
+    order every backend holds to. The cupy kernels format the strings into
+    their bodies at build time and cannot drift; ``etd2_kernels.c`` carries
+    them verbatim as its two macros, and this is what stops that copy from
+    being edited on its own.
+    """
+    from pathlib import Path
+
+    import MCEq
+    from MCEq.solvers.numerics import CORRECTOR_EXPR, PREDICTOR_EXPR
+
+    source = Path(MCEq.__file__).parent / "etd2_kernels" / "etd2_kernels.c"
+    if not source.exists():  # installed as a wheel: only the .so is shipped
+        pytest.skip(f"{source} is not in this installation")
+    text = source.read_text()
+    for macro, expr in (
+        ("ETD2_PREDICT", PREDICTOR_EXPR),
+        ("ETD2_CORRECT", CORRECTOR_EXPR),
+    ):
+        assert expr in text, (
+            f"{source.name} does not carry numerics' {macro} expression "
+            f"{expr!r}; the C kernels and the table have diverged"
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32], ids=["fp64", "fp32"])
+@pytest.mark.parametrize(
+    ("dim", "K", "per_lane"),
+    [(4096, 1, 0), (513, 8, 0), (513, 8, 1), (97, 3, 1)],
+    ids=["k1", "shared", "per_lane", "small"],
+)
+def test_c_stages_match_numpy_lowering(dim, K, per_lane, dtype):
+    """The compiled stages and the numpy lowering agree to the bit.
+
+    Both lower the same two expressions of ``numerics``, so "one association
+    order" holds only if the *compiled* code keeps it — which reading the
+    source cannot show. Contracting ``a * b + c`` into an FMA is how this
+    breaks: the same association, one rounding fewer, and it is what a
+    compiler does by default wherever FMA is baseline (aarch64, or
+    ``-march=native`` on x86-64). ``CMakeLists.txt`` passes
+    ``-ffp-contract=off`` to prevent it; this notices if that stops working.
+
+    Arguments span 18 decades so the two products land at different
+    exponents, where a contracted multiply-add differs from a rounded one.
+    """
+    from MCEq.solvers import numerics
+    from MCEq.solvers.backends.host import _C_POINTER, _fused_stages
+
+    stages = _fused_stages(dtype)
+    if stages is None:
+        pytest.skip("MCEq.etd2_kernels is not built")
+    ptr = _C_POINTER[dtype]
+    rng = np.random.default_rng(7)
+    shape, fshape = (dim, K), ((dim, K) if per_lane else (dim, 1))
+
+    def sample(shp):
+        return (
+            rng.uniform(0.5, 2.0, size=shp) * 10.0 ** rng.uniform(-17, 1, shp)
+        ).astype(dtype)
+
+    eD, hphi1, hphi2 = (sample(fshape) for _ in range(3))
+    x, F, F_a, a = (sample(shape) for _ in range(4))
+    work = np.empty(shape, dtype=dtype)
+
+    # The two lowerings take their operands in different orders; both are
+    # spelled out here so a change to either signature fails loudly.
+    for name, c_stage, c_args, py_stage, py_args in (
+        (
+            "predictor",
+            stages[0],
+            (eD, hphi1, x, F),
+            numerics.predictor,
+            (eD, x, hphi1, F),
+        ),
+        (
+            "corrector",
+            stages[1],
+            (hphi2, a, F_a, F),
+            numerics.corrector,
+            (a, hphi2, F_a, F),
+        ),
+    ):
+        got, want = (np.empty(shape, dtype=dtype) for _ in range(2))
+        c_stage(dim, K, per_lane, *[b.ctypes.data_as(ptr) for b in (*c_args, got)])
+        py_stage(*py_args, want, work)
+        bad = int(np.count_nonzero(got.view(np.uint8) != want.view(np.uint8)))
+        assert bad == 0, (
+            f"{name}: C and numpy lowerings differ in {bad} bytes at dim={dim} "
+            f"K={K} per_lane={per_lane} {np.dtype(dtype).name}; max rel "
+            f"{np.max(np.abs(got - want) / np.where(want != 0, np.abs(want), 1)):.3e}"
+        )
+
+
+@pytest.mark.parametrize("K", [1, 4], ids=["k1", "multirhs"])
+def test_host_solves_without_the_c_extension(toy_solver_problem, K):
+    """An unbuilt source tree falls back to numpy and gets the same answer.
+
+    ``MCEq.etd2_kernels`` is a compiled extension; before the step stages
+    moved into it the host backend was pure numpy, and a tree that has not
+    been built must not lose the solver entirely. Runs the same solve twice
+    in subprocesses, once with the extension blocked at import, and requires
+    the two to agree to the bit -- the fallback lowers the same expressions
+    from the same table.
+    """
+    import subprocess
+    import sys
+
+    script = """
+import sys, numpy as np, scipy.sparse as sp
+if {block!r}:
+    class Block:
+        def find_spec(self, name, path=None, target=None):
+            if name == "MCEq.etd2_kernels":
+                raise ImportError("extension not built")
+            return None
+    sys.meta_path.insert(0, Block())
+    from MCEq.solvers.backends.host import _fused_stages
+    assert _fused_stages(np.float64) is None, "the extension was still importable"
+import MCEq.solvers as solvers
+rng = np.random.default_rng(3)
+n = 40
+A = rng.standard_normal((n, n)) * 0.05
+A -= np.diag(np.abs(A).sum(1) + 0.1)
+B = rng.standard_normal((n, n)) * 0.02
+B -= np.diag(np.abs(B).sum(1) + 0.05)
+sol, _ = solvers.solve_etd2(
+    nsteps=25, dX=np.full(25, 0.1), rho_inv=np.linspace(1.3, 2.0, 25),
+    int_m=sp.csr_matrix(A), dec_m=sp.csr_matrix(B),
+    phi=rng.uniform(0.1, 1.0, (n, {K})), grid_idcs=[], backend="numpy",
+)
+sys.stdout.buffer.write(np.ascontiguousarray(sol, dtype=np.float64).tobytes())
+"""
+    out = []
+    for block in (False, True):
+        run = subprocess.run(
+            [sys.executable, "-c", script.format(block=block, K=K)],
+            capture_output=True,
+        )
+        assert run.returncode == 0, run.stderr.decode()[-2000:]
+        out.append(np.frombuffer(run.stdout, dtype=np.float64))
+
+    assert out[0].size == 40 * K
+    assert np.all(np.isfinite(out[1]))
+    assert np.array_equal(out[0], out[1]), (
+        "the numpy fallback does not reproduce the C stages bitwise; max rel "
+        f"{np.max(np.abs(out[1] - out[0]) / np.abs(out[0])):.3e}"
+    )
+
+
 def test_solve_etd2_numpy_runs(toy_solver_problem):
     """ETD2 returns the right shape, no NaN, monotonic decay on the grid.
 
@@ -1979,7 +2131,7 @@ def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
 # cuda fp32 pipeline — fp64-internal diagonal factors
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-def test_cuda_phi_compute_f64diag_accuracy():
+def test_cuda_diag_factors_f64diag_accuracy():
     """The diag-factor kernel takes fp64 inputs and does fp64 arithmetic
     whatever the output dtype, so its fp32 outputs are the fp64 phi
     factors to fp32 roundoff.
@@ -2009,14 +2161,14 @@ def test_cuda_phi_compute_f64diag_accuracy():
         for a in (d_int.reshape(dim, 1), d_dec.reshape(dim, 1), h, ri)
     ]
     outs_mixed = [cp.empty((dim, K), cp.float32) for _ in range(3)]
-    Kset.phi_compute_multipath(*args64, *outs_mixed)
+    Kset.diag_factors(*args64, *outs_mixed)
 
     # fp64 reference from the same inputs, so the comparison isolates the
     # output cast from the arithmetic.
     outs64 = [cp.empty((dim, K), cp.float64) for _ in range(3)]
-    Kset.phi_compute_multipath(*args64, *outs64)
+    Kset.diag_factors(*args64, *outs64)
 
-    for name, mixed, ref in zip(("eD", "phi1", "phi2"), outs_mixed, outs64):
+    for name, mixed, ref in zip(("eD", "hphi1", "hphi2"), outs_mixed, outs64):
         m = cp.asnumpy(mixed).astype(np.float64)
         r = cp.asnumpy(ref)
         mask = np.abs(r) > 1e-15 * np.abs(r).max()

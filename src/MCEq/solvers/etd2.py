@@ -66,16 +66,18 @@ def etd2_driver(
     Stages per step (state x = Phi_n, corner C(.) of a full-state array;
     the corner terms are absent for the paraxial transport):
 
-      1. factors      eD, phi1, phi2 = f(h D), D = d_int + ri d_dec;
-                      block factors f(h D0_i lam_j) on the corner
+      1. factors      eD, hphi1, hphi2 = f(h D), D = d_int + ri d_dec, with
+                      the step size folded into the phi factors
+                      (:mod:`MCEq.solvers.numerics`); block factors
+                      f(h D0_i lam_j) on the corner, without it
       2. operand      x_c = C(x); Y = T_P x[:, G];  C(x) <- x_c + Y
                       (x now holds w = S x)
       3. remainder    F = A_off w + ri B_off w  (SpMM);
                       C(F) += Df (x_c + Y) - D0 (x_c + T_PP x_c)
-      4. predictor    a = eD x + h phi1 F on the full state;
+      4. predictor    a = eD x + hphi1 F on the full state;
                       C(a) = V eDB Vi x_c + h V phi1B Vi C(F)
       5. operand and remainder (2-3) at a: a_c = C(a), Y_a, F_a
-      6. corrector    x = a + h phi2 (F_a - F) on the full state;
+      6. corrector    x = a + hphi2 (F_a - F) on the full state;
                       C(x) = a_c + h V phi2B Vi (C(F_a) - C(F))
       7. harvest      carousel harvest/reset, or int_grid snapshot
 
@@ -93,8 +95,10 @@ def etd2_driver(
 
     Precision: the loop carries the step size and ``rho_inv`` twice, in
     fp64 for stage 1 (``h64`` / ``ri64``, which feed the diagonals and the
-    exact slot) and in ``be.dtype`` for the stages that touch the state.
-    At fp64 they are the same values. See
+    exact slot) and in ``be.dtype`` for the stages that touch the state --
+    ``ri`` for the SpMM, and ``h`` for the coupled corner, which is the one
+    place the step size still multiplies state-dtype arrays. At fp64 they
+    are the same values. See
     :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`.
     """
     xp = be.xp
@@ -203,16 +207,17 @@ def etd2_driver(
             # 1. diagonal factors of the full state and of the exact slot
             if per_lane:
                 h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows, fp64
-                h, ri = dX_b[k], ri_b[k]  # the same rows in the state dtype
-                h_b = h[None, :]
+                ri = ri_b[k]  # the same row in the state dtype
             else:
                 h64, ri64 = np.float64(dX[k]), np.float64(rho_inv[k])
-                h = h_b = dtype(h64)
                 ri = dtype(ri64)
-            eD, phi1, phi2 = be.diag_factors(h64, ri64)
+            eD, hphi1, hphi2 = be.diag_factors(h64, ri64)
             if coupled:
+                # The exact slot scales the coupled corner by h after the
+                # eigenbasis GEMMs, so it is the one stage that still needs
+                # the step size in the state dtype.
                 if per_lane:
-                    h_c = h[None, None, :]
+                    h_c = dX_b[k][None, None, :]
                     frozen = (h64 == 0.0)[None, None, :]
                     Df = d_dec_c[:, :, None] * ri64 + d_int_c[:, :, None]
                     D0 = d_dec_0[:, None] * ri64 + d_int_0[:, None]
@@ -220,7 +225,7 @@ def etd2_driver(
                     D0_b = D0[None]
                     eDB, phi1B, phi2B = be.block_factors(ZB)
                 else:
-                    h_c = h
+                    h_c = dtype(h64)
                     Df = (d_dec_c * ri64 + d_int_c)[:, :, None]
                     D0 = d_dec_0 * ri64 + d_int_0
                     ZB = lam[:, None] * (D0 * h64)
@@ -235,8 +240,8 @@ def etd2_driver(
             else:
                 be.apply_off(phc, F_phi, ri)
 
-            # 4. predictor a = eD x + h phi1 F, exact slot on the corner
-            be.predictor(eD, phc, phi1, F_phi, h_b, out=a)
+            # 4. predictor a = eD x + hphi1 F, exact slot on the corner
+            be.predictor(eD, phc, hphi1, F_phi, out=a)
             if coupled:
                 block_action(eDB, x_c, a_c)
                 block_action(phi1B, F_c, tmp)
@@ -252,8 +257,8 @@ def etd2_driver(
             else:
                 be.apply_off(a, F_a, ri)
 
-            # 6. corrector x = a + h phi2 (F_a - F), exact slot on the corner
-            be.corrector(a, F_a, F_phi, phi2, h_b, out=phc)
+            # 6. corrector x = a + hphi2 (F_a - F), exact slot on the corner
+            be.corrector(a, F_a, F_phi, hphi2, out=phc)
             if coupled:
                 xp.subtract(corner(F_a), F_c, out=tmp)
                 block_action(phi2B, tmp, tmp)

@@ -1,10 +1,30 @@
-"""Scalar maths of the ETD2RK step: phi functions and step buffers.
+"""The formula table of the ETD2RK step, and the buffers it runs in.
 
-Everything the step formulas need that is neither a backend nor a policy:
-the two phi-function Taylor thresholds, the scratch-buffer layouts every
-backend allocates once per solve, the in-place diagonal-factor kernels
-(shared path and per-RHS path), the block phi factors of the sec(theta)
-exact slot, and the mode-space matmul.
+One integration step, with ``D`` the diagonal of the operator, ``F`` the
+off-diagonal remainder and ``h`` the step size:
+
+    eD = e^{hD}      hphi1 = h phi1(hD)      hphi2 = h phi2(hD)
+    a  = eD x + hphi1 F(x)
+    x+ = a + hphi2 (F(a) - F(x))
+
+``h`` is folded into the phi factors at the factor stage, so the predictor
+and the corrector are elementwise products of three arrays on every backend
+and carry no step size of their own. That fixes the association order --
+``h`` onto the phi factor first, the product onto the remainder -- at the one
+place it is written, instead of leaving each backend's ufunc chain or kernel
+to choose it.
+
+This module is the single source of those formulas, lowered three ways:
+
+* numpy, here -- :func:`phi_factors`, :func:`diagonal_factors` -- serving
+  :class:`MCEq.solvers.backends.host.HostBackend` and through it MKL and
+  Accelerate;
+* C, ``MCEq/etd2_kernels/etd2_kernels.c``, which carries
+  :data:`PREDICTOR_EXPR` and :data:`CORRECTOR_EXPR` verbatim as its
+  ``ETD2_PREDICT`` / ``ETD2_CORRECT`` macros;
+* cupy, :func:`MCEq.solvers.backends.cuda._build_cuda_etd2_kernels`, whose
+  ElementwiseKernel bodies are generated from :data:`PHI_C_BODY` and the same
+  two expression strings.
 
 numpy only. A new scalar formula of the step loop belongs here; anything
 that touches a library handle, a device, or a configuration value does not.
@@ -12,223 +32,179 @@ that touches a library handle, a device, or a configuration value does not.
 
 import numpy as np
 
-# phi1(z) = (e^z - 1) / z              (limit 1   as z -> 0)
-# phi2(z) = (e^z - 1 - z) / z**2       (limit 1/2 as z -> 0)
-# Below the analytic-formula cutoffs we patch with the order-2 Taylor
-# expansion via Horner. phi2 cancels at a wider radius than phi1 because
-# its numerator has a leading z² term.
+# --- the formula table -----------------------------------------------------
+
+#: Radii below which the analytic phi quotients are replaced by their
+#: order-2 Taylor series. phi2 switches at the wider radius because its
+#: numerator cancels to second order where phi1's cancels to first.
+#:
+#: These two radii are mistuned and known to be: measured against a 60-digit
+#: reference, the worst relative error over ``1e-8 <= |z| <= 1`` is 5.2e-11
+#: for phi1 and 4.1e-11 for phi2, where moving phi1's radius to 1.3e-4 alone
+#: costs nothing and buys 120x. Retuning them, or going to an order-3 series
+#: (4.7e-14 / 4.0e-12 for one extra Horner term, about 10 % of this stage),
+#: moves the 1D solution by 6.3e-12 relative L2 — outside the 1e-12 this
+#: phase is allowed, so it is a decision of its own and not a free ride on an
+#: association-order change. Forming the numerator with ``expm1`` reaches
+#: ~1e-16 but needs a second transcendental over the whole state, at 56-99 %
+#: of this stage.
 _PHI1_SMALL = 1e-6
 _PHI2_SMALL = 1e-3
 _INV_6 = 1.0 / 6.0
 _INV_24 = 1.0 / 24.0
 
+#: The two state stages as C expressions, with the step size already folded
+#: into the phi factors. The compiled lowerings are built from these strings:
+#: ``etd2_kernels.c`` carries them as macros and the cupy kernels format them
+#: into ElementwiseKernel bodies.
+PREDICTOR_EXPR = "(eD) * (x) + (hphi1) * (F)"
+CORRECTOR_EXPR = "(a) + (hphi2) * ((F_a) - (F))"
 
-def _etd_step_buffers(dim):
-    """Allocate the per-step scratch arrays the ETD kernels need.
 
-    Centralized here so every backend shares an identical layout — this is
-    a hot loop, and any allocation inside it dominates the SpMVs once those
-    are running on Accelerate / MKL / a tuned BLAS.
+def predictor(eD, x, hphi1, F, out, work):
+    """``out = eD x + hphi1 F`` — the numpy lowering of
+    :data:`PREDICTOR_EXPR`, associated exactly as written.
+
+    The compiled lowerings are what the host and CUDA backends run; this is
+    the reference they are checked against, and the fallback when the C
+    extension is not built. ``work`` is a scratch array of ``out``'s shape.
     """
-    return {
-        "D": np.empty(dim, dtype=np.float64),
-        "hD": np.empty(dim, dtype=np.float64),
-        "eD": np.empty(dim, dtype=np.float64),
-        "phi1": np.empty(dim, dtype=np.float64),
-        "phi2": np.empty(dim, dtype=np.float64),
-        "scratch": np.empty(dim, dtype=np.float64),
-        "abs_hD": np.empty(dim, dtype=np.float64),
-        "mask1": np.empty(dim, dtype=bool),
-        "mask2": np.empty(dim, dtype=bool),
-    }
+    np.multiply(eD, x, out=out)
+    np.multiply(hphi1, F, out=work)
+    np.add(out, work, out=out)
 
 
-def _etd_step_buffers_multipath(dim, K):
-    """Scratch buffers for the per-RHS-path multi-RHS kernel.
+def corrector(a, hphi2, F_a, F, out, work):
+    """``out = a + hphi2 (F_a - F)`` — the numpy lowering of
+    :data:`CORRECTOR_EXPR`, associated exactly as written."""
+    np.subtract(F_a, F, out=work)
+    np.multiply(hphi2, work, out=work)
+    np.add(a, work, out=out)
 
-    Stage-3 lifts ``D`` / ``eD`` / ``φ₁`` / ``φ₂`` from ``(dim,)`` to
-    ``(dim, K)`` because both ``h`` and ``ri`` vary across columns (each
-    column carries its own atmosphere path). Memory cost at the full-sky
-    operating point dim=7986, K=3072, fp64: ≈ 600 MB for the three
-    (dim, K) diag buffers + (dim, K) scratch. See
-    wiki/methods/multi-rhs-etd2-design.md Stage 3 section.
+
+#: The phi branch as C source: reads a ``double z`` in scope and defines
+#: ``e = e^z``, ``p1 = phi1(z)``, ``p2 = phi2(z)``. :func:`phi_factors` is the
+#: numpy form of the same table; see its docstring for the formulas.
+PHI_C_BODY = f"""
+const double e = exp(z);
+const double em1 = e - 1.0;
+const double az = (z >= 0.0) ? z : -z;
+const double p1 = (az > {_PHI1_SMALL!r})
+                ? em1 / z
+                : 1.0 + z * (0.5 + z * {_INV_6!r});
+const double p2 = (az > {_PHI2_SMALL!r})
+                ? (em1 - z) / (z * z)
+                : 0.5 + z * ({_INV_6!r} + z * {_INV_24!r});
+"""
+
+
+def phi_factors(z, e, phi1, phi2, work):
+    """``e^z``, ``phi1(z)`` and ``phi2(z)`` elementwise, into given buffers.
+
+        phi1(z) = (e^z - 1) / z        Taylor 1 + z/2 + z^2/6
+        phi2(z) = (e^z - 1 - z) / z^2  Taylor 1/2 + z/6 + z^2/24
+
+    Both quotients cancel as ``z -> 0``, phi1 to first order and phi2 to
+    second, so inside :data:`_PHI1_SMALL` / :data:`_PHI2_SMALL` the series is
+    evaluated by Horner instead. The numerator is ``e^z - 1``, formed from the
+    exponential the step needs anyway for ``eD``, rather than ``expm1``, which
+    costs accuracy in a band above each radius; see :data:`_PHI1_SMALL` for
+    what that costs and what fixing it would move.
+
+    The Taylor form is written for every entry and the quotient overwrites it
+    where the argument is large enough, so the branch costs one mask pass and
+    no gather. ``work`` is the ``(em1, t, mask)`` triple of :func:`phi_work`,
+    the shape of ``z``; every output and temporary is preallocated because
+    this runs once per integration step.
+
+    ``z`` is ``hD`` over the full state, ``(dim,)`` for a shared integration
+    path and ``(dim, K)`` per lane, and ``h D0 lam`` over the coupled plane of
+    the sec(theta) exact slot. One implementation for all three: the shapes
+    differ, the formula does not.
     """
-    return {
-        "D": np.empty((dim, K), dtype=np.float64),
-        "hD": np.empty((dim, K), dtype=np.float64),
-        "eD": np.empty((dim, K), dtype=np.float64),
-        "phi1": np.empty((dim, K), dtype=np.float64),
-        "phi2": np.empty((dim, K), dtype=np.float64),
-        "scratch": np.empty((dim, K), dtype=np.float64),
-        "abs_hD": np.empty((dim, K), dtype=np.float64),
-        "mask1": np.empty((dim, K), dtype=bool),
-        "mask2": np.empty((dim, K), dtype=bool),
-    }
+    em1, t, mask = work
+    np.exp(z, out=e)
+    np.subtract(e, 1.0, out=em1)
+    np.abs(z, out=t)
+
+    np.multiply(z, _INV_6, out=phi1)
+    np.add(phi1, 0.5, out=phi1)
+    np.multiply(z, phi1, out=phi1)
+    np.add(phi1, 1.0, out=phi1)
+    np.greater(t, _PHI1_SMALL, out=mask)
+    np.divide(em1, z, out=phi1, where=mask)
+
+    np.multiply(z, _INV_24, out=phi2)
+    np.add(phi2, _INV_6, out=phi2)
+    np.multiply(z, phi2, out=phi2)
+    np.add(phi2, 0.5, out=phi2)
+    np.greater(t, _PHI2_SMALL, out=mask)
+    np.subtract(em1, z, out=em1)
+    np.multiply(z, z, out=t)
+    np.divide(em1, t, out=phi2, where=mask)
 
 
-def _etd_compute_diag_factors_multipath(h_K, ri_K, d_int, d_dec, bufs):
-    """Per-RHS-path analogue of :func:`_etd_compute_diag_factors`.
-
-    Computes per-column ``D[i, k] = d_int[i] + ri_K[k] · d_dec[i]``,
-    ``hD = h_K[k] · D``, ``eD = exp(hD)``, and the two φ-functions of
-    ``hD`` elementwise over the ``(dim, K)`` plane. Branches around the
-    small-|hD| Taylor patch are computed via ``where=`` masks; numpy's
-    ufunc ``where=`` works on 2-D arrays so the per-cell branch is
-    cheap. cupy 14 rejects ``where=`` on most arithmetic ufuncs (verified
-    on the PriNCe port); when porting this to cupy, switch to the
-    ``copyto(where=)`` pattern used in PriNCe's etd2.py.
-
-    Frozen-column semantics: when ``h_K[k] == 0`` the column is "done"
-    (its own path has fewer steps than max). The math degenerates to
-    ``eD = 1, φ₁ = 1, φ₂ = 1/2`` for that column (Taylor branches at
-    hD = 0), and the downstream ETD2 update collapses to
-    ``state ← state``. No explicit masking needed.
-    """
-    D = bufs["D"]
-    hD = bufs["hD"]
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-    scratch = bufs["scratch"]
-    abs_hD = bufs["abs_hD"]
-    mask1 = bufs["mask1"]
-    mask2 = bufs["mask2"]
-
-    # D[i, k] = d_int[i] + ri_K[k] · d_dec[i]  -- (dim, K), no extra alloc.
-    np.multiply(d_dec[:, None], ri_K[None, :], out=D)
-    np.add(D, d_int[:, None], out=D)
-    # hD = h_K[None, :] * D ; eD = exp(hD).
-    np.multiply(D, h_K[None, :], out=hD)
-    np.exp(hD, out=eD)
-
-    np.abs(hD, out=abs_hD)
-    np.greater(abs_hD, _PHI1_SMALL, out=mask1)
-    np.greater(abs_hD, _PHI2_SMALL, out=mask2)
-
-    # phi1: analytic (eD - 1) / hD where mask1, Taylor elsewhere.
-    np.subtract(eD, 1.0, out=phi1)
-    np.divide(phi1, hD, out=phi1, where=mask1)
-    np.multiply(hD, _INV_6, out=scratch)
-    np.add(scratch, 0.5, out=scratch)
-    np.multiply(scratch, hD, out=scratch)
-    np.add(scratch, 1.0, out=scratch)
-    np.invert(mask1, out=mask1)
-    np.copyto(phi1, scratch, where=mask1)
-
-    # phi2: analytic (eD - 1 - hD) / hD² where mask2, Taylor elsewhere.
-    np.subtract(eD, 1.0, out=phi2)
-    np.subtract(phi2, hD, out=phi2)
-    np.multiply(hD, hD, out=scratch)
-    np.divide(phi2, scratch, out=phi2, where=mask2)
-    np.multiply(hD, _INV_24, out=scratch)
-    np.add(scratch, _INV_6, out=scratch)
-    np.multiply(scratch, hD, out=scratch)
-    np.add(scratch, 0.5, out=scratch)
-    np.invert(mask2, out=mask2)
-    np.copyto(phi2, scratch, where=mask2)
-
-
-def _etd_compute_diag_factors(h, ri, d_int, d_dec, bufs):
-    """Fill ``bufs['eD']`` / ``bufs['phi1']`` / ``bufs['phi2']`` in place.
-
-    Computes the per-step diagonal of ``A + ri * B``, exponentiates it, and
-    evaluates the two phi-functions of ``h*D``. All work is done in
-    preallocated buffers — no temporaries — and the small-|hD| Taylor
-    branch is patched in only on the rows that need it (instead of being
-    evaluated eagerly across the whole array as ``np.where`` would).
-    """
-    D = bufs["D"]
-    hD = bufs["hD"]
-    eD = bufs["eD"]
-    phi1 = bufs["phi1"]
-    phi2 = bufs["phi2"]
-    scratch = bufs["scratch"]
-    abs_hD = bufs["abs_hD"]
-    mask1 = bufs["mask1"]
-    mask2 = bufs["mask2"]
-
-    # D = d_int + ri * d_dec
-    np.multiply(d_dec, ri, out=D)
-    np.add(D, d_int, out=D)
-    # hD = h * D ; eD = exp(hD)
-    np.multiply(D, h, out=hD)
-    np.exp(hD, out=eD)
-
-    # Branch masks: True ⇒ analytic form is safe.
-    np.abs(hD, out=abs_hD)
-    np.greater(abs_hD, _PHI1_SMALL, out=mask1)
-    np.greater(abs_hD, _PHI2_SMALL, out=mask2)
-
-    # phi1: analytic (eD - 1) / hD where mask1, Taylor 1 + hD/2 + hD²/6 elsewhere.
-    np.subtract(eD, 1.0, out=phi1)
-    np.divide(phi1, hD, out=phi1, where=mask1)
-    # Horner Taylor for phi1: ((hD/6) + 1/2)*hD + 1
-    np.multiply(hD, _INV_6, out=scratch)
-    np.add(scratch, 0.5, out=scratch)
-    np.multiply(scratch, hD, out=scratch)
-    np.add(scratch, 1.0, out=scratch)
-    np.invert(mask1, out=mask1)  # mask1 now: small |hD| rows
-    np.copyto(phi1, scratch, where=mask1)
-
-    # phi2: analytic (eD - 1 - hD) / hD² where mask2, Taylor 1/2 + hD/6 + hD²/24 elsewhere.
-    np.subtract(eD, 1.0, out=phi2)
-    np.subtract(phi2, hD, out=phi2)
-    np.multiply(hD, hD, out=scratch)  # hD² in scratch
-    np.divide(phi2, scratch, out=phi2, where=mask2)
-    # Horner Taylor for phi2: ((hD/24) + 1/6)*hD + 1/2
-    np.multiply(hD, _INV_24, out=scratch)
-    np.add(scratch, _INV_6, out=scratch)
-    np.multiply(scratch, hD, out=scratch)
-    np.add(scratch, 0.5, out=scratch)
-    np.invert(mask2, out=mask2)  # mask2 now: small |hD| rows
-    np.copyto(phi2, scratch, where=mask2)
-
-
-def _secant_phi_factors(ZB, out=None, work=None):
-    """Elementwise exp/phi1/phi2 with Taylor patches for a block argument.
-
-    ``out=(exp, phi1, phi2)`` and ``work=(scratch, large)`` let the hot
-    loop reuse its block-sized arrays instead of allocating six
-    temporaries per step. The no-argument form keeps the small standalone
-    helper convenient for tests and callers outside the driver.
-    """
-    if out is not None:
-        eDB, phi1, phi2 = out
-        scratch, large = work
-        np.expm1(ZB, out=scratch)
-
-        # Taylor branches, evaluated for the whole block and overwritten
-        # by the quotient on entries outside the small-argument patch.
-        np.multiply(ZB, _INV_6, out=phi1)
-        np.add(phi1, 0.5, out=phi1)
-        np.multiply(ZB, phi1, out=phi1)
-        np.add(phi1, 1.0, out=phi1)
-        np.greater(np.abs(ZB, out=eDB), _PHI1_SMALL, out=large)
-        np.divide(scratch, ZB, out=phi1, where=large)
-
-        np.multiply(ZB, _INV_24, out=phi2)
-        np.add(phi2, _INV_6, out=phi2)
-        np.multiply(ZB, phi2, out=phi2)
-        np.add(phi2, 0.5, out=phi2)
-        np.greater(eDB, _PHI2_SMALL, out=large)
-        np.subtract(scratch, ZB, out=eDB)
-        np.multiply(ZB, ZB, out=scratch)
-        np.divide(eDB, scratch, out=phi2, where=large)
-        np.exp(ZB, out=eDB)
-        return out
-
-    safe = np.where(ZB == 0.0, 1.0, ZB)
-    e1 = np.expm1(ZB)
-    phi1 = np.where(np.abs(ZB) > _PHI1_SMALL, e1 / safe, 1.0 + ZB * (0.5 + ZB * _INV_6))
-    phi2 = np.where(
-        np.abs(ZB) > _PHI2_SMALL,
-        (e1 - ZB) / (safe * safe),
-        0.5 + ZB * (_INV_6 + ZB * _INV_24),
+def phi_work(shape):
+    """The scratch triple :func:`phi_factors` needs for arguments of `shape`."""
+    return (
+        np.empty(shape, dtype=np.float64),
+        np.empty(shape, dtype=np.float64),
+        np.empty(shape, dtype=bool),
     )
-    return np.exp(ZB), phi1, phi2
 
 
-def _secant_left_matmul(matrix, plane, out=None):
+def step_buffers(shape):
+    """Buffers of the diagonal-factor stage, allocated once per solve.
+
+    ``shape`` is ``(dim,)`` when every lane walks one shared integration path
+    and ``(dim, K)`` when each carries its own atmosphere path, so that both
+    ``h`` and ``ri`` vary along the lane axis. Centralized here so every
+    backend shares a layout: this is a hot loop, and an allocation inside it
+    dominates the SpMMs once those run on a tuned BLAS.
+
+    Six float64 arrays and one boolean of ``shape``. At the full-sky
+    operating point dim=7986, K=3072 that is 1.2 GB; see
+    wiki/methods/multi-rhs-etd2-design.md Stage 3.
+    """
+    return {
+        "hD": np.empty(shape, dtype=np.float64),
+        "eD": np.empty(shape, dtype=np.float64),
+        "phi1": np.empty(shape, dtype=np.float64),
+        "phi2": np.empty(shape, dtype=np.float64),
+        "work": phi_work(shape),
+    }
+
+
+def diagonal_factors(h, ri, d_int, d_dec, bufs):
+    """``eD``, ``h phi1(hD)`` and ``h phi2(hD)`` of one step, in place.
+
+    ``D = d_int + ri d_dec`` is the diagonal of the operator at this step and
+    ``hD`` its scaled form. One function for both integration paths: a shared
+    path passes scalar ``h`` and ``ri`` against ``(dim,)`` buffers, the
+    per-lane paths of the carousel pass ``(K,)`` lane rows against a
+    ``(dim, K)`` plane. The shapes differ, the formula does not.
+
+    Folding ``h`` in here is what leaves the predictor and the corrector with
+    three arrays and no step size; see the module docstring. A lane with
+    ``h == 0`` is frozen by the same arithmetic: ``hD = 0`` gives ``eD = 1``
+    and ``hphi1 = hphi2 = 0``, so its step collapses to ``x <- x``.
+    """
+    hD, eD, phi1, phi2 = (bufs[k] for k in ("hD", "eD", "phi1", "phi2"))
+    if hD.ndim == 2:
+        d_int, d_dec = d_int[:, None], d_dec[:, None]
+        h, ri = h[None, :], ri[None, :]
+
+    # D = d_int + ri d_dec, then hD = h D, both in the one buffer.
+    np.multiply(d_dec, ri, out=hD)
+    np.add(hD, d_int, out=hD)
+    np.multiply(hD, h, out=hD)
+
+    phi_factors(hD, eD, phi1, phi2, bufs["work"])
+    np.multiply(phi1, h, out=phi1)
+    np.multiply(phi2, h, out=phi2)
+
+
+def left_matmul(matrix, plane, out=None):
     """Apply a mode-space matrix to the leading axis of a >= 2-D plane.
 
     The driver carries logical ``(mode, column, lane)`` planes; flattening
