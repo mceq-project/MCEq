@@ -63,7 +63,14 @@ BLAS_THREADS = 4
 
 import numpy as np
 
-from ._harness import HOST_RTOL, array_digest, file_digest, make_provenance
+from . import _flux_metric
+from ._harness import (
+    HOST_RTOL,
+    array_digest,
+    file_digest,
+    load_section,
+    make_provenance,
+)
 from .make_goldens import SectionUnavailable
 
 SECTION = "solve2d"
@@ -188,14 +195,69 @@ SPECTRUM_MAG = 3.0
 #: Ceiling for the stability check. The routes peak at |state| ~ 42.
 STATE_PEAK_MAX = 1e6
 
-#: rel-L2 budget for the secant states and spectra. Across OpenBLAS
-#: microkernels the fullsky state moves 3.02e-12, the carousel 1.93e-12 and the
-#: single axis 1.17e-12 -- above the plan's 1e-12.
+#: rel-L2 budget for the reductions that are norms rather than spectra. Across
+#: OpenBLAS microkernels the fullsky state moves 3.02e-12 rel-L2, the carousel
+#: 1.93e-12 and the single axis 1.17e-12 -- above the plan's 1e-12.
 SECANT_RTOL = 1e-11
 
+#: Tags of the four stored final states, in the order the routes run.
+STATE_TAGS = ("single", "multirhs", "carousel", "fullsky")
+
+#: Tags of the depth snapshots of the two shared-path routes.
+GRID_TAGS = tuple(
+    f"{tag}_grid{index}"
+    for tag in ("single", "multirhs")
+    for index in range(len(INT_GRID))
+)
+
+#: `state/` keys that are not spectra: the per-mode L2 norms over the 48 Hankel
+#: modes, the multi-RHS column norms, and phi0 itself (a moment-matched initial
+#: condition with negative bins). The per-species metric has nothing to slice
+#: in a norm, so these keep an L2 bound and the `state/` prefix entry below
+#: never reaches them -- `tolerance_entry_for` prefers the longer, exact match.
+NORM_KEYS = ("state/phi0", "state/phi0_matrix_l2") + tuple(
+    f"state/{tag}_mode_l2" for tag in STATE_TAGS + GRID_TAGS
+)
+
+#: Per-species bound for the 2D routes: 3e-8 (maintainer ruling 2026-09-02).
+#: The dense mode-coupling GEMMs spread further than the 1D sparse SpMVs --
+#: 3.74e-9 measured across six OpenBLAS-microkernel pairs on one host, on the
+#: raw monopole blocks (carousel lane 4 / 40 deg, k_mu-, 44.67 GeV), so the
+#: bound carries 8.0x. The E^3-weighted `spectrum/` rows are 44x quieter at
+#: 8.4e-11, so it is the state blocks that set it; unguarded the same scan
+#: reads 1.94e-7, which is what the guard buys.
+SECANT_PER_SPECIES_RTOL = _flux_metric.RTOL_2D
+
+#: The guard is sign definiteness over the grid less its top 3 bins, and on
+#: this database the trim is what makes it usable. The 31-bin grid runs
+#: 0.089 - 89.13 GeV with the muon peak at 14.13 GeV, so its top bins are an
+#: upper-boundary artefact: `spectrum/carousel_total_mu+` is negative in bins
+#: 28-30 at every zenith, from -1.06% of the peak at 0 deg to -12.88% at 72.
+#: An untrimmed sign test therefore disqualifies a whole spectrum over two edge
+#: bins -- 12 of 124 spectrum rows admitted, and none of total_mu+-, numu, nue,
+#: pi+-, K+- or p+. Trimming the top 3 admits 97 of 124 spectrum rows and 951
+#: of 1800 state rows, and the spread it measures is insensitive to the exact
+#: trim (3.18e-9 at N=2, 3.74e-9 at N=3, 3.18e-9 at N=4). Nothing falls through
+#: to `fallback_rtol` any more -- untrimmed, 24 of the 28 spectrum keys did --
+#: but it stays for a key that carries no flux at all, and it keeps the measured
+#: L2 budget rather than 3e-8: the per-species bound is an argument about
+#: fluxes and does not transfer to a key the metric declines to score.
+_PER_SPECIES = {
+    "mode": "per_species_max",
+    "rtol": SECANT_PER_SPECIES_RTOL,
+    "floor": _flux_metric.FLOOR,
+    "guard": _flux_metric.DEFAULT_GUARD,
+    "trim_top_bins": _flux_metric.TRIM_TOP_BINS,
+    "fallback_rtol": SECANT_RTOL,
+}
+
 TOLERANCES = {
-    "state/": {"mode": "rel_l2", "rtol": SECANT_RTOL},
-    "spectrum/": {"mode": "rel_l2", "rtol": SECANT_RTOL},
+    # The monopole blocks are plain (dim_states,) 1D-layout states -- `solve`
+    # tiles phi0 over the Hankel modes, so the mode is the outer axis and
+    # mode 0 splits into species exactly as a 1D state does.
+    "state/": dict(_PER_SPECIES),
+    "spectrum/": dict(_PER_SPECIES),
+    **{key: {"mode": "rel_l2", "rtol": SECANT_RTOL} for key in NORM_KEYS},
     # np.linalg.eig orders the two near-degenerate eigenvalues of S_P
     # (1.000000000212, 0.999999951399) by microkernel; sorted they agree to
     # 6.3e-15. Everything else under ops/ is read off the T disk cache without
@@ -497,6 +559,21 @@ def build():
                 "n_low_e_columns": int(np.size(ops["low_e_idx"])),
                 "n_species": len(mceq.pman.cascade_particles),
             }
+            # Species layout of a monopole block, for `per_species_max`. It
+            # goes into the provenance rather than into `meta/` arrays because
+            # `compare_section` reports an array key the golden does not carry
+            # as a mismatch, so this section cannot grow one without moving its
+            # own file. Same fields, same encoding as gen_solve1d's
+            # `<case>/meta/` stanza.
+            species_layout = {
+                "species": [
+                    f"{q.mceqidx}:{q.name}" for q in mceq.pman.cascade_particles
+                ],
+                "dim": int(mceq.dim),
+                "dim_states": int(mceq.dim_states),
+                "e_grid": np.asarray(mceq.e_grid).tolist(),
+                "e_bins": np.asarray(mceq.e_bins).tolist(),
+            }
         finally:
             mceq.close()
 
@@ -514,6 +591,18 @@ def build():
             if np.asarray(value).dtype.kind == "f" and not np.all(np.isfinite(value))
         )
         assert not nonfinite, f"non-finite entries: {nonfinite}"
+        uncovered = sorted(
+            key
+            for key in arrays
+            if key.startswith("state/")
+            and not key.endswith("_mode0")
+            and key not in NORM_KEYS
+        )
+        assert not uncovered, (
+            f"state/ key that is neither a monopole block nor a listed norm: "
+            f"{uncovered}. The per_species_max entry on the state/ prefix "
+            f"would be applied to a reduction it cannot slice into species"
+        )
 
         provenance = make_provenance(
             SECTION,
@@ -524,9 +613,25 @@ def build():
                 "solve passes the ETD2 path knobs explicitly; the config "
                 "defaults (eps 0.3, dX_max 20) drive the mu-_l rows to "
                 "|state| ~ 1e22 with negative muon fluxes on this database, "
-                "the cliff sitting between dX_max 8 and 6. state/ and "
-                "spectrum/ keys carry rel-L2 1e-11 rather than the plan's "
-                "1e-12: across OpenBLAS microkernels the fullsky state moves "
+                "the cliff sitting between dX_max 8 and 6. The monopole "
+                "blocks and the named spectra carry per_species_max at 3e-8 "
+                "with a 1e-12 x peak floor and the sign-definite guard applied "
+                "to the grid less its top 3 bins: the measured spread across "
+                "six OpenBLAS-microkernel pairs is 3.74e-9 on the raw monopole "
+                "blocks (carousel lane 4 / 40 deg, k_mu-, 44.67 GeV) and "
+                "8.4e-11 on the E^3-weighted spectra, against 1.94e-7 "
+                "unguarded, while an element-wise ratio on the raw state "
+                "reaches 5.5e-5 purely on components at ~1e-16 of the peak. "
+                "The trim is what makes the guard usable here: the 31-bin grid "
+                "runs 0.089 - 89.13 GeV with the muon peak at 14.13 GeV, so "
+                "its top bins are an upper-boundary artefact -- "
+                "spectrum/carousel_total_mu+ is negative in bins 28-30 at "
+                "every zenith, -1.06% of the peak at 0 deg to -12.88% at 72 -- "
+                "and an untrimmed sign test admits 12 of 124 spectrum rows "
+                "against 97 trimmed. The "
+                "per-mode L2 norms, the multi-RHS column norms and phi0 are "
+                "reductions the metric cannot slice and keep rel-L2 1e-11: "
+                "across OpenBLAS microkernels the fullsky state moves "
                 "3.02e-12 rel-L2, the carousel 1.93e-12 and the single axis "
                 "1.17e-12. On one host with the OpenBLAS pool at >= 2 threads "
                 "every key is bitwise, and mkl_etd2 reproduces every key "
@@ -537,7 +642,8 @@ def build():
                 "microkernel. The raw (104160, K) states are 24 MB together, "
                 "so they are compared through per-mode L2 norms, the monopole "
                 "block and the named spectra, with their sha256 in "
-                "extra.state_digests."
+                "extra.state_digests; extra.species_layout carries the species "
+                "table a monopole block splits by."
             ),
             tolerances=TOLERANCES,
             extra={
@@ -554,6 +660,7 @@ def build():
                 "sky_azimuth": list(SKY_AZIMUTH),
                 "sky_carousel_K": SKY_CAROUSEL_K,
                 "sizes": sizes,
+                "species_layout": species_layout,
                 "seconds": seconds,
                 "state_digests": digests,
                 "state_peaks": peaks,
@@ -575,3 +682,31 @@ def build():
     assert "sha256" in db, f"{DB_NAME} not resolvable, provenance incomplete: {db}"
 
     return arrays, provenance
+
+
+def diff_report(golden: dict, produced: dict) -> list[str]:
+    """Per-species worst and the fixed-energy table for the flux keys.
+
+    The species layout is in the stored provenance, not in the arrays, so the
+    renderer reads the section back; a golden written before this metric
+    carries no `extra.species_layout` and the report is then empty, leaving the
+    mismatch lines to speak for themselves.
+    """
+    _, prov = load_section(SECTION)
+    entry = prov.get("tolerances", {}).get("state/", {})
+    keys = sorted(
+        key
+        for key in golden
+        if key.startswith("spectrum/")
+        or (key.startswith("state/") and key.endswith("_mode0"))
+    )
+    return _flux_metric.flux_report(
+        golden,
+        produced,
+        keys=keys,
+        rtol=float(entry.get("rtol", SECANT_PER_SPECIES_RTOL)),
+        provenance=prov,
+        floor=float(entry.get("floor", _flux_metric.FLOOR)),
+        guard=entry.get("guard", _flux_metric.DEFAULT_GUARD),
+        trim=int(entry.get("trim_top_bins", _flux_metric.TRIM_TOP_BINS)),
+    )

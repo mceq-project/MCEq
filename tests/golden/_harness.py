@@ -11,8 +11,17 @@ Comparison modes per key, resolved by :func:`tolerance_for`:
 ``rel_l2``    `||y - x||_2 / ||x||_2 <= rtol` — for backends whose reduction
               order is not fixed (CUDA), and the escape hatch for phases that
               deliberately change a summation or association order.
+``per_species_max``
+              the worst `max_E |dphi/phi_ref|` over the species of a state, on
+              the bins above `floor * peak` of the grid less its top
+              `trim_top_bins` bins, counting only the species a `guard` admits
+              there — see :mod:`._flux_metric`. For the flux keys, where an L2
+              hides a minor species behind the muon rows and an element-wise
+              ratio measures the ~1e-16 components instead of the solver. The
+              entry carries `floor`, `guard` and `trim_top_bins` alongside
+              `rtol`, plus a `fallback_rtol` for the keys the guard empties.
 
-The default is ``bitwise``; keys are moved to ``rel_l2`` only by an explicit
+The default is ``bitwise``; keys are moved to another mode only by an explicit
 entry in the section's `__provenance__["tolerances"]` table, so a phase that
 loosens a tolerance has to say so in its diff.
 """
@@ -26,6 +35,8 @@ import platform
 import sys
 
 import numpy as np
+
+from . import _flux_metric
 
 DATA_DIR = pathlib.Path(__file__).parent / "data"
 
@@ -302,27 +313,39 @@ def load_section(section: str):
 # --------------------------------------------------------------------------
 
 
-def tolerance_for(key: str, provenance: dict):
-    """Resolve `(mode, rtol)` for one key.
+def tolerance_entry_for(key: str, provenance: dict) -> dict:
+    """The tolerance entry governing one key, or the bitwise default.
 
-    A key matches a tolerance entry if the entry is the key itself or a prefix
-    of it ending in `/`, so a whole subtree can be loosened with one line.
+    A key matches an entry if the entry is the key itself or a prefix of it
+    ending in `/`, so a whole subtree can be loosened with one line; the
+    longest matching prefix wins, which is how a section keeps `state/` on the
+    flux metric while its per-mode norms under the same prefix stay on L2.
     """
     table = provenance.get("tolerances") or {}
     if key in table:
-        entry = table[key]
-        return entry.get("mode", "rel_l2"), float(entry.get("rtol", HOST_RTOL))
+        return dict(table[key])
     for prefix, entry in sorted(table.items(), key=lambda kv: -len(kv[0])):
         if prefix.endswith("/") and key.startswith(prefix):
-            return entry.get("mode", "rel_l2"), float(entry.get("rtol", HOST_RTOL))
-    return "bitwise", 0.0
+            return dict(entry)
+    return {"mode": "bitwise", "rtol": 0.0}
 
 
-def compare_key(key, expected, actual, mode, rtol):
+def tolerance_for(key: str, provenance: dict):
+    """Resolve `(mode, rtol)` for one key — the two fields every mode needs."""
+    entry = tolerance_entry_for(key, provenance)
+    return entry.get("mode", "rel_l2"), float(entry.get("rtol", HOST_RTOL))
+
+
+def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
     """Return `None` when `actual` matches `expected`, else an explanation.
 
     Shape and dtype-kind are checked before any numeric work so a structural
     change reports as a structural change rather than raising from `np.asarray`.
+
+    `layout` and `entry` are read only by ``per_species_max``: the species
+    table to slice the state with, which `compare_section` resolves from the
+    golden, and the tolerance entry's `floor`, `guard`, `trim_top_bins` and
+    `fallback_rtol` fields.
     """
     exp = np.asarray(expected)
     act = np.asarray(actual)
@@ -337,6 +360,34 @@ def compare_key(key, expected, actual, mode, rtol):
 
     if exp.dtype.kind != act.dtype.kind:
         return f"{key}: dtype kind {act.dtype.kind!r} != golden {exp.dtype.kind!r}"
+
+    if mode == "per_species_max":
+        if layout is None:
+            return (
+                f"{key}: per_species_max needs a species layout and the "
+                f"section records none (meta/species arrays or "
+                f"extra.species_layout)"
+            )
+        fields = entry or {}
+        try:
+            return _flux_metric.compare(
+                key,
+                exp,
+                act,
+                rtol,
+                layout=layout,
+                floor=float(fields.get("floor", _flux_metric.FLOOR)),
+                guard=fields.get("guard", _flux_metric.DEFAULT_GUARD),
+                trim=int(fields.get("trim_top_bins", _flux_metric.TRIM_TOP_BINS)),
+            )
+        except _flux_metric.Unscorable:
+            # The guard admits no species of this key, so the per-species
+            # maximum does not exist for it. Fall through to relative L2 at
+            # `fallback_rtol` — a bound that is always defined — rather than
+            # let the key pass unchecked or demand bitwise equality of a
+            # reduction whose order the backend chooses.
+            mode = "rel_l2"
+            rtol = float(fields.get("fallback_rtol", rtol))
 
     if mode == "bitwise":
         if exp.dtype != act.dtype:
@@ -391,6 +442,12 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
     how a backend without a fixed reduction order is compared against a host
     golden — CUDA at `CUDA_RTOL` — without loosening the stored tolerances,
     which stay bitwise for the host.
+
+    A key already on `per_species_max` is exempt from that floor: its stored
+    bound is the backend-independent one (a per-species maximum on the bins
+    that carry flux does not depend on a reduction order the way an
+    element-wise ratio does), so CUDA is judged on the flux keys by the
+    per-species bound and on the rest by `rtol_floor`.
     """
     golden, prov = load_section(section)
     problems = []
@@ -403,10 +460,24 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
         problems.append(f"{len(extra)} new key(s) not in golden: {extra[:8]}")
 
     for key in sorted(set(golden) & set(produced)):
-        mode, rtol = tolerance_for(key, prov)
-        if rtol_floor > rtol:
+        entry = tolerance_entry_for(key, prov)
+        mode = entry.get("mode", "rel_l2")
+        rtol = float(entry.get("rtol", HOST_RTOL))
+        if mode != "per_species_max" and rtol_floor > rtol:
             mode, rtol = "rel_l2", rtol_floor
-        problem = compare_key(key, golden[key], produced[key], mode, rtol)
+        problem = compare_key(
+            key,
+            golden[key],
+            produced[key],
+            mode,
+            rtol,
+            layout=(
+                _flux_metric.layout_for(key, golden, prov)
+                if mode == "per_species_max"
+                else None
+            ),
+            entry=entry,
+        )
         if problem:
             problems.append(problem)
     return problems

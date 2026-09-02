@@ -52,7 +52,8 @@ import inspect
 
 import numpy as np
 
-from ._harness import array_digest, make_provenance, sparse_digest
+from . import _flux_metric
+from ._harness import array_digest, load_section, make_provenance, sparse_digest
 
 SECTION = "solve1d"
 
@@ -161,6 +162,36 @@ THETAS_EMON = (0.0,)
 
 #: Depths in g/cm2 for the grid solve.
 INT_GRID = [10.0, 100.0, 500.0, 1000.0]
+
+#: The raw state vectors: one per solved zenith, plus the depth-grid stacks.
+#: Everything else in the section is either a path integer, an operator digest
+#: or a `get_solution` readout, and stays bitwise.
+STATE_KEYS = tuple(
+    f"{case}/theta{theta:g}/state"
+    for case, thetas in (("emoff", THETAS_EMOFF), ("emon", THETAS_EMON))
+    for theta in thetas
+) + ("emoff/grid/grid_sol", "emon/grid/grid_sol")
+
+#: Per-species bound for the raw states, 1e-11 (maintainer ruling 2026-09-02).
+#: The guard is sign definiteness over the grid less its top 3 bins: on the
+#: 31-bin 1D grid (891 GeV .. 891 TeV) the retune leaves 88 species negative
+#: only in the top bin, 33 down to depth 1 and 3 to depth 2, and admission
+#: saturates at trim 3 (259 of 278 final-state entries, 12 of 12 key species,
+#: unchanged at trim 4 and 5). Trim 1 would not do: it admits `prres_mu-` at
+#: 708 TeV, still on the artefact, at 1.17e-10 -- above the bound.
+#:
+#: Margin: the retune moves the final states 1.129e-12 (8.9x) and the depth-grid
+#: stacks 2.915e-12 (3.4x), so 3.4x is what this entry actually carries.
+TOLERANCES = {
+    key: {
+        "mode": "per_species_max",
+        "rtol": _flux_metric.RTOL_1D,
+        "floor": _flux_metric.FLOOR,
+        "guard": _flux_metric.DEFAULT_GUARD,
+        "trim_top_bins": _flux_metric.TRIM_TOP_BINS,
+    }
+    for key in STATE_KEYS
+}
 
 
 def _record_sparse(arrays, prefix, matrix):
@@ -340,8 +371,24 @@ def build():
                 " []) at theta 0 deg only, where the EM block is still finite."
                 " Host backends agree bitwise; the golden test re-runs the"
                 " section under cuda_etd2 and compares it against this file at"
-                " rel-L2 1e-9 (measured worst case 9.8e-14)."
+                " rel-L2 1e-9 (measured worst case 9.8e-14) except on the"
+                " state keys, which CUDA has to meet on the per-species bound."
+                " The state keys carry per_species_max at 1e-11 with a"
+                " 1e-12 x peak floor and the sign-definite guard applied to the"
+                " grid less its top 3 bins, the top bins being an upper-"
+                "boundary artefact rather than a flux: across the phi-Taylor"
+                " retune the worst admitted species of the final states then"
+                " moves 1.129e-12 (k_mu+_l at 3548 GeV, emoff/theta89) and the"
+                " worst named flux 1.08e-12 (total_mu+, same key and bin),"
+                " while the unguarded worst is 1.35e-9 on e+_l at 71 TeV, a"
+                " cancellation residual with negative bins rather than a flux."
+                " Over all six state keys, the depth-grid stacks included, the"
+                " worst is 2.915e-12 (e+_l at 447 TeV, emon/grid/grid_sol[0]),"
+                " so the bound carries 3.4x. The trim admits 259 of 278"
+                " final-state species-lane entries and all 12 key species,"
+                " against 135 and 10 untrimmed. Every other key is bitwise."
             ),
+            tolerances=TOLERANCES,
             extra={
                 "backends_executed": sorted(backends),
                 "int_grid": INT_GRID,
@@ -363,3 +410,24 @@ def build():
     assert "sha256" in db, f"reduced DB not resolvable, provenance incomplete: {db}"
 
     return arrays, provenance
+
+
+def diff_report(golden: dict, produced: dict) -> list[str]:
+    """Per-species worst and the fixed-energy table for the state keys.
+
+    The species layout is in the golden's own `<case>/meta/` arrays, so the
+    stored provenance is only consulted for the floor, the guard and the trim
+    the file was written with — a golden generated before this metric names
+    none of them and falls back to the module defaults.
+    """
+    _, prov = load_section(SECTION)
+    entry = prov.get("tolerances", {}).get(STATE_KEYS[0], {})
+    return _flux_metric.flux_report(
+        golden,
+        produced,
+        keys=STATE_KEYS,
+        rtol=float(entry.get("rtol", _flux_metric.RTOL_1D)),
+        floor=float(entry.get("floor", _flux_metric.FLOOR)),
+        guard=entry.get("guard", _flux_metric.DEFAULT_GUARD),
+        trim=int(entry.get("trim_top_bins", _flux_metric.TRIM_TOP_BINS)),
+    )

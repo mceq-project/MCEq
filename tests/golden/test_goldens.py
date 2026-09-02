@@ -77,14 +77,18 @@ def _check_database_identity(section, golden_prov, produced_prov):
 
 
 def _report(section, prov, problems, produced):
-    """Build the failure message, preferring a generator's own diff renderer."""
+    """Build the failure message: the mismatches, then a generator's own diff.
+
+    Concatenated, not either-or: for the flux sections the mismatch lines name
+    the keys and the renderer explains them (which species, at which energy),
+    and one without the other is half a report.
+    """
     module = load_generator(section)
+    detail = list(problems)
     renderer = getattr(module, "diff_report", None)
     if renderer is not None:
         golden, _ = load_section(section)
-        detail = renderer(golden, produced) or problems
-    else:
-        detail = problems
+        detail += renderer(golden, produced)
     head = (
         f"golden section {section!r} differs from {str(prov.get('git_commit'))[:12]}\n"
         f"note: {prov.get('note', '')}\n"
@@ -126,6 +130,11 @@ def test_golden_section_cuda_matches_host(section, request, monkeypatch):
     cuSPARSE SpMM does not fix its reduction order, so CUDA is not bitwise even
     between two consecutive calls in one process; measured worst case against
     the host file is 9.8e-14 relative L2, four orders inside the budget.
+
+    The flux keys are the exception: `compare_section` leaves a key stored on
+    `per_species_max` at its own bound, because a per-species maximum over the
+    bins that carry flux is the backend-independent statement and an L2 floor
+    on top of it would only hide a species the reordering actually moved.
     """
     if request.config.getoption("--regenerate-goldens"):
         pytest.skip("regeneration writes the host golden only")
