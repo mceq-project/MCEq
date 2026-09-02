@@ -34,24 +34,31 @@ import numpy as np
 
 # --- the formula table -----------------------------------------------------
 
-#: Radii below which the analytic phi quotients are replaced by their
-#: order-2 Taylor series. phi2 switches at the wider radius because its
-#: numerator cancels to second order where phi1's cancels to first.
+#: Radii below which the analytic phi quotients are replaced by their Taylor
+#: series — order 2 for phi1, order 3 for phi2. phi2 switches at the wider
+#: radius because its numerator cancels to second order where phi1's cancels
+#: to first: with the numerator formed as ``e^z - 1``, the quotient carries
+#: ``~2u/|z|`` for phi1 and ``~2u/z^2`` for phi2 (``u = 2^-53``), and each
+#: radius sits where that meets the truncation of the series taken.
 #:
-#: These two radii are mistuned and known to be: measured against a 60-digit
-#: reference, the worst relative error over ``1e-8 <= |z| <= 1`` is 5.2e-11
-#: for phi1 and 4.1e-11 for phi2, where moving phi1's radius to 1.3e-4 alone
-#: costs nothing and buys 120x. Retuning them, or going to an order-3 series
-#: (4.7e-14 / 4.0e-12 for one extra Horner term, about 10 % of this stage),
-#: moves the 1D solution by 6.3e-12 relative L2 — outside the 1e-12 this
-#: phase is allowed, so it is a decision of its own and not a free ride on an
-#: association-order change. Forming the numerator with ``expm1`` reaches
-#: ~1e-16 but needs a second transcendental over the whole state, at 56-99 %
-#: of this stage.
-_PHI1_SMALL = 1e-6
-_PHI2_SMALL = 1e-3
+#: Measured against a 60-digit reference over ``1e-8 <= |z| <= 1``, both signs
+#: (:func:`tests.test_solvers.test_phi_factors_accuracy`), the worst relative
+#: error is 7.9e-13 for phi1 at ``z = 1.4e-4`` and 5.4e-12 for phi2 at
+#: ``z = 6.3e-3`` — in both cases on the quotient side just outside the
+#: radius, which is what makes the radius, not the series order, the thing
+#: that sets the accuracy. phi2's third Horner term is what lets its radius
+#: widen that far, and buys 39x for one multiply-add.
+#:
+#: Two improvements are left: phi1's radius optimum on that grid is 2.0e-4
+#: (4.9e-13, at identical cost), and forming the numerator with ``expm1``
+#: makes phi1 correctly rounded (2.2e-16) and phi2 8.0e-14 — but needs a
+#: second transcendental over the whole state where ``e^z`` is already being
+#: computed for ``eD``.
+_PHI1_SMALL = 1.3e-4
+_PHI2_SMALL = 6.31e-3
 _INV_6 = 1.0 / 6.0
 _INV_24 = 1.0 / 24.0
+_INV_120 = 1.0 / 120.0
 
 #: The two state stages as C expressions, with the step size already folded
 #: into the phi factors. The compiled lowerings are built from these strings:
@@ -94,7 +101,7 @@ const double p1 = (az > {_PHI1_SMALL!r})
                 : 1.0 + z * (0.5 + z * {_INV_6!r});
 const double p2 = (az > {_PHI2_SMALL!r})
                 ? (em1 - z) / (z * z)
-                : 0.5 + z * ({_INV_6!r} + z * {_INV_24!r});
+                : 0.5 + z * ({_INV_6!r} + z * ({_INV_24!r} + z * {_INV_120!r}));
 """
 
 
@@ -102,7 +109,7 @@ def phi_factors(z, e, phi1, phi2, work):
     """``e^z``, ``phi1(z)`` and ``phi2(z)`` elementwise, into given buffers.
 
         phi1(z) = (e^z - 1) / z        Taylor 1 + z/2 + z^2/6
-        phi2(z) = (e^z - 1 - z) / z^2  Taylor 1/2 + z/6 + z^2/24
+        phi2(z) = (e^z - 1 - z) / z^2  Taylor 1/2 + z/6 + z^2/24 + z^3/120
 
     Both quotients cancel as ``z -> 0``, phi1 to first order and phi2 to
     second, so inside :data:`_PHI1_SMALL` / :data:`_PHI2_SMALL` the series is
@@ -134,7 +141,9 @@ def phi_factors(z, e, phi1, phi2, work):
     np.greater(t, _PHI1_SMALL, out=mask)
     np.divide(em1, z, out=phi1, where=mask)
 
-    np.multiply(z, _INV_24, out=phi2)
+    np.multiply(z, _INV_120, out=phi2)
+    np.add(phi2, _INV_24, out=phi2)
+    np.multiply(z, phi2, out=phi2)
     np.add(phi2, _INV_6, out=phi2)
     np.multiply(z, phi2, out=phi2)
     np.add(phi2, 0.5, out=phi2)

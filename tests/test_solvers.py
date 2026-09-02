@@ -136,6 +136,95 @@ def test_step_formula_has_one_source():
         )
 
 
+def _phi_reference(z_values, digits=60):
+    """``phi1(z)``, ``phi2(z)`` at `digits` decimal digits, rounded to double.
+
+        phi1(z) = (e^z - 1) / z        phi2(z) = (e^z - 1 - z) / z^2
+
+    ``e^z`` is summed as a Decimal Taylor series, which converges in ~50 terms
+    for ``|z| <= 1`` at this precision; the cancellation that costs the double
+    forms their last digits is harmless 60 digits up, so rounding the quotient
+    to double gives the correctly rounded value to within half an ulp -- three
+    orders below the errors this pins.
+    """
+    import decimal
+
+    def exp_dec(z):
+        ctx = decimal.getcontext()
+        term = total = decimal.Decimal(1)
+        eps = decimal.Decimal(10) ** (-(ctx.prec - 2))
+        n = 0
+        while abs(term) >= eps * abs(total):
+            n += 1
+            term = term * z / n
+            total += term
+        return total
+
+    decimal.getcontext().prec = digits + 10
+    phi1, phi2 = [], []
+    for value in np.asarray(z_values, dtype=np.float64).ravel():
+        z = decimal.Decimal(float(value))  # exact binary -> decimal
+        if z == 0:
+            phi1.append(1.0)
+            phi2.append(0.5)
+            continue
+        e = exp_dec(z)
+        phi1.append(float((e - 1) / z))
+        phi2.append(float((e - 1 - z) / (z * z)))
+    return np.array(phi1), np.array(phi2)
+
+
+def test_phi_factors_accuracy():
+    """The phi table holds its accuracy, and the C body keeps the same radii.
+
+    ``phi_factors`` is a piecewise formula: a Taylor series inside each radius,
+    the cancelling quotient outside. The worst relative error therefore sits
+    just off the radius -- the quotient's ``2u/|z|`` (phi1) and ``2u/z^2``
+    (phi2) against the series' truncation -- and moving a radius or a series
+    order moves it. Nothing else in the suite evaluates the table against a
+    reference, so a retune that lost accuracy would surface only as a golden
+    that moved for no stated reason.
+
+    Bounds are the measured worst over ``1e-8 <= |z| <= 1`` on this grid, both
+    signs; see :data:`MCEq.solvers.numerics._PHI1_SMALL` for where they come
+    from. The grid is fixed because the worst error is a spike a few points
+    wide: a coarser sampling reads a smaller number.
+
+    :data:`~MCEq.solvers.numerics.PHI_C_BODY` is generated from the same
+    constants and consumed only by the cupy kernels, so the coupling this also
+    has to pin is textual -- the radii and Horner coefficients reaching the C
+    body -- which no test that runs on the host can otherwise show.
+    """
+    from MCEq.solvers import numerics
+
+    decade = np.logspace(-8, 0, 8 * 400 + 1)
+    z = np.concatenate([-decade[::-1], [0.0], decade])
+    ref1, ref2 = _phi_reference(z)
+
+    e = np.empty_like(z)
+    phi1 = np.empty_like(z)
+    phi2 = np.empty_like(z)
+    numerics.phi_factors(z, e, phi1, phi2, numerics.phi_work(z.shape))
+
+    for name, got, ref, bound in (
+        ("phi1", phi1, ref1, 9.0e-13),
+        ("phi2", phi2, ref2, 6.0e-12),
+    ):
+        rel = np.abs(got - ref) / np.abs(ref)
+        worst = int(rel.argmax())
+        assert rel[worst] <= bound, (
+            f"{name}: worst relative error {rel[worst]:.4e} at z={z[worst]:+.5e} "
+            f"exceeds {bound:.1e}"
+        )
+
+    for name in ("_PHI1_SMALL", "_PHI2_SMALL", "_INV_6", "_INV_24", "_INV_120"):
+        literal = repr(getattr(numerics, name))
+        assert literal in numerics.PHI_C_BODY, (
+            f"PHI_C_BODY does not carry {name} = {literal}; the C/cupy body and "
+            f"the numpy lowering have drifted"
+        )
+
+
 @pytest.mark.parametrize("dtype", [np.float64, np.float32], ids=["fp64", "fp32"])
 @pytest.mark.parametrize(
     ("dim", "K", "per_lane"),
