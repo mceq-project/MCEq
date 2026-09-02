@@ -39,6 +39,14 @@
 #  define MCEQ_EXPORT
 #endif
 
+/* MSVC takes C99 `restrict` only under /std:c11 and CMAKE_C_STANDARD 99 emits
+ * no /std flag for cl; `__restrict` is always available there. clang-cl defines
+ * _MSC_VER but compiles C as gnu17 and takes the keyword. Must stay after the
+ * last #include so no system header is parsed with `restrict` as a macro. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define restrict __restrict
+#endif
+
 /* a  = eD x + hphi1 F            */
 #define ETD2_PREDICT(eD, x, hphi1, F) ((eD) * (x) + (hphi1) * (F))
 /* x+ = a + hphi2 (F_a - F)       */
