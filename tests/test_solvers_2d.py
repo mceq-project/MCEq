@@ -20,8 +20,9 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
-#: That database costs 329 MB per process, so keep the whole module on one
-#: ``--dist loadgroup`` worker rather than one copy per worker.
+#: Keep this module's tests on one ``--dist loadgroup`` worker; the database
+#: costs 329 MB per process. Five other modules open the same file and are not
+#: in the group, so this bounds one module rather than the whole suite.
 pytestmark = pytest.mark.xdist_group("fluka2d")
 
 #: Globals :func:`_solve` sets that ``conftest._restore_global_config_state``
@@ -108,17 +109,19 @@ def test_2d_accelerate_matches_numpy(base_config):
 def test_2d_mkl_matches_numpy(base_config):
     """MKL ETD2 on the 2D stitched matrix matches numpy ETD2 to round-off.
 
-    ``MklApplyOff`` accumulates the same CSR rows in the same order as
-    ``ScipyApplyOff``, so the two agree bit-exactly here (134 steps,
-    |state| ~ 2e11). 1e-12 absorbs a partial-sum reordering under another
-    MKL thread count while staying far tighter than the D18 per-species
-    bound, which at 2e-7 would make this test vacuous.
+    Measured bit-exact (134 steps, |state| ~ 2e11, max|delta| 0 at 1, 4 and 16
+    threads): ``MklApplyOff`` parallelises over rows and sums each row
+    serially, as ``ScipyApplyOff`` does, so the thread count does not reorder
+    the accumulation. The tolerance is margin for another MKL build rather
+    than a measured spread, and ``atol`` is what governs the 17 % of elements
+    below 1e-2. Both bounds stay far tighter than the D18 per-species bound,
+    which at 2e-7 would make this test vacuous.
     """
     sol_numpy = _solve("numpy_etd2", base_config)
     sol_mkl = _solve("mkl_etd2", base_config)
     assert sol_numpy.shape == sol_mkl.shape
     assert np.isfinite(sol_mkl).all()
-    np.testing.assert_allclose(sol_numpy, sol_mkl, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(sol_numpy, sol_mkl, rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
