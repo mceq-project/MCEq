@@ -1182,11 +1182,11 @@ def _uniform_path_theta60(mceq, h=5.0):
 @pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
-    """Equivalence test on real MCEq matrices, both CSR and BSR(6) paths.
+    """Equivalence test on real MCEq matrices: the MKL backend vs numpy.
 
-    CSR is bit-exact vs numpy (~1e-12); BSR reorders the SpMV partial
-    sums per-block and lands at ~1e-10 on these matrices — still
-    essentially round-off, just looser.
+    The MKL handles are CSR, the same arithmetic and the same summation
+    order as the scipy SpMV, so the two backends agree to round-off
+    (~1e-12) rather than to a looser storage-dependent bound.
     """
     from MCEq.solvers import (
         compile_operator,
@@ -1216,8 +1216,8 @@ def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
     assert int_off.nnz > 0 and dec_off.nnz > 0, (
         "real matrices should have non-empty off-diagonals"
     )
-    # The storage of the MKL handles is a backend-factory option, not an
-    # argument of the entry point: bind the backend here and run the driver
+    # The MKL handles come from the backend factory, not from the entry
+    # point: bind the backend here and run the driver on it
     be = mkl_backend(compile_operator(mceq.int_m, mceq.dec_m))
     try:
         sol_mkl, _ = etd2_driver(nsteps, dX, rho_inv, be, phi0.copy(), grid_idcs)
@@ -1226,8 +1226,7 @@ def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
 
     assert np.all(np.isfinite(sol_mkl)), "mkl_etd2 produced non-finite values"
     rel_l2 = np.linalg.norm(sol_mkl - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
-    # CSR is the same arithmetic as numpy → bit-exact bound. BSR groups
-    # the SpMV per block, which reorders partial sums and loosens to ~1e-10.
+    # CSR is the same arithmetic as numpy → bit-exact bound.
     tol = 1e-12
     assert rel_l2 < tol, (
         f"mkl_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < {tol})"
@@ -2108,7 +2107,7 @@ def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
             mceq_sib21.set_density_model(dm)
             mceq_sib21.set_zenith_azimuth(60.0)
             mceq_sib21.solve()
-            # rtol allows for BSR-vs-CSR partial-sum reordering between
+            # rtol allows for SpMV-vs-SpMM partial-sum reordering between
             # the single-RHS solve() and the carousel SpMM. Typically
             # ~1e-12 on the e± blowup rows this fixture keeps enabled,
             # but the reordering is BLAS-dependent: macOS-Intel CI hit

@@ -70,14 +70,16 @@ exhaustive_ignores =
     etd2_kernels
     spacc
 # Leaves with no MCEq imports: the 2D Hankel transform helpers and the version
-# string. `hankel` has no target layer in the plan; it lands wherever Phase 5
-# puts the 2D operator maths.
+# string. `hankel` is angular readout rather than operator assembly, so its
+# content moves into `driver/results.py` in Phase 6 (plan section 1).
     hankel
     version
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# misc.py:5 `from MCEq import config` inverts util -> config. Phase 1 removes it
-# (util/logging.py takes the debug level through stdlib logging).
+# misc.py:5 `from MCEq import config` inverts util -> config: `info()` reads the
+# debug settings and `_target_mass` reads `interaction_medium`. Phase 6 removes
+# it, when both take their group views (plan decision D11 revised: `misc.info`
+# stays, there is no `util/logging.py`).
     MCEq.misc -> MCEq.config
 
 # ------------------------------------------------------- C2/C3: environment
@@ -157,7 +159,8 @@ forbidden_modules =
     MCEq.config
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# misc.py:5 -- Phase 1
+# misc.py:5 -- Phase 6, when `info()` takes the `debug` group view and
+# `_target_mass` the `physics` one (see C1 above; D11 revised)
     MCEq.misc -> MCEq.config
 # solvers/backends/mkl.py:18 `config._load_mkl()` / `config.mkl` -- the MKL
 # runtime extraction (dlopen moves into this module, detection into
