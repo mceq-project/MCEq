@@ -77,8 +77,7 @@ def schedule_lpt(nsteps_per_pixel, K):
         slot_assignments[j].append(pid_i)
         heapq.heappush(heap, (L_j + int(ns[pid_i]), j))
 
-    T = max(int(ns[s].sum() if s else 0) for s in slot_assignments) if True else 0
-    # Recompute T cleanly from the heap residuals:
+    # The heap residuals are the per-slot totals, so the makespan is their max.
     T = max(L_j for L_j, _ in heap)
     return slot_assignments, T
 

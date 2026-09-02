@@ -20,9 +20,9 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.solvers import (
     compile_carousel_schedule,
+    compile_operator,
     schedule_lpt,
     secant_layout,
-    secant_split,
     solve_etd2,
 )
 
@@ -133,6 +133,18 @@ def _carousel_inputs(problem, K_pipe):
     )
 
 
+def test_schedule_lpt_assignment_and_makespan():
+    """Longest pixel first onto the currently shortest slot; the makespan is
+    the longest slot's summed length. ``K`` clamps to the pixel count."""
+    # [6, 3, 5, 2] longest-first is [0, 2, 1, 3]: slot 0 takes 6 then 2,
+    # slot 1 takes 5 then 3 -- both 8, the optimal makespan here.
+    assert schedule_lpt([6, 3, 5, 2], 2) == ([[0, 3], [2, 1]], 8)
+    # One slot per pixel: the makespan is the longest single pixel.
+    assert schedule_lpt([6, 3, 5, 2], 7) == ([[0], [2], [1], [3]], 6)
+    with pytest.raises(ValueError):
+        schedule_lpt([], 4)
+
+
 def test_secant_layout_and_split(secant_48mode_problem):
     """Stage 0: in the permuted state the coupled plane is the corner
     block, and the permuted operators act on it as the originals act on
@@ -147,13 +159,13 @@ def test_secant_layout_and_split(secant_48mode_problem):
     np.testing.assert_array_equal(corner, plane)
     assert np.array_equal(xp[lay.inv_perm], x)
 
-    d_int, d_dec, int_off, dec_off = secant_split(p["int_m"], p["dec_m"], ops)
+    d_int, d_dec, int_off, dec_off = compile_operator(p["int_m"], p["dec_m"], ops).split
     assert np.array_equal(d_int, p["int_m"].diagonal()[lay.perm])
     for m, off in ((p["int_m"], int_off), (p["dec_m"], dec_off)):
         ref = (m - sp.diags(m.diagonal())) @ x
         np.testing.assert_array_equal((off @ xp)[lay.inv_perm], ref)
     # (Caching of the compiled operator is MCEqRun._compiled_operator's
-    # job; compile_operator / secant_split are pure.)
+    # job; compile_operator is pure.)
 
     bad = dict(ops, P=np.array([0, 2, 3]))
     with pytest.raises(ValueError):
@@ -365,9 +377,9 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
 
 
 # ---------------------------------------------------------------------------
-# solve_batch wiring: the tri-state resolver for the batch entry points is a
-# pure function of (config, kernel_config, dtype); test it unbound with a
-# stub, like the single-axis tri-state in test_2d_defaults.py.
+# Solver wiring: ``MCEqRun._resolve_secant``, the one resolver every entry
+# point shares, is a pure function of (config, kernel_config, dtype); test it
+# unbound with a stub, like the (flag, is_2d) tri-state in test_2d_defaults.py.
 # ---------------------------------------------------------------------------
 def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
     from MCEq.core import MCEqRun
@@ -380,12 +392,12 @@ def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
     config.secant_theta_transport = flag
     config.kernel_config = kernel
     try:
-        return MCEqRun._resolve_batch_secant(stub, "test", dtype)
+        return MCEqRun._resolve_secant(stub, "test", dtype)
     finally:
         config.secant_theta_transport, config.kernel_config = saved
 
 
-def test_resolve_batch_secant_tri_state():
+def test_resolve_secant_tri_state():
     # Every kernel builds one constant operator set at fp64: the coupled
     # route is driver code plus the apply_off binding.
     for kernel in ("numpy_etd2", "mkl_etd2", "accelerate_etd2", "cuda_etd2"):

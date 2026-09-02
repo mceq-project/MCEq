@@ -426,7 +426,7 @@ def test_mkl_close_releases_bind_scratch():
     del sol
     be.close()
     assert _alive(refs) == 0
-    assert (ao._dec_buf, ao._x_pad, ao._out_pad) == (None,) * 3
+    assert ao._dec_buf is None
     assert ao._ptrs == {}
 
 

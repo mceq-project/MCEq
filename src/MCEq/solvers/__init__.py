@@ -65,13 +65,6 @@ __all__ = [
     "numpy_backend",
     "schedule_lpt",
     "secant_layout",
-    "secant_split",
     "solve_etd2",
     "split_diagonal",
 ]
-
-
-def secant_split(int_m, dec_m, sec_ops):
-    """``(d_int, d_dec, int_off, dec_off)`` of A, B in the secant layout
-    (see :func:`MCEq.operator_assembly.compile_operator`)."""
-    return compile_operator(int_m, dec_m, sec_ops).split

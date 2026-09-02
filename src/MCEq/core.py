@@ -20,7 +20,7 @@ else:
 
 
 # Module-level worker state for the optional process-pool path build
-# inside :meth:`MCEqRun._build_pixel_paths`. Workers fork from the parent
+# inside :meth:`MCEqRun._build_condition_paths`. Workers fork from the parent
 # and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
 # instance itself never has to be picklable. Each worker process gets
 # its own CoW copy of the density model, so per-worker
@@ -2124,63 +2124,6 @@ class MCEqRun:
                 self.set_zenith_azimuth(saved_zen, saved_az)
             self.integration_path = None
 
-    def _build_pixel_paths(
-        self,
-        zenith_grid,
-        azimuth_grid=None,
-        *,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-        path_workers=0,
-    ):
-        """Build per-pixel ETD2 integration paths for a (zenith × azimuth) grid.
-
-        Thin wrapper around :meth:`_build_condition_paths`: flattens the
-        grid into per-pixel conditions with azimuth as the inner axis.
-        Azimuth-independent atmospheres (``density_model.depends_on_azimuth``
-        False) automatically share one path per zenith through the
-        condition dedup.
-
-        Returns ``(paths, pixel_index, K)`` where ``paths`` is a list of
-        ``(nsteps, dX, rho_inv, grid_idcs)`` tuples (one per pixel) and
-        ``pixel_index`` is a ``(K, 2)`` int array mapping each column
-        back to its ``(i_zen, i_az)`` grid coordinates.
-        """
-        zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
-        if azimuth_grid is not None:
-            azimuth_grid = np.asarray(azimuth_grid, dtype=np.float64).reshape(-1)
-        n_zen = zenith_grid.size
-        n_az = azimuth_grid.size if azimuth_grid is not None else 1
-        K = n_zen * n_az
-        if K < 1:
-            raise ValueError("_build_pixel_paths: empty (zenith, azimuth) grid")
-
-        conditions = []
-        pixel_index = np.empty((K, 2), dtype=np.int32)
-        k = 0
-        for i_zen, zen in enumerate(zenith_grid):
-            for i_az in range(n_az):
-                cond = {"zenith_deg": float(zen)}
-                if azimuth_grid is not None:
-                    cond["azimuth_deg"] = float(azimuth_grid[i_az])
-                conditions.append(cond)
-                pixel_index[k] = (i_zen, i_az)
-                k += 1
-
-        paths = self._build_condition_paths(
-            conditions,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-            path_workers=path_workers,
-        )
-        return paths, pixel_index, K
-
     def _is_geomag_eligible_atmosphere(self):
         """True if the active atmosphere has a meaningful geographic location.
 
@@ -2454,8 +2397,6 @@ class MCEqRun:
             f"with {why} — proceeding with the paraxial 2D transport.",
         )
         return None
-
-    _resolve_batch_secant = _resolve_secant
 
     def _build_secant_ops(self):
         """The constant sec(theta) operator set for the current geometry

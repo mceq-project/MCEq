@@ -10,7 +10,7 @@ Everything that talks to ``libmkl`` belongs here. The library is loaded on
 the first handle, never at import.
 """
 
-from ctypes import POINTER, c_double, c_float
+from ctypes import POINTER, Structure, c_double, c_float, c_int
 
 import numpy as np
 import scipy.sparse as sp
@@ -20,25 +20,15 @@ from MCEq.solvers.backends.base import _state_dtype
 from MCEq.solvers.backends.host import HostBackend
 
 
-class _MklMatrixDescr:
+class _MklMatrixDescr(Structure):
     """Shared ``struct matrix_descr`` ctypes wrapper for MKL sparse calls.
 
-    Has to be a module-level class so the argtypes-registered version and
-    the per-wrapper instance reference the same Python type — ctypes does
-    strict isinstance() checking on Structure argtypes.
+    Module level so the argtypes-registered type and the per-wrapper
+    instance are the same Python type — ctypes does strict isinstance()
+    checking on Structure argtypes.
     """
 
-
-def _build_mkl_descr_class():
-    from ctypes import Structure, c_int
-
-    class _MatrixDescr(Structure):
-        _fields_ = [("type", c_int), ("mode", c_int), ("diag", c_int)]
-
-    return _MatrixDescr
-
-
-_MklMatrixDescr = _build_mkl_descr_class()
+    _fields_ = [("type", c_int), ("mode", c_int), ("diag", c_int)]
 
 
 _MKL_ARGTYPES_SET = False
@@ -164,7 +154,6 @@ class MklSparseMatrix:
         self._ct = fl_pr
 
         n_orig = csr.shape[0]
-        self.n_orig = n_orig
         self.n_cols = csr.shape[1]
 
         mkl = config.mkl
@@ -187,7 +176,6 @@ class MklSparseMatrix:
         self._indices = indices
         self._indptr = indptr
         self.nnz = csr.nnz
-        self.n_padded = n_orig
 
         handle = c_void_p()
         data_p = data.ctypes.data_as(POINTER(fl_pr))
@@ -343,10 +331,8 @@ class MklApplyOff:
     The driver's ``(dim, K)`` buffers are C-contiguous, so one row-major
     ``mkl_sparse_d_mm`` per stage covers all lanes (SpMV at K = 1). A
     scalar ``ri`` is fused into the dec SpMM's alpha; a ``(K,)`` lane row
-    scales a separate accumulator. BSR handles pad the operator to a
-    multiple of the block size; the operand is then staged through
-    padded copies. ``owns`` closes the handles with the binding.
-    ``dtype`` is the state precision and matches the handles'.
+    scales a separate accumulator. ``owns`` closes the handles with the
+    binding. ``dtype`` is the state precision and matches the handles'.
     """
 
     name = "mkl"
@@ -361,21 +347,16 @@ class MklApplyOff:
 
     def bind(self, dim, K, nsteps):
         self.K = K
-        self.n_padded = max([dim] + [m.n_padded for m in self.handles])
         self.dim = dim
         if K > 1:
             for m in self.handles:
                 m.set_mm_hint(K, expected_calls=2 * nsteps, layout=101)
         # Dropped first (the memo pins its arrays), so two generations of
         # staging never coexist.
-        self._dec_buf = self._x_pad = self._out_pad = None
+        self._dec_buf = None
         self._ptrs = {}
         self._ptr_type = POINTER(_MKL_TYPES[self.dtype][1])
-        self._dec_buf = np.empty((self.n_padded, K), dtype=self.dtype)
-        self._pad = self.n_padded != dim
-        if self._pad:
-            self._x_pad = np.zeros((self.n_padded, K), dtype=self.dtype)
-            self._out_pad = np.empty((self.n_padded, K), dtype=self.dtype)
+        self._dec_buf = np.empty((self.dim, K), dtype=self.dtype)
 
     def _ptr(self, arr):
         p = self._ptrs.get(id(arr))
@@ -393,10 +374,6 @@ class MklApplyOff:
             )
 
     def __call__(self, x, out, ri):
-        if self._pad:
-            self._x_pad[: self.dim] = x
-            x, out_full = self._x_pad, out
-            out = self._out_pad
         if self.int_off is None:
             out.fill(0.0)
         else:
@@ -408,11 +385,9 @@ class MklApplyOff:
                 self._spmm(self.dec_off, 1.0, x, 0.0, self._dec_buf)
                 np.multiply(self._dec_buf, ri, out=self._dec_buf)
                 np.add(out, self._dec_buf, out=out)
-        if self._pad:
-            np.copyto(out_full, out[: self.dim])
 
     def close(self):
-        self._dec_buf = self._x_pad = self._out_pad = None
+        self._dec_buf = None
         self._ptrs = {}
         if self.owns:
             for m in self.handles:
