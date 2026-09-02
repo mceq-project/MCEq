@@ -65,6 +65,10 @@ class SpaccApplyOff:
         self.dim = dim
         self.K = K
         self._ptr_type = POINTER(_SPACC_CTYPES[self.dtype])
+        # Dropped first (the tile pointers pin the buffers), so two
+        # generations of staging never coexist.
+        self._x_f = self._out_f = self._dec = self._tiles = None
+        self._dec_p = self._x_p = self._out_p = None
         self._ptrs = {}
         self._staged = K > 1
         if self._staged:
@@ -133,6 +137,9 @@ class SpaccApplyOff:
             np.copyto(out, self._out_f)
 
     def close(self):
+        self._x_f = self._out_f = self._dec = self._tiles = None
+        self._dec_p = self._x_p = self._out_p = None
+        self._ptrs = {}
         if self.owns:
             for m in self.handles:
                 m.close()

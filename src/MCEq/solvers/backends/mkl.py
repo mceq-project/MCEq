@@ -366,13 +366,16 @@ class MklApplyOff:
         if K > 1:
             for m in self.handles:
                 m.set_mm_hint(K, expected_calls=2 * nsteps, layout=101)
+        # Dropped first (the memo pins its arrays), so two generations of
+        # staging never coexist.
+        self._dec_buf = self._x_pad = self._out_pad = None
+        self._ptrs = {}
+        self._ptr_type = POINTER(_MKL_TYPES[self.dtype][1])
         self._dec_buf = np.empty((self.n_padded, K), dtype=self.dtype)
         self._pad = self.n_padded != dim
         if self._pad:
             self._x_pad = np.zeros((self.n_padded, K), dtype=self.dtype)
             self._out_pad = np.empty((self.n_padded, K), dtype=self.dtype)
-        self._ptrs = {}
-        self._ptr_type = POINTER(_MKL_TYPES[self.dtype][1])
 
     def _ptr(self, arr):
         p = self._ptrs.get(id(arr))
@@ -409,6 +412,8 @@ class MklApplyOff:
             np.copyto(out_full, out[: self.dim])
 
     def close(self):
+        self._dec_buf = self._x_pad = self._out_pad = None
+        self._ptrs = {}
         if self.owns:
             for m in self.handles:
                 m.close()

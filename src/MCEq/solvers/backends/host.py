@@ -95,12 +95,13 @@ class HostBackend:
         fp64 = self.dtype is np.float64
         self._dim, self._K, self._per_lane = dim, K, per_lane
         shape = (dim, K) if per_lane else (dim,)
+        # Dropped first, so two generations of scratch never coexist.
+        self._bufs = self._block = self._factors = self._work = None
+        self._ptr_cache = {}
         self._bufs = step_buffers(shape)
-        self._block = None
         stages = _fused_stages(self.dtype)
         self._predict, self._correct = stages or (None, None)
         self._ptr = _C_POINTER[self.dtype]
-        self._ptr_cache = {}
         # Scratch for the numpy lowering, allocated only when it is what runs.
         self._work = None if stages else np.empty((dim, K), dtype=self.dtype)
         # Landing buffers for the one cast of the fp64 factors, or None at
@@ -167,9 +168,11 @@ class HostBackend:
         or :meth:`state_buffers`, and handed back unchanged on every step.
         ``ndarray.ctypes.data_as`` costs ~2.5 us per array, which is more
         than the kernel itself at K = 1, so the pointers are built once. The
-        cache holds the array beside its pointer: that keeps the object
-        alive, so its ``id`` cannot be reused by another array, and the
-        identity check makes a stale entry impossible rather than unlikely.
+        key is ``id(arr)``, unique only among live objects, so the entry
+        carries its array and the identity check refuses a hit that a
+        recycled id would otherwise satisfy. The entry is not what keeps the
+        array alive: ``data_as`` pins it through the pointer's own ``._arr``,
+        which is why :meth:`close` has to drop the cache to release it.
         """
         cache = self._ptr_cache
         out = []
@@ -225,6 +228,12 @@ class HostBackend:
         pass
 
     def close(self):
+        """Release the step buffers, the lazily built coupling corner and the
+        pointer memo -- which is what holds the driver's state planes, since
+        ``data_as`` pins through the pointer. Assignment only, so it is safe
+        before a bind and idempotent after one."""
+        self._bufs = self._block = self._factors = None
+        self._work = self._coupling = None
         self._ptr_cache = {}
         self._apply_off.close()
 

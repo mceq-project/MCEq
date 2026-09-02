@@ -17,18 +17,33 @@ as a numerical difference instead of passing silently.
 
 The reference is the same driver on the scipy binding: identical operator,
 identical stage order, only ``apply_off`` differs.
+
+The backend lifecycle tests live here for the same reason: the fakes make
+``SpaccApplyOff`` bindable on every platform, so the release contract of
+``close()`` can be pinned for all three host bindings in one place, without
+a production database and without a platform skip.
 """
 
 from __future__ import annotations
 
 import ctypes
+import gc
+import tracemalloc
+import weakref
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
 
+from MCEq import config
 from MCEq.operator_assembly import compile_operator
-from MCEq.solvers import HostBackend, ScipyApplyOff, SpaccApplyOff, etd2_driver
+from MCEq.solvers import (
+    HostBackend,
+    ScipyApplyOff,
+    SpaccApplyOff,
+    etd2_driver,
+    mkl_backend,
+)
 
 
 class FakeSpaccMatrix:
@@ -232,3 +247,207 @@ def test_spacc_apply_off_scalar_ri_folds_into_alpha():
     p, (int_fake, dec_fake) = _one_step_calls(4)
     assert {c[1] for c in int_fake.calls} == {1.0}
     assert {c[1] for c in dec_fake.calls} == {float(p["rho_inv"][0])}
+
+
+# --- backend lifecycle -----------------------------------------------------
+#
+# ``close()`` is the only release point the solvers have: the driver's
+# callers run it in a ``finally`` and ``MCEqRun`` runs it when its backend
+# cache rotates. The bind-time scratch is the bulk of what a solve allocates
+# -- ``step_buffers`` alone is six fp64 planes and a boolean one of the state
+# shape -- so a ``close()`` that leaves it reachable pins the working set for
+# as long as the backend object lives. Reachability is asserted with
+# weakrefs, which is exact and platform-independent, not by measuring memory.
+
+
+def _bound(p, make_apply_off, per_lane=False, dtype=np.float64, sec_ops=None):
+    """A backend still bound after the driver ran over ``p``, and its
+    solution: the state ``close()`` has to release."""
+    op = compile_operator(p["int_m"], p["dec_m"], sec_ops)
+    be = HostBackend(op, make_apply_off(op, dtype), dtype)
+    dX, rho_inv = _path(p, per_lane)
+    sol, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
+    return be, sol
+
+
+def _coupled_problem(n_k=36, N=6, K=4, nsteps=6, seed=7):
+    """A block-diagonal problem in the secant layout of ``_secant_ops``.
+
+    Reaches the coupled corner, so ``_block`` is allocated, and runs per-lane
+    paths, so the ``step_buffers`` planes are ``(dim, K)`` rather than
+    ``(dim,)``. ``n_k`` is the smallest that operator set allows -- its
+    ``T_P`` carries an off-``P`` column at mode 35 -- and ``N`` the smallest
+    its ``low_e_idx`` allows.
+    """
+    # The operator set is the one the batched secant closure tests use; a
+    # sibling test module, hence the import at the use site.
+    from test_secant_multirhs import _secant_ops
+
+    rng = np.random.default_rng(seed)
+
+    def blocks(spread, loss):
+        """A per-mode upper-triangular production block over a stable loss
+        diagonal, block-diagonal over the mode axis."""
+        return sp.block_diag(
+            [
+                sp.csr_matrix(
+                    np.triu(rng.uniform(0.0, spread, (N, N)), 1)
+                    - np.diag(rng.uniform(*loss, N))
+                )
+                for _ in range(n_k)
+            ],
+            format="csr",
+        )
+
+    dim = n_k * N
+    return dict(
+        nsteps=nsteps,
+        dim=dim,
+        sec_ops=_secant_ops(n_k),
+        dX=np.full(nsteps, 0.1),
+        rho_inv=np.linspace(1.1, 1.4, nsteps),
+        int_m=blocks(0.012, (0.05, 0.13)),
+        dec_m=blocks(0.006, (0.01, 0.035)),
+        phi0=rng.uniform(0.1, 1.2, size=(dim, K)),
+    )
+
+
+def _host_scratch(be):
+    """Every array ``HostBackend.bind`` allocated, flattened."""
+    bufs = be._bufs
+    return (
+        [bufs[k] for k in ("hD", "eD", "phi1", "phi2")]
+        + list(bufs["work"])
+        + list(be._block or ())
+        + list(be._factors or ())
+        + ([] if be._work is None else [be._work])
+    )
+
+
+def _alive(refs):
+    """How many of ``refs`` still have a target, after a collection."""
+    gc.collect()
+    return sum(r() is not None for r in refs)
+
+
+def test_host_close_releases_bind_scratch():
+    """``close()`` releases every buffer ``bind()`` allocated, not only the
+    pointer memo."""
+    p = _problem(3)
+    be, sol = _bound(p, _scipy_binding)
+    refs = [weakref.ref(a) for a in _host_scratch(be)]
+    # Four factor planes and the three phi_work arrays, plus the numpy
+    # lowering's scratch where the C extension is not built.
+    assert len(refs) == 7 + (be._work is not None)
+    del sol
+    be.close()
+    assert _alive(refs) == 0
+    assert (be._bufs, be._block, be._factors, be._work, be._coupling) == (None,) * 5
+    assert be._ptr_cache == {}
+
+
+def test_host_rebind_peaks_at_one_generation():
+    """A repeat ``bind()`` drops the previous scratch before allocating the
+    next, so the peak is one generation of step buffers and not two.
+
+    The buffers are reachable until the assignment either way, so only the
+    allocation peak distinguishes the two orders -- hence tracemalloc rather
+    than a weakref.
+    """
+    dim, K = 40000, 4
+    m = sp.diags(-np.linspace(0.05, 0.1, dim), format="csr")
+    op = compile_operator(m, m, None)
+    be = HostBackend(op, _scipy_binding(op))
+    # 6 fp64 planes and a bool, per element of dim x K.
+    generation = 49 * dim * K
+    tracemalloc.start()
+    try:
+        be.bind(dim, K, True, 3)
+        be.bind(dim, K, True, 3)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+        be.close()
+    assert peak < 1.5 * generation, f"{peak / generation:.2f} generations live at once"
+
+
+def test_host_close_is_idempotent_and_rebinds():
+    """``close()`` is assignment only: it runs on a backend that was never
+    bound and on one already closed, and a bind after it solves as before."""
+    p = _problem(3)
+    op = compile_operator(p["int_m"], p["dec_m"], None)
+    HostBackend(op, _scipy_binding(op)).close()
+
+    be, sol = _bound(p, _scipy_binding)
+    sol = np.array(sol)
+    be.close()
+    be.close()
+    dX, rho_inv = _path(p, False)
+    try:
+        again, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
+    finally:
+        be.close()
+    np.testing.assert_array_equal(again, sol)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32], ids=["fp64", "fp32"])
+def test_host_close_releases_coupled_scratch(dtype):
+    """The coupled per-lane route allocates the most: ``(dim, K)`` planes,
+    the coupled-block factors and phi scratch, and at fp32 the landing
+    buffers of the factor cast."""
+    p = _coupled_problem()
+    be, sol = _bound(p, _scipy_binding, True, dtype, p["sec_ops"])
+    assert be._bufs["eD"].shape == (p["dim"], p["phi0"].shape[1])
+    assert be._block is not None and be._coupling is not None
+    assert (be._factors is None) is (dtype is np.float64)
+    refs = [weakref.ref(a) for a in _host_scratch(be)]
+    assert np.all(np.isfinite(sol))
+    del sol
+    be.close()
+    assert _alive(refs) == 0
+    assert (be._bufs, be._block, be._factors, be._work, be._coupling) == (None,) * 5
+
+
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+def test_mkl_close_releases_bind_scratch():
+    """The MKL binding's scratch and pointer memo go with ``close()`` too.
+
+    The memo holds the driver's state buffers as well, so leaving it
+    populated pins four ``(dim, K)`` planes the backend does not own.
+    """
+    p = _problem(3)
+    op = compile_operator(p["int_m"], p["dec_m"], None)
+    be = mkl_backend(op)
+    dX, rho_inv = _path(p, False)
+    sol, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
+    ao = be._apply_off
+    assert len(ao._ptrs) == 4
+    refs = [weakref.ref(ao._dec_buf)]
+    del sol
+    be.close()
+    assert _alive(refs) == 0
+    assert (ao._dec_buf, ao._x_pad, ao._out_pad) == (None,) * 3
+    assert ao._ptrs == {}
+
+
+@pytest.mark.parametrize("K", [1, 3], ids=["gemv", "staged"])
+def test_spacc_close_releases_bind_scratch(K):
+    """Both Accelerate paths release their staging buffers on ``close()`` --
+    the Fortran-ordered trio and its tile pointers above K = 1, the single
+    dec buffer and its pointer at it."""
+    p = _problem(K)
+    op = compile_operator(p["int_m"], p["dec_m"], None)
+    ao = SpaccApplyOff(*_fakes(op))
+    be = HostBackend(op, ao)
+    dX, rho_inv = _path(p, False)
+    sol, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
+    assert ao._staged is (K > 1)
+    refs = [
+        weakref.ref(a) for a in [ao._dec] + ([ao._x_f, ao._out_f] if ao._staged else [])
+    ]
+    del sol
+    be.close()
+    assert _alive(refs) == 0
+    assert (ao._x_f, ao._out_f, ao._dec, ao._tiles) == (None,) * 4
+    assert (ao._dec_p, ao._x_p, ao._out_p) == (None,) * 3
+    assert ao._ptrs == {}
