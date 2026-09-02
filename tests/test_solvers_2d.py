@@ -1,17 +1,17 @@
 """Cross-backend equivalence on the 2D stitched matrix.
 
-Asserts that all available ETD2RK backends produce identical solutions on
-the stitched (n_k * dim_states) operator built from a 2D database. v2's
-existing ``test_solve_etd2_accelerate_matches_numpy_etd2_real`` covers the
-1D path; the 2D matrix is just a bigger CSR — the driver is
-dimension-agnostic, so equality should hold to round-off.
+Asserts that every ETD2RK backend the host provides produces the same
+solution on the stitched (n_k * dim_states) operator built from a 2D
+database. v2's existing ``test_solve_etd2_accelerate_matches_numpy_etd2_real``
+covers the 1D path; the 2D matrix is just a bigger CSR — the driver is
+dimension-agnostic, so equality holds to round-off.
 
-On macOS only the numpy ↔ Accelerate equivalence runs; the MKL and CUDA
-tests skip with a clear reason and will execute as-is on hardware where
-``sparse_dot_mkl`` / ``cupy`` are available.
+Each backend gates on the capability probe the rest of the suite uses:
+``config.has_accelerate`` (macOS), ``config.has_mkl`` (``libmkl_rt`` under the
+prefix) and ``config.has_cuda`` (an importable cupy *and* a visible device).
+Every test needs the 329 MB FLUKA 2D database and skips without it.
 """
 
-import importlib
 import os
 
 import numpy as np
@@ -20,13 +20,32 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
+#: That database costs 329 MB per process, so keep the whole module on one
+#: ``--dist loadgroup`` worker rather than one copy per worker.
+pytestmark = pytest.mark.xdist_group("fluka2d")
 
-def _has_backend(modname):
+#: Globals :func:`_solve` sets that ``conftest._restore_global_config_state``
+#: does not snapshot. This module runs against a different database from the
+#: rest of the suite, so leaking its grid bounds would change later solves.
+_UNSNAPSHOTTED = (
+    "e_min",
+    "e_max",
+    "muon_helicity_dependence",
+    "muon_multiple_scattering",
+    "secant_theta_transport",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_2d_config():
+    """Keep this module's grid bounds and muon/secant switches from leaking
+    into later tests, which run against a different database."""
+    saved = {name: getattr(config, name) for name in _UNSNAPSHOTTED}
     try:
-        importlib.import_module(modname)
-        return True
-    except Exception:
-        return False
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(config, name, value)
 
 
 @pytest.fixture(scope="module")
@@ -76,32 +95,37 @@ def _solve(kernel, base):
     return mceq._solution
 
 
+@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_2d_accelerate_matches_numpy(base_config):
     """Accelerate ETD2 on the 2D stitched matrix matches numpy ETD2 to round-off."""
-    if not _has_backend("MCEq.spacc"):
-        pytest.skip("Apple Accelerate (spacc) not available")
     sol_numpy = _solve("numpy_etd2", base_config)
     sol_acc = _solve("accelerate_etd2", base_config)
     assert sol_numpy.shape == sol_acc.shape
     np.testing.assert_allclose(sol_numpy, sol_acc, rtol=1e-10, atol=1e-12)
 
 
-@pytest.mark.skipif(
-    not _has_backend("sparse_dot_mkl"),
-    reason="MKL backend (sparse_dot_mkl) not available",
-)
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 def test_2d_mkl_matches_numpy(base_config):
+    """MKL ETD2 on the 2D stitched matrix matches numpy ETD2 to round-off.
+
+    ``MklApplyOff`` accumulates the same CSR rows in the same order as
+    ``ScipyApplyOff``, so the two agree bit-exactly here (134 steps,
+    |state| ~ 2e11). 1e-12 absorbs a partial-sum reordering under another
+    MKL thread count while staying far tighter than the D18 per-species
+    bound, which at 2e-7 would make this test vacuous.
+    """
     sol_numpy = _solve("numpy_etd2", base_config)
     sol_mkl = _solve("mkl_etd2", base_config)
-    np.testing.assert_allclose(sol_numpy, sol_mkl, rtol=1e-10, atol=1e-12)
+    assert sol_numpy.shape == sol_mkl.shape
+    assert np.isfinite(sol_mkl).all()
+    np.testing.assert_allclose(sol_numpy, sol_mkl, rtol=1e-12, atol=1e-14)
 
 
-@pytest.mark.skipif(
-    not _has_backend("cupy"),
-    reason="CUDA backend (cupy) not available",
-)
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 def test_2d_cuda_matches_numpy(base_config):
+    """CUDA ETD2 on the 2D stitched matrix matches numpy ETD2 to round-off."""
     sol_numpy = _solve("numpy_etd2", base_config)
     sol_cuda = _solve("cuda_etd2", base_config)
+    assert np.isfinite(sol_cuda).all()
     # cuSPARSE may reorder partial sums vs scipy CSR; widen tolerance.
     np.testing.assert_allclose(sol_numpy, sol_cuda, rtol=1e-9, atol=1e-10)
