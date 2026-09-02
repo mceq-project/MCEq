@@ -1,0 +1,143 @@
+name: Notebooks
+
+# Executes the example notebooks under docs/examples/ and examples/ with
+# `pytest --nbmake`, so a notebook cannot silently rot against the library API.
+#
+# Only Plot_density_depth_relations.ipynb runs today; the other ten are
+# `--ignore`d, one line each, for the reasons tabulated above the pytest step.
+# The list shrinks as the notebooks are rewritten -- deleting an `--ignore`
+# line is the whole change.
+#
+# A separate workflow rather than a job in test.yaml: the trigger differs. A
+# notebook edit must not start the 40-job test matrix, and test.yaml's path
+# filter would have to grow docs/examples/** for a job here to fire at all.
+# One ubuntu job on one Python is enough -- the notebooks exercise no
+# platform-specific code, and the wheel matrix already covers the build.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - docs/examples/**
+      - examples/**
+      - src/**
+      - mceq_config/**
+      - pyproject.toml
+      - CMakeLists.txt
+      - .github/workflows/notebooks.yaml
+  push:
+    branches:
+      - main
+
+concurrency:
+  # head_ref is empty for push events, so without the run_id fallback every
+  # push to main cancels the previous run.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  nbmake:
+    name: nbmake (ubuntu-latest, 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_SYSTEM_PYTHON: "true"
+      # The notebooks call pyplot without selecting a backend.
+      MPLBACKEND: "Agg"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: notebooks-ubuntu-latest-3.12
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Editable so the notebooks import the checkout, and a real build because
+      # density_profiles pulls in the compiled corsikaatm and nrlmsise00
+      # extensions. No mkl: the executing notebook runs no solver.
+      - name: Install requirements
+        run: uv pip install -e . --group notebooks
+
+      # Same asset, path and cache key as _run_tests.yml, on purpose: the two
+      # jobs then share one cache entry instead of each downloading the file.
+      - name: Cache test database
+        id: cache-db
+        uses: actions/cache@v6
+        with:
+          path: src/MCEq/data/mceq_db_v140reduced_compact.h5
+          key: mceq-test-db-v1-${{ runner.os }}
+
+      - name: Download test database if not cached
+        if: steps.cache-db.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
+
+      # `--ignore` prunes a path before collection, so nbmake never opens the
+      # ignored notebooks and a corrupted one would pass unnoticed. This step
+      # covers all eleven -- it is the only thing the ten ignored ones get.
+      - name: Validate notebook JSON
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          import nbformat
+
+          paths = sorted(pathlib.Path("docs/examples").glob("*.ipynb"))
+          paths += sorted(pathlib.Path("examples").glob("*.ipynb"))
+          if not paths:
+              sys.exit("no notebooks found -- did a directory move?")
+          bad = 0
+          for path in paths:
+              try:
+                  nbformat.validate(nbformat.read(path, as_version=4))
+              except Exception as exc:
+                  bad += 1
+                  print(f"INVALID {path}: {type(exc).__name__}: {exc}")
+          print(f"{len(paths) - bad}/{len(paths)} notebooks valid")
+          sys.exit(bad != 0)
+          PY
+
+      # `--nbmake-kernel=python3` overrides each notebook's own kernelspec.
+      # Seven notebooks declare `python2` and one declares `mceq_dev_396`; no
+      # runner has either, and the flag is what lets an `--ignore` line be
+      # deleted without editing the notebook's metadata. It is inert for the
+      # one notebook running today, which already declares `python3`.
+      #
+      # A notebook that wants the database cached above has to set
+      # `config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"` itself. The
+      # default is the 292 MB mceq_db_lext_dpm193_v140.h5, MCEq downloads it on
+      # first use, and there is no environment override -- so a rewrite that
+      # forgets this line costs CI a 292 MB fetch.
+      #
+      # Why each notebook is ignored (model names after
+      # misc.normalize_hadronic_model_name, which strips "-" and "." and
+      # upper-cases; the CI database carries only QGSJETII04 and SIBYLL21):
+      #
+      #   Basic_flux                            SIBYLL23C, in no shipped DB
+      #   Compare_primary_fluxes                SIBYLL23C, in no shipped DB
+      #   Dependence_of_spectrum_on_atmosphere  SIBYLL23C, in no shipped DB
+      #   Full_sky_carousel                     SIBYLL23D, not in the CI DB
+      #   KPi_demonstration                     DPMJETIII191, in no shipped DB
+      #   Muon spectra                          Python 2 `print`; 6 of its 8
+      #                                         models are in no shipped DB
+      #   Partial_hadron_contribution           imports CRFluxModels
+      #                                         (pre-crflux); also SIBYLL23C
+      #   Simple_zenith_averaged_neutrinos      SIBYLL23C, in no shipped DB
+      #   Zenith_distribution_IceCube           SIBYLL23C, in no shipped DB
+      #   Angular_shower_development            needs the 2D FLUKA DB
+      - name: Execute notebooks
+        run: |
+          pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
+            --ignore="docs/examples/Basic_flux.ipynb" \
+            --ignore="docs/examples/Compare_primary_fluxes.ipynb" \
+            --ignore="docs/examples/Dependence_of_spectrum_on_atmosphere.ipynb" \
+            --ignore="docs/examples/Full_sky_carousel.ipynb" \
+            --ignore="docs/examples/KPi_demonstration.ipynb" \
+            --ignore="docs/examples/Muon spectra.ipynb" \
+            --ignore="docs/examples/Partial_hadron_contribution.ipynb" \
+            --ignore="docs/examples/Simple_zenith_averaged_neutrinos.ipynb" \
+            --ignore="docs/examples/Zenith_distribution_IceCube.ipynb" \
+            --ignore="examples/Angular_shower_development.ipynb"

@@ -50,6 +50,18 @@ lint = [
     # acyclic_siblings.
     "import-linter>=2.14",
 ]
+notebooks = [
+    # Executes docs/examples/ and examples/ as a pytest gate; see
+    # .github/workflows/notebooks.yaml. nbmake already requires pytest and
+    # ipykernel, but the gate forces `--nbmake-kernel=python3`, so the kernel
+    # provider is a direct requirement of the invocation, not an accident of
+    # nbmake's dependency tree.
+    "nbmake>=1.5",
+    "ipykernel",
+    # Every example notebook imports pyplot, and matplotlib is not a runtime
+    # dependency of MCEq.
+    "matplotlib>=3.10",
+]
 docs = [
     # Core
     "sphinx>=8",
