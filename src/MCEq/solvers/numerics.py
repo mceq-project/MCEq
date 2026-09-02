@@ -51,9 +51,9 @@ import numpy as np
 #:
 #: Two improvements are left: phi1's radius optimum on that grid is 2.0e-4
 #: (4.9e-13, at identical cost), and forming the numerator with ``expm1``
-#: makes phi1 correctly rounded (2.2e-16) and phi2 8.0e-14 — but needs a
-#: second transcendental over the whole state where ``e^z`` is already being
-#: computed for ``eD``.
+#: gives phi1 9.1e-14 and phi2 4.4e-12 at these radii, or 2.2e-16 and 8.0e-14
+#: with the radii retuned for it too (3.5e-6, 2.2e-3) — but needs a second
+#: transcendental over the whole state where ``e^z`` is already there for ``eD``.
 _PHI1_SMALL = 1.3e-4
 _PHI2_SMALL = 6.31e-3
 _INV_6 = 1.0 / 6.0

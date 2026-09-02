@@ -19,7 +19,9 @@ Comparison modes per key, resolved by :func:`tolerance_for`:
               hides a minor species behind the muon rows and an element-wise
               ratio measures the ~1e-16 components instead of the solver. The
               entry carries `floor`, `guard` and `trim_top_bins` alongside
-              `rtol`, plus a `fallback_rtol` for the keys the guard empties.
+              `rtol`, plus a `fallback_rtol` that bounds everything the maximum
+              does not cover: the species the guard leaves unscored, contained
+              per lane by relative L2, and the whole array of a key it empties.
 
 The default is ``bitwise``; keys are moved to another mode only by an explicit
 entry in the section's `__provenance__["tolerances"]` table, so a phase that
@@ -336,7 +338,9 @@ def tolerance_for(key: str, provenance: dict):
     return entry.get("mode", "rel_l2"), float(entry.get("rtol", HOST_RTOL))
 
 
-def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
+def compare_key(
+    key, expected, actual, mode, rtol, *, layout=None, entry=None, rtol_floor=0.0
+):
     """Return `None` when `actual` matches `expected`, else an explanation.
 
     Shape and dtype-kind are checked before any numeric work so a structural
@@ -346,6 +350,14 @@ def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
     table to slice the state with, which `compare_section` resolves from the
     golden, and the tolerance entry's `floor`, `guard`, `trim_top_bins` and
     `fallback_rtol` fields.
+
+    `rtol_floor` is also read only by ``per_species_max``, and only by the two
+    relative-L2 sub-bounds inside it -- the containment of the species the guard
+    leaves unscored, and the whole-array fallback for a key it empties. Those
+    are norms, so a backend that does not fix its reduction order moves them;
+    the per-species maximum itself is the backend-independent statement and
+    stays at its stored `rtol`. `compare_section` handles the floor for every
+    other mode before calling.
     """
     exp = np.asarray(expected)
     act = np.asarray(actual)
@@ -369,6 +381,7 @@ def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
                 f"extra.species_layout)"
             )
         fields = entry or {}
+        fallback = max(float(fields.get("fallback_rtol", rtol)), rtol_floor)
         try:
             return _flux_metric.compare(
                 key,
@@ -379,6 +392,7 @@ def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
                 floor=float(fields.get("floor", _flux_metric.FLOOR)),
                 guard=fields.get("guard", _flux_metric.DEFAULT_GUARD),
                 trim=int(fields.get("trim_top_bins", _flux_metric.TRIM_TOP_BINS)),
+                fallback_rtol=fallback,
             )
         except _flux_metric.Unscorable:
             # The guard admits no species of this key, so the per-species
@@ -387,7 +401,7 @@ def compare_key(key, expected, actual, mode, rtol, *, layout=None, entry=None):
             # let the key pass unchecked or demand bitwise equality of a
             # reduction whose order the backend chooses.
             mode = "rel_l2"
-            rtol = float(fields.get("fallback_rtol", rtol))
+            rtol = fallback
 
     if mode == "bitwise":
         if exp.dtype != act.dtype:
@@ -447,7 +461,9 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
     bound is the backend-independent one (a per-species maximum on the bins
     that carry flux does not depend on a reduction order the way an
     element-wise ratio does), so CUDA is judged on the flux keys by the
-    per-species bound and on the rest by `rtol_floor`.
+    per-species bound and on the rest by `rtol_floor`. The floor is still
+    handed to `compare_key`, which applies it to the relative-L2 sub-bounds
+    inside that mode -- those are norms and do move with the reduction order.
     """
     golden, prov = load_section(section)
     problems = []
@@ -477,6 +493,7 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
                 else None
             ),
             entry=entry,
+            rtol_floor=rtol_floor,
         )
         if problem:
             problems.append(problem)

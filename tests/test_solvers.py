@@ -136,6 +136,63 @@ def test_step_formula_has_one_source():
         )
 
 
+def _c_ternary(expression):
+    """``cond ? a : b`` -> ``np.where(cond, a, b)``, outermost first.
+
+    Depth-tracked so a ternary inside parentheses is not mistaken for the
+    top-level one; text with no ``?`` comes back unchanged.
+    """
+    depth = 0
+    question = colon = -1
+    for index, char in enumerate(expression):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and char == "?" and question < 0:
+            question = index
+        elif depth == 0 and char == ":" and question >= 0 and colon < 0:
+            colon = index
+    if question < 0 or colon < 0:
+        return expression
+    return "np.where({}, {}, {})".format(
+        _c_ternary(expression[:question]),
+        _c_ternary(expression[question + 1 : colon]),
+        _c_ternary(expression[colon + 1 :]),
+    )
+
+
+def _eval_c_body(body, z):
+    """``(p1, p2)`` from a C phi body, evaluated over `z` as numpy.
+
+    The body declares ``double`` scalars and branches with the C conditional
+    operator, so each statement becomes an assignment and each ``?:`` an
+    ``np.where``; the C math names are bound to their numpy counterparts, and
+    one the table does not use raises rather than pass silently. Both arms of a
+    ``where`` are evaluated, hence the ``errstate``: the quotient arm divides by
+    zero at ``z = 0``, where the series arm is the one selected.
+    """
+    namespace = {
+        "np": np,
+        "z": np.asarray(z, dtype=np.float64),
+        "exp": np.exp,
+        "expm1": np.expm1,
+        "fabs": np.abs,
+        "sqrt": np.sqrt,
+        "log": np.log,
+    }
+    lines = []
+    for statement in body.replace("const double", "").split(";"):
+        statement = " ".join(statement.split())
+        if not statement:
+            continue
+        name, expression = statement.split("=", 1)
+        lines.append(f"{name.strip()} = {_c_ternary(expression.strip())}")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        exec("\n".join(lines), namespace)  # noqa: S102
+    return namespace["p1"], namespace["p2"]
+
+
 def _phi_reference(z_values, digits=60):
     """``phi1(z)``, ``phi2(z)`` at `digits` decimal digits, rounded to double.
 
@@ -192,8 +249,14 @@ def test_phi_factors_accuracy():
 
     :data:`~MCEq.solvers.numerics.PHI_C_BODY` is generated from the same
     constants and consumed only by the cupy kernels, so the coupling this also
-    has to pin is textual -- the radii and Horner coefficients reaching the C
-    body -- which no test that runs on the host can otherwise show.
+    has to pin is what the *device* computes, which no test that runs on the
+    host can otherwise show. Grepping the body for the constants cannot show
+    it: the body is an f-string built from those same names in that same
+    module, so no radius, coefficient or branch can be edited in a way the grep
+    notices. So the body is evaluated instead, on the accuracy grid plus the
+    four radius points -- where the strict ``>`` decides the branch -- and
+    required to agree with :func:`~MCEq.solvers.numerics.phi_factors` to the
+    bit. It does today, on all 6407 points.
     """
     from MCEq.solvers import numerics
 
@@ -217,11 +280,29 @@ def test_phi_factors_accuracy():
             f"exceeds {bound:.1e}"
         )
 
-    for name in ("_PHI1_SMALL", "_PHI2_SMALL", "_INV_6", "_INV_24", "_INV_120"):
-        literal = repr(getattr(numerics, name))
-        assert literal in numerics.PHI_C_BODY, (
-            f"PHI_C_BODY does not carry {name} = {literal}; the C/cupy body and "
-            f"the numpy lowering have drifted"
+    probe = np.concatenate(
+        [
+            z,
+            [
+                numerics._PHI1_SMALL,
+                -numerics._PHI1_SMALL,
+                numerics._PHI2_SMALL,
+                -numerics._PHI2_SMALL,
+            ],
+        ]
+    )
+    host = [np.empty_like(probe) for _ in range(3)]
+    numerics.phi_factors(probe, *host, numerics.phi_work(probe.shape))
+    c_p1, c_p2 = _eval_c_body(numerics.PHI_C_BODY, probe)
+
+    for name, got, want in (("p1", c_p1, host[1]), ("p2", c_p2, host[2])):
+        differ = np.flatnonzero((got != want) & ~(np.isnan(got) & np.isnan(want)))
+        assert differ.size == 0, (
+            f"PHI_C_BODY's {name} differs from phi_factors on "
+            f"{differ.size} of {probe.size} points, first at "
+            f"z={probe[differ[0]]:+.5e}: C {got[differ[0]]!r} vs numpy "
+            f"{want[differ[0]]!r}; the C/cupy body and the numpy lowering "
+            f"have drifted"
         )
 
 

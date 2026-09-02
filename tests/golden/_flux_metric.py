@@ -54,6 +54,25 @@ spread. The guard name, the floor and the trim travel in the section's
 `__provenance__` tolerance entry, so a golden says which species it gated and
 how.
 
+**Containment.** The guard decides what the *flux* bound is applied to, and a
+maximum over the species it admits says nothing about the ones it rejects. So
+every species and lane the maximum does not cover -- rejected by the guard, or
+admitted with no bin above the floor to divide by -- is bounded separately, per
+lane, by relative L2 at the entry's `fallback_rtol`; see :func:`lane_containment`.
+That is a containment statement about references the flux metric cannot
+condition on (a cancellation residual, an identically zero species), not the
+flux error estimate D18 rules out: it is neither an element-wise ratio nor the
+number a solver change is judged on. Its granularity is the species/lane, not
+the bin, because the trim's whole point is that an untrustworthy reference bin
+of an *admitted* species is not compared at all.
+
+**Non-finite actuals** are a mismatch, not a bin to skip: the score reduces with
+`nanargmax`, which would step over a NaN in a scored bin and read the key as
+passing, and raise on a lane that is NaN throughout. Both sibling modes reject
+a differing non-finite pattern outright and so does this one; the 1D solve is
+known to diverge to NaN with `e+-` enabled at high zenith, with a
+backend-dependent mask.
+
 Residual, worth knowing before the bound is ever tightened: the artefact leaks
 one bin past the trim. Every worst guarded 2D row sits at 44.67 or 35.48 GeV --
 the top retained bins -- and restricting the scan to E <= 30 GeV drops the
@@ -157,14 +176,15 @@ class Unscorable(Exception):
 
     The per-species maximum is then not defined for that key and the caller has
     to fall back to a bound that is: `compare_key` uses relative L2 at the
-    entry's `fallback_rtol`.
+    entry's `fallback_rtol` over the whole array.
 
     Under the edge-trimmed guard no key of either committed section reaches
     here -- untrimmed, 24 of the 28 2D spectrum keys did -- so the fallback is
     now a guard against a key that carries no flux at all rather than a routine
-    path. It is still reachable per key, not per lane: the multi-RHS zero
-    right-hand side is one identically-zero *lane* of `state/multirhs_mode0`,
-    and its seven siblings keep the key scorable.
+    path. It is reachable per key, not per lane: the multi-RHS zero right-hand
+    side is one identically-zero *lane* of `state/multirhs_mode0`, and its seven
+    siblings keep the key scorable. Those siblings are what
+    :func:`lane_containment` bounds instead, at the same `fallback_rtol`.
     """
 
 
@@ -305,6 +325,15 @@ class SpeciesScore(NamedTuple):
     n_trimmed: int = 0
 
 
+class NonFinite(NamedTuple):
+    """A bin where the actual and the reference differ in finiteness."""
+
+    n: int  # bins of this species/lane that differ
+    at: float  # grid coordinate of the first
+    actual: float
+    reference: float
+
+
 class Entry(NamedTuple):
     """One species of one lane of one key."""
 
@@ -313,13 +342,60 @@ class Entry(NamedTuple):
     score: SpeciesScore
     guarded: bool  # the guard admits it
     on_e_grid: bool = True  # False for a sky map, whose axis is the pixel
+    nonfinite: NonFinite | None = None  # set when the finiteness patterns differ
+
+
+def at_grid(value: float, on_e_grid: bool) -> str:
+    """A grid coordinate as an energy or as a bin index."""
+    return f"E = {value:.4g} GeV" if on_e_grid else f"index {int(value)}"
 
 
 def where(entry: Entry) -> str:
     """Where an entry's maximum sits, as an energy or as a bin index."""
-    if entry.on_e_grid:
-        return f"E = {entry.score.at_e:.4g} GeV"
-    return f"index {int(entry.score.at_e)}"
+    return at_grid(entry.score.at_e, entry.on_e_grid)
+
+
+def nonfinite_mismatch(reference, actual, grid) -> NonFinite | None:
+    """The first bin where `actual` and `reference` differ in finiteness.
+
+    A NaN or an infinity the golden does not have is a mismatch rather than a
+    bin to skip. `species_metric` reduces with `nanargmax`, which passes over a
+    NaN in a scored bin and raises on a lane that is NaN throughout, and
+    `worst_entry` drops an infinite score as unscorable -- so without this
+    check a diverged solve reads as a pass. The whole stored row is checked,
+    not only the scored bins: the trim and the floor say which bins carry
+    *flux*, not which are allowed to stop being numbers.
+    """
+    reference = np.asarray(reference, dtype=np.float64)
+    actual = np.asarray(actual, dtype=np.float64)
+    bad = np.isfinite(reference) != np.isfinite(actual)
+    if not bad.any():
+        return None
+    index = int(np.flatnonzero(bad)[0])
+    return NonFinite(
+        int(bad.sum()),
+        float(np.asarray(grid, dtype=np.float64)[index]),
+        float(actual[index]),
+        float(reference[index]),
+    )
+
+
+def rel_l2(reference, actual) -> float:
+    """`||actual - reference||_2 / ||reference||_2` over the finite bins.
+
+    `inf` when the reference is all zero and the actual is not, which keeps the
+    harness rule that an all-zero golden supports no relative bound and has to
+    be reproduced exactly.
+    """
+    reference = np.asarray(reference, dtype=np.float64)
+    actual = np.asarray(actual, dtype=np.float64)
+    finite = np.isfinite(reference) & np.isfinite(actual)
+    reference, actual = reference[finite], actual[finite]
+    delta = float(np.linalg.norm(actual - reference))
+    denom = float(np.linalg.norm(reference))
+    if denom == 0.0:
+        return 0.0 if delta == 0.0 else float("inf")
+    return delta / denom
 
 
 def species_metric(
@@ -358,6 +434,20 @@ def species_metric(
     if not keep.any():
         return SpeciesScore(
             float("nan"), float("nan"), 0, float(peak), rel, rel_raw, keep, n_trimmed
+        )
+    if not np.isfinite(rel[keep]).any():
+        # Every scored bin of the actual is non-finite, so there is no maximum
+        # to take; `nanargmax` would raise here. `nonfinite_mismatch` is what
+        # reports it, and `evaluate_key` attaches that to the entry.
+        return SpeciesScore(
+            float("nan"),
+            float("nan"),
+            int(keep.sum()),
+            float(peak),
+            rel,
+            rel_raw,
+            keep,
+            n_trimmed,
         )
     index = int(np.nanargmax(rel))
     return SpeciesScore(
@@ -410,6 +500,9 @@ def evaluate_key(
                             values, actual_species[name], layout.e_grid, floor, trim
                         ),
                         admits(values[: n_retained(values.size, trim)]),
+                        nonfinite=nonfinite_mismatch(
+                            values, actual_species[name], layout.e_grid
+                        ),
                     )
                 )
         return entries
@@ -431,6 +524,7 @@ def evaluate_key(
                 species_metric(reference, produced[label], grid, floor, row_trim),
                 admits(reference[: n_retained(reference.size, row_trim)]),
                 on_e_grid,
+                nonfinite_mismatch(reference, produced[label], grid),
             )
         )
     return entries
@@ -444,6 +538,71 @@ def worst_entry(entries, *, guarded_only: bool = True) -> Entry | None:
         if (entry.guarded or not guarded_only) and np.isfinite(entry.score.max_rel)
     ]
     return max(pool, key=lambda entry: entry.score.max_rel) if pool else None
+
+
+def covered(entry: Entry) -> bool:
+    """True when the per-species maximum actually bounds `entry`.
+
+    Two conditions, and `worst_entry`'s pool is the same pair: the guard has to
+    admit the entry, and the reference has to keep a bin above the floor to
+    divide by. Everything else is what :func:`lane_containment` picks up.
+    """
+    return bool(entry.guarded and np.isfinite(entry.score.max_rel))
+
+
+def lane_containment(expected, actual, layout: Layout, entries) -> list:
+    """`[(lane, rel_l2, rejected_names)]` for what the maximum does not cover.
+
+    One relative L2 per lane over the bins of the species :func:`covered`
+    rejects, so that no species and no lane of a stored state is bounded by
+    nothing. The per-species maximum is a statement about the species its guard
+    admits; on a key with one admitted species every other species would
+    otherwise be free to move arbitrarily, which is narrower than the plain
+    relative L2 this metric replaced.
+
+    Per lane and over the rejected bins only, so it is strictly tighter than
+    that whole-array norm: the denominator is a subset of it. The granularity
+    is the species/lane rather than the bin because a bin the trim or the floor
+    drops inside an *admitted* species is deliberately not compared -- that is
+    the ruling the trim implements -- and an L2 could not bound a component at
+    1e-16 of the peak anyway.
+
+    The derived `total_mu+-` rows are not stored bins, so they are skipped:
+    their components carry the containment, and the rows themselves are only
+    ever the maximum's business.
+    """
+    slices = dict(layout.table)
+    lanes = state_lanes(expected, layout.dim_states)
+    out = []
+    if lanes is not None:
+        produced = dict(state_lanes(actual, layout.dim_states) or [])
+        for label, reference in lanes:
+            scored = np.zeros(reference.size, dtype=bool)
+            rejected = []
+            for entry in entries:
+                index = slices.get(entry.species)
+                if entry.lane != label or index is None:
+                    continue
+                if covered(entry):
+                    scored[index * layout.dim : (index + 1) * layout.dim] = True
+                else:
+                    rejected.append(entry.species)
+            hole = ~scored
+            if hole.any():
+                out.append(
+                    (label, rel_l2(reference[hole], produced[label][hole]), rejected)
+                )
+        return out
+
+    rows = spectrum_rows(expected)
+    if rows is None:
+        return out
+    produced = dict(spectrum_rows(actual) or [])
+    scored_lanes = {entry.lane for entry in entries if covered(entry)}
+    for label, reference in rows:
+        if label not in scored_lanes:
+            out.append((label, rel_l2(reference, produced[label]), []))
+    return out
 
 
 def worst_by_species(entries) -> dict:
@@ -468,12 +627,22 @@ def compare(
     floor: float = FLOOR,
     guard: str = DEFAULT_GUARD,
     trim: int = TRIM_TOP_BINS,
+    fallback_rtol: float | None = None,
 ) -> str | None:
-    """`None` when every guarded species is within `rtol`, else the reason.
+    """`None` when the key is both within `rtol` and contained, else the reasons.
+
+    Three checks, reported distinctly because they say different things:
+
+    * a finiteness pattern that differs from the golden -- a mismatch on its
+      own, and reported alone because a NaN makes the other two meaningless;
+    * the flux bound, `max_E |dphi/phi_ref|` over the species the guard admits,
+      against `rtol`;
+    * containment of everything the maximum does not cover, per lane, against
+      `fallback_rtol` (defaulting to `rtol`); see :func:`lane_containment`.
 
     Raises `Unscorable` when the guard, the trim and the floor leave nothing to
-    score; the key then has no per-species maximum and the caller has to bound
-    it another way.
+    score; the key then has no per-species maximum at all and the caller bounds
+    the whole array at `fallback_rtol` instead.
     """
     entries = evaluate_key(
         expected, actual, layout, floor=floor, guard=guard, trim=trim
@@ -484,20 +653,53 @@ def compare(
             f"spectrum stack (dim_states {layout.dim_states}), so "
             f"per_species_max cannot score it"
         )
+
+    broken = [entry for entry in entries if entry.nonfinite is not None]
+    if broken:
+        entry, bad = broken[0], broken[0].nonfinite
+        return (
+            f"{key}{entry.lane}: {bad.n} bin(s) of {entry.species or 'the row'}"
+            f" differ in finiteness from the golden, first at"
+            f" {at_grid(bad.at, entry.on_e_grid)}: actual {bad.actual!r},"
+            f" golden {bad.reference!r}"
+            f" ({len(broken)} species/lane(s) affected)"
+        )
+
     worst = worst_entry(entries)
     if worst is None:
         raise Unscorable(
             f"{key}: no species the {guard} guard admits over the grid less its "
             f"top {trim} bin(s) keeps a bin above {floor:.0e} x peak"
         )
-    if worst.score.max_rel <= rtol:
-        return None
-    return (
-        f"{key}{worst.lane}: per-species max {worst.score.max_rel:.3e} > {rtol:.1e}"
-        f" on {worst.species or 'the row'} at {where(worst)}"
-        f" ({worst.score.n_kept} bins above floor {floor:.0e}, guard {guard},"
-        f" top {worst.score.n_trimmed} bin(s) trimmed)"
-    )
+
+    problems = []
+    if worst.score.max_rel > rtol:
+        problems.append(
+            f"{key}{worst.lane}: per-species max {worst.score.max_rel:.3e} >"
+            f" {rtol:.1e} on {worst.species or 'the row'} at {where(worst)}"
+            f" ({worst.score.n_kept} bins above floor {floor:.0e}, guard {guard},"
+            f" top {worst.score.n_trimmed} bin(s) trimmed)"
+        )
+
+    bound = rtol if fallback_rtol is None else float(fallback_rtol)
+    over = [
+        item
+        for item in lane_containment(expected, actual, layout, entries)
+        if item[1] > bound
+    ]
+    if over:
+        label, rel, rejected = max(over, key=lambda item: item[1])
+        what = (
+            f"the {len(rejected)} species the {guard} guard leaves unscored"
+            f" ({', '.join(rejected[:4])}{' ...' if len(rejected) > 4 else ''})"
+            if rejected
+            else f"the row the {guard} guard leaves unscored"
+        )
+        problems.append(
+            f"{key}{label}: containment rel-L2 {rel:.3e} > {bound:.1e} over"
+            f" {what}" + (f", worst of {len(over)} lane(s)" if len(over) > 1 else "")
+        )
+    return "; ".join(problems) or None
 
 
 # --------------------------------------------------------------------------
@@ -616,9 +818,14 @@ def flux_report(
 
     The worst guarded species of every gated key, largest first, then the
     fixed-energy table of the worst key -- which is the table the maintainer
-    reads to decide whether a move is physics or a reduction order. Keys the
-    guard declines entirely are counted, not scored: they are bounded by the
-    entry's `fallback_rtol` and their mismatch lines say so.
+    reads to decide whether a move is physics or a reduction order.
+
+    This is the flux view only. A key the guard declines entirely is counted
+    here, not scored, and a species it rejects inside a scored key does not
+    appear at all; both are bounded by `fallback_rtol` -- the whole array
+    through `Unscorable`, the rejected species through
+    :func:`lane_containment` -- and it is `compare`'s mismatch lines, not this
+    table, that report them.
     """
     scored = []
     declined = []

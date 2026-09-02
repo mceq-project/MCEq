@@ -54,9 +54,9 @@ class EarthsAtmosphere(metaclass=ABCMeta):
             environment = config.environment
         self.thrad = None
         self.theta_deg = None
-        # Configured estimate of the maximum density, so the public ``max_den``
-        # property is readable before the first ``set_theta``;
-        # ``calculate_density_spline`` then replaces it with the measured value.
+        # Configured surface density, so ``max_den`` reads before the first
+        # ``set_theta``; that call overwrites it with ``get_density(geom.h(0,
+        # thrad))``, the atmosphere top -- the path minimum, not the maximum.
         self._max_den = environment.max_density
         self.max_theta = 90.0
         self.location = None

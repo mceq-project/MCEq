@@ -476,6 +476,336 @@ def test_unscorable_all_zero_reference_still_requires_exactness(layout):
     assert "all-zero" in problem
 
 
+# --------------------------------------------------------------------------
+# containment: the species and lanes the maximum does not cover
+# --------------------------------------------------------------------------
+
+
+def test_containment_bounds_a_species_the_guard_rejects(layout):
+    """The hole the per-species maximum leaves, and what closes it.
+
+    The maximum is taken over the species the guard admits, so on a key with
+    one admitted species a move confined to a rejected one is invisible to it.
+    Species `b` here has a negative bin and is rejected; `a` and `c` are not
+    and hold the maximum at zero. Containment is what notices.
+    """
+    ref = np.array(
+        [1.0, 1.0, 1.0, 1.0]  # a: sign definite
+        + [1.0, 1.0, -1e-3, 1.0]  # b: rejected
+        + [1.0, 1.0, 1.0, 1.0]  # c: sign definite
+    )
+    new = np.array(ref)
+    new[4] *= 1 + 1e-6
+
+    # the flux bound sees nothing: every admitted species is untouched
+    entries = _flux_metric.evaluate_key(ref, new, layout, trim=0)
+    assert _flux_metric.worst_entry(entries).score.max_rel == 0.0
+
+    problem = _flux_metric.compare(
+        "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-9
+    )
+    assert "containment rel-L2" in problem
+    assert "> 1.0e-09 over the 1 species the sign_definite guard leaves" in problem
+    assert "(b)" in problem
+    assert "per-species max" not in problem
+
+    # a real bound, not a hard fail: the same move inside `fallback_rtol` passes
+    assert (
+        _flux_metric.compare(
+            "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-3
+        )
+        is None
+    )
+
+
+def test_containment_is_per_lane(layout):
+    """A rejected species is bounded in the lane it moved in, not on average."""
+    ref = np.ones((12, 8))
+    ref[6] = -1e-3  # species b, bin 2: rejected in every lane
+    new = np.array(ref)
+    new[4, 5] *= 1 + 1e-6  # species b, bin 0, lane 5 only
+
+    problem = _flux_metric.compare(
+        "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-9
+    )
+    assert "k[:,5]: containment rel-L2" in problem
+    assert "worst of" not in problem  # exactly one lane is over
+
+
+def test_containment_and_the_flux_bound_are_reported_distinctly(layout):
+    """A flux mismatch and a containment mismatch are different statements."""
+    ref = np.array([1.0] * 4 + [1.0, 1.0, -1e-3, 1.0] + [1.0] * 4)
+    new = np.array(ref)
+    new[0] *= 1 + 1e-6  # species a: admitted, so the flux bound
+    new[4] *= 1 + 1e-6  # species b: rejected, so containment
+
+    problem = _flux_metric.compare(
+        "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-9
+    )
+    assert "per-species max 1.000e-06 > 1.0e-09 on a" in problem
+    assert "containment rel-L2" in problem
+    assert problem.count("; ") == 1
+
+
+def test_containment_covers_a_species_with_nothing_above_the_floor(layout):
+    """Admitted but unscored is unbounded too, so it is contained as well."""
+    ref = np.zeros(12)
+    ref[0:4] = 1.0  # a carries the flux; b and c are identically zero
+    new = np.array(ref)
+    new[4] = 1e-30  # species b was zero and is not any more
+
+    entries = _flux_metric.evaluate_key(ref, new, layout, trim=0)
+    by_species = {entry.species: entry for entry in entries}
+    assert by_species["b"].guarded and not _flux_metric.covered(by_species["b"])
+
+    problem = _flux_metric.compare(
+        "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1.0
+    )
+    # an all-zero reference supports no relative bound, so exactness is required
+    assert "containment rel-L2 inf" in problem
+
+
+def test_containment_skips_the_derived_helicity_sums():
+    """`total_mu+` is not stored bins, so it carries no containment of its own.
+
+    Its components do. Here `mu+_l` is rejected and `total_mu+` with it, and
+    the containment denominator has to be the two component rows -- counting
+    the sum as well would double the residual and halve the bound.
+    """
+    layout = _flux_metric.Layout(
+        table=(("mu+_l", 0), ("mu+_r", 1)),
+        dim=2,
+        dim_states=4,
+        e_grid=np.array([10.0, 100.0]),
+        e_bins=np.array([3.0, 30.0, 300.0]),
+    )
+    ref = np.array([1.0, -1.0, 1.0, 1.0])  # mu+_l rejected, mu+_r admitted
+    new = np.array(ref)
+    new[0] *= 1 + 1e-6
+
+    lanes = _flux_metric.lane_containment(
+        ref, new, layout, _flux_metric.evaluate_key(ref, new, layout, trim=0)
+    )
+    assert len(lanes) == 1
+    label, rel, rejected = lanes[0]
+    assert (label, rejected) == ("", ["mu+_l"])
+    assert rel == pytest.approx(1e-6 / np.sqrt(2.0))
+
+
+def test_containment_bounds_a_rejected_spectrum_row(layout):
+    """A stored spectrum has no species, so the unit of containment is the row."""
+    ref = np.array([[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, -1e-3, 1.0]])
+    new = np.array(ref)
+    new[1, 0] *= 1 + 1e-6
+
+    problem = _flux_metric.compare(
+        "spectrum/z", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-9
+    )
+    assert "spectrum/z[1]: containment rel-L2" in problem
+    assert "the row the sign_definite guard leaves unscored" in problem
+
+
+def test_containment_uses_the_entry_fallback_rtol(unit_section):
+    """The stored `fallback_rtol`, not `rtol`, is what contains a rejected species."""
+    tolerances = {
+        "state/": {
+            "mode": "per_species_max",
+            "rtol": 1e-12,
+            "floor": 1e-12,
+            "guard": "sign_definite",
+            "trim_top_bins": 0,
+            "fallback_rtol": 1e-6,
+        }
+    }
+    # species b (entries 2 and 3) has a negative bin, so the guard rejects it
+    arrays = unit_section(
+        tolerances, arrays={"state/x": np.array([1.0, 2.0, 3.0, -4.0])}
+    )
+    produced = dict(arrays)
+
+    produced["state/x"] = np.array([1.0, 2.0, 3.0 * (1 + 1e-9), -4.0])
+    assert compare_section("unit", produced) == []
+
+    produced["state/x"] = np.array([1.0, 2.0, 3.0 * (1 + 1e-3), -4.0])
+    problems = compare_section("unit", produced)
+    assert len(problems) == 1
+    assert "containment rel-L2" in problems[0] and "> 1.0e-06" in problems[0]
+
+
+def test_containment_respects_the_cuda_rtol_floor(unit_section):
+    """A norm moves with the reduction order, so the CUDA floor reaches it.
+
+    The per-species maximum itself does not -- `compare_section` keeps that at
+    its stored bound -- but the containment of the species it leaves unscored
+    is a relative L2, and judging CUDA's reordering by a 1e-12 norm would
+    report the backend rather than the solver.
+    """
+    tolerances = {
+        "state/": {
+            "mode": "per_species_max",
+            "rtol": 1e-12,
+            "floor": 1e-12,
+            "guard": "sign_definite",
+            "trim_top_bins": 0,
+            "fallback_rtol": 1e-12,
+        }
+    }
+    arrays = unit_section(
+        tolerances, arrays={"state/x": np.array([1.0, 2.0, 3.0, -4.0])}
+    )
+    produced = dict(arrays)
+    produced["state/x"] = np.array([1.0, 2.0, 3.0 * (1 + 1e-10), -4.0])
+
+    assert compare_section("unit", produced) != []
+    assert compare_section("unit", produced, rtol_floor=1e-9) == []
+
+
+def test_containment_bounds_a_rejected_species_of_the_1d_golden(solve1d_golden):
+    """The regression this closes, on the section that shipped it.
+
+    `emon/theta0/state` admits 68 of its 74 entries; the six the guard rejects
+    are `e+-` and their helicities -- the cancellation residuals the sign test
+    exists to keep out of the flux bound. A move confined to one of them is
+    what the per-species maximum cannot see and containment must.
+    """
+    key = "emon/theta0/state"
+    layout = _flux_metric.layout_for(key, solve1d_golden)
+    index = dict(layout.table)["e+_l"]
+
+    reference = solve1d_golden[key]
+    entries = _flux_metric.evaluate_key(reference, reference, layout)
+    rejected = [entry.species for entry in entries if not _flux_metric.covered(entry)]
+    assert rejected == ["e+_l", "e+", "e+_r", "e-_l", "e-", "e-_r"]
+
+    produced = np.array(reference)
+    produced[index * layout.dim : (index + 1) * layout.dim] *= 1 + 1e-3
+
+    # the flux bound is blind to it: no admitted species moved
+    worst = _flux_metric.worst_entry(
+        _flux_metric.evaluate_key(reference, produced, layout)
+    )
+    assert worst.score.max_rel == 0.0
+
+    problem = _flux_metric.compare(
+        key,
+        reference,
+        produced,
+        _flux_metric.RTOL_1D,
+        layout=layout,
+        fallback_rtol=_flux_metric.RTOL_1D,
+    )
+    assert "containment rel-L2" in problem
+    assert "e+_l" in problem
+    assert "per-species max" not in problem
+
+
+# --------------------------------------------------------------------------
+# non-finite actuals
+# --------------------------------------------------------------------------
+
+
+def test_nan_in_a_scored_bin_is_a_mismatch(layout):
+    """`nanargmax` steps over a NaN, so the check has to precede the score.
+
+    Not hypothetical: the 1D solve diverges to NaN with `e+-` enabled at high
+    zenith, and which entries the divergence reaches is backend-dependent.
+    """
+    ref = np.ones(12)
+    new = np.array(ref)
+    new[5] = np.nan  # species b, bin 1 -- above the floor and inside the trim
+
+    score = _flux_metric.species_metric(ref[4:8], new[4:8], layout.e_grid, trim=0)
+    assert score.max_rel == 0.0  # what the maximum alone reports
+
+    problem = _flux_metric.compare("k", ref, new, 1e-9, layout=layout, trim=0)
+    assert "1 bin(s) of b differ in finiteness from the golden" in problem
+    assert "first at E = 100 GeV: actual nan, golden 1.0" in problem
+    assert "(1 species/lane(s) affected)" in problem
+
+
+def test_a_whole_lane_of_nan_is_a_mismatch(layout):
+    """The shape that raised out of `nanargmax` instead of reporting anything."""
+    ref = np.ones((12, 2))
+    new = np.array(ref)
+    new[:, 1] = np.nan
+
+    problem = _flux_metric.compare("k", ref, new, 1e-9, layout=layout, trim=0)
+    assert "k[:,1]: 4 bin(s) of a differ in finiteness" in problem
+    # three species plus the two derived helicity sums are absent here, so
+    # every entry of the lane is affected
+    assert "(3 species/lane(s) affected)" in problem
+
+
+def test_infinite_actual_is_a_mismatch(layout):
+    """An infinite score is dropped by `worst_entry`, so it needs its own check."""
+    for value in (np.inf, -np.inf):
+        new = np.ones(12)
+        new[0] = value
+        entries = _flux_metric.evaluate_key(np.ones(12), new, layout, trim=0)
+        by_species = {entry.species: entry for entry in entries}
+        assert not np.isfinite(by_species["a"].score.max_rel)
+        assert _flux_metric.worst_entry(entries).score.max_rel == 0.0
+
+        problem = _flux_metric.compare(
+            "k", np.ones(12), new, 1e-9, layout=layout, trim=0
+        )
+        assert "1 bin(s) of a differ in finiteness" in problem
+        assert f"actual {value!r}" in problem
+
+
+def test_nan_is_reported_before_the_other_two_bounds(layout):
+    """A NaN makes the maximum and the containment meaningless, so it reports alone."""
+    ref = np.array([1.0] * 4 + [1.0, 1.0, -1e-3, 1.0] + [1.0] * 4)
+    new = np.array(ref)
+    new[0] *= 1 + 1e-3  # would be a flux mismatch
+    new[4] = np.nan  # and a containment one
+
+    problem = _flux_metric.compare(
+        "k", ref, new, 1e-9, layout=layout, trim=0, fallback_rtol=1e-9
+    )
+    assert "differ in finiteness" in problem
+    assert "per-species max" not in problem and "containment" not in problem
+
+
+def test_nan_in_a_trimmed_bin_is_still_a_mismatch(layout):
+    """The trim says which bins carry flux, not which may stop being numbers."""
+    ref = np.ones(12)
+    new = np.array(ref)
+    new[3] = np.nan  # species a, top bin of a four-bin grid
+
+    entries = _flux_metric.evaluate_key(ref, new, layout, trim=1)
+    assert _flux_metric.worst_entry(entries).score.max_rel == 0.0
+    problem = _flux_metric.compare("k", ref, new, 1e-9, layout=layout, trim=1)
+    assert "1 bin(s) of a differ in finiteness" in problem
+
+
+def test_a_matching_nan_pattern_is_not_a_mismatch(layout):
+    """The rule is the sibling modes': the *pattern* has to differ."""
+    ref = np.ones(12)
+    ref[5] = np.nan
+    new = np.array(ref)
+    assert _flux_metric.compare("k", ref, new, 1e-9, layout=layout, trim=0) is None
+
+
+def test_compare_section_reports_a_nan_on_the_flux_metric(unit_section):
+    """The dispatch carries it, so the mode is not NaN-blind at section level."""
+    tolerances = {
+        "state/": {
+            "mode": "per_species_max",
+            "rtol": 1e-9,
+            "floor": 1e-12,
+            "guard": "sign_definite",
+            "trim_top_bins": 0,
+        }
+    }
+    arrays = unit_section(tolerances)
+    produced = dict(arrays)
+    produced["state/x"] = np.array([1.0, 2.0, np.nan, 4.0])
+    problems = compare_section("unit", produced)
+    assert len(problems) == 1
+    assert "differ in finiteness from the golden" in problems[0]
+
+
 def test_helicity_rows_are_summed():
     """`total_mu+` is the flux a result is quoted on, so it is scored."""
     layout = _flux_metric.Layout(
