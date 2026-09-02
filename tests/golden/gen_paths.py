@@ -77,10 +77,11 @@ at density_profiles.py:1150 (bug B15), while "MSIS21_KM3NeT" is present. The
 list is the golden rather than the ValueError it raises, because an unknown
 model name raises the identical ValueError("Choose a different profile.").
 
-max_den_type_before_set_theta pins bug B14: config.max_density is the tuple
-(0.001225,) because config.py:89 shadows the float at config.py:64, and
-EarthsAtmosphere.__init__ copies it into _max_den, so the public max_den
-property returns a tuple until the first set_theta overwrites it.
+max_den_type_before_set_theta pins the type of config.environment.max_density,
+which EarthsAtmosphere.__init__ copies into _max_den: the public max_den
+property serves that float until the first set_theta overwrites it. A tuple
+here is the signature of bug B14, a second max_density assignment in config
+shadowing the float.
 
 max_den itself is not stored per path: density_profiles.py:117 sets it to the
 density at the top of the atmosphere, which is constant over zenith (CORSIKA
@@ -144,8 +145,8 @@ def build() -> tuple[dict, dict]:
 
     from .make_goldens import SectionUnavailable
 
-    # MSIS21 rides on the optional `nrlmsis` package, which pyproject installs
-    # only on Python >= 3.10.
+    # MSIS21 rides on the optional `nrlmsis` package, which only the `test`
+    # dependency group installs.
     try:
         import nrlmsis  # noqa: F401
     except ImportError as exc:
@@ -215,7 +216,7 @@ def build() -> tuple[dict, dict]:
                 "snapshot_grid_X": list(SNAPSHOT_GRID_X),
                 "out_of_range_zenith_deg": OUT_OF_RANGE_ZENITH_DEG,
                 "hybrid_sample_sizes": {"geomspace": 6001, "linspace": 4001},
-                "pinned_bugs": ["B14", "B15"],
+                "pinned_bugs": ["B15"],
             },
         )
     finally:

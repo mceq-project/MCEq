@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod
 from os.path import join
 
 import numpy as np
-from six import with_metaclass
 
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import (
@@ -12,7 +11,7 @@ from MCEq.geometry.atmosphere_parameters import (
 from MCEq.misc import info
 
 
-class EarthsAtmosphere(with_metaclass(ABCMeta)):
+class EarthsAtmosphere(metaclass=ABCMeta):
     """
     Abstract class containing common methods on atmosphere.
     You have to inherit from this class and implement the virtual method
@@ -55,10 +54,9 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
             environment = config.environment
         self.thrad = None
         self.theta_deg = None
-        # ``max_density`` is the tuple ``(0.001225,)``: config declares the name
-        # twice and the tuple wins. It reaches the public ``max_den`` property
-        # unchanged until ``calculate_density_spline`` replaces it with a float,
-        # so an atmosphere read before its first ``set_theta`` reports a tuple.
+        # Configured estimate of the maximum density, so the public ``max_den``
+        # property is readable before the first ``set_theta``;
+        # ``calculate_density_spline`` then replaces it with the measured value.
         self._max_den = environment.max_density
         self.max_theta = 90.0
         self.location = None

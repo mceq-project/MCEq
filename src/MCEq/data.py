@@ -3,7 +3,6 @@ from os.path import isfile, join
 
 import h5py
 import numpy as np
-import six
 
 from .misc import _eval_energy_cuts, info, normalize_hadronic_model_name
 
@@ -1239,7 +1238,7 @@ class Interactions:
             )
             i = 0
             m = np.copy(m)
-            for args, mmat in six.iteritems(self.mod_pprod[(parent[0], child[0])]):
+            for args, mmat in iter(self.mod_pprod[(parent[0], child[0])].items()):
                 info(10, i, (parent[0], child[0]), args, np.sum(mmat), np.sum(m))
                 i += 1
                 m *= mmat

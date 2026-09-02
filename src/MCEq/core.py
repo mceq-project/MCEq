@@ -3,7 +3,6 @@ from time import time
 
 import numpy as np
 import scipy.sparse as sp
-import six
 
 import MCEq.data
 from MCEq import config
@@ -3109,7 +3108,7 @@ class MatrixBuilder:
             per_mode_csr = []
             for k in range(self.n_k):
                 rows, cols, vals = [], [], []
-                for (c, p), d in six.iteritems(blocks):
+                for (c, p), d in iter(blocks.items()):
                     rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
                     slab = d[k]
                     if slab.shape != (rc.uidx - rc.lidx, rp.uidx - rp.lidx):
@@ -3151,7 +3150,7 @@ class MatrixBuilder:
             return stitched
 
         new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
-        for (c, p), d in six.iteritems(blocks):
+        for (c, p), d in iter(blocks.items()):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d

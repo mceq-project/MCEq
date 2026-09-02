@@ -12,6 +12,7 @@ authors = [
   { name = "Stefan Fröse", email = "stefanfroese@as.edu.tw" },
 ]
 license = { text = "BSD 3-Clause License" }
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -42,13 +43,12 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
-    # Requires Python >= 3.10; on 3.9 the MSIS21 smoke test importorskips.
-    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1 ; python_version >= '3.10'",
+    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1",
 ]
 lint = [
     # Layer contracts (.importlinter). 2.14 is the first release with
-    # acyclic_siblings; grimp 3.16 and import-linter 2.14 need Python >= 3.10.
-    "import-linter>=2.14 ; python_version >= '3.10'",
+    # acyclic_siblings.
+    "import-linter>=2.14",
 ]
 docs = [
     # Core

@@ -17,12 +17,11 @@ when overwriting a model yield file in
 from abc import ABCMeta, abstractmethod
 
 import numpy as np
-from six import with_metaclass
 
 from MCEq.misc import info
 
 
-class CharmModel(with_metaclass(ABCMeta)):
+class CharmModel(metaclass=ABCMeta):
     """Abstract class, from which implemeted charm models can inherit.
 
     Note:

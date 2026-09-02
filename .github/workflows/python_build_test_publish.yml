@@ -43,7 +43,7 @@ jobs:
   # One Python per platform, ~2 min a job. Anything that breaks the toolchain on
   # a platform -- a compiler that is not found, a wheel the repair step refuses,
   # a deployment target that no longer matches the runner image -- fails here
-  # instead of somewhere inside the 46-job release matrix. Runs on PRs that
+  # instead of somewhere inside the 29-job release matrix. Runs on PRs that
   # touch the build, and gates `wheels` on push so a bad platform costs one
   # round of six jobs rather than the whole matrix.
   smoke:
@@ -79,10 +79,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest, windows-11-arm]
-        py: [cp39, cp310, cp311, cp312, cp313, cp314]
+        py: [cp310, cp311, cp312, cp313, cp314]
         exclude:
-          - os: windows-11-arm
-            py: cp39
           - os: windows-11-arm
             py: cp310
     steps:

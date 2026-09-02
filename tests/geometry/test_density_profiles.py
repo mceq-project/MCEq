@@ -537,7 +537,8 @@ def test_arca_site_coordinates():
 #   * interface conformance -- pure class introspection, no backend, so it
 #     runs everywhere including CI;
 #   * numerical parity -- needs the optional 'nrlmsis' package (MSIS21 is
-#     opt-in), so it skips where that is absent, including CI.
+#     opt-in), so it skips where that is absent; CI carries it in the test
+#     dependency group.
 # ---------------------------------------------------------------------------
 
 MSIS_TREE_PAIRS = [

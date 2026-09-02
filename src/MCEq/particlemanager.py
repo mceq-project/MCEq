@@ -1,7 +1,6 @@
 from math import copysign
 
 import numpy as np
-import six
 from particletools.tables import PYTHIAParticleData
 
 from MCEq.misc import average_A_target, getAZN, info, print_in_rows
@@ -1108,9 +1107,9 @@ class ParticleManager:
 
     def __contains__(self, pdg_id_or_name):
         """Defines the `in` operator to look for particles"""
-        if isinstance(pdg_id_or_name, six.integer_types):
+        if isinstance(pdg_id_or_name, (int,)):
             pdg_id_or_name = (pdg_id_or_name, 0)
-        elif isinstance(pdg_id_or_name, six.string_types):
+        elif isinstance(pdg_id_or_name, (str,)):
             pdg_id_or_name = (_pdata.pdg_id(pdg_id_or_name), 0)
         return pdg_id_or_name in list(self.pdg2pref)
 
@@ -1118,7 +1117,7 @@ class ParticleManager:
         """Returns reference to particle object."""
         if isinstance(pdg_id_or_name, tuple):
             return self.pdg2pref[pdg_id_or_name]
-        if isinstance(pdg_id_or_name, six.integer_types):
+        if isinstance(pdg_id_or_name, (int,)):
             return self.pdg2pref[(pdg_id_or_name, 0)]
         else:
             try:

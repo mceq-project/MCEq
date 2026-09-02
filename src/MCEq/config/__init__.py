@@ -85,9 +85,6 @@ len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-#: Approximate value for the maximum density expected. Used by the
-#: atmosphere model. Default value: air at the surface.
-max_density = (0.001225,)
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
