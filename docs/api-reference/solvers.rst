@@ -76,10 +76,8 @@ coupling) and one backend per (``kernel_config``, precision, coupling);
 opt-in) and ``accelerate_etd2`` (macOS; the ``"auto"`` choice there). Every
 one of them runs :func:`etd2_driver`, so every route — single axis,
 multi-RHS, the LPT carousel, the sec(θ) coupling — is available on all four,
-as is fp32. The one combination that is not: fp32 *together with* the
-sec(θ) coupling runs only on ``cuda_etd2``; elsewhere the coupled route
-falls back to the paraxial transport under ``secant_theta_transport =
-"auto"`` and raises under ``"require"``.
+as is fp32, and so is any combination of them: the coupled route at fp32
+agrees between the host kernels and ``cuda_etd2`` to ~1e-6 per species.
 
 :func:`~MCEq.solvers.solve_etd2` is the entry point: it compiles the
 operator, binds the backend named by ``backend=`` and runs the driver,

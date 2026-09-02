@@ -1522,7 +1522,7 @@ class MCEqRun:
             rho_inv,
             phi0,
             grid_idcs,
-            sec_ops=self._resolve_secant("solve"),
+            sec_ops=self._resolve_secant(),
         )
 
         if isinstance(self.grid_sol, list):
@@ -1635,7 +1635,7 @@ class MCEqRun:
             rho_inv,
             phi0,
             grid_idcs,
-            sec_ops=self._resolve_secant("solve"),
+            sec_ops=self._resolve_secant(),
         )
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
@@ -1687,10 +1687,8 @@ class MCEqRun:
         For 2D databases the sec(theta) transport correction resolves
         through ``config.secant_mode(is_2d)`` exactly as in
         :meth:`solve`: one constant operator set (the cap is not zenith
-        dependent) is shared by every column, applied on the
-        ``numpy_etd2`` / ``mkl_etd2`` (fp64) / ``cuda_etd2`` backends;
-        other configurations downgrade to paraxial with a warning under
-        ``"auto"`` and refuse under ``"require"``.
+        dependent) is shared by every column, on every backend and at
+        either ``dtype``.
 
         Examples::
 
@@ -1750,7 +1748,7 @@ class MCEqRun:
                 f"solve_batch: dtype must be float32 or float64, got {dtype}"
             )
 
-        sec_ops = self._resolve_secant("solve_batch", dtype)
+        sec_ops = self._resolve_secant()
 
         # --- resolve phi0 ------------------------------------------------
         if phi0 is None:
@@ -2364,39 +2362,18 @@ class MCEqRun:
     # it. Both objects are cached here against the identity of their inputs.
     # fp32 is a dtype the backends carry, not a kernel family of its own.
 
-    def _resolve_secant(self, caller, dtype=np.float64):
+    def _resolve_secant(self):
         """The sec(theta) operator set for a solve, or ``None`` for the
         paraxial transport.
 
         One constant set serves every column of every batch (the cap is
         not zenith dependent). The coupled route is driver code plus the
-        ``apply_off`` binding, so every kernel carries it at fp64; the one
-        configuration without a secant route — fp32 state buffers outside
-        cuda — falls back to the paraxial transport under ``"auto"`` and
-        raises under ``"require"``.
+        ``apply_off`` binding, so every kernel carries it at every
+        precision; only ``config.secant_mode`` decides.
         """
-        mode = config.secant_mode(self._mceq_db.is_2d)
-        if mode == "off":
+        if config.secant_mode(self._mceq_db.is_2d) == "off":
             return None
-        kc = config.kernel_config.lower()
-        blockers = []
-        if np.dtype(dtype) == np.float32 and kc not in ("cuda", "cuda_etd2"):
-            blockers.append("fp32 state buffers outside cuda_etd2")
-        if not blockers:
-            return self._build_secant_ops()
-        why = " and ".join(blockers)
-        if mode == "require":
-            raise NotImplementedError(
-                f"{caller}: secant_theta_transport is implemented on every "
-                "kernel at fp64, and at fp32 only on cuda_etd2 — "
-                f"not with {why}"
-            )
-        info(
-            1,
-            f"{caller}: sec(theta) transport correction is not available "
-            f"with {why} — proceeding with the paraxial 2D transport.",
-        )
-        return None
+        return self._build_secant_ops()
 
     def _build_secant_ops(self):
         """The constant sec(theta) operator set for the current geometry

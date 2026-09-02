@@ -378,10 +378,10 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
 
 # ---------------------------------------------------------------------------
 # Solver wiring: ``MCEqRun._resolve_secant``, the one resolver every entry
-# point shares, is a pure function of (config, kernel_config, dtype); test it
-# unbound with a stub, like the (flag, is_2d) tri-state in test_2d_defaults.py.
+# point shares, is a pure function of (config flag, is_2d); test it unbound
+# with a stub, like the tri-state in test_2d_defaults.py.
 # ---------------------------------------------------------------------------
-def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
+def _resolve_for(flag, kernel, is_2d=True):
     from MCEq.core import MCEqRun
 
     stub = SimpleNamespace(
@@ -392,40 +392,33 @@ def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True):
     config.secant_theta_transport = flag
     config.kernel_config = kernel
     try:
-        return MCEqRun._resolve_secant(stub, "test", dtype)
+        return MCEqRun._resolve_secant(stub)
     finally:
         config.secant_theta_transport, config.kernel_config = saved
 
 
 def test_resolve_secant_tri_state():
-    # Every kernel builds one constant operator set at fp64: the coupled
-    # route is driver code plus the apply_off binding.
+    # The coupled set is built for every kernel, and the state precision is
+    # not an input at all: the coupled route is driver code plus the
+    # apply_off binding, and fp32 is a dtype the backends carry. The fp32
+    # combination is pinned end to end by
+    # ``test_host_secant_fp32_matches_cuda_fp32``.
     for kernel in ("numpy_etd2", "mkl_etd2", "accelerate_etd2", "cuda_etd2"):
         assert _resolve_for("auto", kernel) == {"marker": True}
         assert _resolve_for(True, kernel) == {"marker": True}
     # 1D databases and explicit False stay paraxial without building.
     assert _resolve_for("auto", "numpy_etd2", is_2d=False) is None
     assert _resolve_for(False, "numpy_etd2") is None
-    # fp32 state buffers outside cuda are the one remaining blocker: they
-    # downgrade under "auto" and raise under "require".
-    assert _resolve_for("auto", "mkl_etd2", dtype=np.float32) is None
-    assert _resolve_for("auto", "accelerate_etd2", dtype=np.float32) is None
-    assert _resolve_for(True, "cuda_etd2", dtype=np.float32) == {"marker": True}
-    for kwargs in (
-        {"kernel": "accelerate_etd2", "dtype": np.float32},
-        {"kernel": "mkl_etd2", "dtype": np.float32},
-    ):
-        with pytest.raises(NotImplementedError):
-            _resolve_for(True, **kwargs)
 
 
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
 def test_cuda_secant_fp32_matches_fp64(secant_48mode_problem):
     """The coupled branch at fp32 stays within the fp32 budget of its fp64 self.
 
-    `_resolve_secant` allows fp32 only on CUDA, so this is the one reachable
-    fp32 path through the sec(theta) corner: the eigenbasis transform and the
-    block phi factors run there on fp64 diagonals writing into an fp32 state.
+    The absolute leg of the fp32 sec(theta) corner, where the eigenbasis
+    transform and the block phi factors run on fp64 diagonals writing into an
+    fp32 state; ``test_host_secant_fp32_matches_cuda_fp32`` is the
+    host-vs-device leg.
     """
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
@@ -456,3 +449,69 @@ def test_cuda_secant_fp32_matches_fp64(secant_48mode_problem):
     assert np.all(np.isfinite(fp32))
     rel = np.linalg.norm(fp32 - fp64) / np.linalg.norm(fp64)
     assert 1e-9 < rel < 1e-4, f"cuda secant fp32 vs fp64 rel-L2 = {rel:.3e}"
+
+
+def _per_block_max_rel(ref, new, n_k, N, floor=1e-12):
+    """The D18 metric on the fixture's ``(n_k, N, K)`` state: per row block
+    of the species-like ``N`` axis, the max ``|dphi / phi_ref|`` over that
+    block's bins, dropping bins below ``floor`` x the block's peak and
+    ``phi_ref == 0`` (the zero/cutoff-like column)."""
+    ref = ref.reshape(n_k, N, -1)
+    new = new.reshape(n_k, N, -1)
+    out = np.empty(N)
+    for s in range(N):
+        r, n = ref[:, s], new[:, s]
+        keep = (r >= floor * r.max()) & (r != 0.0)
+        assert keep.any(), f"row block {s} has no bin above the floor"
+        out[s] = np.max(np.abs(n[keep] - r[keep]) / np.abs(r[keep]))
+    return out
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
+@pytest.mark.parametrize(
+    "backend",
+    [
+        "numpy",
+        pytest.param(
+            "mkl",
+            marks=pytest.mark.skipif(not config.has_mkl, reason="MKL not available"),
+        ),
+    ],
+)
+def test_host_secant_fp32_matches_cuda_fp32(secant_48mode_problem, backend):
+    """fp32 with the coupling runs on the host kernels too (D22), within the
+    per-species fp32 budget of the CUDA route.
+
+    The coupled route is driver code plus the ``apply_off`` binding, and the
+    eigenbasis transform and block phi factors are fp64 diagonals writing
+    into the fp32 state on every backend — so host and device differ only by
+    fp32 roundoff in the sparse product and the transforms.
+    """
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+
+    def run(be):
+        sol, _ = solve_etd2(
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"],
+            [],
+            backend=be,
+            sec_ops=ops,
+            fp_precision=32,
+        )
+        return sol
+
+    host = run(backend)
+    cuda = run("cuda")
+    assert np.all(np.isfinite(host))
+
+    per_block = _per_block_max_rel(cuda, host, p["n_k"], p["N"])
+    assert per_block.max() <= 1e-4, (
+        f"{backend} fp32 vs cuda fp32 per-block max-rel = {per_block.max():.3e} "
+        f"(per block {np.array2string(per_block, precision=2)})"
+    )

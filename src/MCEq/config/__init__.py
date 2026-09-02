@@ -356,11 +356,9 @@ muon_multiple_scattering = True
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
 #: the Hankel modes), independent of the axis' zenith angle.
-#: "auto" (default): applied on every solve with a 2D database where
-#: the coupling is implemented (single-axis and batched entry points on
-#: the numpy/MKL/CUDA kernels); unsupported configurations fall back to
-#: the paraxial transport with a warning. True: required (unsupported
-#: configurations raise). False: off. Ignored on 1D databases.
+#: "auto" (default) and True both apply it on every solve with a 2D
+#: database — every entry point, every kernel, fp32 and fp64. False: off.
+#: Ignored on 1D databases.
 secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
@@ -639,10 +637,10 @@ def secant_mode(is_2d):
     """Resolve :data:`secant_theta_transport` against the database
     dimensionality.
 
-    Returns one of ``"off"`` (1D database, or the flag is False),
-    ``"auto"`` (the default — apply where implemented, downgrade to
-    paraxial with a warning elsewhere) and ``"require"`` (flag is
-    True — unsupported paths refuse instead of downgrading).
+    Returns ``"off"`` (1D database, or the flag is False) or one of
+    ``"auto"`` (the default) and ``"require"`` (flag is True), which the
+    resolver treats alike: the coupling is available on every kernel at
+    every precision, so no configuration is left to downgrade or refuse.
     """
     flag = secant_theta_transport
     if not is_2d:

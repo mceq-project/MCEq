@@ -1145,6 +1145,101 @@ def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
     )
 
 
+def _per_species_max_rel(mceq, ref, new, floor=1e-12):
+    """The D18 metric: per species, the max ``|dphi / phi_ref|`` over the
+    energy bins, dropping bins below ``floor`` x that species' peak and
+    ``phi_ref == 0``.
+
+    Species blocks are ``[mceqidx * dim : (mceqidx + 1) * dim]``, the slice
+    ``get_solution`` reads. ``nan`` for a species with no bin above the floor.
+    """
+    dim = mceq.dim
+    out = {}
+    for q in mceq.pman.cascade_particles:
+        r = ref[q.mceqidx * dim : (q.mceqidx + 1) * dim]
+        n = new[q.mceqidx * dim : (q.mceqidx + 1) * dim]
+        peak = r.max()
+        keep = (
+            (r >= floor * peak) & (r != 0.0)
+            if peak > 0.0
+            else np.zeros(r.shape, dtype=bool)
+        )
+        out[q.name] = (
+            float(np.max(np.abs(n[keep] - r[keep]) / np.abs(r[keep])))
+            if keep.any()
+            else np.nan
+        )
+    return out
+
+
+@pytest.mark.xdist_group("full_db")
+@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
+    """fp32 MKL vs fp32 CUDA on the real operator, per species (D18, D22).
+
+    Two uniform theta=60 paths over one operator and initial state: ``h = 5``
+    is inside the explicit-stepping stiffness limit of the EM block, ``h = 20``
+    (the production ``etd2_path["dX_max"]``) is past it with
+    ``config.em_adaptive_step`` off. Outside e+- the metric is a stable
+    property of the operator — fp32 roundoff in the sparse product and the
+    state buffers, 6e-6 to 1e-5 measured across both steps and both energy
+    grids the shared fixture is built on.
+
+    The e+- lanes are not such a property, which is what excluding them
+    buys: over-integrated, they are a sign-oscillating residual already at
+    fp64, so the metric either leaves the budget (1e-3) or has no bin left
+    above its floor (a reference block with no positive bin). Their value on
+    the fine step is reported, not bounded — it moves from 1.1e-5 to 2.3e-3
+    with the energy grid alone.
+    """
+    from MCEq.solvers import solve_etd2
+
+    mceq = mceq_sib21_full_db
+    em = {q.name for q in mceq.pman.cascade_particles if abs(q.pdg_id[0]) == 11}
+    phi0 = mceq._phi0.copy()
+
+    def run(path, backend):
+        nsteps, dX, rho_inv = path
+        sol, _ = solve_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            mceq.int_m,
+            mceq.dec_m,
+            phi0.copy(),
+            [],
+            backend=backend,
+            fp_precision=32,
+            device_id=config.cuda_gpu_id,
+        )
+        return sol
+
+    for h in (5.0, 20.0):
+        path = _uniform_path_theta60(mceq, h=h)
+        per_species = _per_species_max_rel(mceq, run(path, "mkl"), run(path, "cuda"))
+        # nan (nothing above the floor) is unmeasurable, not inside the budget.
+        worst_em = max(per_species[name] for name in em)
+        worst_other = max(
+            v for name, v in per_species.items() if name not in em and np.isfinite(v)
+        )
+        print(
+            f"h={h:g} ({path[0]} steps) mkl32 vs cuda32 per-species max-rel: "
+            f"e+- {worst_em:.3e}, other {worst_other:.3e}"
+        )
+        assert worst_other <= 1e-4, (
+            f"h={h:g}: worst non-e+- species = {worst_other:.3e} (e+- {worst_em:.3e})"
+        )
+        if h > 5.0:
+            # Over-integrated, the e+- blocks are either past the budget or have
+            # no bin above the floor at all -- either way the exclusion earns its
+            # place. Spelled out rather than left to `not nan <= x`.
+            assert np.isnan(worst_em) or worst_em > 1e-4, (
+                f"h={h:g} over-integrates the EM cascade, so the e+- exclusion "
+                f"should be load bearing, but their worst is {worst_em:.3e}"
+            )
+
+
 def test_numpy_etd2_empty_dec_off():
     """A pure e±/γ EM-cascade solve disables all decays, so dec_m has no
     off-diagonal. The kernel must carry an all-zero ``dec_off`` through the
