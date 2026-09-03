@@ -1,9 +1,13 @@
 import inspect
+import pathlib
 
 import numpy as np
 import pytest
 
 import MCEq.geometry.density_profiles as dp
+
+#: Synthetic US-Standard profile above 2834 m, shipped next to this file.
+TABLE_PATH = str(pathlib.Path(__file__).parent / "atmosphere_table_example.csv")
 
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
@@ -103,6 +107,7 @@ def test_msis_atm(loc, season, expected):
         (dp.CorsikaAtmosphere, ("USStd", None)),
         (dp.MSIS00Atmosphere, ("SouthPole", "January")),
         (dp.IsothermalAtmosphere, ("Nowhere", None)),
+        (dp.TabulatedAtmosphere, (TABLE_PATH,)),
     ],
 )
 def test_common_atmosphere_interface(cls, args):
@@ -110,7 +115,7 @@ def test_common_atmosphere_interface(cls, args):
     atm.set_theta(0.0)
 
     X_test = np.linspace(1, atm.max_X * 0.99, 10)
-    h_test = np.linspace(0, atm.geom.h_atm, 10)
+    h_test = np.linspace(atm.geom.h_obs, atm.geom.h_atm, 10)
 
     # r_X2rho should give positive finite values
     inv_rho = atm.r_X2rho(X_test)
@@ -205,11 +210,6 @@ def test_msis00_icecube_centered():
 
     atm.set_theta(135.0)
     assert atm.theta_deg == 135.0
-
-
-@pytest.mark.xfail(reason="AIRSAtmosphere requires unavailable data files")
-def test_airs_instantiation():
-    dp.AIRSAtmosphere("SouthPole", "January")
 
 
 @pytest.mark.parametrize("X", [1.0, 10.0, 100.0])
@@ -516,6 +516,204 @@ def test_arca_site_coordinates():
     lat, lon = atm._impact_point(0.0, 0.0)
     assert np.isclose(lat, 36.267, atol=1e-3)
     assert np.isclose(lon, 16.100, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# TabulatedAtmosphere
+#
+# The shipped fixture (atmosphere_table_example.csv) is the US Standard
+# Atmosphere sampled above 2834 m, i.e. an IceCube-like column, so its numbers
+# can be sanity-checked against MSIS00IceCubeCentered by eye.
+# ---------------------------------------------------------------------------
+
+
+def _write_table(tmp_path, lines, name="table.csv"):
+    path = tmp_path / name
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_tabulated_reference_values():
+    atm = dp.TabulatedAtmosphere(TABLE_PATH, location="SouthPole", season="January")
+    atm.set_theta(0.0)
+    assert np.allclose(
+        [atm.max_X, 1.0 / atm.r_X2rho(100.0)], (729.1534453674, 1.5771744269e-04)
+    )
+
+
+def test_tabulated_observation_level_follows_the_table():
+    """h_obs defaults to the lowest tabulated height."""
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    table = dp.load_atmosphere_table(TABLE_PATH)
+    assert np.isclose(atm.geom.h_obs, table["h_cm"][0])
+
+    # An explicit level higher up sees a thinner column, lower down a thicker
+    # one (the profile is extrapolated log-linearly below the table).
+    atm.set_theta(0.0)
+    higher = dp.TabulatedAtmosphere(TABLE_PATH, surface_elevation_m=6000.0)
+    higher.set_theta(0.0)
+    lower = dp.TabulatedAtmosphere(TABLE_PATH, surface_elevation_m=0.0)
+    lower.set_theta(0.0)
+    assert higher.max_X < atm.max_X < lower.max_X
+
+
+def test_tabulated_negative_table_heights_clip_at_sea_level():
+    """Reanalyses extrapolate below ground; h_obs must not go negative."""
+    table = dp.load_atmosphere_table(TABLE_PATH)
+    table["h_cm"] = table["h_cm"] - 4.0e5  # push the bottom below sea level
+    atm = dp.TabulatedAtmosphere(table)
+    assert atm.geom.h_obs == 0.0
+
+
+def test_tabulated_reproduces_the_table_rows():
+    table = dp.load_atmosphere_table(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(table)
+    assert np.allclose(atm.get_density(table["h_cm"]), table["rho_gcm3"], rtol=1e-12)
+    assert np.allclose(atm.get_temperature(table["h_cm"]), table["T_K"], rtol=1e-12)
+    # Building an atmosphere must not modify the caller's table.
+    fresh = dp.load_atmosphere_table(TABLE_PATH)
+    assert np.array_equal(table["h_cm"], fresh["h_cm"])
+    assert np.array_equal(table["rho_gcm3"], fresh["rho_gcm3"])
+
+
+def test_tabulated_density_column_matches_ideal_gas(tmp_path):
+    """rho_gcm3 and (T_K, p_hPa) are two spellings of the same table."""
+    table = dp.load_atmosphere_table(TABLE_PATH)
+    path = _write_table(
+        tmp_path,
+        ["h_cm,rho_gcm3"]
+        + [f"{h:.10e},{r:.10e}" for h, r in zip(table["h_cm"], table["rho_gcm3"])],
+    )
+    from_rho = dp.TabulatedAtmosphere(path)
+    from_pt = dp.TabulatedAtmosphere(TABLE_PATH)
+    from_rho.set_theta(0.0)
+    from_pt.set_theta(0.0)
+    assert np.isclose(from_rho.max_X, from_pt.max_X, rtol=1e-9)
+
+
+def test_tabulated_missing_values_and_row_order(tmp_path):
+    """Rows may arrive in any order; incomplete rows are dropped."""
+    path = _write_table(
+        tmp_path,
+        [
+            "# comment before the header",
+            "p_hPa,h_cm,T_K",  # column order is irrelevant
+            "500.0,5.0e5,250.0",
+            "",
+            "# a row with no temperature cannot give a density",
+            ",8.0e5,",
+            "700.0,3.0e5,265.0",  # out of order
+            "300.0,9.0e5,230.0",
+            "nan,1.0e6,225.0",
+        ],
+    )
+    table = dp.load_atmosphere_table(path)
+    assert np.array_equal(table["h_cm"], [3.0e5, 5.0e5, 9.0e5])
+    assert np.all(np.diff(table["rho_gcm3"]) < 0.0)
+
+
+def test_tabulated_unknown_columns_are_ignored(tmp_path):
+    path = _write_table(
+        tmp_path,
+        [
+            "h_cm,T_K,p_hPa,specific_humidity,ozone",
+            "3.0e5,265.0,700.0,0.004,1e-8",
+            "9.0e5,230.0,300.0,0.0001,2e-6",
+        ],
+    )
+    table = dp.load_atmosphere_table(path)
+    assert sorted(table) == ["T_K", "h_cm", "rho_gcm3"]
+
+
+@pytest.mark.parametrize(
+    ("lines", "match"),
+    [
+        (["z_cm,T_K,p_hPa", "3.0e5,265.0,700.0", "9.0e5,230.0,300.0"], "h_cm"),
+        (["h_cm,T_K", "3.0e5,265.0", "9.0e5,230.0"], "rho_gcm3"),
+        (["h_cm,T_K,p_hPa"], "data row"),
+        (["h_cm,T_K,p_hPa", "3.0e5,265.0,700.0"], "usable row"),
+        (["h_cm,T_K,p_hPa", "3.0e5,,700.0", "9.0e5,230.0,"], "usable row"),
+    ],
+    ids=["no-height", "no-density", "header-only", "one-row", "all-incomplete"],
+)
+def test_tabulated_table_errors(tmp_path, lines, match):
+    with pytest.raises(ValueError, match=match):
+        dp.load_atmosphere_table(_write_table(tmp_path, lines))
+
+
+def test_tabulated_isothermal_tail():
+    """The default tail is exactly exponential and joins without a step."""
+    table = dp.load_atmosphere_table(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    h_top, rho_top = table["h_cm"][-1], table["rho_gcm3"][-1]
+    scale_h = (h_top - table["h_cm"][-2]) / np.log(table["rho_gcm3"][-2] / rho_top)
+
+    assert np.isclose(atm.get_density(h_top), rho_top, rtol=1e-12)
+    for h in (5.0e6, 8.0e6, 1.1e7):
+        assert np.isclose(
+            atm.get_density(h), rho_top * np.exp(-(h - h_top) / scale_h), rtol=1e-9
+        )
+
+
+def test_tabulated_top_extension_none_reports_the_gap():
+    atm = dp.TabulatedAtmosphere(TABLE_PATH, top_extension="none")
+    assert np.isnan(atm.get_density(atm.geom.h_atm))
+    with pytest.raises(ValueError, match="not finite"):
+        atm.set_theta(0.0)
+
+
+def test_tabulated_unknown_top_extension():
+    with pytest.raises(ValueError, match="unknown top_extension"):
+        dp.TabulatedAtmosphere(TABLE_PATH, top_extension="quadratic")
+
+
+def test_tabulated_msis00_extension():
+    """The msis00 tail follows MSIS above the table instead of an exponential."""
+    tab = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", season="January"
+    )
+    iso = dp.TabulatedAtmosphere(TABLE_PATH)
+    msis = dp.MSIS00Atmosphere("SouthPole", "January")
+    for h in (6.0e6, 8.0e6, 1.1e7):
+        assert np.isclose(tab.get_density(h), msis.get_density(h), rtol=1e-3)
+    # ... and the two tails really are different up there
+    assert not np.isclose(tab.get_density(8.0e6), iso.get_density(8.0e6), rtol=0.2)
+
+
+def test_tabulated_is_direction_independent():
+    """One column for every direction: no azimuth, no upgoing angles."""
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    assert not atm.depends_on_azimuth
+    assert atm.max_theta < 92.0  # the geometric horizon seen from 2834 m
+    assert atm.current_impact_latitude is None
+    assert atm.current_impact_longitude is None
+    with pytest.raises(Exception, match="not in allowed range"):
+        atm.set_theta(95.0)
+
+
+def test_tabulated_spline_matches_base_implementation():
+    """The vectorised override must reproduce the base-class spline exactly."""
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    atm.set_theta(45.0)
+    probe = (
+        atm.max_X,
+        atm._min_X,
+        atm._max_den,
+        atm.r_X2rho(200.0),
+        atm.h2X(1.0e6),
+        atm.X2h(500.0),
+    )
+
+    dp.EarthsAtmosphere.calculate_density_spline(atm)
+    reference = (
+        atm.max_X,
+        atm._min_X,
+        atm._max_den,
+        atm.r_X2rho(200.0),
+        atm.h2X(1.0e6),
+        atm.X2h(500.0),
+    )
+    assert np.allclose(probe, reference, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------

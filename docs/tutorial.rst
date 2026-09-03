@@ -120,7 +120,14 @@ Available models are:
   Kept for back-compat. Not fork-safe; `path_workers` must be 0.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
   (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
-- 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
+- 'Tabulated' - a measured or reanalysed vertical profile read from a CSV table,
+  e.g. ``mceq.set_density_model(('Tabulated', ('south_pole_20120103.csv',)))``.
+  The table gives ``h_cm`` plus either ``rho_gcm3`` or ``T_K`` and ``p_hPa``, and
+  is extended above its topmost point with an isothermal tail (or with MSIS00).
+  It describes **one column above one site**, so the azimuth angle is ignored and
+  the zenith range stops at the horizon; see
+  :class:`MCEq.geometry.density_profiles.TabulatedAtmosphere` for the full format
+  and ``docs/examples/ERA5_density_spline.ipynb`` for converting ERA5 data to it.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
 
