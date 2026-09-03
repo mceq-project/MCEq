@@ -1,3 +1,5 @@
+import multiprocessing
+
 import numpy as np
 import pytest
 
@@ -2443,6 +2445,10 @@ def test_cuda_diag_factors_f64diag_accuracy():
         )
 
 
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason="no fork start method; the path build runs serially here",
+)
 def test_msis_condition_paths_are_fork_reproducible():
     """A forked path build reproduces the serial one on an MSIS atmosphere.
 
@@ -2478,3 +2484,28 @@ def test_msis_condition_paths_are_fork_reproducible():
             assert np.array_equal(one[2], other[2])
     finally:
         mceq.close()
+
+
+def test_condition_paths_fall_back_to_serial_without_fork(mceq_sib21, monkeypatch):
+    """`path_workers` degrades to a serial build where fork is missing.
+
+    Windows offers only spawn, and `get_context("fork")` there raises
+    `ValueError: cannot find context for 'fork'`. Both are faked here, so the
+    fallback is exercised on a platform that does have fork.
+    """
+
+    def no_fork(method=None):
+        raise ValueError(f"cannot find context for {method!r}")
+
+    conditions = [{"zenith_deg": zenith} for zenith in (0.0, 30.0, 60.0)]
+    serial = mceq_sib21._build_condition_paths(conditions, path_workers=0)
+
+    monkeypatch.setattr(multiprocessing, "get_all_start_methods", lambda: ["spawn"])
+    monkeypatch.setattr(multiprocessing, "get_context", no_fork)
+    fallback = mceq_sib21._build_condition_paths(conditions, path_workers=4)
+
+    assert len(fallback) == len(conditions)
+    for one, other in zip(serial, fallback):
+        assert one[0] == other[0]
+        assert np.array_equal(one[1], other[1])
+        assert np.array_equal(one[2], other[2])

@@ -109,3 +109,43 @@ def test_no_error_when_old_db_absent(tmp_path, monkeypatch):
 
     with patch("MCEq.download._download_file"):
         download.ensure_db_available()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# MKL library load
+# ---------------------------------------------------------------------------
+
+
+class PreFspathCDLL:
+    """``ctypes.CDLL.__init__`` as CPython < 3.12 has it, on Windows.
+
+    The ``os.fspath`` call landed in 3.12; before it, the DLL-search-path
+    branch subscripts the argument directly, so anything but a string raises
+    ``TypeError: argument of type 'WindowsPath' is not iterable``. Standing in
+    for the real loader lets a Linux run reject a ``Path`` the way Windows on
+    3.10/3.11 does.
+    """
+
+    def __init__(self, name, *args, **kwargs):
+        assert isinstance(name, str), (
+            f"cdll.LoadLibrary got a {type(name).__name__}; ctypes calls "
+            "os.fspath on it only from CPython 3.12"
+        )
+        self.loaded = "/" in name or "\\" in name  # TypeError on a PathLike
+
+
+def test_load_mkl_passes_a_string_path(monkeypatch):
+    """``_load_mkl`` hands ``LoadLibrary`` a ``str``.
+
+    ``detect.mkl_library_path`` returns a ``Path``, which the Windows loader
+    on Python 3.10/3.11 cannot take.
+    """
+    import ctypes
+
+    monkeypatch.setattr(cfg, "mkl", None)
+    monkeypatch.setattr(cfg.detect, "has_mkl", lambda: True)
+    monkeypatch.setattr(ctypes.cdll, "_dlltype", PreFspathCDLL)
+
+    cfg._load_mkl()
+
+    assert isinstance(cfg.mkl, PreFspathCDLL)

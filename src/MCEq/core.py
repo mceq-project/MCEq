@@ -1977,7 +1977,8 @@ class MCEqRun:
           path_workers (int): fork-pool size for a parallel path build.
             Only allowed without ``density_model`` overrides. A worker's
             paths are bitwise equal to the serial ones on every
-            atmosphere, MSIS00 included.
+            atmosphere, MSIS00 included. Ignored where fork is
+            unavailable (Windows), which builds serially.
 
         Returns:
           list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
@@ -2012,6 +2013,12 @@ class MCEqRun:
                     "on the active atmosphere; build density_model "
                     "overrides serially (path_workers=0)."
                 )
+            import multiprocessing as _mp
+
+            # Windows and any spawn-only platform: the pool needs fork to
+            # share the atmosphere, so build serially instead. Same paths.
+            if "fork" not in _mp.get_all_start_methods():
+                n_workers = 0
 
         def dm_key_of(c):
             dm_spec = c.get("density_model")

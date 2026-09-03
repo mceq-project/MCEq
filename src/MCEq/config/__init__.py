@@ -500,7 +500,10 @@ def _load_mkl():
         return
     from ctypes import cdll
 
-    mkl = cdll.LoadLibrary(detect.mkl_library_path())
+    # ``os.fspath`` is not optional: ``CDLL.__init__`` only calls it itself
+    # from CPython 3.12, and its Windows branch does ``'/' in name`` first,
+    # which raises TypeError on a Path under 3.10/3.11.
+    mkl = cdll.LoadLibrary(os.fspath(detect.mkl_library_path()))
 
 
 #: Environment variables every BLAS MCEq can reach reads when it loads.
