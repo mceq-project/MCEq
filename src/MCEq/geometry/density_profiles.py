@@ -1,5 +1,4 @@
 from abc import ABCMeta, abstractmethod
-from os.path import join
 
 import numpy as np
 from six import with_metaclass
@@ -72,6 +71,34 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """
         raise NotImplementedError("Base class called.")
 
+    def _assert_finite_density(self, rho_vec, h_vec_cm):
+        """Raises if any sampled density is not finite.
+
+        A backend that has no data for part of the integration path (a
+        tabulated profile that stops below the top of the atmosphere, say)
+        returns ``nan`` there.  Integrating that silently produces ``nan``
+        splines much later, so the failure is reported here, where the
+        offending heights are still known.
+
+        Args:
+          rho_vec (numpy.ndarray): sampled densities in g/cm**3
+          h_vec_cm (numpy.ndarray): the heights they were sampled at, in cm
+
+        Raises:
+            ValueError: if any entry of *rho_vec* is not finite.
+        """
+        bad = ~np.isfinite(rho_vec)
+        if not np.any(bad):
+            return
+        h_bad = np.atleast_1d(h_vec_cm)[bad]
+        raise ValueError(
+            f"{self.__class__.__name__}::calculate_density_spline(): "
+            f"{np.count_nonzero(bad)} of {len(rho_vec)} density samples are "
+            f"not finite at zenith {self.theta_deg:.1f} deg, for heights "
+            f"{h_bad.min():.4e} - {h_bad.max():.4e} cm. The density model does "
+            "not cover the whole integration path."
+        )
+
     def calculate_density_spline(self, n_steps=2000):
         """Calculates and stores a spline of :math:`\\rho(X)`.
 
@@ -105,6 +132,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
 
         # Compute density at every step once to avoid calling vec_rho_l twice
         rho_vec = vec_rho_l(dl_vec)
+        self._assert_finite_density(rho_vec, self.geom.h(dl_vec, thrad))
 
         # Calculate integral for each depth point
         X_int = cumulative_trapezoid(rho_vec, dl_vec)
@@ -269,9 +297,16 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
     def nref_rel_air(self, h_cm):
         """Returns the refractive index - 1 in air (density parametrization
         as in CORSIKA).
+
+        Normalised to the density at the observation level.  Models whose
+        profile does not reach sea level (an elevated site, or a tabulated
+        atmosphere that starts at the surface) have no density at h=0, so
+        anchoring this on the observation level is what keeps the value finite.
+        For the default h_obs=0 this is the sea-level normalisation it has
+        always been.
         """
 
-        return 0.000283 * self.get_density(h_cm) / self.get_density(0)
+        return 0.000283 * self.get_density(h_cm) / self.get_density(self.geom.h_obs)
 
     def gamma_cherenkov_air(self, h_cm):
         """Returns the Lorentz factor gamma of Cherenkov threshold in air (MeV)."""
@@ -1192,201 +1227,290 @@ class MSIS00KM3NeTCentered(MSIS00LocationCentered):
         self._detector_name = detector
 
 
-class AIRSAtmosphere(EarthsAtmosphere):
-    """Interpolation class for tabulated atmospheres.
+#: Molar mass of dry air in g/mol.
+_M_AIR = 28.964
+#: Ideal gas constant in hPa cm**3 / (K mol).
+_R_GAS = 8.314e4
+#: Padding added to both ends of a tabulated profile in cm.  Purely to absorb
+#: floating-point error at the exact integration limits (``h_obs`` and
+#: ``h_atm``); 1 m is physically negligible.
+_TABLE_PAD_CM = 100.0
+#: Number of table bins blended into MSIS00 by ``top_extension="msis00"``.
+_MSIS_BLEND_BINS = 5
 
-    This class is intended to read preprocessed AIRS Satellite data.
+
+def load_atmosphere_table(filename):
+    """Reads a tabulated atmosphere from a CSV file.
+
+    The format is deliberately minimal so that any data source -- ERA5, AIRS,
+    GDAS, radiosondes -- can be converted to it with a few lines of code.  See
+    :class:`TabulatedAtmosphere` for the full specification and
+    ``docs/examples/ERA5_density_spline.ipynb`` for a worked converter.
 
     Args:
-      location (str): see :func:`init_parameters`
-      season (str,optional): see :func:`init_parameters`
+      filename (str): path to the CSV file
+
+    Returns:
+      dict: ``{"h_cm": ndarray, "rho_gcm3": ndarray}``, plus ``"T_K"`` when the
+      file provides a temperature column.  Rows are sorted by height and rows
+      with missing height or density are dropped.
+    """
+    # Strip full-line comments and blanks first: numpy's ``names=True`` always
+    # takes the *first* line as the header, comment marker or not.
+    with open(filename) as table_file:
+        rows = [
+            line
+            for line in table_file
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+    if len(rows) < 2:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} holds {max(len(rows) - 1, 0)} "
+            "data row(s). A header line naming the columns plus at least two "
+            "data rows are required."
+        )
+
+    raw = np.atleast_1d(np.genfromtxt(rows, delimiter=",", names=True, dtype=float))
+    if raw.dtype.names is None:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} has no column header row. "
+            "The first non-comment line must name the columns."
+        )
+    columns = {name.lower(): raw[name].astype(np.float64) for name in raw.dtype.names}
+
+    if "h_cm" not in columns:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} is missing the required "
+            f"'h_cm' column. Found: {sorted(columns)}."
+        )
+    h_cm = columns["h_cm"]
+
+    if "rho_gcm3" in columns:
+        dens = columns["rho_gcm3"]
+    elif "t_k" in columns and "p_hpa" in columns:
+        # Dry-air ideal gas law.  ERA5 provides specific humidity on the
+        # model-level path; ignoring it overestimates the near-surface density
+        # by at most ~1%.
+        dens = columns["p_hpa"] / columns["t_k"] * _M_AIR / _R_GAS
+    else:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} must provide either a "
+            f"'rho_gcm3' column or both 'T_K' and 'p_hPa'. Found: {sorted(columns)}."
+        )
+
+    valid = np.isfinite(h_cm) & np.isfinite(dens) & (dens > 0.0)
+    if np.count_nonzero(valid) < 2:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} has "
+            f"{np.count_nonzero(valid)} usable row(s); at least 2 rows with a "
+            "finite height and a positive density are required."
+        )
+
+    order = np.argsort(h_cm[valid])
+    table = {"h_cm": h_cm[valid][order], "rho_gcm3": dens[valid][order]}
+    if "t_k" in columns:
+        table["T_K"] = columns["t_k"][valid][order]
+
+    info(
+        2,
+        f"loaded {len(table['h_cm'])} rows from {filename}, "
+        f"h = {table['h_cm'][0]:.3e} - {table['h_cm'][-1]:.3e} cm",
+    )
+    return table
+
+
+class TabulatedAtmosphere(EarthsAtmosphere):
+    """Atmosphere interpolated from a tabulated vertical density profile.
+
+    The table is a **CSV file describing one vertical column above one site at
+    one point in time**.  It replaces the former ``AIRSAtmosphere`` and is the
+    supported way to drive MCEq with measured or reanalysed atmospheric data;
+    ``docs/examples/ERA5_density_spline.ipynb`` shows how to turn an ERA5
+    download into such a table.
+
+    **Table format (v1)**::
+
+        # MCEq tabulated atmosphere v1 -- comment lines are ignored
+        # South Pole, ERA5 pressure levels, 2012-01-03 12:00 UTC
+        h_cm,T_K,p_hPa
+        283400.0,247.1,681.2
+        510000.0,231.4,500.0
+        900000.0,,300.0
+
+    * ``h_cm`` (required) -- height above sea level in cm.
+    * Density, either directly as ``rho_gcm3`` in g/cm**3, or derived from
+      ``T_K`` (K) and ``p_hPa`` (hPa) via the dry-air ideal gas law.
+    * ``T_K`` also feeds :func:`get_temperature`.
+    * Column order is irrelevant and unknown columns are ignored, so a table may
+      carry extra data products alongside the ones MCEq reads.  Rows may be in
+      any order; they are sorted by height on load.
+    * Missing values are written as an empty field or ``nan`` and are dropped
+      row-wise.
+
+    .. note::
+       **This model uses a single vertical column for every direction.**  The
+       shower impact point moves away from the detector as the zenith angle
+       grows (~100 km at 80 deg), and the atmosphere it develops in varies with
+       that position -- which a one-column table cannot express.  The zenith
+       range is therefore limited to downgoing angles, and the azimuth angle is
+       ignored.  For a direction-resolved atmosphere use
+       :class:`MSIS00LocationCentered` or :class:`MSIS21LocationCentered`.
+       Extending the table format with ``lat_deg``/``lon_deg`` columns so the
+       profile can be sampled at the impact point (and upgoing angles supported)
+       is planned; see the MCEq issue tracker.
+
+    Args:
+      table (str or dict): path to a CSV file, or a table already parsed by
+        :func:`load_atmosphere_table`.
+      surface_elevation_m (float, optional): observation level in metres above
+        sea level.  ``None`` (default) uses the lowest height in the table,
+        clipped at sea level -- reanalysis products commonly extrapolate below
+        ground and report negative heights.
+      top_extension (str): how to continue the profile above the topmost
+        tabulated point up to the top of the atmosphere.  ``"isothermal"``
+        (default) appends an exponential tail whose scale height is fitted to
+        the two topmost points; it is self-contained and deterministic, and
+        although it drifts from a real atmosphere by a factor of a few far
+        above the table, the column left up there is small (~1 g/cm**2 above
+        47 km, i.e. ~0.1% of a vertical column).  ``"msis00"`` blends into
+        :class:`MSIS00Atmosphere` instead, which requires *location* to be one
+        of its named sites; prefer it when the table stops low or when the top
+        of the profile matters.  ``"none"`` leaves the profile short, so
+        :func:`get_density` returns ``nan`` above the table and building the
+        density spline raises.
+      location (str, optional): name of the site, for bookkeeping and for the
+        ``"msis00"`` extension.
+      season (str, optional): month name, for bookkeeping and for the
+        ``"msis00"`` extension.
     """
 
-    def __init__(self, location, season, extrapolate=True, *args, **kwargs):
-        if location != "SouthPole":
-            raise Exception(
-                self.__class__.__name__
-                + "(): Only South Pole location supported. "
-                + location
+    def __init__(
+        self,
+        table,
+        surface_elevation_m=None,
+        top_extension="isothermal",
+        location=None,
+        season=None,
+    ):
+        if top_extension not in ("isothermal", "msis00", "none"):
+            raise ValueError(
+                f"{self.__class__.__name__}(): unknown top_extension "
+                f"'{top_extension}'. Choose 'isothermal', 'msis00' or 'none'."
             )
 
-        self.extrapolate = extrapolate
-
-        self.month2doy = {
-            "January": 1,
-            "February": 32,
-            "March": 60,
-            "April": 91,
-            "May": 121,
-            "June": 152,
-            "July": 182,
-            "August": 213,
-            "September": 244,
-            "October": 274,
-            "November": 305,
-            "December": 335,
-        }
-
-        self.season = season
-        self.init_parameters(location, **kwargs)
+        # Base class first: it creates self.geom, which the height bookkeeping
+        # below reads for h_atm and h_obs.
         EarthsAtmosphere.__init__(self)
 
-    def init_parameters(self, location, **kwargs):
-        """Loads tables and prepares interpolation.
-
-        Args:
-          location (str): supported is only "SouthPole"
-          doy (int): Day Of Year
-        """
-        # from time import strptime
-        from os import path
-
-        from matplotlib.dates import datestr2num, num2date
-
-        def bytespdate2num(b):
-            return datestr2num(b.decode("utf-8"))
-
-        data_path = join(
-            path.expanduser("~"), "OneDrive/Dokumente/projects/atmospheric_variations/"
+        parsed = table if isinstance(table, dict) else load_atmosphere_table(table)
+        # Copy: the profile is completed in place below, and a caller-supplied
+        # table must not be modified by building an atmosphere from it.
+        self.h = np.array(parsed["h_cm"], dtype=np.float64)
+        self.dens = np.array(parsed["rho_gcm3"], dtype=np.float64)
+        self.temp = (
+            np.array(parsed["T_K"], dtype=np.float64) if "T_K" in parsed else None
         )
 
-        if "table_path" in kwargs:
-            data_path = kwargs["table_path"]
-
-        files = [
-            ("dens", "airs_amsu_dens_180_daily.txt"),
-            ("temp", "airs_amsu_temp_180_daily.txt"),
-            ("alti", "airs_amsu_alti_180_daily.txt"),
-        ]
-
-        data_collection = {}
-
-        # limit SouthPole pressure to <= 600
-        min_press_idx = 4
-
-        IC79_idx_1 = None
-        IC79_idx_2 = None
-
-        for d_key, fname in files:
-            fname = data_path + "tables/" + fname
-            # tabf = open(fname).read()
-
-            tab = np.loadtxt(
-                fname, converters={0: bytespdate2num}, usecols=[0] + list(range(2, 27))
-            )
-            # with open(fname, 'r') as f:
-            #     comline = f.readline()
-            # p_levels = [
-            #     float(s.strip()) for s in comline.split(' ')[3:] if s != ''
-            # ][min_press_idx:]
-            dates = num2date(tab[:, 0])
-            for di, date in enumerate(dates):
-                if date.month == 6 and date.day == 1:
-                    if date.year == 2010:
-                        IC79_idx_1 = di
-                    elif date.year == 2011:
-                        IC79_idx_2 = di
-            surf_val = tab[:, 1]
-            cols = tab[:, min_press_idx + 2 :]
-            data_collection[d_key] = (dates, surf_val, cols)
-
-        self.interp_tab_d = {}
-        self.interp_tab_t = {}
-        self.dates = {}
-        dates = data_collection["alti"][0]
-
-        msis = MSIS00Atmosphere(location, "January")
-        for didx, date in enumerate(dates):
-            h_vec = np.array(data_collection["alti"][2][didx, :] * 1e2)
-            d_vec = np.array(data_collection["dens"][2][didx, :])
-            t_vec = np.array(data_collection["temp"][2][didx, :])
-
-            if self.extrapolate:
-                # Extrapolate using msis
-                h_extra = np.linspace(h_vec[-1], self.geom.h_atm * 1e2, 250)
-                msis._msis.set_doy(self._get_y_doy(date)[1] - 1)
-                msis_extra_d = np.array([msis.get_density(h) for h in h_extra])
-                msis_extra_t = np.array([msis.get_temperature(h) for h in h_extra])
-
-                # Interpolate last few altitude bins
-                ninterp = 5
-
-                for ni in range(ninterp):
-                    cl = 1 - np.exp(-ninterp + ni + 1)
-                    ch = 1 - np.exp(-ni)
-                    norm = 1.0 / (cl + ch)
-                    d_vec[-ni - 1] = (
-                        d_vec[-ni - 1] * cl * norm
-                        + msis.get_density(h_vec[-ni - 1]) * ch * norm
-                    )
-                    t_vec[-ni - 1] = (
-                        t_vec[-ni - 1] * cl * norm
-                        + msis.get_temperature(h_vec[-ni - 1]) * ch * norm
-                    )
-
-                # Merge the two datasets
-                h_vec = np.hstack([h_vec[:-1], h_extra])
-                d_vec = np.hstack([d_vec[:-1], msis_extra_d])
-                t_vec = np.hstack([t_vec[:-1], msis_extra_t])
-
-            self.interp_tab_d[self._get_y_doy(date)] = (h_vec, d_vec)
-            self.interp_tab_t[self._get_y_doy(date)] = (h_vec, t_vec)
-
-            self.dates[self._get_y_doy(date)] = date
-
-        self.IC79_start = self._get_y_doy(dates[IC79_idx_1])
-        self.IC79_end = self._get_y_doy(dates[IC79_idx_2])
-        self.IC79_days = (dates[IC79_idx_2] - dates[IC79_idx_1]).days
         self.location = location
-        if self.season is None:
-            self.set_IC79_day(0)
+        self.season = season
+        self.top_extension = top_extension
+
+        if surface_elevation_m is None:
+            h_obs_cm = max(float(self.h[0]), 0.0)
         else:
-            self.set_season(self.season)
-        # Clear cached value to force spline recalculation
+            h_obs_cm = surface_elevation_m * 1e2
+
+        self._extend_below(h_obs_cm - _TABLE_PAD_CM)
+        self._extend_above(self.geom.h_atm + _TABLE_PAD_CM)
+        self._log_dens = np.log(self.dens)
+
+        # Cleared before set_h_obs so that it does not try to build a spline.
         self.theta_deg = None
+        self.set_h_obs(h_obs_cm)
 
-    def set_date(self, year, doy):
-        self.h, self.dens = self.interp_tab_d[(year, doy)]
-        _, self.temp = self.interp_tab_t[(year, doy)]
-        self.date = self.dates[(year, doy)]
-        # Compatibility with caching
-        self.season = self.date
+    # ------------------------------------------------------------------
+    # Profile completion
+    # ------------------------------------------------------------------
 
-    def _set_doy(self, doy, year=2010):
-        self.h, self.dens = self.interp_tab_d[(year, doy)]
-        _, self.temp = self.interp_tab_t[(year, doy)]
-        self.date = self.dates[(year, doy)]
+    def _log_linear_point(self, h_target, i_near, i_far):
+        """Density at *h_target* from a log-linear fit through two table rows."""
+        h_near, h_far = self.h[i_near], self.h[i_far]
+        ln_near, ln_far = np.log(self.dens[i_near]), np.log(self.dens[i_far])
+        slope = (ln_far - ln_near) / (h_far - h_near)
+        return float(np.exp(ln_near + slope * (h_target - h_near)))
 
-    def set_season(self, month):
-        self.season = month
-        self._set_doy(self.month2doy[month])
-        self.season = month
-
-    def set_IC79_day(self, IC79_day):
-        import datetime
-
-        if IC79_day > self.IC79_days:
-            raise Exception(
-                self.__class__.__name__ + "::set_IC79_day(): IC79_day above range."
-            )
-        target_day = self._get_y_doy(
-            self.dates[self.IC79_start] + datetime.timedelta(days=IC79_day)
+    def _extend_below(self, h_bottom):
+        """Extends the profile down to *h_bottom* with a log-linear tail."""
+        if self.h[0] <= h_bottom:
+            return
+        info(
+            2,
+            f"{self.__class__.__name__}: table starts at {self.h[0]:.3e} cm, "
+            f"extrapolating down to {h_bottom:.3e} cm.",
         )
-        info(2, "setting IC79_day", IC79_day)
-        self.h, self.dens = self.interp_tab_d[target_day]
-        _, self.temp = self.interp_tab_t[target_day]
-        self.date = self.dates[target_day]
-        # Compatibility with caching
-        self.season = self.date
+        rho_bottom = self._log_linear_point(h_bottom, 0, 1)
+        self.h = np.hstack([h_bottom, self.h])
+        self.dens = np.hstack([rho_bottom, self.dens])
+        if self.temp is not None:
+            self.temp = np.hstack([self.temp[0], self.temp])
 
-    def _get_y_doy(self, date):
-        return date.timetuple().tm_year, date.timetuple().tm_yday
+    def _extend_above(self, h_top):
+        """Extends the profile up to *h_top* according to *top_extension*."""
+        if self.top_extension == "none" or self.h[-1] >= h_top:
+            return
+        if self.top_extension == "isothermal":
+            # np.interp works on log(rho), so an exponential tail is exactly a
+            # straight line: a single extra point reproduces it everywhere.
+            if not self.dens[-2] > self.dens[-1]:
+                raise ValueError(
+                    f"{self.__class__.__name__}(): the two topmost table rows "
+                    "do not decrease in density, so no isothermal scale height "
+                    "can be fitted. Use top_extension='msis00' or 'none'."
+                )
+            rho_top = self._log_linear_point(h_top, -1, -2)
+            self.h = np.hstack([self.h, h_top])
+            self.dens = np.hstack([self.dens, rho_top])
+            if self.temp is not None:
+                self.temp = np.hstack([self.temp, self.temp[-1]])
+            return
+
+        # top_extension == "msis00": blend the top of the table into MSIS00 so
+        # that the seam does not show up as a density step in the 40-80 km
+        # region, where inclined showers develop.
+        msis = MSIS00Atmosphere(self.location, self.season)
+        h_extra = np.linspace(self.h[-1], h_top, 100)
+        msis_dens = np.array([msis.get_density(h) for h in h_extra])
+        msis_temp = np.array([msis.get_temperature(h) for h in h_extra])
+
+        n_blend = min(_MSIS_BLEND_BINS, len(self.h) - 1)
+        for i in range(n_blend):
+            w_tab = 1.0 - np.exp(-n_blend + i + 1)
+            w_msis = 1.0 - np.exp(-i)
+            norm = 1.0 / (w_tab + w_msis)
+            self.dens[-i - 1] = (
+                self.dens[-i - 1] * w_tab + msis.get_density(self.h[-i - 1]) * w_msis
+            ) * norm
+            if self.temp is not None:
+                self.temp[-i - 1] = (
+                    self.temp[-i - 1] * w_tab
+                    + msis.get_temperature(self.h[-i - 1]) * w_msis
+                ) * norm
+
+        self.h = np.hstack([self.h[:-1], h_extra])
+        self.dens = np.hstack([self.dens[:-1], msis_dens])
+        if self.temp is not None:
+            self.temp = np.hstack([self.temp[:-1], msis_temp])
+
+    # ------------------------------------------------------------------
+    # Density and temperature
+    # ------------------------------------------------------------------
 
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.
 
-        Interpolates table at requested value for previously set
-        year and day of year (doy).
+        Log-linear interpolation of the tabulated profile.  Heights outside the
+        tabulated range return ``nan``; with the default *top_extension* the
+        range covers the whole integration path.
 
         Args:
           h_cm (float): height in cm
@@ -1394,19 +1518,12 @@ class AIRSAtmosphere(EarthsAtmosphere):
         Returns:
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
-        ret = np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
-        try:
-            ret[h_cm > self.h[-1]] = np.nan
-        except TypeError:
-            if h_cm > self.h[-1]:
-                return np.nan
-        return ret
+        return np.exp(
+            np.interp(h_cm, self.h, self._log_dens, left=np.nan, right=np.nan)
+        )
 
     def get_temperature(self, h_cm):
         """Returns the temperature in K.
-
-        Interpolates table at requested value for previously set
-        year and day of year (doy).
 
         Args:
           h_cm (float): height in cm
@@ -1414,13 +1531,53 @@ class AIRSAtmosphere(EarthsAtmosphere):
         Returns:
           float: temperature :math:`T(h_{cm})` in K
         """
-        ret = np.exp(np.interp(h_cm, self.h, np.log(self.temp)))
-        try:
-            ret[h_cm > self.h[-1]] = np.nan
-        except TypeError:
-            if h_cm > self.h[-1]:
-                return np.nan
-        return ret
+        if self.temp is None:
+            raise ValueError(
+                f"{self.__class__.__name__}::get_temperature(): the table has "
+                "no 'T_K' column."
+            )
+        return np.interp(h_cm, self.h, self.temp, left=np.nan, right=np.nan)
+
+    # ------------------------------------------------------------------
+    # Density spline (vectorised)
+    # ------------------------------------------------------------------
+
+    def calculate_density_spline(self, n_steps=2000):
+        """Calculates and stores a spline of :math:`\\rho(X)`.
+
+        Overrides the base implementation to evaluate the whole altitude grid in
+        one interpolation instead of looping :func:`get_density` through
+        ``np.vectorize``.  The spline node bookkeeping is identical.
+
+        Args:
+          n_steps (int, optional): number of :math:`X` values to use for
+            interpolation
+        """
+        from scipy.integrate import cumulative_trapezoid
+        from scipy.interpolate import UnivariateSpline
+
+        if self.theta_deg is None:
+            raise Exception("zenith angle not set")
+
+        thrad = self.thrad
+        dl_vec = np.linspace(0.0, self.geom.path_len(thrad), n_steps)
+        h_vec_cm = self.geom.h(dl_vec, thrad)
+        rho_vec = self.get_density(h_vec_cm)
+        self._assert_finite_density(rho_vec, h_vec_cm)
+
+        X_int = cumulative_trapezoid(rho_vec, dl_vec)
+
+        self._max_X = X_int[-1]
+        self._min_X = X_int[0]
+        self._max_den = float(rho_vec[0])
+
+        # Same node contract as the base class: X_int[i] pairs with dl_vec[i+1],
+        # and the splines are fitted on the reversed (descending-height) arrays.
+        h_intp = h_vec_cm[2:][::-1]
+        X_intp = X_int[1:][::-1]
+        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
+        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
+        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
 
 
 class GeneralizedTarget:

@@ -51,6 +51,7 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
 #: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
 #: density_model = ('MSIS21_KM3NeT', ('ORCA', 'January'))      # detector-centered NRLMSIS 2.1 at ORCA
+#: density_model = ('Tabulated', ('my_atmosphere.csv',))   # measured/reanalysed profile from a CSV table
 #: density_model = ('GeneralizedTarget', None)
 
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
