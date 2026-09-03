@@ -1,13 +1,12 @@
 from time import time
 
 import numpy as np
-import scipy.sparse as sp
 
 import MCEq.data
 from MCEq import config
 from MCEq.download import ensure_db_available
 from MCEq.misc import info, normalize_hadronic_model_name
-from MCEq.operators.compiled import compile_operator
+from MCEq.operators.compiled import compile_operator, em_step_scale
 
 # Imported for use below and re-exported for compatibility: `MatrixBuilder`
 # lived in this module until it moved to `MCEq.operators.matrix_builder`, and
@@ -2551,20 +2550,14 @@ class MCEqRun:
         return False
 
     def _em_cascade_step_scale(self):
-        """Cure-B stiffness scale r_EM of the e+/-/gamma block of ``int_m``.
+        """Cure-B stiffness scale r_EM of the current ``int_m``, memoised.
 
-        Returns ``spec(int_off_EM)``: the spectral radius of the *off-diagonal*
-        part of ``int_m`` restricted to the e+/-/gamma rows and columns, in
-        1/(g/cm^2). This is the same quantity (``spec(int_off)``) that fixes
-        the legacy ``config.etd2_path['dX_max']`` for the hadronic matrix
-        (~0.094), evaluated on the much stiffer EM block (~0.13). The spectral
-        radius — not a matrix norm — is the right scale: the EM off-diagonal is
-        a near-singular, highly non-normal difference+production operator whose
-        1-norm is dominated by the near-cancelling continuous-loss bands and is
-        meaningless as a step scale. ``int_m`` is X-constant, so r_EM is a
-        single global scalar; it is cached and invalidated when ``int_m`` is
-        rebuilt. Returns 0.0 when no e+/-/gamma are loaded (EM cascade inactive)
-        or the matrices are not yet built.
+        The scale itself is a property of the operator and is computed by
+        :func:`MCEq.operators.compiled.em_step_scale`; this method holds the
+        memo. ``int_m`` is X-constant, so one spectral radius serves every step
+        of every solve, and the entry is keyed on the *identity* of ``int_m``,
+        which invalidates it whenever the matrices are rebuilt. Returns 0.0
+        before the matrices exist, and 0.0 when no e+/-/gamma are loaded.
         """
         int_m = getattr(self, "int_m", None)
         if int_m is None:
@@ -2572,46 +2565,11 @@ class MCEqRun:
         cache = getattr(self, "_em_step_scale_cache", None)
         if cache is not None and cache[0] is int_m:
             return cache[1]
-        col_ranges = [
-            np.arange(p.lidx, p.uidx)
-            for p in self.pman.all_particles
-            if getattr(p, "is_em", False)
-        ]
-        if not col_ranges:
-            self._em_step_scale_cache = (int_m, 0.0)
-            return 0.0
-        idx = np.concatenate(col_ranges)
-        diag = int_m.diagonal()
-        int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
-        block = int_off[idx][:, idx].tocsc().astype(np.float64)
-        # Spectral radius of the EM off-diagonal. The block is a small
-        # sub-system (a few e+/-/gamma species x dim_e, typically < ~2000) and
-        # strongly NON-NORMAL (||A||_2 / rho ~ 3). Sparse ``eigs(k=1, 'LM')``
-        # routinely FAILS to converge on it (ARPACK DNAUPD finds no eigenvalue
-        # to tolerance), and the old except-branch then silently substituted a
-        # matrix norm — 2-3x larger than the true spectral radius AND
-        # nondeterministic — capping dX far tighter than this method's own
-        # docstring promises ("spectral radius, not a matrix norm"). Dense
-        # ``eigvals`` is exact, deterministic and cheap at this size; ARPACK +
-        # norm survive only as a fallback for an unexpectedly huge block.
-        n = block.shape[0]
-        try:
-            if n <= int(getattr(config, "em_step_dense_eig_max", 4000)):
-                ev = np.linalg.eigvals(block.toarray())
-            else:
-                from scipy.sparse.linalg import eigs
-
-                ev = eigs(
-                    block, k=1, which="LM", return_eigenvectors=False, maxiter=10000
-                )
-            r_em = float(np.max(np.abs(ev)))
-        except Exception:
-            # Last-resort fall-back (huge block + ARPACK failure): the spectral
-            # radius is bounded above by both induced norms; take the smaller
-            # so we never under-cap.
-            n1 = float(np.abs(block).sum(axis=0).max())
-            ninf = float(np.abs(block).sum(axis=1).max())
-            r_em = min(n1, ninf)
+        r_em = em_step_scale(
+            int_m,
+            self.pman.all_particles,
+            dense_eig_max=getattr(config, "em_step_dense_eig_max", 4000),
+        )
         self._em_step_scale_cache = (int_m, r_em)
         return r_em
 
