@@ -18,6 +18,7 @@ Regenerate with `python -m tests.golden.make_goldens [section ...]` or
 SECTIONS = (
     "structure",
     "paths",
+    "environment",
     "solve1d",
     "species",
     "operators1d",
@@ -39,7 +40,21 @@ SLOW_SECTIONS = frozenset({"solve2d", "operators2d"})
 #: is here as well as in SLOW_SECTIONS — the two marks are orthogonal. The two
 #: `operators*` sections are here for a stricter reason than the solve ones:
 #: their CSR keys are sha256 digests, which cannot be compared to a tolerance
-#: at all.
+#: at all. `environment` is here for that same reason and no other: it is
+#: thread-invariant (rebuilt at 1, 2, 4 and 8 BLAS threads, all 2574 keys
+#: bitwise — FITPACK's band solve is serial Fortran and not a BLAS call, and the
+#: one BLAS-shaped operation in its builder is a 3x3 matvec), but its spline
+#: knots and coefficients are sha256 digests, and a quadratic interpolating
+#: spline through 2000 MSIS densities is no less sensitive to a numpy/scipy
+#: bump than a solve is.
 HOST_SECTIONS = frozenset(
-    {"paths", "solve1d", "species", "operators1d", "solve2d", "operators2d"}
+    {
+        "paths",
+        "environment",
+        "solve1d",
+        "species",
+        "operators1d",
+        "solve2d",
+        "operators2d",
+    }
 )

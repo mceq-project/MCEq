@@ -24,6 +24,7 @@ from ._harness import save_section
 GENERATORS = {
     "structure": "gen_structure",
     "paths": "gen_paths",
+    "environment": "gen_environment",
     "solve1d": "gen_solve1d",
     "species": "gen_species",
     "operators1d": "gen_operators1d",
