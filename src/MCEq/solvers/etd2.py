@@ -3,7 +3,7 @@
 :func:`etd2_driver` is one loop for every route -- paraxial and
 sec(theta)-coupled, single axis, shared-path multi-RHS and the LPT carousel
 -- on numpy, MKL, Accelerate and CUDA.
-:func:`MCEq.operator_assembly.compile_operator` prepares the operator; a
+:func:`MCEq.operators.compiled.compile_operator` prepares the operator; a
 backend object places it on its library / device and executes the stages
 there. Nothing else differs between backends. :func:`solve_etd2` is the
 single route from the matrices of ``MatrixBuilder`` to a solution: compile,
@@ -18,7 +18,7 @@ scalar formulas it calls belong in :mod:`MCEq.solvers.numerics`.
 import numpy as np
 
 from MCEq.misc import info
-from MCEq.operator_assembly import compile_operator
+from MCEq.operators.compiled import compile_operator
 from MCEq.solvers.backends import (
     accelerate_backend,
     cuda_backend,
@@ -38,8 +38,8 @@ def etd2_driver(
     ``S = I`` is the paraxial transport. With the sec(theta) transport
     ``S = I + T Pi``, where ``T`` is the constant Hankel-space representation
     of multiplication by ``min(sec theta, sec theta_cap)`` (see
-    :mod:`MCEq.secant`) and ``Pi`` the projector onto the state columns with
-    ``E_kin < config.secant_theta_e_max``. The operator is then split, per
+    :mod:`MCEq.operators.secant`) and ``Pi`` the projector onto the columns
+    with ``E_kin < config.secant_theta_e_max``. The operator is then split, per
     state column i in the support of Pi and the coupled mode subspace P
     (S_P = (I+T)[P,P]):
 
@@ -56,7 +56,7 @@ def etd2_driver(
     stiffness; stitching the coupling into the CSR instead puts stiff
     coupled loss terms in the explicit part and diverges.
 
-    The operator behind ``be`` is a :class:`~MCEq.operator_assembly.
+    The operator behind ``be`` is a :class:`~MCEq.operators.compiled.
     CompiledOperator`; with coupling, the state lives in its low-E-first
     layout (``phi`` and the results are in the original layout), the
     coupled plane is the corner block ``x.reshape(n_k, N, K)[:n_P, :n_g]``
@@ -354,7 +354,7 @@ def solve_etd2(
         same rank.
       grid_idcs: step indices to snapshot.
       backend: ``"numpy"``, ``"mkl"``, ``"accelerate"`` or ``"cuda"``.
-      sec_ops: sec(theta) operator set of :mod:`MCEq.secant`, or ``None``
+      sec_ops: sec(theta) operator set of :mod:`MCEq.operators.secant`, or ``None``
         for the paraxial transport.
       schedule, phi0_per_pixel: LPT carousel of
         :func:`MCEq.solvers.schedule.compile_carousel_schedule`. With a

@@ -47,7 +47,7 @@ containers =
 layers =
     core : (driver)
     solvers
-    operator_assembly : secant : (operators)
+    operator_assembly : secant : operators
     particlemanager : (species)
     data
     download
@@ -86,6 +86,9 @@ ignore_imports =
 # The environment layer knows about geometry and atmospheres, not about the
 # cascade. Two forbidden contracts rather than one independence contract: the
 # latter would also forbid data <-> species, which the target layering allows.
+#
+# `operator_assembly` and `secant` are the Phase 5 re-export shims (D14); they
+# stay listed beside `operators` until Phase 7 deletes them.
 [importlinter:contract:C2]
 name = C2 environment does not import data/species/operators/solvers
 type = forbidden
@@ -94,6 +97,7 @@ source_modules =
 forbidden_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.operators
     MCEq.operator_assembly
     MCEq.secant
     MCEq.solvers
@@ -106,6 +110,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.operators
     MCEq.operator_assembly
     MCEq.secant
     MCEq.solvers
@@ -121,6 +126,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.operators
     MCEq.operator_assembly
     MCEq.secant
     MCEq.solvers
@@ -144,6 +150,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.operators
     MCEq.operator_assembly
     MCEq.secant
     MCEq.solvers

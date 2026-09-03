@@ -8,7 +8,7 @@ import MCEq.data
 from MCEq import config
 from MCEq.download import ensure_db_available
 from MCEq.misc import info, normalize_hadronic_model_name
-from MCEq.operator_assembly import compile_operator
+from MCEq.operators.compiled import compile_operator
 from MCEq.particlemanager import ParticleManager
 
 # trapz was finally removed with numpy 2.4
@@ -2382,11 +2382,11 @@ class MCEqRun:
         return self._build_secant_ops()
 
     def _build_secant_ops(self):
-        """The constant sec(theta) operator set for the current geometry
-        (see :mod:`MCEq.secant`), built once per (geometry, ``secant_*``
+        """The constant sec(theta) operator set for the current geometry (see
+        :mod:`MCEq.operators.secant`), built once per (geometry, ``secant_*``
         parameters) and reused across solves — the operator and backend
         caches key on its identity."""
-        from MCEq.secant import build_secant_kernel_ops
+        from MCEq.operators.secant import build_secant_kernel_ops
 
         k_grid = np.asarray(self._mceq_db.k_grid)
         e_centers = np.asarray(self._energy_grid.c)
@@ -2415,7 +2415,7 @@ class MCEqRun:
         return cached[1]
 
     def _compiled_operator(self, sec_ops=None):
-        """:func:`~MCEq.operator_assembly.compile_operator` of the current
+        """:func:`~MCEq.operators.compiled.compile_operator` of the current
         matrices, cached against the identity of ``int_m`` / ``dec_m`` and
         of the operator set (a paraxial and a coupled entry coexist)."""
         cache = self.__dict__.setdefault("_operator_cache", {})
@@ -3101,8 +3101,8 @@ class MatrixBuilder:
 
         ``config.secant_theta_transport`` does not alter these matrices;
         the sec(theta) mode coupling is applied inside the ETD2RK secant
-        kernels (see :mod:`MCEq.secant` for why it is not stitched into
-        the CSR).
+        kernels (see :mod:`MCEq.operators.secant` for why it is not stitched
+        into the CSR).
         """
         from scipy.sparse import coo_matrix, csr_matrix
 

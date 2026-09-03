@@ -16,11 +16,12 @@ own each piece:
   through a fixed-width multi-RHS pipeline.
 
 A name is re-exported here when a caller outside the package uses it;
-everything else stays in the module that owns it. The operator-assembly
-names below are re-exported because callers reach them through this module.
+everything else stays in the module that owns it. The
+:mod:`MCEq.operators.compiled` names below are re-exported because callers
+reach them through this module.
 """
 
-from MCEq.operator_assembly import (
+from MCEq.operators.compiled import (
     CompiledOperator,
     compile_operator,
     secant_layout,
