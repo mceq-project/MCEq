@@ -259,12 +259,12 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         info(5, f".. nrlmsis2.1 vectorised call took {time() - now:1.3f}s")
 
-        self._max_den = float(rho_vec[0])
+        max_den = float(rho_vec[0])
 
         # ``h_vec_cm[i] == geom.h(dl_vec[i], thrad)``, so ``dl_vec[2:]`` is
         # ``h_vec_cm[2:]`` — the heights the base tail recomputes with one
         # scalar call each, one ULP of ``r_E`` away from these.
-        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1])
+        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1], max_den=max_den)
 
     # ------------------------------------------------------------------
     # set_theta (base-class behavior; no azimuth concept here)
@@ -516,11 +516,11 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
         info(5, f".. spline build took {time() - now:1.3f}s")
 
-        self._max_den = float(rho_vec[0])
+        max_den = float(rho_vec[0])
 
         # As above: ``h_vec_cm[2:]`` is the base tail's ``dl_vec[2:]`` heights,
         # from one array ``geom.h`` call rather than ``n_steps`` scalar ones.
-        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1])
+        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1], max_den=max_den)
 
     # ------------------------------------------------------------------
     # set_theta — location-centered version with azimuth support

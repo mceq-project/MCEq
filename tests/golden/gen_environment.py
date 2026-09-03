@@ -43,7 +43,9 @@ check (:func:`_check_invariants`). The collision structure of the 250 knot and
 250 coefficient digests is the second:
 
 * **195 distinct knot digests of 250.** With ``s = 0.0`` FITPACK interpolates,
-  so ``s_h2X``'s knots *are* the ``h_intp`` samples and depend on
+  so ``s_h2X``'s knots are fixed by the ``h_intp`` samples alone -- not equal
+  to them, since at ``k = 2`` the interior knots fall between the data points
+  and only the two boundary knots coincide -- hence they depend on
   ``(thrad, h_obs, h_form)`` alone. 18 geometries are shared by several cells,
   and there the CORSIKA, isothermal, MSIS00 and MSIS21 knots coincide bitwise
   across completely different density models. That is the invariant, not a
@@ -371,7 +373,7 @@ detector-centred models the azimuth mode, the impact latitude/longitude and
 the full (n_azimuth, 2) impact-coordinate table that pins _impact_point.
 
 84 cells, all mutually distinct. 195 of the 250 knot digests are distinct
-because s_h2X's knots are the h_intp samples and therefore geometry: 18
+because s_h2X's knots are fixed by the h_intp samples, hence geometry: 18
 geometries are shared by several cells and the knots coincide there across
 every density model. 247 of the 250 coefficient digests are distinct, the
 three collisions being the falsy-theta_deg set_h_obs cell below.

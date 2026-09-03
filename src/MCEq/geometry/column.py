@@ -14,14 +14,13 @@ from __future__ import annotations
 import numpy as np
 
 
-def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp):
+def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp, *, max_den):
     """Integrate the column and fit the three splines every atmosphere shares.
 
     Args:
       atmosphere: the :class:`~MCEq.geometry.density_profiles.EarthsAtmosphere`
-        to store the result on. ``_max_X``, ``_s_h2X``, ``_s_X2rho`` and
-        ``_s_lX2h`` are set; ``_max_den`` is **not**, because callers derive it
-        differently.
+        to store the result on. ``_max_X``, ``_max_den`` and the three splines
+        are all set here.
       rho_vec: density at each of the ``n_steps`` samples of *dl_vec*.
       dl_vec: slant path from the top of the atmosphere to the observation
         level, ``linspace(0, path_len, n_steps)``.
@@ -31,6 +30,11 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp):
         array-``geom.h`` spellings differ by one ULP of ``r_E`` at 258 of 901
         zeniths, and both are in use -- ``tests/geometry/test_environment_pins.py``
         pins that difference and bounds it at two ULP.
+      max_den: the caller's atmosphere-top density. Keyword-only and required
+        on purpose: it is the one stored quantity the four callers derive
+        differently, and ``EarthsAtmosphere.__init__`` pre-sets ``_max_den``
+        from ``config.environment.max_density``, so a caller that simply forgot
+        it would inherit a plausible 0.001225 with no exception raised.
 
     Returns:
       ``X_int = cumulative_trapezoid(rho_vec, dl_vec)``, one element shorter
@@ -73,12 +77,23 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp):
 
     h_intp = np.asarray(h_intp)
     X_int = cumulative_trapezoid(rho_vec, dl_vec)
-    log_X_intp = np.log(X_int[1:][::-1])
 
-    # Before the fits, so a rejected ``h_intp`` leaves ``_max_X`` describing the
-    # new zenith while the splines still describe the old one. Pre-existing
-    # order, kept because changing it is a behaviour change, not a relocation.
+    # Assigned before anything that can raise, which is the order the four
+    # callers had. It means a rejected ``h_intp`` leaves ``_max_X`` describing
+    # the new zenith while the splines still describe the old one -- see B28 --
+    # but changing that is a behaviour change, not a relocation.
     atmosphere._max_X = X_int[-1]
+    atmosphere._max_den = max_den
+
+    # ``np.log`` of the CONTIGUOUS slice, reversed after, rather than of the
+    # reversed view. Elementwise, so the two are equal on this host; they are
+    # not equal by construction, because numpy dispatches the float64 ``log``
+    # SVML loop only on AVX512-SKX and conditions that dispatch on contiguity.
+    # The base tail fed ``np.log`` a Python list, hence contiguous, and the
+    # MSIS21 tails fed it a negative-stride view -- so the two families already
+    # disagreed in this respect and a shared helper has to pick one. It picks
+    # the contiguous form, which is what the majority of atmospheres had.
+    log_X_intp = np.log(X_int[1:])[::-1]
     atmosphere._s_h2X = UnivariateSpline(h_intp, log_X_intp, k=2, s=0.0)
     atmosphere._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
     atmosphere._s_lX2h = UnivariateSpline(log_X_intp[::-1], h_intp[::-1], k=2, s=0.0)

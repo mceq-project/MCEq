@@ -112,7 +112,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         info(5, f".. took {time() - now:1.2f}s")
 
         # ``dl = 0`` is the atmosphere top, so this is the path minimum.
-        self._max_den = self.get_density(self.geom.h(0, thrad))
+        max_den = self.get_density(self.geom.h(0, thrad))
 
         # One scalar ``geom.h`` call per sample. The MSIS21 overrides pass the
         # heights of a single array call instead, and the two spellings differ
@@ -120,7 +120,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         # ``tests/geometry/test_environment_pins.py``. Which one a given
         # atmosphere uses is therefore its own business, not the fit's.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
-        fit_column_splines(self, rho_vec, dl_vec, h_intp)
+        fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
     @property
     def max_X(self):
@@ -164,12 +164,10 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         """Configures geometry and initiates spline calculation for
         :math:`\\rho(X)`.
 
-        If the option 'use_atm_cache' is enabled in the config, the
-        function will check, if a corresponding spline is available
-        in the cache and use it. Otherwise it will call
-        :func:`calculate_density_spline`,  make the function
-        :func:`r_X2rho` available to the core code and store the spline
-        in the cache.
+        Calls :func:`calculate_density_spline`, which makes :func:`r_X2rho`
+        available to the core code. There is no spline cache and no
+        ``use_atm_cache`` config option -- this docstring described both for
+        years -- only the ``theta_deg`` short-circuit below.
 
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector
@@ -952,14 +950,14 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
         info(5, f".. took {time() - now:1.2f}s")
 
-        self._max_den = float(rho_vec[0])
+        max_den = float(rho_vec[0])
 
         # Scalar ``geom.h``, as in the base tail this branch replaces. These
         # are the same values as ``h_vec[2:][::-1]`` -- same function, same
         # arguments -- so the recomputation is redundant, but removing it is a
         # change of its own and not part of this extraction.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
-        fit_column_splines(self, rho_vec, dl_vec, h_intp)
+        fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
     # ------------------------------------------------------------------
     # Angle setting
