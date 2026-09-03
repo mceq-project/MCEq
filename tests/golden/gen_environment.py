@@ -1,8 +1,8 @@
 """Golden section ``environment``: atmospheres, their raw splines, and geometry.
 
 Sweeps (atmosphere class x zenith x azimuth mode x observation level) and pins,
-per cell, the four numbers :meth:`calculate_density_spline` leaves behind
-(``max_X``, ``_min_X``, ``max_den``, ``max_theta``), the FITPACK knot and
+per cell, the three numbers :meth:`calculate_density_spline` leaves behind
+(``max_X``, ``max_den``, ``max_theta``), the FITPACK knot and
 coefficient arrays of ``s_h2X`` / ``s_X2rho`` / ``s_lX2h``, the public spline
 wrappers on a per-cell probe grid, the :class:`EarthGeometry` state, and the
 impact-point geography of the detector-centred models. Beside the sweep it pins
@@ -175,10 +175,10 @@ AVERAGED_ZENITHS_MSIS21 = (0.0, 60.0, 85.0, 91.0, 120.0)
 AVERAGED_ZENITHS_MSIS00 = (60.0, 91.0)
 AVERAGED_ZENITHS_MSIS00_ONE = (60.0,)
 
-#: Fractions of ``[_min_X, max_X]`` at which the depth-keyed wrappers are
-#: probed. Every point is inside the fitted domain by construction, including
-#: the two endpoints, so the section never pins an extrapolation it did not
-#: mean to.
+#: Fractions of ``[min_X, max_X]`` at which the depth-keyed wrappers are
+#: probed, where ``min_X`` is the first ``s_X2rho`` knot. Every point is inside
+#: the fitted domain by construction, including the two endpoints, so the
+#: section never pins an extrapolation it did not mean to.
 X_FRACTIONS = (0.0, 0.001, 0.01, 0.1, 0.5, 0.9, 0.999, 1.0)
 
 #: Heights in cm at which ``h2X`` and ``get_density`` are probed. Fixed rather
@@ -360,9 +360,10 @@ fork-free, MCEqRun-free: an atmosphere needs only its own parameter tables plus
 the ctypes nrlmsise00 library (MSIS00) or the optional nrlmsis extension
 (MSIS21, and the only thing this section gates on).
 
-Per cell: max_X, _min_X, max_den, max_theta, theta_deg, thrad; the sha256 of
+Per cell: max_X, max_den, max_theta, theta_deg, thrad; the sha256 of
 the knot and coefficient arrays of s_h2X / s_X2rho / s_lX2h with their degree
-and lengths; r_X2rho / X2h at eight fractions of [_min_X, max_X] and h2X at
+and lengths; r_X2rho / X2h at eight fractions of [min_X, max_X] -- min_X being
+the first s_X2rho knot, i.e. the fitted lower bound -- and h2X at
 six fixed heights; get_density at those six heights, or at two of them in
 azimuth-averaging mode, where the method is a Python loop over n_azimuth
 backend calls per height; the seven EarthGeometry scalars; and for the
@@ -488,9 +489,16 @@ def _record_atmosphere(arrays, prefix, atm, h_form):
     not agree bitwise — see :func:`_check_invariants` and
     ``tests/geometry/test_environment_pins.py`` — so a phase that unifies the
     four tails has to change this array and say which form it chose.
+
+    ``min_X`` is the lower end of the ``s_X2rho`` fitted domain, read off the
+    spline's first knot rather than from an attribute: with ``s = 0.0``
+    FITPACK interpolates, so that knot *is* the first cumulative-trapezoid
+    depth the tail integrated. It bounds the probe grid only — it is not
+    pinned as a scalar, because no MCEq code reads it and the knot digests
+    below already fix it.
     """
     arrays[f"{prefix}/h_form"] = np.asarray(h_form)
-    min_X = float(atm._min_X)
+    min_X = float(atm.s_X2rho.get_knots()[0])
     max_X = float(atm.max_X)
     arrays[f"{prefix}/scalars"] = np.array(
         [
@@ -498,7 +506,6 @@ def _record_atmosphere(arrays, prefix, atm, h_form):
             float(atm.thrad),
             float(atm.max_theta),
             max_X,
-            min_X,
             float(atm.max_den),
         ],
         dtype=np.float64,
@@ -818,9 +825,9 @@ def _record_gtracr(arrays):
         gc._DEFAULT_MASS_GROUPS, dtype=np.int64
     )
 
-    # Location resolution. ARCA is the interesting row: the coordinate branch
-    # tests 36.264 / 15.4 against the _KM3NET_DETECTORS entry's 36.267 / 16.1,
-    # so it never matches and the name falls through to the coord stub.
+    # Location resolution. The lat/lon columns are the load-bearing ones:
+    # get_cutoff_map samples gtracr at exactly them for every row, so they are
+    # what a cutoff map belongs to. The name column only labels them.
     rows = []
     for label, maker in (
         (

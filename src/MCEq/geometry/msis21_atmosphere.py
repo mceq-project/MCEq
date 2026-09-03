@@ -264,7 +264,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
 
         self._max_X = X_int[-1]
-        self._min_X = X_int[0]
         self._max_den = float(rho_vec[0])
 
         # Base-class spline fit: h_intp = reversed(geom.h(dl_vec[2:], thrad)),
@@ -532,7 +531,6 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
 
         self._max_X = X_int[-1]
-        self._min_X = X_int[0]
         self._max_den = float(rho_vec[0])
 
         # Same indexing as the MSIS00 base-class spline contract:

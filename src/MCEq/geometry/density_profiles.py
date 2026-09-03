@@ -121,13 +121,13 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         self._max_X = X_int[-1]
         self._max_den = self.get_density(self.geom.h(0, thrad))
 
-        # Store minimum valid slant depth for the integration path.  The
-        # spline below is only fitted for X >= X_int[0]; starting the
-        # numerical integration from X_int[0] avoids evaluating r_X2rho
-        # outside the fitted domain, which can return non-physical (zero or
-        # negative) values due to quadratic spline extrapolation and cause an
-        # infinite loop in _calculate_integration_path.
-        self._min_X = X_int[0]
+        # ``s_X2rho`` below is fitted on ``X_int``, so its domain starts at
+        # ``X_int[0] > 0`` and every solve extrapolates it down to
+        # ``config.X_start == 0``. That extrapolation is load-bearing, not a
+        # hazard: it is the top-of-atmosphere saturation of ``1/rho`` that
+        # ``etd2_nonuniform_path`` sizes its first steps against, and
+        # ``s_X2rho.get_knots()[0]`` recovers the fitted lower bound exactly
+        # for anyone who needs it.
 
         # Interpolate with bi-splines without smoothing
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
@@ -972,7 +972,6 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         dl_vec = dl_vec[1:]
 
         self._max_X = X_int[-1]
-        self._min_X = X_int[0]
         self._max_den = float(rho_vec[0])
 
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
