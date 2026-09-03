@@ -353,7 +353,7 @@ _DEFAULT_MASS_GROUPS = (
     (402, 2, 4),  # He
     (1206, 6, 12),  # C-N-O
     (2814, 14, 28),  # Si
-    (5426, 26, 54),  # Fe
+    (5426, 26, 56),  # Fe-56; the id is crflux's group key, not A*100+Z
 )
 
 
