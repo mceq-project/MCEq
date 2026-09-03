@@ -5,6 +5,7 @@ import numpy as np
 
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import (
+    MONTH_TO_DAY_OF_YEAR,
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
@@ -1001,20 +1002,8 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         self.extrapolate = extrapolate
 
-        self.month2doy = {
-            "January": 1,
-            "February": 32,
-            "March": 60,
-            "April": 91,
-            "May": 121,
-            "June": 152,
-            "July": 182,
-            "August": 213,
-            "September": 244,
-            "October": 274,
-            "November": 305,
-            "December": 335,
-        }
+        # Was a verbatim copy of the shared table; the two agreed exactly.
+        self.month2doy = MONTH_TO_DAY_OF_YEAR
 
         self.season = season
         self.init_parameters(location, **kwargs)
