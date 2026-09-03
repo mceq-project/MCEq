@@ -338,10 +338,12 @@ def test_get_solution_grid_idx(mceq_sib21):
     assert np.allclose(sol_last, sol1)
 
 
-def test_get_solution_wrong_particle_name(mceq_sib21):
+def test_get_solution_wrong_particle_name(mceq_sib21, monkeypatch):
     from MCEq import config
 
-    config.excpt_on_missing_particle = True
+    # The production default is False, and conftest does not snapshot this one:
+    # leaving it True turns every later missing-particle lookup into a raise.
+    monkeypatch.setattr(config, "excpt_on_missing_particle", True)
     mceq_sib21.solve()
     with pytest.raises(Exception):
         mceq_sib21.get_solution("proton", mag=0, integrate=True, grid_idx=0)

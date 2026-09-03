@@ -10,6 +10,33 @@ from MCEq import config
 from MCEq.core import MCEqRun
 from MCEq.solvers import solve_etd2
 
+#: Globals :func:`mceq_2d` sets. ``conftest._restore_global_config_state``
+#: snapshots ``mceq_db_fname``, but it is function-scoped and so runs *after*
+#: this module-scoped fixture: its snapshot already holds the mutated value.
+#: Every name here is therefore restored locally, and the rest of the suite
+#: runs against a different database, so leaking the grid bounds or the
+#: muon/secant switches would change later solves.
+_MUTATED = (
+    "mceq_db_fname",
+    "e_min",
+    "e_max",
+    "muon_helicity_dependence",
+    "muon_multiple_scattering",
+    "secant_theta_transport",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_2d_config():
+    """Keep this module's database, grid bounds and muon/secant switches from
+    leaking into later tests, which run against a different database."""
+    saved = {name: getattr(config, name) for name in _MUTATED}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(config, name, value)
+
 
 @pytest.fixture(scope="module")
 def mceq_2d():

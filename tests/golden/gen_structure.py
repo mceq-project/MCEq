@@ -45,6 +45,15 @@ PACKAGES = ("MCEq", "mceq_config")
 #: A class body executes at import time and counts as an import-time import.
 DEFERRED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
+#: Config globals :func:`build` pins. No array here reads a database — the
+#: section is parsed out of the source text — but `make_provenance` records the
+#: sha256 of whatever `mceq_db_fname` names, and `_check_database_identity`
+#: rejects a section whose digest moved. Unpinned, that digest is whatever the
+#: host had configured when the section was generated, so the section fails
+#: after any test that changes the global. Pin the reduced database the other
+#: sections use.
+CONFIG_PINS = {"mceq_db_fname": "mceq_db_v140reduced_compact.h5"}
+
 
 def module_name(path: Path) -> str:
     """Dotted name of the module at `path`, e.g. `src/MCEq/data.py` -> MCEq.data."""
@@ -157,7 +166,13 @@ def _text(values) -> np.ndarray:
 
 
 def build() -> tuple[dict, dict]:
-    """Produce (arrays, provenance) for this section. Mutates no process state."""
+    """Produce (arrays, provenance) for this section.
+
+    Every array comes from the source text; the config pins touch only what
+    `make_provenance` records, and are restored before returning.
+    """
+    from MCEq import config
+
     files = source_files()
     paths = [path.relative_to(ROOT).as_posix() for path in files]
     lines = [count_lines(path) for path in files]
@@ -174,22 +189,33 @@ def build() -> tuple[dict, dict]:
         "cycles": _text(cycles(edges)),
     }
 
-    provenance = make_provenance(
-        SECTION,
-        note=(
-            "Static module inventory, import graph, MCEq.config importers and import "
-            "cycles, parsed from the source with ast. A ratchet: every phase of the "
-            "layered-architecture refactor changes it, and regenerating is the "
-            "reviewed act of accepting the new shape."
-        ),
-        tolerances={},
-        extra={
-            "roots": list(ROOTS),
-            "module_count": len(files),
-            "total_lines": sum(lines),
-            "edge_count": len(edges),
-        },
-    )
+    saved = {key: getattr(config, key) for key in CONFIG_PINS}
+    for key, value in CONFIG_PINS.items():
+        setattr(config, key, value)
+    try:
+        provenance = make_provenance(
+            SECTION,
+            note=(
+                "Static module inventory, import graph, MCEq.config importers and "
+                "import cycles, parsed from the source with ast. A ratchet: every "
+                "phase of the layered-architecture refactor changes it, and "
+                "regenerating is the reviewed act of accepting the new shape."
+            ),
+            tolerances={},
+            extra={
+                "roots": list(ROOTS),
+                "module_count": len(files),
+                "total_lines": sum(lines),
+                "edge_count": len(edges),
+            },
+        )
+    finally:
+        for key, value in saved.items():
+            setattr(config, key, value)
+
+    db = provenance["databases"].get("mceq_db_fname", {})
+    assert "sha256" in db, f"reduced DB not resolvable, provenance incomplete: {db}"
+
     return arrays, provenance
 
 
