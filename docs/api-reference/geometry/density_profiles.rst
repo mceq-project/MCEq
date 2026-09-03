@@ -10,8 +10,10 @@ Currently, three different types models are supported:
 
 #.  Linsley-type/CORSIKA-style parameterization
 #.  Numerical atmosphere via external routine (NRLMSISE-00 / NRLMSIS 2.1)
-#.  Tabulated vertical profiles read from a CSV table
-    (:class:`MCEq.geometry.density_profiles.TabulatedAtmosphere`)
+#.  Tabulated atmospheres read from a CSV table, either a single vertical
+    profile (:class:`MCEq.geometry.density_profiles.TabulatedAtmosphere`) or a
+    longitude/latitude grid of columns sampled at the shower impact point
+    (:class:`MCEq.geometry.density_profiles.TabulatedLocationCentered`)
 
 Both implementations have to inherit from the abstract class :class:`MCEq.geometry.density_profiles.EarthsAtmosphere`,
 which provides the functions for other parts of the program. In particular the function :func:`MCEq.geometry.density_profiles.EarthsAtmosphere.get_density()`.
