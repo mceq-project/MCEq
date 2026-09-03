@@ -62,9 +62,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self.inp.alt = c_double(self.locations[self.current_location][2])
         self.inp.g_lat = c_double(self.locations[self.current_location][1])
         self.inp.g_long = c_double(self.locations[self.current_location][0])
-        self.inp.lst = c_double(
-            self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0
-        )
+        self._update_lst()
         # Do not touch this except you know what you are doing
         # Use imported constants
         self.inp.f107A = c_double(DEFAULT_F107A)
@@ -99,7 +97,27 @@ class cNRLMSISE00(NRLMSISE00Base):
             raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
         self.inp.g_lat = c_double(latitude)
         self.inp.g_long = c_double(longitude)
+        self._update_lst()
         self._invalidate()
+
+    def _update_lst(self):
+        """Keep local apparent solar time consistent with the longitude.
+
+        NRLMSISE-00 takes ``lst`` as a separate input from ``sec`` and
+        ``g_long``, and its own documentation requires
+        ``lst = sec/3600 + g_long/15``; the model uses it for the diurnal and
+        semidiurnal tides. Before this was called from
+        :meth:`set_location_coord`, ``lst`` was written once at construction
+        and never again, so every site was evaluated at the *default*
+        location's solar time -- 12.0, since the default is the South Pole at
+        longitude 0. The error reached 9.3 hours of solar time (Tsukuba) and
+        25.8 % in density near 95 km, while staying under 0.25 % at sea level;
+        it was exactly zero at the South Pole, which is why the flagship
+        MSIS00 use case never showed it.
+        """
+        self.inp.lst = c_double(
+            self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0
+        )
 
     def set_season(self, tag):
         if tag not in self.month2doy:

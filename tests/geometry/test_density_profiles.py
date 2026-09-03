@@ -65,19 +65,24 @@ def test_corsika_atm(loc, season, expected):
     assert np.allclose([cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)], expected)
 
 
+#: ``(location, season, (max_X, rho(X=100)))``. Regenerated 2026-09-04 for the
+#: ``inp.lst`` fix: NRLMSISE-00 was evaluated at the *default* location's local
+#: solar time for every site, so only longitude 0 was right. ``SouthPole`` in
+#: either season is therefore unchanged -- it is at longitude 0 -- and every
+#: other row moved, max_X by -4.08e-03 (LynnLake) to +5.49e-04 (KSC) relative.
 msis00_expected = [
     ("SouthPole", "January", (1022.6914983678925, 0.00014380042112573175)),
-    ("Karlsruhe", "January", (1041.2180457811605, 0.00016046129606232836)),
-    ("Geneva", "January", (1044.6608866969684, 0.00016063221634835724)),
-    ("Tokyo", "January", (1046.427667371285, 0.00016041531186210874)),
-    ("GranSasso", "January", (1048.6505423154006, 0.00016107650347480857)),
-    ("TelAviv", "January", (1050.6431802896034, 0.00016342084740033518)),
-    ("KSC", "January", (1050.2145039327452, 0.00016375664772178006)),
-    ("SoudanMine", "January", (1033.3640270683418, 0.00015614485659072835)),
-    ("Tsukuba", "January", (1045.785578319159, 0.00015970449150213374)),
-    ("LynnLake", "January", (1019.9475650272982, 0.000153212909250962)),
-    ("PeaceRiver", "January", (1020.3640351872195, 0.00015221038616604717)),
-    ("FtSumner", "January", (1047.964376368261, 0.00016218804771381842)),
+    ("Karlsruhe", "January", (1041.289013674065, 0.00016046154046440097)),
+    ("Geneva", "January", (1044.7036685769876, 0.00016063233336103958)),
+    ("Tokyo", "January", (1045.4798068305856, 0.00016041700334528804)),
+    ("GranSasso", "January", (1048.4140388269473, 0.00016107613896142165)),
+    ("TelAviv", "January", (1049.0871438983927, 0.0001634228665611206)),
+    ("KSC", "January", (1050.791106460818, 0.00016375550073813365)),
+    ("SoudanMine", "January", (1029.6072438610581, 0.00015614027005961752)),
+    ("Tsukuba", "January", (1044.4508230740112, 0.00015970671458771378)),
+    ("LynnLake", "January", (1015.7845557008363, 0.00015321145174507125)),
+    ("PeaceRiver", "January", (1017.2175925371322, 0.00015221283768710126)),
+    ("FtSumner", "January", (1045.2167062296312, 0.00016219157233339192)),
     ("SouthPole", "July", (1022.1737895082897, 0.00017812023753792838)),
 ]
 
