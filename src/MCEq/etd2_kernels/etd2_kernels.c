@@ -1,17 +1,30 @@
-/* Fused ETD2 post-apply kernels — platform-neutral.
+/* The fused ETD2RK predictor and corrector — platform-neutral.
  *
- * Lifted out of src/MCEq/spacc/spacc.c so the same kernels are available on
- * Linux/Windows for the MKL Sparse BLAS multi-RHS path (which doesn't link
- * Apple Accelerate). Same symbol names and ABI as the spacc-side copies;
- * the Mac path can switch to importing these once Stage-4 settles. No
- * dependency on any sparse backend — these are loop kernels over the
- * (dim, K) column-major buffers produced by the multi-RHS/multipath
- * solvers.
+ * One macro body per stage, instantiated at fp64 and fp32, so the two
+ * precisions cannot drift apart. Pure loop kernels with no sparse-backend
+ * dependency: the same compiled module serves the scipy, MKL and Accelerate
+ * bindings of MCEq.solvers.backends.host on Mac, Linux and Windows.
  *
- * Layout: all (dim, K) arrays are column-major (Fortran-contiguous);
- * the inner loop walks rows with stride 1. eD/phi1/phi2 may be (dim,)
- * (multirhs — shared across K columns) or (dim, K) (multipath — per
- * column). h may be scalar (multirhs) or (K,) (multipath).
+ * Layout: the state is the row-major (dim, K) plane of
+ * MCEq.solvers.etd2.etd2_driver, so the lane axis is contiguous and the
+ * inner loop walks it. `per_lane` says how to read the factors eD / hphi1 /
+ * hphi2. With one integration path shared by every lane they are (dim,), one
+ * value per row, and the loop lifts that value out of the lane loop so the
+ * lane axis vectorises; with one path per lane they are (dim, K) in the same
+ * row-major layout as the state, so they are indexed alongside it. The step
+ * size is already folded into the phi factors, so a stage is an elementwise
+ * product of three arrays.
+ *
+ * Aliasing: the output buffer is distinct from every input, which is what
+ * `restrict` states. The driver holds to it — the predictor writes the
+ * predictor buffer while reading the state, and the corrector writes the
+ * state while reading the predictor — and an in-place call would be wrong
+ * for the corrector in any case, which reads `a` after writing `x`.
+ *
+ * ETD2_PREDICT and ETD2_CORRECT are the formula table of
+ * MCEq.solvers.numerics verbatim (PREDICTOR_EXPR, CORRECTOR_EXPR); the cupy
+ * kernels of the CUDA backend are generated from those same two strings, and
+ * tests/test_solvers.py pins the match.
  */
 
 #include <stddef.h>
@@ -26,172 +39,78 @@
 #  define MCEQ_EXPORT
 #endif
 
-/* ---- fp64 ---- */
+/* MSVC takes C99 `restrict` only under /std:c11 and CMAKE_C_STANDARD 99 emits
+ * no /std flag for cl; `__restrict` is always available there. clang-cl defines
+ * _MSC_VER but compiles C as gnu17 and takes the keyword. Must stay after the
+ * last #include so no system header is parsed with `restrict` as a macro. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define restrict __restrict
+#endif
 
-/* post_apply1 multirhs: a = eD * phc + h * phi1 * F_phi  (eD/phi1: (dim,)) */
-MCEQ_EXPORT
-void etd2_post_apply1_multirhs(
-    int dim, int K, double h,
-    const double *eD, const double *phi1,
-    const double *phc, const double *F_phi, double *a)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        const double *phc_k = phc + (size_t)k * dim;
-        const double *Fp_k = F_phi + (size_t)k * dim;
-        double *a_k = a + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            a_k[i] = eD[i] * phc_k[i] + h * phi1[i] * Fp_k[i];
-        }
+/* a  = eD x + hphi1 F            */
+#define ETD2_PREDICT(eD, x, hphi1, F) ((eD) * (x) + (hphi1) * (F))
+/* x+ = a + hphi2 (F_a - F)       */
+#define ETD2_CORRECT(a, hphi2, F_a, F) ((a) + (hphi2) * ((F_a) - (F)))
+
+#define ETD2_STAGES(SUFFIX, T)                                                \
+    MCEQ_EXPORT                                                               \
+    void etd2_predictor_##SUFFIX(                                             \
+        int dim, int K, int per_lane,                                         \
+        const T *restrict eD, const T *restrict hphi1,                        \
+        const T *restrict x, const T *restrict F, T *restrict a)              \
+    {                                                                         \
+        if (K == 1)                                                           \
+        { /* single axis: one flat pass, no lane loop */                      \
+            for (int i = 0; i < dim; ++i)                                     \
+                a[i] = ETD2_PREDICT(eD[i], x[i], hphi1[i], F[i]);             \
+            return;                                                           \
+        }                                                                     \
+        if (per_lane)                                                         \
+        { /* factors in the state's own layout, indexed alongside it */       \
+            const size_t n = (size_t)dim * (size_t)K;                         \
+            for (size_t j = 0; j < n; ++j)                                    \
+                a[j] = ETD2_PREDICT(eD[j], x[j], hphi1[j], F[j]);             \
+            return;                                                           \
+        }                                                                     \
+        for (int i = 0; i < dim; ++i)                                         \
+        { /* one factor per row, lifted out of the lane loop */               \
+            const size_t r = (size_t)i * (size_t)K;                           \
+            const T eD_i = eD[i], hphi1_i = hphi1[i];                         \
+            for (int k = 0; k < K; ++k)                                       \
+                a[r + k] =                                                    \
+                    ETD2_PREDICT(eD_i, x[r + k], hphi1_i, F[r + k]);          \
+        }                                                                     \
+    }                                                                         \
+                                                                              \
+    MCEQ_EXPORT                                                               \
+    void etd2_corrector_##SUFFIX(                                             \
+        int dim, int K, int per_lane,                                         \
+        const T *restrict hphi2,                                              \
+        const T *restrict a, const T *restrict F_a, const T *restrict F,      \
+        T *restrict x)                                                        \
+    {                                                                         \
+        if (K == 1)                                                           \
+        {                                                                     \
+            for (int i = 0; i < dim; ++i)                                     \
+                x[i] = ETD2_CORRECT(a[i], hphi2[i], F_a[i], F[i]);            \
+            return;                                                           \
+        }                                                                     \
+        if (per_lane)                                                         \
+        {                                                                     \
+            const size_t n = (size_t)dim * (size_t)K;                         \
+            for (size_t j = 0; j < n; ++j)                                    \
+                x[j] = ETD2_CORRECT(a[j], hphi2[j], F_a[j], F[j]);            \
+            return;                                                           \
+        }                                                                     \
+        for (int i = 0; i < dim; ++i)                                         \
+        {                                                                     \
+            const size_t r = (size_t)i * (size_t)K;                           \
+            const T hphi2_i = hphi2[i];                                       \
+            for (int k = 0; k < K; ++k)                                       \
+                x[r + k] =                                                    \
+                    ETD2_CORRECT(a[r + k], hphi2_i, F_a[r + k], F[r + k]);    \
+        }                                                                     \
     }
-}
 
-/* post_apply2 multirhs: phc = a + h * phi2 * (F_a - F_phi)  (phi2: (dim,)) */
-MCEQ_EXPORT
-void etd2_post_apply2_multirhs(
-    int dim, int K, double h,
-    const double *phi2,
-    const double *a, const double *F_a, const double *F_phi, double *phc)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        const double *a_k = a + (size_t)k * dim;
-        const double *Fa_k = F_a + (size_t)k * dim;
-        const double *Fp_k = F_phi + (size_t)k * dim;
-        double *phc_k = phc + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            phc_k[i] = a_k[i] + h * phi2[i] * (Fa_k[i] - Fp_k[i]);
-        }
-    }
-}
-
-/* post_apply1 multipath: per-column h_K and per-column (dim, K) eD/phi1. */
-MCEQ_EXPORT
-void etd2_post_apply1_multipath(
-    int dim, int K,
-    const double *h_K,
-    const double *eD_NK, const double *phi1_NK,
-    const double *phc, const double *F_phi, double *a)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        double h_k = h_K[k];
-        const double *eD_k = eD_NK + (size_t)k * dim;
-        const double *phi1_k = phi1_NK + (size_t)k * dim;
-        const double *phc_k = phc + (size_t)k * dim;
-        const double *Fp_k = F_phi + (size_t)k * dim;
-        double *a_k = a + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            a_k[i] = eD_k[i] * phc_k[i] + h_k * phi1_k[i] * Fp_k[i];
-        }
-    }
-}
-
-/* post_apply2 multipath: per-column h_K and per-column (dim, K) phi2. */
-MCEQ_EXPORT
-void etd2_post_apply2_multipath(
-    int dim, int K,
-    const double *h_K,
-    const double *phi2_NK,
-    const double *a, const double *F_a, const double *F_phi, double *phc)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        double h_k = h_K[k];
-        const double *phi2_k = phi2_NK + (size_t)k * dim;
-        const double *a_k = a + (size_t)k * dim;
-        const double *Fa_k = F_a + (size_t)k * dim;
-        const double *Fp_k = F_phi + (size_t)k * dim;
-        double *phc_k = phc + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            phc_k[i] = a_k[i] + h_k * phi2_k[i] * (Fa_k[i] - Fp_k[i]);
-        }
-    }
-}
-
-/* ---- fp32 ---- */
-
-MCEQ_EXPORT
-void etd2_post_apply1_multirhs_f32(
-    int dim, int K, float h,
-    const float *eD, const float *phi1,
-    const float *phc, const float *F_phi, float *a)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        const float *phc_k = phc + (size_t)k * dim;
-        const float *Fp_k = F_phi + (size_t)k * dim;
-        float *a_k = a + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            a_k[i] = eD[i] * phc_k[i] + h * phi1[i] * Fp_k[i];
-        }
-    }
-}
-
-MCEQ_EXPORT
-void etd2_post_apply2_multirhs_f32(
-    int dim, int K, float h,
-    const float *phi2,
-    const float *a, const float *F_a, const float *F_phi, float *phc)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        const float *a_k = a + (size_t)k * dim;
-        const float *Fa_k = F_a + (size_t)k * dim;
-        const float *Fp_k = F_phi + (size_t)k * dim;
-        float *phc_k = phc + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            phc_k[i] = a_k[i] + h * phi2[i] * (Fa_k[i] - Fp_k[i]);
-        }
-    }
-}
-
-MCEQ_EXPORT
-void etd2_post_apply1_multipath_f32(
-    int dim, int K,
-    const float *h_K,
-    const float *eD_NK, const float *phi1_NK,
-    const float *phc, const float *F_phi, float *a)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        float h_k = h_K[k];
-        const float *eD_k = eD_NK + (size_t)k * dim;
-        const float *phi1_k = phi1_NK + (size_t)k * dim;
-        const float *phc_k = phc + (size_t)k * dim;
-        const float *Fp_k = F_phi + (size_t)k * dim;
-        float *a_k = a + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            a_k[i] = eD_k[i] * phc_k[i] + h_k * phi1_k[i] * Fp_k[i];
-        }
-    }
-}
-
-MCEQ_EXPORT
-void etd2_post_apply2_multipath_f32(
-    int dim, int K,
-    const float *h_K,
-    const float *phi2_NK,
-    const float *a, const float *F_a, const float *F_phi, float *phc)
-{
-    for (int k = 0; k < K; ++k)
-    {
-        float h_k = h_K[k];
-        const float *phi2_k = phi2_NK + (size_t)k * dim;
-        const float *a_k = a + (size_t)k * dim;
-        const float *Fa_k = F_a + (size_t)k * dim;
-        const float *Fp_k = F_phi + (size_t)k * dim;
-        float *phc_k = phc + (size_t)k * dim;
-        for (int i = 0; i < dim; ++i)
-        {
-            phc_k[i] = a_k[i] + h_k * phi2_k[i] * (Fa_k[i] - Fp_k[i]);
-        }
-    }
-}
+ETD2_STAGES(f64, double)
+ETD2_STAGES(f32, float)

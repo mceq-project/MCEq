@@ -1,10 +1,8 @@
 from math import copysign
 
 import numpy as np
-import six
 from particletools.tables import PYTHIAParticleData
 
-from MCEq import config
 from MCEq.misc import average_A_target, getAZN, info, print_in_rows
 
 info(5, "Initialization of PYTHIAParticleData object")
@@ -45,6 +43,8 @@ class MCEqParticle:
       egrid (np.array, optional): energy grid (centers)
       cs_db (object, optional): reference to an instance of
                                 :class:`InteractionYields`
+      physics: settings group (``config.physics``) holding the decay and
+               resonance filters. :class:`ParticleManager` passes its own.
     """
 
     def __init__(
@@ -54,8 +54,18 @@ class MCEqParticle:
         energy_grid=None,
         cs_db=None,
         init_pdata_defaults=True,
-        A_target=average_A_target(),
+        A_target=None,
+        *,
+        physics=None,
     ):
+        if physics is None:
+            from MCEq import config
+
+            physics = config.physics
+        #: settings group this particle reads its filters from
+        self._physics = physics
+        if A_target is None:
+            A_target = average_A_target(physics.interaction_medium)
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
@@ -86,7 +96,7 @@ class MCEqParticle:
         #: (bool) particle is interacting projectile
         self.is_projectile = False
         #: (bool) particle is stable
-        self.is_stable = False or pdg_id in config.adv_set["disable_decays"]
+        self.is_stable = pdg_id in physics.filters["disable_decays"]
         #: (bool) can_interact
         self.can_interact = False
         #: (bool) has continuous losses dE/dX defined
@@ -161,7 +171,8 @@ class MCEqParticle:
         #: (bool) particle is stable
         #: TODO the exclusion of neutron decays is a hotfix
         self.is_stable = (
-            not self.ctau < np.inf or self.pdg_id[0] in config.adv_set["disable_decays"]
+            not self.ctau < np.inf
+            or self.pdg_id[0] in self._physics.filters["disable_decays"]
         )
 
     def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
@@ -194,7 +205,6 @@ class MCEqParticle:
         self.cs = cs_db[self.pdg_id[0]]
         if sum(self.cs) > 0:
             self.can_interact = True
-            # self._interaction_threshold()
         else:
             self.can_interact = False
 
@@ -406,7 +416,7 @@ class MCEqParticle:
         return self.cs
 
     def inverse_interaction_length(self):
-        """Returns inverse interaction length for A_target given by config.
+        """Returns inverse interaction length for this particle's ``A_target``.
 
         Returns:
           (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
@@ -455,19 +465,7 @@ class MCEqParticle:
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            xl_dist = (
-                en
-                * xl_grid
-                * cupy.asnumpy(m[: eidx + 1, eidx])
-                / self._energy_grid.w[: eidx + 1]
-            )
-        else:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
+        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -493,19 +491,7 @@ class MCEqParticle:
         m = self.decay_dists[sec_pdg]
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            xl_dist = (
-                en
-                * xl_grid
-                * cupy.asnumpy(m[: eidx + 1, eidx])
-                / self._energy_grid.w[: eidx + 1]
-            )
-        else:
-            xl_dist = (
-                en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
-            )
+        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -530,92 +516,8 @@ class MCEqParticle:
 
         m = self.hadr_yields[sec_pdg]
         ekin_grid = self._energy_grid.c
-        if config.kernel_config == "CUDA":
-            import cupy
-
-            elab_dist = cupy.asnumpy(m[: eidx + 1, eidx]) / self._energy_grid.w[eidx]
-        else:
-            elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
+        elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
-
-    def dN_dxf(self, energy, prim_pdg, sec_pdg, pos_only=True, verbose=True, **kwargs):
-        r"""Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close
-        to ``energy`` (lab. not kinetic) for hadron-air collisions.
-
-        The function respects modifications applied via :func:`_set_mod_pprod`.
-
-        Args:
-            energy (float): approximate interaction lab. energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
-            verbose (bool): print out the closest energy
-
-        Returns:
-            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
-        """
-        if not hasattr(self, "_ptav_sib23c"):
-            # Load spline of average pt distribution as a funtion of log(E_lab) from sib23c
-            import pickle
-            from os.path import join
-
-            self._ptav_sib23c = pickle.load(
-                open(join(config.data_dir, "sibyll23c_aux.ppd"), "rb")
-            )[0]
-
-        def xF(xL, Elab, ppdg):
-            m = {2212: 0.938, 211: 0.139, 321: 0.493}
-            mp = m[2212]
-
-            Ecm = np.sqrt(2 * Elab * mp + 2 * mp**2)
-            Esec = xL * Elab
-            betacm = np.sqrt((Elab - mp) / (Elab + mp))
-            gammacm = (Elab + mp) / Ecm
-            avpt = self._ptav_sib23c[ppdg](
-                np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)] ** 2)
-            )
-
-            xf = (
-                2
-                * (
-                    -betacm * gammacm * Esec
-                    + gammacm * np.sqrt(Esec**2 - m[np.abs(ppdg)] ** 2 - avpt**2)
-                )
-                / Ecm
-            )
-            dxl_dxf = 1.0 / (
-                2
-                * (
-                    -betacm * gammacm * Elab
-                    + xL
-                    * Elab**2
-                    * gammacm
-                    / np.sqrt((xL * Elab) ** 2 - m[np.abs(ppdg)] ** 2 - avpt**2)
-                )
-                / Ecm
-            )
-
-            return xf, dxl_dxf
-
-        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
-        en = self._energy_grid.c[eidx] + self.mass
-        info(2, "Nearest energy, index: ", en, eidx, condition=verbose)
-        m = self.hadr_yields[sec_pdg]
-        xl_grid = (self._energy_grid.c[: eidx + 1] + self.mass) / en
-        xl_dist = (
-            xl_grid
-            * en
-            * m[: eidx + 1, eidx]
-            / np.diag(self._energy_grid.w)[: eidx + 1]
-        )
-        xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)
-        xf_dist = xl_dist * dxl_dxf
-
-        if pos_only:
-            xf_dist = xf_dist[xf_grid >= 0]
-            xf_grid = xf_grid[xf_grid >= 0]
-            return xf_grid, xf_dist
-
-        return xf_grid, xf_dist
 
     def _critical_energy(self):
         """Returns critical energy where decay and interaction
@@ -628,27 +530,10 @@ class MCEqParticle:
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
 
-    def _interaction_threshold(self):
-        """Finds minimal energy grid idx where interaction cross sections
-        becomes > 0.
-
-        Only for interacting particles.
-        """
-        if self.can_interact:
-            self.int_idx = (self.cs != 0).argmax()
-            info(
-                10,
-                "Interaction threshold for {0} is {1:5.3f} GeV".format(
-                    self.name, self._energy_grid.c[self.int_idx]
-                ),
-            )
-        else:
-            self.int_idx = 0
-
     def _apply_force_resonance(self):
         """Flag this particle as a resonance if it appears in
-        ``config.adv_set["force_resonance"]`` and is not in
-        ``config.standard_particles``.
+        ``physics.filters["force_resonance"]`` and is not in
+        ``physics.standard_particles``.
 
         A resonance particle is folded into other particles' interaction /
         decay matrices at build time (via ``MatrixBuilder._follow_chains``)
@@ -657,8 +542,8 @@ class MCEqParticle:
         """
         pid = abs(self.pdg_id[0])
         self.is_resonance = (
-            pid in config.adv_set["force_resonance"]
-            and pid not in config.standard_particles
+            pid in self._physics.filters["force_resonance"]
+            and pid not in self._physics.standard_particles
         )
 
     def __eq__(self, other):
@@ -694,14 +579,31 @@ class MCEqParticle:
 class ParticleManager:
     """Database for objects of :class:`MCEqParticle`.
 
+    ``physics`` is the settings group (``config.physics``) that this manager and
+    every particle it builds read their filters and switches from.
+
     Authors:
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
 
     def __init__(
-        self, pdg_id_list, energy_grid, cs_db, medium=config.interaction_medium
+        self,
+        pdg_id_list,
+        energy_grid,
+        cs_db,
+        medium=None,
+        *,
+        physics=None,
     ):
+        from MCEq import config
+
+        physics = config.physics if physics is None else physics
+        # Resolved here rather than as a signature default: a default binds when
+        # this module is first imported, which happens lazily from MCEqRun, so
+        # whether a caller's `config.interaction_medium` was seen depended on
+        # whether it was written before that import.
+        medium = physics.interaction_medium if medium is None else medium
         # (dict) Dimension of primary grid
         self._energy_grid = energy_grid
         # Particle index shortcuts
@@ -736,6 +638,8 @@ class ParticleManager:
         self._cs_db = cs_db
         # Medium
         self._medium = medium
+        # Settings group, handed on to every MCEqParticle built here
+        self._physics = physics
         # Dictionary to save te tracking particle config
         self.tracking_relations = []
         # Save the tracking relations requested by default tracking
@@ -806,7 +710,11 @@ class ParticleManager:
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
-            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
+            elif (
+                self._physics.generic_losses_all_charged
+                and p.is_charged
+                and not p.is_em
+            ):
                 # Stopping power dEdX is almost the same for all charged particles.
                 # What changes is gamm*beta. We interpolate the dEdX tables
                 # stored for protons to different energy grids.
@@ -1043,6 +951,7 @@ class ParticleManager:
                 self._energy_grid,
                 self._cs_db,
                 A_target=average_A_target(self._medium),
+                physics=self._physics,
             )
             for pdg, hel in particles
         ]
@@ -1137,7 +1046,7 @@ class ParticleManager:
 
         info(10, "Restoring tracking particle setup")
 
-        if not self.tracking_relations and config.enable_default_tracking:
+        if not self.tracking_relations and self._physics.enable_default_tracking:
             self._init_default_tracking()
             return
 
@@ -1172,8 +1081,9 @@ class ParticleManager:
             )
 
         # Track prompt leptons
+        prompt_ctau = self._physics.prompt_ctau
         self.track_leptons_from(
-            [p.pdg_id for p in self.all_particles if p.ctau < config.prompt_ctau],
+            [p.pdg_id for p in self.all_particles if p.ctau < prompt_ctau],
             "prcas_",
             exclude_em=True,
             use_helicities=False,
@@ -1197,9 +1107,9 @@ class ParticleManager:
 
     def __contains__(self, pdg_id_or_name):
         """Defines the `in` operator to look for particles"""
-        if isinstance(pdg_id_or_name, six.integer_types):
+        if isinstance(pdg_id_or_name, (int,)):
             pdg_id_or_name = (pdg_id_or_name, 0)
-        elif isinstance(pdg_id_or_name, six.string_types):
+        elif isinstance(pdg_id_or_name, (str,)):
             pdg_id_or_name = (_pdata.pdg_id(pdg_id_or_name), 0)
         return pdg_id_or_name in list(self.pdg2pref)
 
@@ -1207,7 +1117,7 @@ class ParticleManager:
         """Returns reference to particle object."""
         if isinstance(pdg_id_or_name, tuple):
             return self.pdg2pref[pdg_id_or_name]
-        if isinstance(pdg_id_or_name, six.integer_types):
+        if isinstance(pdg_id_or_name, (int,)):
             return self.pdg2pref[(pdg_id_or_name, 0)]
         else:
             try:

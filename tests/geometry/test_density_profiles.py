@@ -537,7 +537,8 @@ def test_arca_site_coordinates():
 #   * interface conformance -- pure class introspection, no backend, so it
 #     runs everywhere including CI;
 #   * numerical parity -- needs the optional 'nrlmsis' package (MSIS21 is
-#     opt-in), so it skips where that is absent, including CI.
+#     opt-in), so it skips where that is absent; CI carries it in the test
+#     dependency group.
 # ---------------------------------------------------------------------------
 
 MSIS_TREE_PAIRS = [
@@ -584,13 +585,23 @@ def test_msis21_public_interface_matches_msis00(name00, name21):
             f"{params21[name].default!r}, but {name00} uses {p00.default!r}"
         )
 
+
 MSIS21_PAIRS = [
-    ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
-     lambda: dp.MSIS21IceCubeCentered("SouthPole", "January")),
-    ("ARCA", lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January")),
-    ("ORCA", lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January")),
+    (
+        "IceCube",
+        lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
+        lambda: dp.MSIS21IceCubeCentered("SouthPole", "January"),
+    ),
+    (
+        "ARCA",
+        lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January"),
+    ),
+    (
+        "ORCA",
+        lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January"),
+    ),
 ]
 
 

@@ -1,4 +1,3 @@
-import importlib
 import os
 import pathlib
 import platform
@@ -6,6 +5,8 @@ import sys
 import warnings
 
 from MCEq import base_path
+
+from . import detect
 
 #: Debug flag for verbose printing, 0 silences MCEq entirely
 debug_level = 1
@@ -84,9 +85,6 @@ len_target = 1000.0
 #: density of default material in g/cm^3
 env_density = 0.001225
 env_name = "air"
-#: Approximate value for the maximum density expected. Used by the
-#: atmosphere model. Default value: air at the surface.
-max_density = (0.001225,)
 # =================================================================
 # Parameters of numerical integration
 # =================================================================
@@ -104,7 +102,8 @@ e_min = 0.1
 #: this value. Smaller grids speed up the initialization and integration.
 e_max = 1e11
 
-#: Enable electromagnetic cascade with matrices from EmCA
+#: Enable electromagnetic cascade with matrices from the EM database
+#: (``em_db_fname``)
 enable_em = False
 
 #: Air-target EM matrices: select a specific density slice from a
@@ -127,7 +126,7 @@ em_air_density = None
 #:   "cuda_etd2"       — NVIDIA cuSPARSE-backed ETD2RK (requires cupy and
 #:                       a CUDA-capable GPU; recommended for large state
 #:                       vectors and many solve() calls).
-kernel_config = "auto"
+_kernel_config_request = "auto"
 
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
@@ -144,26 +143,13 @@ floatlen = None
 #: numpy is linked to MKL. Default is ``min(16, os.cpu_count())``: MKL's
 #: sparse SpMV scales near-linearly to ~16 threads on the SIBYLL21
 #: matrices, then plateaus / regresses on most servers due to memory
-#: bandwidth and NUMA effects. Override after import for full control:
+#: bandwidth and NUMA effects. The same count is applied to every BLAS pool
+#: MCEq can reach, OpenBLAS included, because the dense mode-coupling GEMMs of
+#: the secant routes are skinny ((n_P, n_k) @ (n_k, n_g*K)) and an all-cores
+#: fan-out on those shapes is pure contention — 66x slower than a capped pool
+#: at K = 8 on a 48-core host. Override after import for full control:
 #: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
-
-#: Block size for the MKL ETD2 BSR off-diagonal storage. ``6`` is the
-#: empirically-tuned default — ~1.5x faster than CSR on SIBYLL21 matrices
-#: with MKL >= 2024 (see ``docs/mceq_v1.x_v2_diff.md`` §8.4). MKL appears
-#: to specialise its BSR microkernel for ``b in [2, 7]``; ``b >= 8`` falls
-#: into a generic path that's slower than CSR for these matrices. Set
-#: ``None`` to fall back to CSR (useful for debugging or if a future MKL
-#: regresses BSR perf).
-mkl_bsr_blocksize = 6
-
-#: Block size for the numpy ETD2 BSR off-diagonal storage. ``11`` is the
-#: empirically-tuned default — ~2x faster than CSR on SIBYLL21 matrices
-#: via scipy's BSR matvec. scipy's BSR kernel benefits from larger blocks
-#: than MKL's (the C++ template's per-block overhead is amortised better),
-#: and ``b = 11`` happens to tile the 121-energy-bin macro-blocks neatly
-#: (121 = 11**2). Set ``None`` to fall back to CSR.
-numpy_bsr_blocksize = 11
 
 # =========================================================================
 # Advanced settings
@@ -353,6 +339,46 @@ use_isospin_sym = True
 #: dataset defect.
 muon_helicity_dependence = True
 
+#: Gaussian multiple Coulomb scattering of muons in the 2D transport,
+#: applied as per-mode diagonal damping -kappa^2 theta_s^2(E)/4 with the
+#: CORSIKA Gauss-approximation theta_s (E_s = 21 MeV, lambda_s = 37.7
+#: g/cm2; Gaussian core only, no Moliere tail). Disable only to compare
+#: against MC runs with scattering switched off.
+muon_multiple_scattering = True
+
+#: sec(theta) path-elongation correction for the 2D transport. The
+#: paraxial solver books all losses per unit axis-projected depth,
+#: over-predicting the wide-angle density of species in local
+#: production/loss equilibrium (sub-GeV hadrons and muons) by
+#: sec(theta). Physics, operator construction and solver integration:
+#: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
+#: the Hankel modes), independent of the axis' zenith angle.
+#: "auto" (default) and True both apply it on every solve with a 2D
+#: database — every entry point, every kernel, fp32 and fp64. False: off.
+#: Ignored on 1D databases.
+secant_theta_transport = "auto"
+#: angle (deg) at which the sec(theta) elongation is clamped:
+#: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
+#: elongation at wide angles at the price of a worse-conditioned
+#: coupling operator; below ~50 the operator's eigenbasis is
+#: numerically defective and the build raises. Valid range [50, 90).
+secant_theta_cap_deg = 75.0
+#: zero coupling-matrix rows with kappa > this. The correction has no
+#: support at narrow angular scales (high kappa); raising the limit
+#: only adds inversion ringing, lowering it truncates the operator.
+secant_theta_row_kmax = 50.0
+#: ridge strength of the operator fit, relative to the top singular
+#: value of the Gram matrix. Increase only if the operator build
+#: reports conditioning problems.
+secant_theta_lam_rel = 1e-9
+#: weight of the S @ 1 = 1 constraint (kappa-flat = collimated states
+#: are not elongated).
+secant_theta_w_flat = 1.0
+#: apply the coupling only to state columns with E_kin (GeV) below this
+#: threshold. The correction is 30-60% at 0.1 GeV, ~1% at 2-4 GeV and
+#: <0.1% above 10 GeV, so the default excludes energies where it is
+#: numerically irrelevant. None applies it to all energies.
+secant_theta_e_max = 31.6
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
@@ -423,65 +449,38 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: versions, using `from mceq_config import config`. The future versions
 #: will access the module attributes directly.
 
-#: Autodetect best solver
-#: determine shared library extension and MKL path
-pf = platform.platform()
-has_accelerate = False
+#: Platform and backend detection resolve on first read, through the module
+#: ``__getattr__`` below: importing MCEq must not dlopen a BLAS, probe a GPU or
+#: decide which kernel will run. Reading any of ``has_mkl``, ``has_cuda``,
+#: ``has_accelerate``, ``mkl_path`` or ``kernel_config`` caches the answer as a
+#: real module attribute, so the cost is paid once and later reads are ordinary
+#: attribute lookups.
 
-prefix = pathlib.Path(sys.prefix)
-if "Linux" in pf:
-    mkl_libs = list((prefix / "lib").glob("libmkl_rt*"))
-    mkl_path = mkl_libs[0] if mkl_libs else prefix / "lib" / "libmkl_rt.so"
-elif "macOS" in pf:
-    mkl_path = prefix / "lib" / "libmkl_rt.dylib"
-    has_accelerate = True
-else:
-    # Windows or unknown OS: search for mkl_rt*.dll in Library/bin and lib
-    mkl_path = None
-    mkl_dirs = [prefix / "Library" / "bin", prefix / "lib"]
-    mkl_candidates = []
-    for d in mkl_dirs:
-        if d.exists():
-            mkl_candidates.extend(d.glob("mkl_rt*.dll"))
-    if mkl_candidates:
-        mkl_path = mkl_candidates[0]
-    else:
-        # fallback to default path
-        mkl_path = prefix / "Library" / "bin" / "mkl_rt.dll"
-
-    mkl_path = os.fspath(mkl_path)
-
-# mkl library handler
+#: ``libmkl_rt`` handle, populated by :func:`_load_mkl`.
 mkl = None
 
-has_mkl = bool(pathlib.Path(mkl_path).is_file())
+_LAZY = {
+    "has_mkl": lambda: detect.has_mkl(),
+    "has_cuda": lambda: detect.has_cuda(),
+    "has_accelerate": lambda: detect.has_accelerate(),
+    "mkl_path": lambda: detect.mkl_library_path(),
+    "kernel_config": lambda: detect.resolve_kernel(_kernel_config_request),
+    "pf": lambda: platform.platform(),
+    "prefix": lambda: pathlib.Path(sys.prefix),
+}
 
-# Look for cupy module
-has_cuda = importlib.util.find_spec("cupy") is not None
 
-# Pick the fastest available ETD2RK kernel. CUDA is intentionally not
-# auto-selected: spinning up a GPU context has nontrivial cost and a
-# matching cupy install is not always present on machines that have a
-# GPU. Apple Accelerate wins on macOS, Intel MKL wins on x86 Linux /
-# Windows when present, otherwise we fall back to plain numpy.
-if kernel_config == "auto":
-    if has_accelerate:
-        kernel_config = "accelerate_etd2"
-    elif has_mkl:
-        kernel_config = "mkl_etd2"
-    else:
-        kernel_config = "numpy_etd2"
-else:
-    kc = kernel_config.lower()
-    if kc in ("cuda", "cuda_etd2") and not has_cuda:
-        raise Exception("CUDA unavailable. Make sure cupy is installed.")
-    elif kc in ("mkl", "mkl_etd2") and not has_mkl:
-        raise Exception("MKL unavailable. Make sure Intel MKL is installed.")
-    elif kc in ("accelerate", "accelerate_etd2") and not has_accelerate:
-        raise Exception("Accelerate unavailable. Only on MacOS.")
+def __getattr__(name):
+    probe = _LAZY.get(name)
+    if probe is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = probe()
+    globals()[name] = value  # subsequent reads bypass this hook
+    return value
 
-if debug_level >= 2:
-    print(f"Auto-detected {kernel_config} solver.")
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
 
 
 def _load_mkl():
@@ -497,15 +496,50 @@ def _load_mkl():
     every wrapper sees the same symbol table.
     """
     global mkl
-    if mkl is not None or not has_mkl:
+    if mkl is not None or not detect.has_mkl():
         return
     from ctypes import cdll
 
-    mkl = cdll.LoadLibrary(mkl_path)
+    # ``os.fspath`` is not optional: ``CDLL.__init__`` only calls it itself
+    # from CPython 3.12, and its Windows branch does ``'/' in name`` first,
+    # which raises TypeError on a Path under 3.10/3.11.
+    mkl = cdll.LoadLibrary(os.fspath(detect.mkl_library_path()))
+
+
+#: Environment variables every BLAS MCEq can reach reads when it loads.
+_THREAD_ENV = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def _publish_thread_env(nthreads):
+    """Announce the thread count to BLAS libraries not yet in the process.
+
+    A BLAS reads its thread count once, when it loads, and numpy loads its own
+    lazily on the first product. Publishing costs microseconds and needs no
+    library present, which is why it is the only part of the thread setting
+    that runs at import.
+    """
+    for var in _THREAD_ENV:
+        os.environ[var] = str(nthreads)
+
+
+#: Handle of the process-wide BLAS limit, kept alive by :func:`set_mkl_threads`.
+_blas_limiter = None
 
 
 def set_mkl_threads(nthreads):
-    """Set the MKL thread count (loads ``libmkl_rt`` on the first call).
+    """Set the thread count of every BLAS pool MCEq can reach.
+
+    MKL through ``mkl_set_num_threads`` (loading ``libmkl_rt`` on the first
+    call) and, when threadpoolctl is available, every other pool it finds —
+    OpenBLAS above all, which is what numpy links against in most wheels.
+    One process-wide setting, applied once: the solver never adjusts a pool
+    around an individual step loop.
 
     Idempotent on the library side: only ``mkl_set_num_threads`` is
     called on subsequent invocations. The cached cdll handle is
@@ -519,12 +553,37 @@ def set_mkl_threads(nthreads):
     mkl_threads = nthreads
     if mkl is not None:
         mkl.mkl_set_num_threads(byref(c_int(nthreads)))
-        if debug_level >= 5:
-            print(f"MKL threads limited to {nthreads}")
+    global _blas_limiter
+    _publish_thread_env(nthreads)
+
+    try:
+        from threadpoolctl import threadpool_limits
+    except ImportError:
+        if debug_level >= 2:
+            print(
+                "threadpoolctl is not installed; only MKL's pool is limited, and "
+                "the dense secant GEMMs may contend on a many-core host."
+            )
+    else:
+        # threadpool_limits restores the previous limits when the object is
+        # collected, so the handle is kept for the life of the process. It only
+        # reaches libraries already loaded; the environment above covers the rest.
+        if _blas_limiter is not None:
+            _blas_limiter.unregister()
+        _blas_limiter = threadpool_limits(limits=nthreads, user_api="blas")
+    if debug_level >= 5:
+        print(f"BLAS threads limited to {nthreads}")
 
 
-if has_mkl:
-    set_mkl_threads(mkl_threads)
+# Only the environment is published at import: the dlopen and the threadpoolctl
+# pass happen on the first explicit set_mkl_threads, or never.
+_publish_thread_env(mkl_threads)
+
+
+#: Take the energy grid from the EM database instead of the hadronic one.
+#: Only meaningful for a standalone EM cascade, where there is no hadronic DB
+#: to define it.
+em_standalone_grid = False
 
 
 # Compatibility layer for dictionary access to config attributes
@@ -557,118 +616,44 @@ class MCEqConfigCompatibility(dict):
 config = MCEqConfigCompatibility(globals())
 
 
-class FileIntegrityCheck:
+def secant_theta_cap():
+    """Validated float value of :data:`secant_theta_cap_deg`.
+
+    The cap is defined relative to the shower axis (like the Hankel
+    modes themselves) and must lie in [50, 90): sec(theta) diverges at
+    90 deg, and below ~50 deg the coupling operator's eigenbasis is
+    numerically defective so it cannot be built (see :mod:`MCEq.secant`).
     """
-    A class to check a file integrity against provided checksum
-
-    Attributes
-    ----------
-    filename : str
-        path to the file
-    checksum : str
-        hex of sha256 checksum
-    Methods
-    -------
-    succeeded():
-        returns True if checksum and calculated checksum of the file are equal
-
-    get_file_checksum():
-        returns checksum of the file
-    """
-
-    import hashlib
-
-    def __init__(self, filename, checksum=""):
-        self.filename = filename
-        self.checksum = checksum
-        self.sha256_hash = self.hashlib.sha256()
-        self.hash_is_calculated = False
-
-    def _calculate_hash(self):
-        if not self.hash_is_calculated:
-            try:
-                with open(self.filename, "rb") as file:
-                    for byte_block in iter(lambda: file.read(4096), b""):
-                        self.sha256_hash.update(byte_block)
-                self.hash_is_calculated = True
-            except OSError as ex:
-                print(f"FileIntegrityCheck: {ex}")
-
-    def succeeded(self):
-        self._calculate_hash()
-        return self.hash_is_calculated and self.sha256_hash.hexdigest() == self.checksum
-
-    def get_file_checksum(self):
-        self._calculate_hash()
-        return self.sha256_hash.hexdigest()
-
-
-def _download_file(url, outfile):
-    """Downloads the MCEq database from github"""
-
-    import math
-
-    import requests
-    from tqdm import tqdm
-
-    # Streaming, so we can iterate over the response.
-    r = requests.get(url, stream=True)
-
-    # Total size in bytes.
-    total_size = int(r.headers.get("content-length", 0))
-    block_size = 1024 * 1024
-    wrote = 0
-    with open(outfile, "wb") as f:
-        for data in tqdm(
-            r.iter_content(block_size),
-            total=math.ceil(total_size // block_size),
-            unit="MB",
-            unit_scale=True,
-        ):
-            wrote = wrote + len(data)
-            f.write(data)
-    if total_size != 0 and wrote != total_size:
-        raise Exception("ERROR, something went wrong")
-
-
-# Download database file from github
-base_url = "https://github.com/afedynitch/MCEq/releases/download/"
-release_tag = "builds_on_azure/"
-# sha256 checksum of the default database file
-# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
-file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
-
-
-def ensure_db_available():
-    """Download the MCEq database if not already present.
-
-    Called by MCEqRun.__init__ so that the download is deferred until the
-    database is actually needed.  This allows tests (and other callers) to
-    override ``config.mceq_db_fname`` before a download is attempted.
-
-    The integrity check only applies to the default database; non-default
-    files are accepted as-is if they exist.
-    """
-    import os
-
-    _url = base_url + release_tag + mceq_db_fname
-    filepath = data_dir / mceq_db_fname
-    if filepath.exists():
-        is_complete = (
-            FileIntegrityCheck(filepath, file_checksum).succeeded()
-            if mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
-            else True
+    cap = float(secant_theta_cap_deg)
+    if not 50.0 <= cap < 90.0:
+        raise ValueError(
+            f"config.secant_theta_cap_deg = {cap:g} is outside the "
+            "supported range [50, 90)."
         )
-    else:
-        is_complete = False
+    return cap
 
-    if not is_complete:
-        print(f"Downloading MCEq database file {mceq_db_fname}.")
-        if debug_level >= 2:
-            print(_url)
-        _download_file(_url, filepath)
 
-    old_db = data_dir / "mceq_db_lext_dpm191.h5"
-    if old_db.exists():
-        print(f"Removing previous database {old_db.name}.")
-        os.unlink(old_db)
+def secant_mode(is_2d):
+    """Resolve :data:`secant_theta_transport` against the database
+    dimensionality.
+
+    Returns ``"off"`` (1D database, or the flag is False) or one of
+    ``"auto"`` (the default) and ``"require"`` (flag is True), which the
+    resolver treats alike: the coupling is available on every kernel at
+    every precision, so no configuration is left to downgrade or refuse.
+    """
+    flag = secant_theta_transport
+    if not is_2d:
+        return "off"
+    if isinstance(flag, str) and flag.lower() == "auto":
+        return "auto"
+    return "require" if flag else "off"
+
+
+# Grouped views over the names above, one per layer of the plan's section 2.2.
+# They read and write through to this module, so a component handed
+# `config.grid` still sees a later `config.e_min = ...`.
+from . import groups as _groups  # noqa: E402
+
+globals().update(_groups.build())
+GROUP_OF = _groups.FLAT_TO_GROUP

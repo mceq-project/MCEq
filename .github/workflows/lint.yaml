@@ -1,0 +1,58 @@
+name: Lint
+
+# Static gates: ruff, the import-layer contracts in .importlinter and the
+# 600-line module-size limit. None of them imports MCEq — grimp and ast parse
+# the sources — so the job needs no compiler, no database and no wheel, and
+# runs in seconds on one Python.
+#
+# ruff is pinned to the version .pre-commit-config.yaml uses, so a contributor
+# who ran the hooks cannot be failed here by a newer release.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/**
+      - mceq_config/**
+      - scripts/**
+      - tests/**
+      - conftest.py
+      - .importlinter
+      - pyproject.toml
+      - .github/workflows/lint.yaml
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  structure:
+    name: ruff + import layers + module size
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Pinned to .pre-commit-config.yaml's rev so the hooks and CI agree.
+      - name: Ruff
+        run: |
+          uvx ruff@0.14.13 check --no-cache .
+          uvx ruff@0.14.13 format --no-cache --check .
+
+      - name: Install the lint group
+        run: uv pip install --system --group lint
+
+      - name: Module size
+        run: python scripts/check_module_size.py
+
+      # lint-imports is the console script; `python -m importlinter.cli` exits 0
+      # without running anything, because the package defines no __main__.
+      - name: Import layer contracts
+        run: PYTHONPATH=src:. lint-imports --no-cache

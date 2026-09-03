@@ -11,14 +11,32 @@ energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 _xmat = None
 
 _target_masses = {
-    # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    "air": sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    # <A> must be the ATOM-number-weighted mean mass so that the
+    # interaction rate per grammage N_A/<A> * <sigma> (with <sigma> the
+    # per-atom air average) equals N_A * sum_i w_i/A_i * sigma_i.
+    # Dry-air volume fractions N2/O2/Ar = 0.78084/0.20946/0.00934
+    # (https://en.wikipedia.org/wiki/Atmosphere_of_Earth) contribute
+    # 2/2/1 atoms per molecule -> <A> = 14.5431, identical to CORSIKA's
+    # AVERAW. (The pre-2026 value 14.6568 weighted by MOLECULE fractions,
+    # double-counting argon relative to the diatomics: +0.78% in every
+    # interaction length.)
+    "air": (
+        sum(
+            n * f * a
+            for f, a, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
+        )
+        / sum(
+            n * f
+            for f, _, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
+        )
+    ),
     "water": 1.0 / 3.0 * (2.0 + 16.0),
     "ice": 1.0 / 3.0 * (2.0 + 16.0),
     "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
     "rock": 22.0,
     "hydrogen": 1.0,
-    "iron": 26.0,
+    # A of iron, not Z (was 26.0 = Z until 2026)
+    "iron": 55.845,
 }
 
 
@@ -73,9 +91,11 @@ def normalize_hadronic_model_name(name):
 def average_A_target(mat="auto"):
     """Average target mass number.
 
-    For air <A> = 14.6568 (using mass fractions from
-    https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    Other media supported are co2, rock, ice, water, and hydrogen.
+    For air <A> = 14.5431: the atom-number-weighted mean mass of dry
+    air (N2/O2/Ar volume fractions with 2/2/1 atoms per molecule),
+    matching CORSIKA's AVERAW. Pair it with per-atom-averaged air
+    cross sections. Other media supported are co2, rock, ice, water,
+    hydrogen, and iron.
 
     Args:
         mat: str or float, optional
@@ -92,15 +112,14 @@ def average_A_target(mat="auto"):
     """
     if isinstance(mat, str) and mat.lower() == "auto":
         return _target_masses[config.interaction_medium.lower()]
-    elif isinstance(mat, str) and mat.lower() in _target_masses:
+    if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
-    elif isinstance(mat, float) or isinstance(mat, int):
+    if isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
-    else:
-        raise ValueError(
-            "mceq_config.A_target is expected to be a "
-            + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
-        )
+    raise ValueError(
+        "mceq_config.A_target is expected to be a "
+        + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+    )
 
 
 def theta_deg(cos_theta):
@@ -177,8 +196,8 @@ def getAZN(pdg_id):
     if pdg_id == 2212:
         return 1, 1, 0
     if pdg_id > 1000000000:
-        A = pdg_id % 1000 / 10
-        Z = pdg_id % 1000000 / 10000
+        A = (pdg_id % 1000) // 10
+        Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
     return 1, 0, 0
 
@@ -237,47 +256,44 @@ def pdg2corsikaid(pdg_id):
 
 
 def caller_name(skip=2):
-    """Get a name of a caller in the format module.class.method
+    """Name of a caller as ``module.Class::method(): ``.
 
-    `skip` specifies how many levels of stack to skip while getting caller
-    name. skip=1 means "who calls me", skip=2 "who calls my caller" etc.
-    An empty string is returned if skipped levels exceed stack height.abs
+    `skip` counts stack levels above this function: skip=1 is "who calls me",
+    skip=2 "who calls my caller". An empty string is returned when the stack is
+    shallower than that.
+
+    The frame is fetched with :func:`sys._getframe` rather than
+    :func:`inspect.stack`, which materialises `FrameInfo` records with source
+    context for the whole stack: 0.08 us against 192 us on a typical stack, and
+    :func:`info` reaches this on every call while an override list is active.
 
     From https://gist.github.com/techtonik/2151727
     """
-    import inspect
+    import sys
 
-    stack = inspect.stack()
-    start = 0 + skip
-
-    if len(stack) < start + 1:
+    try:
+        frame = sys._getframe(skip)
+    except ValueError:  # stack shallower than `skip`
         return ""
-
-    parentframe = stack[start][0]
 
     name = []
 
     if config.print_module:
-        module = inspect.getmodule(parentframe)
-        # `modname` can be None when frame is executed directly in console
-        if module:
-            name.append(module.__name__ + ".")
+        modname = frame.f_globals.get("__name__")
+        if modname:
+            name.append(modname + ".")
 
-    # detect classname
-    if "self" in parentframe.f_locals:
-        # I don't know any way to detect call from the object method
-        # there seems to be no way to detect static method call - it will
-        # be just a function call
+    # A frame with a local named `self` is a method call; there is no way to
+    # tell a static method from a plain function this way.
+    if "self" in frame.f_locals:
+        name.append(frame.f_locals["self"].__class__.__name__ + "::")
 
-        name.append(parentframe.f_locals["self"].__class__.__name__ + "::")
-
-    codename = parentframe.f_code.co_name
+    codename = frame.f_code.co_name
     if codename != "<module>":  # top level usually
         name.append(codename + "(): ")  # function or a method
     else:
         name.append(": ")  # If called from module scope
 
-    del parentframe
     return "".join(name)
 
 
@@ -313,3 +329,45 @@ def info(min_dbg_level, *message, **kwargs):
         if blank_caller:
             cname = len(cname) * " "
         print(cname + " ".join(message))
+
+
+def reset_plt(ticksize, fontsize):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib.pyplot as plt
+
+    plt.rcParams["xtick.labelsize"] = ticksize
+    plt.rcParams["ytick.labelsize"] = ticksize
+    plt.rcParams["font.size"] = fontsize
+    plt.rcParams["mathtext.fontset"] = "stix"
+    plt.rcParams["font.family"] = "STIXGeneral"
+    plt.rcParams["legend.facecolor"] = "white"
+    plt.rcParams["axes.formatter.limits"] = (-1, 3)
+    plt.rcParams["axes.linewidth"] = 2.25
+
+
+def put_ticks(this_fig, this_ax):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib
+
+    this_ax.xaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, right=True
+    )
+    this_ax.xaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, right=True
+    )
+    dx = -3 / 72
+    dy = -3 / 72
+    y_offset = matplotlib.transforms.ScaledTranslation(0, dy, this_fig.dpi_scale_trans)
+    x_offset = matplotlib.transforms.ScaledTranslation(dx, 0, this_fig.dpi_scale_trans)
+
+    for label in this_ax.xaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + y_offset)
+
+    for label in this_ax.yaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + x_offset)
