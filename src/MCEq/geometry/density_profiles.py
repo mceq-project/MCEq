@@ -9,6 +9,7 @@ from MCEq.geometry.atmosphere_parameters import (
     list_available_corsika_atmospheres,
 )
 from MCEq.geometry.column import fit_column_splines
+from MCEq.geometry.location_centered import LocationCenteredMixin
 from MCEq.misc import info
 
 
@@ -672,7 +673,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         return self._msis.get_temperature(h_cm)
 
 
-class MSIS00LocationCentered(MSIS00Atmosphere):
+class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
     """MSIS atmosphere model coupled to an arbitrary detector location.
 
     This is the general base class for detector-centred atmosphere models.
@@ -742,6 +743,10 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
     #: detector location); ``set_theta`` accepts ``azimuth_deg``.
     depends_on_azimuth: bool = True
 
+    def _set_backend_location(self, longitude, latitude):
+        """MSISE-00 keeps its position inside the C library object."""
+        self._msis.set_location_coord(longitude, latitude)
+
     def __init__(
         self,
         detector_coord,
@@ -765,118 +770,22 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         elif doy is not None:
             self._msis.set_doy(doy)
 
-        # Detector geometry
-        self._detector_longitude = longitude
-        self._detector_latitude = latitude
-        self._detector_depth_m = depth_m
-        self._surface_elevation_m = surface_elevation_m
-        self._n_azimuth = n_azimuth
-        self._azimuth_averaging = False
-        self._effective_theta_deg = 0.0
-        self._current_azimuth_deg = None
-        self._azimuth_avg_coords = []
-        self._current_impact_latitude = None
-        self._current_impact_longitude = None
-
-        # Initialise the base class (sets geom, thrad, theta_deg, …)
+        # Base class first (creates self.geom), then the shared detector
+        # geometry -- see LocationCenteredMixin._init_detector_geometry.
         EarthsAtmosphere.__init__(self)
-        if surface_elevation_m != 0.0:
-            self.geom.set_h_obs(surface_elevation_m * 1e2)
-        self.max_theta = max_theta
-        self.location = f"({longitude:.3f}\u00b0E, {latitude:.3f}\u00b0N)"
-        self.season = season
+        self._init_detector_geometry(
+            longitude,
+            latitude,
+            depth_m,
+            season,
+            n_azimuth,
+            max_theta,
+            surface_elevation_m,
+        )
 
     # ------------------------------------------------------------------
     # Geometry helpers
     # ------------------------------------------------------------------
-
-    def _impact_point(self, zenith_deg, azimuth_deg):
-        """Return the geographic coordinates of the shower impact point.
-
-        Finds the crossing of the shower axis (a straight line through the
-        detector, followed toward the incoming shower source) with the
-        surface sphere at the current observation level (``geom.r_obs``)
-        using full 3-D ECEF (Earth-Centred, Earth-Fixed) Cartesian
-        geometry.  The surface crossing on the source side is where the
-        atmospheric shower column stands.
-
-        Azimuth convention: 0° = North, 90° = East (clockwise from North).
-        The full zenith range [0°, 180°] is supported: for downgoing
-        showers the crossing is near the detector; for upgoing showers
-        (zenith > 90°) the toward-source ray traverses the Earth and the
-        crossing is on the far side, where the shower actually developed.
-        The original (theta, azimuth) at the detector is passed in — no
-        mirroring of either angle is needed.
-
-        At South Pole and zenith ≤ 90° this formula is algebraically
-        equivalent to the original 2-D formula in the legacy
-        :class:`MSIS00IceCubeCentered`.
-
-        Args:
-            zenith_deg (float): Zenith angle at the detector in degrees
-                (0°–180°).
-            azimuth_deg (float): Azimuth angle in degrees (0° = North,
-                90° = East).
-
-        Returns:
-            tuple: ``(latitude_deg, longitude_deg)`` of the impact point.
-        """
-        r = self.geom.r_obs / 1e2  # cm → m
-        r_det = self.geom.r_E / 1e2 + self._surface_elevation_m - self._detector_depth_m
-
-        theta = np.deg2rad(zenith_deg)
-        alpha = np.deg2rad(azimuth_deg)
-        lat0 = np.deg2rad(self._detector_latitude)
-        lon0 = np.deg2rad(self._detector_longitude)
-
-        # Detector position in ECEF (metres)
-        P_det = np.array(
-            [
-                r_det * np.cos(lat0) * np.cos(lon0),
-                r_det * np.cos(lat0) * np.sin(lon0),
-                r_det * np.sin(lat0),
-            ]
-        )
-
-        # Shower direction in ENU frame (pointing toward incoming source)
-        # azimuth 0° → North, 90° → East
-        d_ENU = np.array(
-            [
-                np.sin(theta) * np.sin(alpha),  # East component
-                np.sin(theta) * np.cos(alpha),  # North component
-                np.cos(theta),  # Up component
-            ]
-        )
-
-        # ENU → ECEF rotation matrix (columns: East, North, Up basis vectors)
-        T = np.array(
-            [
-                [
-                    -np.sin(lon0),
-                    -np.sin(lat0) * np.cos(lon0),
-                    np.cos(lat0) * np.cos(lon0),
-                ],
-                [
-                    np.cos(lon0),
-                    -np.sin(lat0) * np.sin(lon0),
-                    np.cos(lat0) * np.sin(lon0),
-                ],
-                [0.0, np.cos(lat0), np.sin(lat0)],
-            ]
-        )
-        d_ECEF = T @ d_ENU
-
-        # Crossing with the surface sphere |P_det + x * d_ECEF|² = r².
-        # The larger root is the surface crossing on the source side; it is
-        # valid for detectors below (r_det < r) and above (r_det > r) the
-        # sphere, and for the full zenith range 0°–180°.
-        A = np.dot(d_ECEF, P_det)
-        x = -A + np.sqrt(A**2 + (r**2 - r_det**2))
-
-        P_impact = P_det + x * d_ECEF
-        lat_imp = np.rad2deg(np.arcsin(np.clip(P_impact[2] / r, -1.0, 1.0)))
-        lon_imp = np.rad2deg(np.arctan2(P_impact[1], P_impact[0]))
-        return lat_imp, lon_imp
 
     # ------------------------------------------------------------------
     # Density
@@ -963,112 +872,9 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
     # Angle setting
     # ------------------------------------------------------------------
 
-    def set_theta(self, theta_deg, azimuth_deg=None):
-        """Configure the zenith (and optionally azimuth) angle.
-
-        *theta_deg* is the zenith angle **at the detector**.  The
-        atmospheric column is integrated at the local zenith angle where
-        the shower axis crosses the surface, obtained from impact-parameter
-        conservation along the straight axis,
-        :math:`\\sin\\theta_s = (r_{det}/r_{surf})\\sin\\theta`.  This one
-        formula covers all regimes: downgoing (tiny correction below ~80°,
-        ~1.4° at the horizon for a detector 2 km below the surface), the
-        grazing window just below the geometric horizon (90° < theta ≤
-        90° + dip, which stays a *near-side* downgoing column), and upgoing
-        showers (whose column stands at the far-side surface crossing,
-        found by following the axis toward the source through the Earth).
-        For upgoing angles the observation level is set to sea level, since
-        the far-side surface is generically the ocean, and restored to
-        *surface_elevation_m* for downgoing/grazing angles.
-
-        Args:
-            theta_deg (float): Zenith angle at the detector in degrees
-                [0, max_theta].
-            azimuth_deg (float, optional): Azimuth angle in degrees
-                (0° = North, 90° = East).  When ``None`` (default) the
-                density profile is averaged over all azimuth directions.
-        """
-        if theta_deg < 0.0 or theta_deg > self.max_theta:
-            raise ValueError(
-                f"Zenith angle {theta_deg} not in allowed range [0, {self.max_theta}]."
-            )
-
-        # Below-horizon dip of the local surface seen from the detector:
-        # rays with theta <= 90 + dip still exit through the near-side
-        # surface (grazing); larger angles traverse the Earth (upgoing).
-        r_E = self.geom.r_E  # cm
-        elev_cm = self._surface_elevation_m * 1e2
-        r_det = r_E + elev_cm - self._detector_depth_m * 1e2
-        dip_deg = np.rad2deg(np.arccos(min(r_det / (r_E + elev_cm), 1.0)))
-        far_side = theta_deg > 90.0 + dip_deg
-
-        # Near side: column ends at the local surface elevation.
-        # Far side: column ends at sea level (generic far-side surface).
-        h_obs_cm = 0.0 if far_side else elev_cm
-        if self.geom.h_obs != h_obs_cm:
-            self.geom.set_h_obs(h_obs_cm)
-
-        # Local zenith angle of the shower axis at the surface crossing
-        # (the impact parameter r*sin(theta) is conserved along the axis).
-        sin_loc = np.clip(
-            r_det / self.geom.r_obs * np.sin(np.deg2rad(theta_deg)), 0.0, 1.0
-        )
-        effective_theta = np.rad2deg(np.arcsin(sin_loc))
-
-        if azimuth_deg is not None:
-            lat, lon = self._impact_point(theta_deg, azimuth_deg)
-            self._msis.set_location_coord(lon, lat)
-            self._current_impact_latitude = lat
-            self._current_impact_longitude = lon
-            self._azimuth_averaging = False
-            self._azimuth_avg_coords = []
-            info(
-                1,
-                f"zenith={theta_deg:.1f}\u00b0, azimuth={azimuth_deg:.1f}\u00b0"
-                f" \u2192 impact lat={lat:.2f}\u00b0, lon={lon:.2f}\u00b0,"
-                f" local zenith={effective_theta:.2f}\u00b0",
-            )
-        else:
-            # Pre-compute all impact points once; they depend only on zenith,
-            # not on height, so they are constant for this set_theta call.
-            # Use the original theta_deg (transparent-Earth projection — see
-            # the comment above for the single-azimuth branch).
-            azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
-            self._azimuth_avg_coords = [
-                self._impact_point(theta_deg, azi) for azi in azi_grid
-            ]
-            self._azimuth_averaging = True
-            self._current_impact_latitude = None
-            self._current_impact_longitude = None
-
-        self._effective_theta_deg = effective_theta
-        self._current_azimuth_deg = azimuth_deg
-        self.thrad = np.deg2rad(effective_theta)
-        self.theta_deg = theta_deg  # keep original; may be > 90 for upgoing
-        self.calculate_density_spline()
-
     # ------------------------------------------------------------------
     # Impact coordinate properties
     # ------------------------------------------------------------------
-
-    @property
-    def current_impact_latitude(self):
-        """Latitude of the shower impact point for the current angle (degrees).
-
-        ``None`` when azimuth-averaging mode is active (no single impact
-        point is defined in that case) or before :meth:`set_theta` has
-        been called.
-        """
-        return self._current_impact_latitude
-
-    @property
-    def current_impact_longitude(self):
-        """Longitude of the shower impact point for the current angle (degrees).
-
-        ``None`` when azimuth-averaging mode is active or before
-        :meth:`set_theta` has been called.
-        """
-        return self._current_impact_longitude
 
 
 class MSIS00IceCubeCentered(MSIS00LocationCentered):
