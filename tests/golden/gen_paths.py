@@ -155,8 +155,15 @@ def build() -> tuple[dict, dict]:
         ) from exc
 
     arrays = {}
-    saved_debug_level = config.debug_level
+    # The paths come from the atmosphere and the integration grid, not from the
+    # hadronic yields, but `MCEqRun` opens a database to report which density
+    # models it accepts -- and the provenance records that file's sha256. Pin
+    # the reduced database the other sections use, or the section is generated
+    # against whatever the host happens to have configured and can never be
+    # verified anywhere else.
+    saved = {k: getattr(config, k) for k in ("debug_level", "mceq_db_fname")}
     config.debug_level = 0
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     try:
         atmospheres = {
             name: getattr(dprof, cls_name)(*model_config)
@@ -220,6 +227,7 @@ def build() -> tuple[dict, dict]:
             },
         )
     finally:
-        config.debug_level = saved_debug_level
+        for key, value in saved.items():
+            setattr(config, key, value)
 
     return arrays, provenance
