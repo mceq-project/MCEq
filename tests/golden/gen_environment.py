@@ -402,11 +402,13 @@ Pinned behaviours beyond the numbers:
 - The zenith guard of the LocationCentered classes: set_theta above max_theta
   raises ValueError, where the base classes raise a bare Exception (paths pins
   that one). Stored as the exception type name.
-- gtracr_cutoff._gtracr_location_from_atmosphere recognises IceCube and ORCA
-  by coordinate but NOT ARCA: it tests lat 36.264 / lon 15.4 against the
-  _KM3NET_DETECTORS entry's 36.267 / 16.1, so ARCA falls through to the
-  coord-stub branch and is named coord_lat+36p267_lon+016p100. Pinned as the
-  name it actually returns.
+- gtracr_cutoff._gtracr_location_from_atmosphere names ORCA and ARCA from the
+  _detector_name the KM3NeT subclasses set beside the coordinates, IceCube
+  from the pole, and anything else from a coord stub. The coordinates are
+  MCEq's in every branch, and get_cutoff_map samples at exactly those -- it
+  hands gtracr an explicit Location and never a bare site name, so gtracr's
+  own table cannot move the sampling point away from the column MCEq
+  integrates. gtracr/cache_version pins the CACHE_VERSION that states it.
 - The two geom.h call forms. Two of the four spline tails call geom.h once on
   the dl vector and two loop over the samples, and the two do not agree
   bitwise: numpy lowers arr ** 2 to a multiply while a float64 scalar goes

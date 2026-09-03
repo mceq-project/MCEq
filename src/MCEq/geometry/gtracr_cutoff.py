@@ -12,6 +12,10 @@ Flow on first call after install (or after a cache-invalidation):
    :data:`MCEq.geometry.atmosphere_parameters.LOCATIONS`).
 2. Run ``gtracr.geomagnetic_cutoffs.GMRC`` to sample trajectories at the
    detector position (IGRF-13 by default), with a tqdm progress bar.
+   The position is an explicit ``gtracr.location.Location`` carrying the
+   coordinates from step 1, for every site: MCEq's table is authoritative,
+   so the cutoff map and the atmospheric column always refer to the same
+   point on the Earth.
 3. Bin to a fine native grid (180 × 360) and gap-fill any NaN cells.
 4. Save the result to ``<MCEq.data_dir>/gtracr_cutoffs/<key>.npz``.
    Cache key encodes location, IGRF date, B-field type, particle
@@ -36,7 +40,12 @@ import numpy as np
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
 # or the gtracr API changes in a backward-incompatible way).
-CACHE_VERSION = 1
+#
+# v2: the trajectory sampling point is MCEq's detector coordinate for every
+# site, where v1 handed gtracr the bare site name for IceCube and ORCA and
+# let gtracr's own table decide. Maps cached under v1 sampled a different
+# position for those two, so they cannot be reused.
+CACHE_VERSION = 2
 
 # Native gtracr sampling grid: 1° × 1° (180 zen × 360 az). All downstream
 # pixel grids are linearly interpolated from this.
@@ -114,18 +123,24 @@ def _cache_key(
 
 
 def _gtracr_location_from_atmosphere(density_model):
-    """Pick a gtracr location identifier for an MCEq atmosphere.
+    """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
-    Returns ``(name, lat, lon)`` or raises ``ValueError`` if the
-    atmosphere has no notion of geographic location.
+    Raises ``ValueError`` if the atmosphere has no notion of geographic
+    location, which is what makes the cutoff feature refuse a CORSIKA or
+    isothermal profile.
 
-    Recognises:
-    - MSIS21LocationCentered / MSIS00LocationCentered and subclasses
-      (IceCube, KM3NeT) — uses ``_detector_latitude / _detector_longitude``
-      directly. The name keeps the detector tag when known
-      (``IceCube``, ``ORCA``, ``ARCA``).
-    - MSIS21Atmosphere / MSIS00Atmosphere with a named ``self.location``
-      from :data:`atmosphere_parameters.LOCATIONS`.
+    The coordinates always come from MCEq — ``_detector_latitude /
+    _detector_longitude`` for the detector-centred models, the
+    :data:`atmosphere_parameters.LOCATIONS` table for a named site — and
+    :func:`get_cutoff_map` samples at exactly those. The name is a label on
+    them, not a lookup key, so how it is obtained cannot move the sampling
+    point:
+
+    - the KM3NeT subclasses carry ``_detector_name`` (``ORCA`` / ``ARCA``),
+      set from the same ``_KM3NET_DETECTORS`` entry the coordinates come
+      from, so the tag cannot drift away from the position it names;
+    - IceCube is the geographic pole, which is exact and unambiguous;
+    - anything else gets a stub spelling out its own coordinates.
     """
     from MCEq.geometry.atmosphere_parameters import LOCATIONS
 
@@ -133,17 +148,13 @@ def _gtracr_location_from_atmosphere(density_model):
     lat = getattr(density_model, "_detector_latitude", None)
     lon = getattr(density_model, "_detector_longitude", None)
     if lat is not None and lon is not None:
-        # Try to recover a name tag — gtracr's IceCube and ORCA use the
-        # exact lat/lon below; otherwise return a coord-based stub.
-        if abs(lat - (-90.0)) < 1e-6 and abs(lon) < 1e-6:
-            name = "IceCube"
-        elif abs(lat - 42.803) < 1e-3 and abs(lon - 6.033) < 1e-3:
-            name = "ORCA"
-        elif abs(lat - 36.264) < 1e-3 and abs(lon - 15.4) < 1e-3:
-            name = "ARCA"
-        else:
-            name = f"coord_lat{lat:+07.3f}_lon{lon:+08.3f}".replace(".", "p")
-        return name, float(lat), float(lon)
+        name = getattr(density_model, "_detector_name", None)
+        if not name:
+            if abs(lat - (-90.0)) < 1e-6 and abs(lon) < 1e-6:
+                name = "IceCube"
+            else:
+                name = f"coord_lat{lat:+07.3f}_lon{lon:+08.3f}".replace(".", "p")
+        return str(name), float(lat), float(lon)
 
     # Named MSIS or CORSIKA-style atmosphere with a location in the table
     loc = getattr(density_model, "location", None)
@@ -198,6 +209,7 @@ def get_cutoff_map(
     try:
         import gtracr
         from gtracr.geomagnetic_cutoffs import GMRC
+        from gtracr.location import Location
     except ImportError as e:
         raise ImportError(
             "gtracr is required for the geomagnetic cutoff feature. "
@@ -236,23 +248,13 @@ def get_cutoff_map(
             g_az = d["gtracr_native_az"].copy()
             g_rc = d["gtracr_native_rcutoff_GV"].copy()
     else:
-        # Resolve the gtracr Location: prefer the named convenience
-        # (IceCube/ORCA/...) if it matches; otherwise build a Location
-        # from explicit coordinates.
-        try:
-            from gtracr.location import Location
-
-            known_locs = {
-                "IceCube": "IceCube",
-                "ORCA": "ORCA",
-                "ARCA": "ARCA",
-            }
-            if location_name in known_locs:
-                gmrc_loc = location_name
-            else:
-                gmrc_loc = Location(name=location_name, latitude=lat, longitude=lon)
-        except Exception:
-            gmrc_loc = location_name  # fall back to gtracr default lookup
+        # MCEq's site table is authoritative: always hand gtracr an explicit
+        # Location built from the coordinates MCEq resolved, never a bare
+        # site name. Passing a name gtracr recognises would make gtracr's own
+        # table decide where the trajectories are sampled, so the cutoff map
+        # would belong to a different point than the atmospheric column the
+        # rest of the calculation integrates — the two must agree.
+        gmrc_loc = Location(name=location_name, latitude=lat, longitude=lon)
 
         gmrc = GMRC(
             location=gmrc_loc,

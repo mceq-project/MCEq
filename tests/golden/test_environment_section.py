@@ -14,7 +14,7 @@ equal to the pre-move ones; ``max_theta`` is overwritten on a plain atmosphere
 and preserved on a detector-centred one; the detector-centred zenith guard
 raises ``ValueError`` where the base classes raise a bare ``Exception``; the
 two ``geom.h`` call forms disagree at some of the geometries the sweep visits;
-``gtracr_cutoff`` recognises IceCube and ORCA by coordinate and misses ARCA;
+``gtracr_cutoff`` resolves every detector to MCEq's own coordinates;
 and the provenance stanza describes the file it was written beside.
 """
 
@@ -253,15 +253,21 @@ def test_the_two_geom_h_call_forms_disagree_at_some_geometries(section):
     assert float(forms[forms[:, 2] == 0][:, 3].max(initial=0.0)) == 0.0
 
 
-def test_the_gtracr_location_table_misses_arca(section):
-    """IceCube and ORCA resolve by coordinate; ARCA does not.
+def test_the_gtracr_location_table_is_mceqs_own_coordinates(section):
+    """Every detector resolves to MCEq's coordinates, under its own name.
 
-    ``_gtracr_location_from_atmosphere`` tests ``lat 36.264 / lon 15.4``
-    against the ``_KM3NET_DETECTORS`` entry's ``36.267 / 16.1``, so the ARCA
-    branch never fires and the name falls through to the coordinate stub. The
-    coordinates it returns are right; only the name tag is lost, and gtracr's
-    own ``Location`` is then built from them — so this is pinned as the name it
-    actually produces rather than reported as broken.
+    ``get_cutoff_map`` hands gtracr an explicit ``Location`` carrying these
+    lat/lon for every site and never a bare site name, so these numbers are
+    where the trajectories are sampled. That is the point of the row: MCEq's
+    site table decides, not gtracr's, and the cutoff map therefore belongs to
+    the same position as the atmospheric column.
+
+    Until :data:`CACHE_VERSION` 2 the two tables could disagree. ARCA was
+    additionally mislabelled — the old coordinate test compared ``36.264 /
+    15.4`` against the ``_KM3NET_DETECTORS`` entry's ``36.267 / 16.1`` and
+    could not fire — so the name now comes from the ``_detector_name`` the
+    KM3NeT subclasses set beside the coordinates, which cannot drift from
+    them.
 
     An atmosphere with no geography raises ``ValueError``, which is what makes
     the geomagnetic-cutoff feature refuse a CORSIKA or isothermal profile.
@@ -269,16 +275,36 @@ def test_the_gtracr_location_table_misses_arca(section):
     arrays, _ = section
     table = {row[0]: row[1:] for row in arrays["gtracr/locations"].tolist()}
 
-    assert table["MSIS00IceCubeCentered"][0] == "IceCube"
-    assert table["MSIS00KM3NeTCentered/ORCA"][0] == "ORCA"
-    assert table["MSIS00KM3NeTCentered/ARCA"][0].startswith("coord_lat+36p267"), (
-        "the ARCA coordinate branch now matches, so the tolerance test in "
-        "_gtracr_location_from_atmosphere was corrected; that changes the "
-        "gtracr cache key and therefore every cached cutoff map"
-    )
+    # (name, lat, lon) as MCEq holds them: the pole for IceCube, and the
+    # _KM3NET_DETECTORS entries for the two KM3NeT sites.
+    expected = {
+        "MSIS00IceCubeCentered": ("IceCube", -90.0, 0.0),
+        "MSIS00KM3NeTCentered/ORCA": ("ORCA", 42.803, 6.033),
+        "MSIS00KM3NeTCentered/ARCA": ("ARCA", 36.267, 16.1),
+    }
+    for label, (name, lat, lon) in expected.items():
+        got_name, got_lat, got_lon = table[label]
+        assert got_name == name, label
+        assert float(got_lat) == pytest.approx(lat, abs=1e-6), label
+        assert float(got_lon) == pytest.approx(lon, abs=1e-6), label
+
     assert table["MSIS00Atmosphere/Karlsruhe"][0] == "Karlsruhe"
     for label in ("CorsikaAtmosphere/BK_USStd", "IsothermalAtmosphere"):
         assert table[label][0] == "<ValueError>", label
+
+
+def test_the_gtracr_cache_version_is_2(section):
+    """``CACHE_VERSION`` 2 is what invalidates the v1 maps.
+
+    v1 sampled IceCube and ORCA at gtracr's coordinates, so its cached maps
+    are not the same quantity as v2's and must not be reused. The number is
+    pinned so a bump is a deliberate edit here rather than a silent one.
+    """
+    arrays, _ = section
+    assert int(arrays["gtracr/cache_version"]) == 2
+    for label in ("igrf_default", "table_orca"):
+        key_str = str(arrays[f"gtracr/cache_key/{label}"][0])
+        assert key_str.startswith("v2|"), key_str
 
 
 def test_the_cutoff_mask_zeroes_a_species_below_its_rigidity_threshold(section):
