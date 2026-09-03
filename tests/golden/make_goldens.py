@@ -26,7 +26,9 @@ GENERATORS = {
     "paths": "gen_paths",
     "solve1d": "gen_solve1d",
     "species": "gen_species",
+    "operators1d": "gen_operators1d",
     "solve2d": "gen_solve2d",
+    "operators2d": "gen_operators2d",
 }
 
 

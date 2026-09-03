@@ -20,11 +20,13 @@ SECTIONS = (
     "paths",
     "solve1d",
     "species",
+    "operators1d",
     "solve2d",
+    "operators2d",
 )
 
 #: Sections that need a database CI does not carry or cost minutes to build.
-SLOW_SECTIONS = frozenset({"solve2d"})
+SLOW_SECTIONS = frozenset({"solve2d", "operators2d"})
 
 #: Sections pinned bitwise to the numpy/BLAS build of the host that generated
 #: them, and therefore compared on one designated reference job instead of
@@ -34,5 +36,10 @@ SLOW_SECTIONS = frozenset({"solve2d"})
 #: scipy 1.17, and the sha256 digest keys are bitwise by construction.
 #: `structure` is deliberately absent: line counts are portable, so it stays the
 #: cheap guard that the harness is still wired up on every platform. `solve2d`
-#: is here as well as in SLOW_SECTIONS — the two marks are orthogonal.
-HOST_SECTIONS = frozenset({"paths", "solve1d", "species", "solve2d"})
+#: is here as well as in SLOW_SECTIONS — the two marks are orthogonal. The two
+#: `operators*` sections are here for a stricter reason than the solve ones:
+#: their CSR keys are sha256 digests, which cannot be compared to a tolerance
+#: at all.
+HOST_SECTIONS = frozenset(
+    {"paths", "solve1d", "species", "operators1d", "solve2d", "operators2d"}
+)
