@@ -3,6 +3,11 @@
 The layer between the species definition and the solvers, host-only and
 backend-agnostic:
 
+* :mod:`MCEq.operators.loss_stencil` -- the finite-difference families for
+  ``d/du``, ``u = ln E``, behind the continuous-loss band, and the exactness
+  condition each one imposes.
+* :mod:`MCEq.operators.scattering` -- the ``kappa^2`` Gaussian
+  multiple-Coulomb damping of muons in the 2D transport.
 * :mod:`MCEq.operators.compiled` -- :func:`~MCEq.operators.compiled.compile_operator`
   turns the constant sparse matrices ``A = int_m`` and ``B = dec_m`` into one
   immutable :class:`~MCEq.operators.compiled.CompiledOperator`: the diagonal /

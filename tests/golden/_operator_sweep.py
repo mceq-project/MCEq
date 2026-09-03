@@ -68,7 +68,8 @@ import numpy as np
 from ._harness import make_provenance, sparse_digest
 
 #: Every interior stencil ``MatrixBuilder._construct_differential_operator``
-#: accepts (core.py:3295-3352). Kept in the order of the method's own dispatch:
+#: accepts (:data:`MCEq.operators.loss_stencil.STENCIL_METHODS`, since Phase 5
+#: move B; ``core.py:3295-3352`` before it). Kept in the order of the dispatch:
 #: the two ``expfit_low_upwind*`` composites, the three high-order families,
 #: then the two monotone upwind operators. ``tests/test_operators_pin.py``
 #: reads the accepted names out of the ``ValueError`` the method raises and

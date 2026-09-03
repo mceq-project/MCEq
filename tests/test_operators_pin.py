@@ -32,6 +32,7 @@ import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.core import MatrixBuilder, MCEqRun
+from MCEq.operators import loss_stencil
 from tests.golden._operator_sweep import STENCILS
 
 # ---------------------------------------------------------------------------
@@ -72,16 +73,20 @@ def stencil_config(monkeypatch):
 
 
 def test_stencil_names_match_the_builders_own_error(stencil_config):
-    """The golden sweep's `STENCILS` is the set `core.py` says it accepts.
+    """The golden sweep's `STENCILS` is the set the stencil module accepts.
 
     The names are read back out of the ``ValueError`` rather than restated, so
     a family added to the builder without a golden cell fails here instead of
-    going unswept.
+    going unswept. ``STENCIL_METHODS`` is checked against the same message: it
+    is the module's own catalogue of the dispatch, and a family listed there
+    but not raised over is the same silent drift in the other direction.
     """
     with pytest.raises(ValueError) as excinfo:
         _op_matrix("no_such_stencil")
     expected = str(excinfo.value).split("Expected", 1)[1]
-    assert set(re.findall(r"'([a-z0-9_]+)'", expected)) == set(STENCILS)
+    raised = set(re.findall(r"'([a-z0-9_]+)'", expected))
+    assert raised == set(STENCILS)
+    assert raised == set(loss_stencil.STENCIL_METHODS)
 
 
 @pytest.mark.parametrize("method", STENCILS)

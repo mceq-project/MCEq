@@ -8,6 +8,7 @@ import MCEq.data
 from MCEq import config
 from MCEq.download import ensure_db_available
 from MCEq.misc import info, normalize_hadronic_model_name
+from MCEq.operators import loss_stencil, scattering
 from MCEq.operators.compiled import compile_operator
 from MCEq.particlemanager import ParticleManager
 
@@ -3040,36 +3041,21 @@ class MatrixBuilder:
         Returns ``(muon_lidcs, theta_s_sq)`` — the state-vector offsets of
         all muon species present (PDG ±13, helicities 0, ±1) and the
         squared scattering angle per unit depth — or ``None`` when muon
-        multiple scattering does not apply. The per-mode diagonal
+        multiple scattering does not apply. Physics and formulas:
+        :mod:`MCEq.operators.scattering`. The per-mode diagonal
         contribution is ``-kappa^2 * theta_s^2(E) / 4``; it sits on the
         diagonal D so ETD2RK's ``e^{h*D}`` integrates it exactly, without
         a per-step operator split.
         """
         if not (self.is_2d and getattr(config, "muon_multiple_scattering", False)):
             return None
-        # Constants of the Gauss approximation used by CORSIKA (Heck &
-        # Pierog handbook p.12): Gaussian core only, no Moliere tail.
-        lambda_s = 37.7  # g/cm^2
-        E_s = 0.021  # GeV
-        e_kin = self._energy_grid.c
         # Prefer pman's (13, 0) mass; fall back to the PDG value.
         try:
             mu_mass = float(self._pman[(13, 0)].mass)
         except (KeyError, AttributeError):
-            mu_mass = 0.10566  # GeV
-        E_lab = e_kin + mu_mass
-        p2 = E_lab**2 - mu_mass**2
-        p2 = np.where(p2 > 0, p2, 1e-30)
-        beta = np.sqrt(p2) / E_lab
-        theta_s_sq = (1.0 / lambda_s) * (E_s / (E_lab * beta**2)) ** 2
-        muon_lidcs = []
-        for pdg in (13, -13):
-            for hel in (0, 1, -1):
-                key = (pdg, hel)
-                if key in self._pman.pdg2pref:
-                    p = self._pman.pdg2pref[key]
-                    if hasattr(p, "lidx") and getattr(p, "mceqidx", -1) >= 0:
-                        muon_lidcs.append(p.lidx)
+            mu_mass = scattering.MUON_MASS
+        theta_s_sq = scattering.theta_s_squared(self._energy_grid.c, mu_mass)
+        muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
         return muon_lidcs, theta_s_sq
@@ -3132,7 +3118,7 @@ class MatrixBuilder:
                 kappa = self.k_grid[k]
                 if mu_damp is not None and kappa != 0:
                     muon_lidcs, theta_s_sq = mu_damp
-                    damping = -(kappa**2) * theta_s_sq / 4.0
+                    damping = scattering.mode_damping(theta_s_sq, kappa)
                     for lidx in muon_lidcs:
                         diag = np.arange(lidx, lidx + n_e)
                         rows.append(diag)
@@ -3245,148 +3231,24 @@ class MatrixBuilder:
         """Constructs a derivative operator for the continuous losses.
 
         Builds a (dim_e x dim_e) banded matrix that approximates d/du with
-        u = ln E on the (log-uniform) energy grid. The interior 7-point
-        stencil is selected by :data:`MCEq.config.loss_stencil_method`:
+        u = ln E on the (log-uniform) energy grid. Families, exactness
+        conditions and the boundary-row caveat:
+        :mod:`MCEq.operators.loss_stencil`. The interior 7-point stencil is
+        selected by :data:`MCEq.config.loss_stencil_method`, anchored for the
+        ``expfit*`` families at :data:`MCEq.config.loss_stencil_alpha0`, and
+        the composites replace :data:`MCEq.config.loss_stencil_low_upwind_rows`
+        low-energy rows.
 
-        - ``"expfit_low_upwind2"`` (default) / ``"expfit_low_upwind"``:
-          expfit interior with the low-energy boundary layer
-          (:data:`MCEq.config.loss_stencil_low_upwind_rows` rows) replaced
-          by monotone second-/first-order upwind rows — removes the
-          low-energy boundary cliff of the pure expfit operator.
-        - ``"expfit"``: exponentially-fitted 7-point stencil anchored
-          at :data:`MCEq.config.loss_stencil_alpha0`. Near-exact for power-law
-          spectra E^{-alpha} with alpha ~ alpha0 on a coarse log grid.
-        - ``"centered"``: symmetric 6th-order centered FD.
-        - ``"biased"``: legacy 7-point biased "6th-order" stencil.
-
-        The non-upwind options share the same one-sided polynomial-fit
-        stencils on the boundary rows (0, 1, 2 and last-2, last-1, last); see
-        ``docs/mceq_v1.x_v2_diff.md`` for the boundary-cliff caveat.
+        Called from :meth:`__init__` and nowhere else, so
+        :meth:`MCEqRun.regenerate_matrices` rebuilds the blocks against the
+        ``op_matrix`` the constructor left behind; a stencil change needs this
+        method called explicitly.
         """
-        # First rows of operator matrix (values are truncated at the edges
-        # of a matrix.)
-        diags_leftmost = [0, 1, 2, 3]
-        coeffs_leftmost = [-11, 18, -9, 2]
-        denom_leftmost = 6
-        diags_left_1 = [-1, 0, 1, 2, 3]
-        coeffs_left_1 = [-3, -10, 18, -6, 1]
-        denom_left_1 = 12
-        diags_left_2 = [-2, -1, 0, 1, 2, 3]
-        coeffs_left_2 = [3, -30, -20, 60, -15, 2]
-        denom_left_2 = 60
-
-        # Last rows at the right of operator matrix
-        diags_right_2 = [-d for d in diags_left_2[::-1]]
-        coeffs_right_2 = [-d for d in coeffs_left_2[::-1]]
-        denom_right_2 = denom_left_2
-        diags_right_1 = [-d for d in diags_left_1[::-1]]
-        coeffs_right_1 = [-d for d in coeffs_left_1[::-1]]
-        denom_right_1 = denom_left_1
-        diags_rightmost = [-d for d in diags_leftmost[::-1]]
-        coeffs_rightmost = [-d for d in coeffs_leftmost[::-1]]
-        denom_rightmost = denom_leftmost
-
-        h = np.log(self._energy_grid.b[1:] / self._energy_grid.b[:-1])
-        dim_e = int(self._energy_grid.d)
-        last = dim_e - 1
-
-        # Interior stencil selection. All options are 7-point and span at
-        # most [-3, +3], so the row range range(3, dim_e - 3) is uniform.
-        method = getattr(config, "loss_stencil_method", "expfit_low_upwind2")
-        low_boundary = None
-        if method in ("expfit_low_upwind", "expfit_low_upwind2"):
-            low_boundary = method.rsplit("_", 1)[-1]
-            method = "expfit"
-
-        # Simple monotone UPWIND stencils (full-matrix, no high-order boundary
-        # rows → avoids the expfit "boundary cliff"). Energy loss advects the
-        # spectrum toward lower E, so the upwind direction is toward HIGHER E
-        # (forward in u = ln E), matching the one-sided orientation of the
-        # low-E boundary row. Added for the fine-grid Nmax convergence study
-        # (runs/2026-06-06_em-grid-exact-nmax): unconditionally stable, diffusive
-        # at O(h) (upwind) / O(h²) (upwind2), converges as the grid refines.
-        if method in ("upwind", "upwind2"):
-            op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
-            if method == "upwind":  # 1st-order forward difference
-                for row in range(dim_e - 1):
-                    op_matrix[row, row] = -1.0 / h[row]
-                    op_matrix[row, row + 1] = 1.0 / h[row]
-                # top edge: 1st-order backward (forward out of range)
-                op_matrix[last, last - 1] = -1.0 / h[last - 1]
-                op_matrix[last, last] = 1.0 / h[last - 1]
-            else:  # "upwind2": 2nd-order forward-biased
-                for row in range(dim_e - 2):
-                    op_matrix[row, row] = -1.5 / h[row]
-                    op_matrix[row, row + 1] = 2.0 / h[row]
-                    op_matrix[row, row + 2] = -0.5 / h[row]
-                # top two edges: 2nd-order backward-biased
-                for row in (dim_e - 2, last):
-                    hh = h[row - 2]
-                    op_matrix[row, row - 2] = 0.5 / hh
-                    op_matrix[row, row - 1] = -2.0 / hh
-                    op_matrix[row, row] = 1.5 / hh
-            self.op_matrix = op_matrix
-            return
-
-        if method == "biased":
-            diags_int = np.asarray(diags_left_2)
-            coeffs_int = np.asarray(coeffs_left_2, dtype=np.float64) / 60.0
-        elif method == "centered":
-            diags_int = np.asarray([-3, -2, -1, 1, 2, 3])
-            coeffs_int = np.asarray([-1, 9, -45, 45, -9, 1], dtype=np.float64) / 60.0
-        elif method == "expfit":
-            alpha0 = float(getattr(config, "loss_stencil_alpha0", 3.0))
-            diags_int = np.arange(-3, 4)
-            # Use the mean log-spacing for a single fit (grid is log-uniform).
-            h_avg = float(np.mean(h))
-            deltas = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
-            a = -alpha0 + deltas
-            Aexp = np.exp(np.outer(a, diags_int) * h_avg)
-            rhs = a * h_avg
-            coeffs_int = np.linalg.solve(Aexp, rhs)
-        else:
-            raise ValueError(
-                f"Unknown loss_stencil_method: {method!r}. "
-                "Expected 'expfit', 'centered', 'biased', 'upwind', 'upwind2', "
-                "'expfit_low_upwind', or 'expfit_low_upwind2'."
-            )
-
-        op_matrix = np.zeros((dim_e, dim_e), dtype=config.floatlen)
-        op_matrix[0, np.asarray(diags_leftmost)] = np.asarray(coeffs_leftmost) / (
-            denom_leftmost * h[0]
+        self.op_matrix = loss_stencil.differential_operator(
+            self._energy_grid.b,
+            int(self._energy_grid.d),
+            method=getattr(config, "loss_stencil_method", "expfit_low_upwind2"),
+            alpha0=getattr(config, "loss_stencil_alpha0", 3.0),
+            low_upwind_rows=getattr(config, "loss_stencil_low_upwind_rows", 8),
+            dtype=config.floatlen,
         )
-        op_matrix[1, 1 + np.asarray(diags_left_1)] = np.asarray(coeffs_left_1) / (
-            denom_left_1 * h[1]
-        )
-        op_matrix[2, 2 + np.asarray(diags_left_2)] = np.asarray(coeffs_left_2) / (
-            denom_left_2 * h[2]
-        )
-        op_matrix[last, last + np.asarray(diags_rightmost)] = np.asarray(
-            coeffs_rightmost
-        ) / (denom_rightmost * h[last])
-        op_matrix[last - 1, last - 1 + np.asarray(diags_right_1)] = np.asarray(
-            coeffs_right_1
-        ) / (denom_right_1 * h[last - 1])
-        op_matrix[last - 2, last - 2 + np.asarray(diags_right_2)] = np.asarray(
-            coeffs_right_2
-        ) / (denom_right_2 * h[last - 2])
-        for row in range(3, dim_e - 3):
-            op_matrix[row, row + diags_int] = coeffs_int / h[row]
-
-        if low_boundary is not None:
-            n_low = min(
-                max(3, int(getattr(config, "loss_stencil_low_upwind_rows", 8))),
-                dim_e - 2,
-            )
-            op_matrix[:n_low, :] = 0.0
-            if low_boundary == "upwind":
-                for row in range(n_low):
-                    op_matrix[row, row] = -1.0 / h[row]
-                    op_matrix[row, row + 1] = 1.0 / h[row]
-            elif low_boundary == "upwind2":
-                for row in range(n_low):
-                    op_matrix[row, row] = -1.5 / h[row]
-                    op_matrix[row, row + 1] = 2.0 / h[row]
-                    op_matrix[row, row + 2] = -0.5 / h[row]
-
-        self.op_matrix = op_matrix
