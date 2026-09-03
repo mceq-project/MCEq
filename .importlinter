@@ -169,6 +169,11 @@ ignore_imports =
 # misc.py:5 -- Phase 6, when `info()` takes the `debug` group view and
 # `_target_mass` the `physics` one (see C1 above; D11 revised)
     MCEq.misc -> MCEq.config
+# operators/matrix_builder.py:`MatrixBuilder.__init__` -- the function-local
+# `None` fallback to the live `grid`/`losses`/`physics` views, the Phase 1
+# convention (dadd911). Phase 6 removes it, when the driver injects the three
+# groups unconditionally.
+    MCEq.operators.matrix_builder -> MCEq.config
 # solvers/backends/mkl.py:18 `config._load_mkl()` / `config.mkl` -- the MKL
 # runtime extraction (dlopen moves into this module, detection into
 # config/detect.py) removes it.

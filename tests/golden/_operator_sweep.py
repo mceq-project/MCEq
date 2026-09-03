@@ -4,7 +4,7 @@ The sections pin the assembled cascade operators themselves — ``int_m``,
 ``dec_m`` and the differential operator behind the continuous-loss band —
 across the full cross product of interior stencils and muon multiple
 scattering, on both databases. Nothing here solves; the whole cost is
-:meth:`MCEq.core.MatrixBuilder.construct_matrices`.
+:meth:`MCEq.operators.matrix_builder.MatrixBuilder.construct_matrices`.
 
 Why the section exists: Phase 5 moves ``MatrixBuilder`` out of ``core.py``,
 extracts the stencil families and the kappa^2 muon damping as pure functions,
@@ -22,8 +22,8 @@ One :class:`~MCEq.core.MCEqRun` per database. Per cell the generator sets
 ``MatrixBuilder._construct_differential_operator()`` and then
 ``construct_matrices(skip_decay_matrix=False)``, and digests the result.
 
-The explicit ``_construct_differential_operator()`` is load-bearing:
-``core.py`` calls it from ``MatrixBuilder.__init__`` and nowhere else, so
+The explicit ``_construct_differential_operator()`` is load-bearing: it is
+called from ``MatrixBuilder.__init__`` and nowhere else, so
 ``MCEqRun.regenerate_matrices()`` alone does **not** pick up a stencil change
 — it rebuilds the blocks against the stale ``op_matrix``. That is pinned as a
 behaviour by ``tests/test_operators_pin.py``.
@@ -192,8 +192,8 @@ def build_cell_operators(mceq, stencil, scattering):
     generator and the equivalence test in ``tests/test_operators_pin.py``
     exercise the same three calls instead of two copies that can drift.
 
-    ``_construct_differential_operator()`` is explicit because ``core.py``
-    calls it from ``MatrixBuilder.__init__`` and nowhere else, so
+    ``_construct_differential_operator()`` is explicit because it is called
+    from ``MatrixBuilder.__init__`` and nowhere else, so
     ``construct_matrices`` alone refills the blocks against the ``op_matrix``
     the constructor left behind. ``skip_decay_matrix`` stays False so ``dec_m``
     is rebuilt and its invariance is measured, not assumed.

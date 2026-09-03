@@ -3,6 +3,10 @@
 The layer between the species definition and the solvers, host-only and
 backend-agnostic:
 
+* :mod:`MCEq.operators.matrix_builder` --
+  :class:`~MCEq.operators.matrix_builder.MatrixBuilder` fills the interaction
+  and decay matrices ``int_m`` and ``dec_m``, per (child, parent) channel, from
+  the tabulated yields a particle manager carries.
 * :mod:`MCEq.operators.loss_stencil` -- the finite-difference families for
   ``d/du``, ``u = ln E``, behind the continuous-loss band, and the exactness
   condition each one imposes.

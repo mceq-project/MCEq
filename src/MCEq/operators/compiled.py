@@ -1,16 +1,16 @@
 """Operator assembly for the ETD2RK solvers.
 
-:class:`MCEq.core.MatrixBuilder` produces the cascade operator as two
-constant sparse matrices, ``A = int_m`` and ``B = dec_m``. The ETD2RK step
-loop does not consume them directly: it integrates the diagonal of
-``A + ri B`` exactly and the off-diagonal explicitly, in a state layout of
-its choosing, and with the sec(theta) transport it needs the constant
-mode-coupling operators of :mod:`MCEq.operators.secant` alongside. This module is the
-layer in between — host-only and backend-agnostic. :func:`compile_operator`
-turns the matrices (and the optional coupling operator set) into one
-immutable :class:`CompiledOperator`; the backends in :mod:`MCEq.solvers`
-place that object onto their library handles or device and execute the
-step loop of :func:`MCEq.solvers.etd2_driver` against it.
+:class:`~MCEq.operators.matrix_builder.MatrixBuilder` produces the cascade
+operator as two constant sparse matrices, ``A = int_m`` and ``B = dec_m``.
+The ETD2RK step loop does not consume them directly: it integrates the
+diagonal of ``A + ri B`` exactly and the off-diagonal explicitly, in a state
+layout of its choosing, and with the sec(theta) transport it needs the
+constant mode-coupling operators of :mod:`MCEq.operators.secant` alongside.
+This module is the layer in between — host-only and backend-agnostic.
+:func:`compile_operator` turns the matrices (and the optional coupling
+operator set) into one immutable :class:`CompiledOperator`; the backends in
+:mod:`MCEq.solvers` place that object onto their library handles or device
+and execute the step loop of :func:`MCEq.solvers.etd2_driver` against it.
 
 Numerics: the off-diagonals are CSR with every row's nonzeros kept in
 their build order, also after the layout permutation (the column indices
