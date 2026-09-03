@@ -8,6 +8,7 @@ from MCEq.geometry.atmosphere_parameters import (
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
+from MCEq.geometry.column import fit_column_splines
 from MCEq.misc import info
 
 
@@ -89,9 +90,6 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
         if self.theta_deg is None:
             raise Exception("zenith angle not set")
         info(
@@ -111,32 +109,18 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         # Compute density at every step once to avoid calling vec_rho_l twice
         rho_vec = vec_rho_l(dl_vec)
 
-        # Calculate integral for each depth point
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec = dl_vec[1:]
-
         info(5, f".. took {time() - now:1.2f}s")
 
-        # Save depth value at h_obs
-        self._max_X = X_int[-1]
+        # Save density value at h_obs
         self._max_den = self.get_density(self.geom.h(0, thrad))
 
-        # ``s_X2rho`` below is fitted on ``X_int``, so its domain starts at
-        # ``X_int[0] > 0`` and every solve extrapolates it down to
-        # ``config.X_start == 0``. That extrapolation is load-bearing, not a
-        # hazard: it is the top-of-atmosphere saturation of ``1/rho`` that
-        # ``etd2_nonuniform_path`` sizes its first steps against, and
-        # ``s_X2rho.get_knots()[0]`` recovers the fitted lower bound exactly
-        # for anyone who needs it.
-
-        # Interpolate with bi-splines without smoothing
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
-        # This is an incomplete workaround for non-monothonic elevations for
-        # upgoing trajectories.
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        # One scalar ``geom.h`` call per sample. The MSIS21 overrides pass the
+        # heights of a single array call instead, and the two spellings differ
+        # by one ULP of ``r_E`` at a fifth of the zenith range -- see
+        # ``tests/geometry/test_environment_pins.py``. Which one a given
+        # atmosphere uses is therefore its own business, not the fit's.
+        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
+        fit_column_splines(self, rho_vec, dl_vec, h_intp)
 
     @property
     def max_X(self):
@@ -940,9 +924,6 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
         thrad = self.thrad
         path_length = self.geom.path_len(thrad)
         dl_vec = np.linspace(0, path_length, n_steps)
@@ -968,17 +949,14 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
         info(5, f".. took {time() - now:1.2f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec = dl_vec[1:]
-
-        self._max_X = X_int[-1]
         self._max_den = float(rho_vec[0])
 
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        # Scalar ``geom.h``, as in the base tail this branch replaces. These
+        # are the same values as ``h_vec[2:][::-1]`` -- same function, same
+        # arguments -- so the recomputation is redundant, but removing it is a
+        # change of its own and not part of this extraction.
+        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
+        fit_column_splines(self, rho_vec, dl_vec, h_intp)
 
     # ------------------------------------------------------------------
     # Angle setting

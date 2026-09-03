@@ -33,6 +33,7 @@ from MCEq.geometry.atmosphere_parameters import (
     LOCATIONS,
     MONTH_TO_DAY_OF_YEAR,
 )
+from MCEq.geometry.column import fit_column_splines
 from MCEq.geometry.density_profiles import _KM3NET_DETECTORS, EarthsAtmosphere
 from MCEq.misc import info
 
@@ -226,9 +227,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
         if self.theta_deg is None:
             raise Exception("zenith angle not set")
 
@@ -261,19 +259,12 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         info(5, f".. nrlmsis2.1 vectorised call took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
-
-        self._max_X = X_int[-1]
         self._max_den = float(rho_vec[0])
 
-        # Base-class spline fit: h_intp = reversed(geom.h(dl_vec[2:], thrad)),
-        # X_intp = reversed(X_int[1:]). h_vec_cm[i] = geom.h(dl_vec[i], thrad),
-        # so dl_vec[2:] → h_vec_cm[2:].
-        h_intp = h_vec_cm[2:][::-1]
-        X_intp = X_int[1:][::-1]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        # ``h_vec_cm[i] == geom.h(dl_vec[i], thrad)``, so ``dl_vec[2:]`` is
+        # ``h_vec_cm[2:]`` — the heights the base tail recomputes with one
+        # scalar call each, one ULP of ``r_E`` away from these.
+        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1])
 
     # ------------------------------------------------------------------
     # set_theta (base-class behavior; no azimuth concept here)
@@ -471,9 +462,6 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
         if self.theta_deg is None:
             raise Exception("zenith angle not set")
 
@@ -528,19 +516,11 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
         info(5, f".. spline build took {time() - now:1.3f}s")
 
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)  # (n_steps-1,)
-
-        self._max_X = X_int[-1]
         self._max_den = float(rho_vec[0])
 
-        # Same indexing as the MSIS00 base-class spline contract:
-        # h_intp = reversed(geom.h(dl_vec[2:], thrad))
-        # X_intp = reversed(X_int[1:])
-        h_intp = h_vec_cm[2:][::-1]
-        X_intp = X_int[1:][::-1]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        # As above: ``h_vec_cm[2:]`` is the base tail's ``dl_vec[2:]`` heights,
+        # from one array ``geom.h`` call rather than ``n_steps`` scalar ones.
+        fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1])
 
     # ------------------------------------------------------------------
     # set_theta — location-centered version with azimuth support
