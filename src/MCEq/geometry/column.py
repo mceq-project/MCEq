@@ -5,8 +5,8 @@ the sampled density along the slant path, then fit the three splines the solver
 reads. What differs between them is only how the density and the heights are
 obtained. That tail lives here so the contract is stated once.
 
-Destined for ``MCEq.environment`` (plan §4), which owns columns while
-``solvers/path.py`` owns steps.
+Columns belong here; steps belong to :mod:`MCEq.solvers.path`, which owns the
+step-size policy and the depth grid.
 """
 
 from __future__ import annotations
@@ -25,24 +25,40 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp):
       rho_vec: density at each of the ``n_steps`` samples of *dl_vec*.
       dl_vec: slant path from the top of the atmosphere to the observation
         level, ``linspace(0, path_len, n_steps)``.
-      h_intp: height at ``dl_vec[2:]``, reversed -- so, increasing height. A
-        list or an array; the two are bitwise equivalent here. It is an
-        argument rather than something computed from *dl_vec* because the
-        scalar-``geom.h`` and array-``geom.h`` spellings differ by one ULP of
-        ``r_E`` at a fifth of the zenith range, and both are in use --
-        ``tests/geometry/test_environment_pins.py`` pins that difference.
+      h_intp: height at ``dl_vec[2:]``, in reverse path order. A list or an
+        array; the two are bitwise equivalent here. It is an argument rather
+        than something computed from *dl_vec* because the scalar-``geom.h`` and
+        array-``geom.h`` spellings differ by one ULP of ``r_E`` at 258 of 901
+        zeniths, and both are in use -- ``tests/geometry/test_environment_pins.py``
+        pins that difference and bounds it at two ULP.
 
     Returns:
       ``X_int = cumulative_trapezoid(rho_vec, dl_vec)``, one element shorter
-      than *dl_vec* and starting at the first non-zero depth.
+      than *dl_vec*. The node contract is ``X_int[i]`` = depth accumulated up
+      to ``dl_vec[i+1]``, so ``X_int[0]`` is the first non-zero depth and not
+      the depth at ``dl_vec[0]``. Pairing it with ``rho_vec[1:]`` below is
+      therefore aligned, not off by one.
 
     The three fits, all quadratic without smoothing:
 
-    * ``_s_h2X`` -- height to ``log X``, over ``X_int[1:]`` reversed so it runs
-      with *h_intp*. Reversing rather than sorting is an incomplete workaround
-      for the non-monotonic elevations of upgoing trajectories.
+    * ``_s_h2X`` -- height to ``log X``, over ``X_int[1:]`` in the same reverse
+      path order as *h_intp*.
     * ``_s_X2rho`` -- ``X`` to density, over all of ``X_int``.
     * ``_s_lX2h`` -- ``log X`` to height, the inverse of the first.
+
+    **Reverse path order is not the same as increasing height, and FITPACK
+    requires the latter.** It coincides for any downgoing column and for the
+    ``*LocationCentered`` classes at every zenith, since those hand the
+    geometry an effective *local* zenith of at most 90 degrees. It does not
+    coincide for a genuinely upgoing column above a raised observation level:
+    with ``h_obs > 0`` and theta > 90 the height is V-shaped along the path, and
+    ``UnivariateSpline`` then rejects *h_intp* outright with "x must be strictly
+    increasing if s = 0" -- 229 of 1998 samples are non-increasing at
+    theta = 91.4 deg, ``h_obs`` = 2 km. ``set_h_obs`` admits those angles
+    (``max_theta = geom.theta_max_deg`` = 91.435 deg there), so the class accepts
+    zeniths this fit cannot serve. Nothing in the tree reaches it; it is a real
+    latent defect rather than a handled case, and reversing the arrays is no
+    workaround for it.
 
     ``_s_X2rho`` is fitted on ``X_int``, so its domain starts at
     ``X_int[0] > 0`` and every solve extrapolates it down to
@@ -59,6 +75,9 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp):
     X_int = cumulative_trapezoid(rho_vec, dl_vec)
     log_X_intp = np.log(X_int[1:][::-1])
 
+    # Before the fits, so a rejected ``h_intp`` leaves ``_max_X`` describing the
+    # new zenith while the splines still describe the old one. Pre-existing
+    # order, kept because changing it is a behaviour change, not a relocation.
     atmosphere._max_X = X_int[-1]
     atmosphere._s_h2X = UnivariateSpline(h_intp, log_X_intp, k=2, s=0.0)
     atmosphere._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)

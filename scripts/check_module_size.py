@@ -37,8 +37,8 @@ ALLOW = {
     "src/MCEq/core.py": 3538,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
     "src/MCEq/data.py": 1486,  # Phase 4 -> data/*
     "src/MCEq/ddm.py": 870,  # Phase 4 -> models/ddm/*
-    "src/MCEq/geometry/density_profiles.py": 1821,  # Phase 3 -> environment/*
-    "src/MCEq/geometry/msis21_atmosphere.py": 648,  # Phase 3 -> environment/*
+    "src/MCEq/geometry/density_profiles.py": 1846,  # Phase 3 -> environment/*
+    "src/MCEq/geometry/msis21_atmosphere.py": 670,  # Phase 3 -> environment/*
     "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
 }
 

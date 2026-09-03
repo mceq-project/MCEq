@@ -111,12 +111,12 @@ class EarthsAtmosphere(metaclass=ABCMeta):
 
         info(5, f".. took {time() - now:1.2f}s")
 
-        # Save density value at h_obs
+        # ``dl = 0`` is the atmosphere top, so this is the path minimum.
         self._max_den = self.get_density(self.geom.h(0, thrad))
 
         # One scalar ``geom.h`` call per sample. The MSIS21 overrides pass the
         # heights of a single array call instead, and the two spellings differ
-        # by one ULP of ``r_E`` at a fifth of the zenith range -- see
+        # by one ULP of ``r_E`` at 258 of 901 zeniths -- see
         # ``tests/geometry/test_environment_pins.py``. Which one a given
         # atmosphere uses is therefore its own business, not the fit's.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
@@ -131,7 +131,10 @@ class EarthsAtmosphere(metaclass=ABCMeta):
 
     @property
     def max_den(self):
-        """Density at altitude 0."""
+        """Atmosphere-top density -- the path minimum, despite the name (B29).
+
+        Two meanings across its lifetime; see the note in :func:`__init__`.
+        """
         if not hasattr(self, "_max_den"):
             self.set_theta(0)
         return self._max_den

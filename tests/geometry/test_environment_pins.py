@@ -69,7 +69,7 @@ def _h_both_ways(geom, thrad, n_steps=N_STEPS):
 
 
 def test_geom_h_disagrees_between_an_array_call_and_a_scalar_loop():
-    """One ULP of ``r_E``, at a fifth of the zenith range.
+    """One ULP of ``r_E``, at 258 of 901 zeniths -- 29 %, not a fifth.
 
     ``h`` returns ``sqrt(A_2^2 + (A_1 + l - dl)^2) - r_E``. numpy lowers
     ``arr ** 2`` to a multiply and sends a float64 *scalar* ``** 2`` through
