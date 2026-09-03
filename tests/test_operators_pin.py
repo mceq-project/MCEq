@@ -14,6 +14,10 @@ pinned here is the *behaviour* around them, which no array value records:
   golden digests cannot see, and the one MKL and cuSPARSE handles depend on;
 * that the golden sweep's construct-once shortcut is the same operator as a
   fresh ``MCEqRun``, which was measured and then left in a docstring;
+* the two-term invariant ``int_m == int_m_hadr + dEdx_band`` and the two
+  properties of the split the golden digests cannot see: that the band is
+  reused rather than recomputed, and that a settings change since the assembly
+  is refused instead of answered with a mismatched half;
 * the identity, invalidation and release contract of the ``_compiled_operator``
   cache;
 * the dense-vs-ARPACK gate of the EM step scale, the norm fallback behind
@@ -446,6 +450,95 @@ def test_the_assembled_1d_operators_are_canonical(mceq_sib21):
     """
     for name in ("int_m", "dec_m"):
         assert canonical_csr_problems(getattr(mceq_sib21, name), name) == []
+
+
+# ---------------------------------------------------------------------------
+# int_m == int_m_hadr + dEdx_band
+# ---------------------------------------------------------------------------
+
+
+def _pruned_digest(matrix):
+    """`sparse_digest` of a copy with explicit zeros dropped.
+
+    A CSR add prunes a cancelling entry on scipy 1.18 but ``pyproject``
+    declares plain ``"scipy"``, so a version that keeps it would otherwise
+    hash differently over the same operator.
+    """
+    csr = matrix.tocsr(copy=True)
+    csr.eliminate_zeros()
+    return sparse_digest(csr)
+
+
+def test_int_m_is_the_sum_of_the_hadronic_part_and_the_loss_band(mceq_sib21):
+    """The D27 split, bitwise, on the operator the fixture built.
+
+    ``int_m`` is not reassembled from the two halves — the accumulation that
+    produces it is untouched and the halves are read off it — so what this
+    states is that the two exposed operators really are its parts, which no
+    ``operators*`` digest can see. fp64 here (``floatlen`` None); the sum is
+    fp64 because ``dEdx_band`` is, and the band is deliberately *not* cast to
+    ``grid.dtype`` first: ``block += band`` rounds the promoted sum once, and a
+    cast band would round twice and move about one entry in 3000 at float32.
+    """
+    mb = mceq_sib21.matrix_builder
+    int_m, hadr, band = mb.int_m, mb.int_m_hadr, mb.dEdx_band
+
+    assert band.dtype == np.float64, "the band must stay in the dtype it is built in"
+    assert hadr.dtype == int_m.dtype
+    assert hadr.shape == band.shape == int_m.shape
+    assert band.nnz and hadr.nnz > band.nnz
+
+    total = (hadr + band).astype(int_m.dtype)
+    total.eliminate_zeros()
+    total.sort_indices()
+    assert _pruned_digest(total) == _pruned_digest(int_m)
+    for name, matrix in (("int_m_hadr", hadr), ("dEdx_band", band)):
+        assert canonical_csr_problems(matrix.tocsr(), name) == []
+
+
+def test_the_two_halves_are_cached_and_reuse_the_stashed_band(mceq_sib21, monkeypatch):
+    """Repeat access is the same object, and `cont_loss_operator` is not re-run.
+
+    The band arrays are stashed as the accumulation adds them, so assembling
+    ``dEdx_band`` cannot re-enter ``cont_loss_operator`` — which under
+    ``losses.average_operator`` goes through ``np.linalg.matrix_power`` and
+    which a stencil changed since the assembly would answer differently.
+    ``boom`` is what says the property is not quietly recomputing it.
+    """
+    mb = mceq_sib21.matrix_builder
+    mb._int_m_hadr = mb._dEdx_band = None  # force a fresh assembly
+
+    def boom(self, pdg_id):
+        raise AssertionError("dEdx_band recomputed the band instead of reusing it")
+
+    monkeypatch.setattr(MatrixBuilder, "cont_loss_operator", boom)
+    band, hadr = mb.dEdx_band, mb.int_m_hadr
+    assert mb.dEdx_band is band
+    assert mb.int_m_hadr is hadr
+
+
+def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch):
+    """Neither half is served against settings the live ``int_m`` was not built at.
+
+    Both are assembled on demand through ``_csr_from_blocks``, which reads
+    ``grid.dtype`` and the muon-damping flag at call time, so a global changed
+    since ``construct_matrices`` would return a half of an operator nobody
+    holds. ``floatlen`` is the trigger the 1D fixture has: the damping flag
+    reaches the assembly only when ``is_2d``, so flipping it here is genuinely
+    a no-op and the key says so.
+    """
+    mb = mceq_sib21.matrix_builder
+    assert mb.int_m_hadr is not None
+
+    monkeypatch.setattr(
+        config, "muon_multiple_scattering", not config.muon_multiple_scattering
+    )
+    assert mb.int_m_hadr is not None, "the 1D assembly does not read the damping flag"
+
+    monkeypatch.setattr(config, "floatlen", np.float32)
+    for name in ("int_m_hadr", "dEdx_band"):
+        with pytest.raises(RuntimeError, match="not be a part of the int_m in hand"):
+            getattr(mb, name)
 
 
 # ---------------------------------------------------------------------------

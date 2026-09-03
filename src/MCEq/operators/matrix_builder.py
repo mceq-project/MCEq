@@ -25,6 +25,13 @@ resonances into their parents, adds the continuous-loss band and the
 into the two constant sparse matrices ``int_m`` and ``dec_m`` that
 :mod:`MCEq.operators.compiled` turns into a compiled operator for the solvers.
 
+``int_m`` is also available split in two, as
+:attr:`MatrixBuilder.int_m_hadr` + :attr:`MatrixBuilder.dEdx_band`, which the
+block-ETD research item (plan §7 R3) needs. Both halves are assembled lazily
+from what the accumulation stashed as it ran -- ``int_m`` is never recomputed
+from them, so it stays bitwise what it was, and the hot path pays one dense
+block copy per species carrying losses.
+
 Settings reach the builder as the ``grid``, ``losses`` and ``physics`` group
 views of :mod:`MCEq.config.groups`, not as reads off the config module, so this
 layer stays below the driver (contract C5 in ``.importlinter``). ``grid`` is
@@ -74,6 +81,7 @@ class MatrixBuilder:
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
+        self._reset_band_split()
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -95,6 +103,9 @@ class MatrixBuilder:
         matrix. This is not necessary if, for example, particle production
         is modified, or the interaction model is changed.
 
+        Also invalidates and re-stashes the :attr:`int_m_hadr` /
+        :attr:`dEdx_band` split, which is read off this accumulation.
+
         Args:
           skip_decay_matrix (bool): Omit re-creating D matrix
 
@@ -105,6 +116,7 @@ class MatrixBuilder:
             f"Start filling matrices. Skip_decay_matrix = {skip_decay_matrix}",
         )
 
+        self._reset_band_split()
         self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
 
         cparts = self._pman.cascade_particles
@@ -147,16 +159,19 @@ class MatrixBuilder:
                     ):
                         info(5, "Cont. loss for", parent.name)
                         if self._physics.enable_cont_rad_loss:
+                            # Stash the band and the block it lands on, so the
+                            # int_m_hadr / dEdx_band split needs neither a
+                            # second cont_loss_operator call nor a change here.
+                            band = self.cont_loss_operator(parent.pdg_id)
+                            self._contloss_bands[idx] = band
+                            self._preband_blocks[idx] = self.C_blocks[idx].copy()
                             if self.is_2d:
-                                self.C_blocks[idx] += self.cont_loss_operator(
-                                    parent.pdg_id
-                                )[None, :, :]
+                                self.C_blocks[idx] += band[None, :, :]
                             else:
-                                self.C_blocks[idx] += self.cont_loss_operator(
-                                    parent.pdg_id
-                                )
+                                self.C_blocks[idx] += band
 
         self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
+        self._assembly_key = self._current_assembly_key()
         # -I + D
 
         if not skip_decay_matrix or self.dec_m is None:
@@ -227,6 +242,113 @@ class MatrixBuilder:
         if self._losses.average_operator:
             return self._average_operator(op_mat)
         return op_mat
+
+    # ----------------------------------------------------------------------
+    # the int_m_hadr + dEdx_band split (D27)
+    # ----------------------------------------------------------------------
+
+    def _reset_band_split(self):
+        """Drop the band stashes and both assembled halves of ``int_m``."""
+        self._contloss_bands, self._preband_blocks = {}, {}
+        self._int_m_hadr = self._dEdx_band = self._assembly_key = None
+
+    def _current_assembly_key(self):
+        """The two settings an assembly reads that the blocks do not carry: the
+        CSR dtype (``np.dtype`` normalises the ``floatlen = None`` spelling of
+        fp64) and whether ``_csr_from_blocks`` finds muon damping to apply."""
+        damping = self.is_2d and getattr(
+            self._physics, "muon_multiple_scattering", False
+        )
+        return np.dtype(self._grid.dtype), bool(damping)
+
+    def _require_live_assembly(self, name):
+        """Raise unless ``name`` would assemble into a part of the live ``int_m``."""
+        if self.int_m is None:
+            raise RuntimeError(
+                f"{name} needs construct_matrices() to have run: it is read off "
+                f"the accumulation that produces int_m."
+            )
+        current = self._current_assembly_key()
+        if current != self._assembly_key:
+            raise RuntimeError(
+                f"{name} would not be a part of the int_m in hand: (grid.dtype, "
+                f"muon damping) is now {current} and int_m was assembled at "
+                f"{self._assembly_key}. Call construct_matrices() first."
+            )
+
+    @property
+    def int_m_hadr(self):
+        r"""``int_m`` without the continuous-loss band, assembled on demand.
+
+        Hadronic production, the :math:`-\boldsymbol{1}` main diagonal, the
+        :math:`\boldsymbol{\Lambda}_{int}` scaling and the
+        :math:`-\kappa^2\theta_s^2(E)/4` muon damping, which belongs to neither
+        name: ``int_m == int_m_hadr + dEdx_band``, the sum taken in the band's
+        fp64 and rounded once to ``grid.dtype``.
+
+        Bitwise at fp64, the default. Below it the identity holds except where
+        the band and the damping meet -- nowhere in 1D, the muon diagonals in
+        2D. There the assembly adds the band into the dense block and the
+        damping over it as a CSR duplicate, so ``int_m`` is
+        ``fl(fl(hadronic + band) + damping)`` against this half's
+        ``fl(hadronic + damping)``; float addition is not associative, and a
+        few ulp of those entries is the difference (measured: 1542 of 8742, 1
+        to 7 ulp, on the 2D rc7 fixture at float32).
+
+        ``int_m`` is not reassembled from the halves -- it is this same
+        accumulation read one block earlier. Cached until the next
+        ``construct_matrices``.
+        """
+        self._require_live_assembly("int_m_hadr")
+        if self._int_m_hadr is None:
+            blocks = dict(self.C_blocks)
+            blocks.update(self._preband_blocks)
+            self._int_m_hadr = self._csr_from_blocks(blocks, apply_muon_scattering=True)
+        return self._int_m_hadr
+
+    @property
+    def dEdx_band(self):
+        """The continuous-loss band of ``int_m`` alone, assembled on demand.
+
+        The complement of :attr:`int_m_hadr`, in fp64, from the band arrays
+        ``cont_loss_operator`` returned during the assembly -- reused, not
+        recomputed, so ``losses.average_operator`` never re-enters its
+        ``np.linalg.matrix_power`` and a stencil changed since cannot leak in.
+        Empty when the continuous loss is off. Cached like the other half.
+        """
+        self._require_live_assembly("dEdx_band")
+        if self._dEdx_band is None:
+            self._dEdx_band = self._csr_from_bands()
+        return self._dEdx_band
+
+    def _csr_from_bands(self):
+        """Place the stashed loss bands at their species offsets, per mode.
+
+        fp64, the dtype ``cont_loss_operator`` produces: a band cast to
+        ``grid.dtype`` first would round twice, where ``block += band`` rounds
+        the promoted sum once. The band is mode-independent -- added to every
+        Hankel slab of a species through ``band[None, :, :]`` -- so the 2D
+        operator is ``n_k`` copies of the one-mode matrix. No ``(row, column)``
+        is written twice, the species blocks being disjoint, so the COO
+        conversion has no duplicates to sum in an unspecified order.
+        """
+        shape = (self.dim_states, self.dim_states)
+        parts = []
+        for (c, p), band in self._contloss_bands.items():
+            rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
+            r, cc = np.nonzero(band)
+            parts.append((band[r, cc], r + rc.lidx, cc + rp.lidx))
+        if parts:
+            data, rows, cols = (np.concatenate(a) for a in zip(*parts))
+            one = sp.coo_matrix(
+                (data.astype(np.float64, copy=False), (rows, cols)), shape=shape
+            ).tocsr()
+        else:
+            one = sp.csr_matrix(shape, dtype=np.float64)
+        stitched = one if self.n_k == 1 else sp.block_diag([one] * self.n_k, "csr")
+        stitched.eliminate_zeros()
+        stitched.sort_indices()
+        return stitched
 
     @property
     def dim(self):
