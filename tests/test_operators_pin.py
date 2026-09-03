@@ -10,15 +10,20 @@ pinned here is the *behaviour* around them, which no array value records:
 * which stencil names the builder accepts, and that it rejects the rest;
 * that ``op_matrix`` is built in ``MatrixBuilder.__init__`` and nowhere else,
   so ``regenerate_matrices()`` alone does not pick up a stencil change;
+* that every assembly path returns a *canonical* CSR — the one property the
+  golden digests cannot see, and the one MKL and cuSPARSE handles depend on;
+* that the golden sweep's construct-once shortcut is the same operator as a
+  fresh ``MCEqRun``, which was measured and then left in a docstring;
 * the identity, invalidation and release contract of the ``_compiled_operator``
   cache;
-* the dense-vs-ARPACK gate of the EM step scale, and the norm fallback behind
-  both.
+* the dense-vs-ARPACK gate of the EM step scale, the norm fallback behind
+  both, and that on a stitched 2D operator it reads Hankel mode 0 alone.
 
-Everything except the ``regenerate_matrices`` pin is database-free: the two
-methods under test read a bin-edge array and a sparse matrix respectively, so
-a synthetic operator exercises the production code path without the
-interaction database.
+Everything except the ``regenerate_matrices``, canonical-``int_m`` and
+construct-once pins is database-free: the methods under test read a bin-edge
+array and a sparse matrix, so a synthetic operator exercises the production
+code path without the interaction database. The three that need one use the
+reduced database CI carries, never the 329 MB 2D one.
 """
 
 from __future__ import annotations
@@ -32,8 +37,14 @@ import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.core import MatrixBuilder, MCEqRun
-from MCEq.operators import loss_stencil
-from tests.golden._operator_sweep import STENCILS
+from MCEq.operators import loss_stencil, scattering
+from tests.golden import gen_operators1d
+from tests.golden._harness import canonical_csr_problems, sparse_digest
+from tests.golden._operator_sweep import (
+    STENCILS,
+    build_cell_operators,
+    pinned_config,
+)
 
 # ---------------------------------------------------------------------------
 # loss stencils: which names exist, and that each one is a different operator
@@ -203,6 +214,323 @@ def test_regenerate_matrices_does_not_rebuild_the_differential_operator(mceq_sib
 
 
 # ---------------------------------------------------------------------------
+# canonical CSR form: the property no golden digest can see
+# ---------------------------------------------------------------------------
+
+
+def _clean_csr():
+    """A canonical CSR with two entries in its first row, ready to corrupt."""
+    return sp.csr_matrix(np.array([[1.0, 2.0, 0.0], [0.0, 3.0, 4.0], [5.0, 0.0, 6.0]]))
+
+
+def _duplicated_csr():
+    """:func:`_clean_csr`, with its (0, 0) entry split into a duplicate pair."""
+    return sp.csr_matrix(
+        (
+            np.array([0.5, 0.5, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            np.array([0, 0, 1, 1, 2, 0, 2]),
+            np.array([0, 3, 5, 7]),
+        ),
+        shape=(3, 3),
+    )
+
+
+def test_the_canonical_check_rejects_a_de_canonicalised_matrix():
+    """The negative control: without it the checks below prove nothing.
+
+    Four corruptions, all built in memory and all of the *same* operator —
+    ``!=`` gives an empty difference against the clean one every time:
+
+    * two entries of a row transposed, with the flags primed first. scipy
+      caches them on read, so afterwards the matrix claims to be sorted and
+      canonical over data that is neither, and a check written against the
+      flags would pass. ``sparse_digest`` cannot see it at all: sorting the
+      copy undoes the transposition, so the hash is unchanged.
+    * one entry split into a duplicate pair. Its columns still ascend, just not
+      strictly, so ``has_sorted_indices`` is honestly True and scipy computes
+      ``has_canonical_format`` as False — here the buffer scan is what catches
+      it.
+    * the same duplicate pair with both flags forced True, which is what an
+      in-place edit or a hand-built CSR leaves behind.
+    * a canonical matrix whose flag says otherwise, which misleads a backend
+      into work it does not need and, worse, is how the checks above would be
+      defeated in the other direction.
+    """
+    clean = _clean_csr()
+    assert canonical_csr_problems(clean, "int_m") == []
+
+    transposed = _clean_csr()
+    assert transposed.has_sorted_indices and transposed.has_canonical_format
+    transposed.indices[[0, 1]] = transposed.indices[[1, 0]]
+    transposed.data[[0, 1]] = transposed.data[[1, 0]]
+    problems = canonical_csr_problems(transposed, "int_m")
+    assert any("descending column step" in line for line in problems), problems
+    assert any("has_sorted_indices is True" in line for line in problems), problems
+    assert (transposed != clean).nnz == 0, "the corruption changed the operator"
+    assert sparse_digest(transposed) == sparse_digest(clean), (
+        "sparse_digest can see an unsorted row after all — this test is stale"
+    )
+
+    duplicated = _duplicated_csr()
+    assert (duplicated != clean).nnz == 0, "the corruption changed the operator"
+    # Its columns still ascend, just not strictly, so `has_sorted_indices` is
+    # honestly True and scipy computes `has_canonical_format` as False. The
+    # buffer scan is what has to catch this one.
+    assert canonical_csr_problems(duplicated, "int_m") == [
+        "int_m: 1 duplicate (row, column) entry/ies"
+    ]
+
+    lying = _duplicated_csr()
+    lying.has_sorted_indices = True
+    lying.has_canonical_format = True
+    problems = canonical_csr_problems(lying, "int_m")
+    assert any("duplicate (row, column)" in line for line in problems), problems
+    assert any("has_canonical_format is True" in line for line in problems), problems
+
+    stale = _clean_csr()
+    stale.has_sorted_indices = False
+    problems = canonical_csr_problems(stale, "int_m")
+    assert len(problems) == 2, problems
+    assert all("and the buffers say True" in line for line in problems), problems
+
+
+class _StubParticle:
+    """A cascade species as the assembly and the muon damping see one."""
+
+    def __init__(self, mceqidx, name, pdg_id, lidx, dim):
+        self.mceqidx = mceqidx
+        self.name = name
+        self.pdg_id = pdg_id
+        self.lidx = lidx
+        self.uidx = lidx + dim
+        self.mass = scattering.MUON_MASS
+
+
+class _StubPman:
+    """The two lookup tables `_csr_from_blocks` and the damping index with."""
+
+    def __init__(self, species):
+        self.mceqidx2pref = {p.mceqidx: p for p in species}
+        self.pdg2pref = {(p.pdg_id, 0): p for p in species}
+
+    def __getitem__(self, key):
+        return self.pdg2pref[key]
+
+
+class _BlocksStub:
+    """A `MatrixBuilder` stand-in carrying only what the assembly reads.
+
+    ``_csr_from_blocks`` reads ``is_2d``, the three dimensions, ``k_grid`` and
+    the particle manager's ``mceqidx2pref``; ``_muon_scattering_damping``
+    additionally reads ``_energy_grid.c`` and ``pdg2pref``. Both are borrowed
+    unbound, so the production assembly runs — including the COO scatter, the
+    ``block_diag`` stitch and the ``kappa^2`` damping — with no database.
+
+    Three species of ``dim`` bins each, one of them a muon so the damping has
+    somewhere to land. ``k_grid`` starts at ``kappa = 0``, as a real one does,
+    which is the mode the damping skips.
+    """
+
+    _csr_from_blocks = MatrixBuilder._csr_from_blocks
+    _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
+
+    def __init__(self, is_2d, n_k=3, dim=8):
+        self.is_2d = is_2d
+        self.n_k = n_k if is_2d else 1
+        self.k_grid = np.arange(self.n_k, dtype=np.float64)
+        self.dim = dim
+        species = [
+            _StubParticle(0, "gamma", 22, 0 * dim, dim),
+            _StubParticle(1, "mu+", 13, 1 * dim, dim),
+            _StubParticle(2, "pi+", 211, 2 * dim, dim),
+        ]
+        self.dim_states = len(species) * dim
+        self._pman = _StubPman(species)
+        self._energy_grid = SimpleNamespace(c=np.logspace(-1, 3, dim), d=dim)
+
+    def blocks(self):
+        """``(child, parent) -> block``, shaped as the builder expects.
+
+        The muon self-block has a populated main diagonal, which is what makes
+        the damping a duplicate rather than a new entry; the pion -> muon block
+        is lower-triangular, the shape a real production block has; the gamma
+        row is left empty, so the assembly also has to cope with rows that
+        carry nothing.
+        """
+        dim = self.dim
+        diagonal = np.diag(-np.linspace(1.0, 2.0, dim))
+        triangular = np.tril(np.full((dim, dim), 0.25))
+        blocks = {(1, 1): diagonal, (1, 2): triangular}
+        if self.is_2d:
+            return {
+                key: np.repeat(value[None, :, :], self.n_k, axis=0)
+                for key, value in blocks.items()
+            }
+        return blocks
+
+
+@pytest.fixture
+def assembly_config(monkeypatch):
+    """Fix the two globals `_csr_from_blocks` reads out of `config`."""
+    monkeypatch.setattr(config, "floatlen", np.float64)
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+
+
+@pytest.mark.parametrize("is_2d", [False, True], ids=["1d", "2d"])
+@pytest.mark.parametrize("scatter", [False, True], ids=["ms_off", "ms_on"])
+def test_every_assembly_path_returns_a_canonical_operator(
+    is_2d, scatter, assembly_config
+):
+    """Both branches of `_csr_from_blocks`, at either setting of the damping.
+
+    The 2D branch is the one that can lose the property: it scatters the
+    channel slabs into COO triplets and adds the damping as *further* entries
+    at positions the channel diagonal already holds, so canonical form there
+    rests on ``coo.tocsr()`` summing duplicates and on the explicit
+    ``sort_indices()`` after it. The 1D branch goes through
+    ``csr_matrix(dense)`` and is canonical by construction — pinned anyway,
+    because Phase 5 splits ``int_m`` into ``int_m_hadr + dEdx_band`` and a
+    hand-built CSR on either branch would be silent in all 28 golden cells.
+    """
+    stub = _BlocksStub(is_2d)
+    matrix = stub._csr_from_blocks(stub.blocks(), apply_muon_scattering=scatter)
+    assert matrix.shape == (stub.n_k * stub.dim_states,) * 2
+    assert canonical_csr_problems(matrix, "int_m") == []
+
+
+def test_the_2d_damping_is_added_over_an_occupied_diagonal(assembly_config):
+    """So the 2D path really does depend on duplicates being summed.
+
+    Same nonzero count as the undamped assembly and different values: every
+    damping entry fell on a ``(row, column)`` the muon self-block already
+    occupied. Without this the canonical check above could be passing on an
+    assembly that never produced a duplicate in the first place.
+    """
+    stub = _BlocksStub(is_2d=True)
+    damped = stub._csr_from_blocks(stub.blocks(), apply_muon_scattering=True)
+    plain = stub._csr_from_blocks(stub.blocks(), apply_muon_scattering=False)
+
+    assert damped.nnz == plain.nnz, "the damping added entries of its own"
+    assert (damped != plain).nnz > 0, "the damping did not reach the operator"
+    # kappa = 0 is untouched; every other mode is damped.
+    per_mode = [
+        (damped - plain)[
+            k * stub.dim_states : (k + 1) * stub.dim_states,
+            k * stub.dim_states : (k + 1) * stub.dim_states,
+        ].nnz
+        for k in range(stub.n_k)
+    ]
+    assert per_mode[0] == 0 and all(n == stub.dim for n in per_mode[1:]), per_mode
+
+
+def test_the_assembled_1d_operators_are_canonical(mceq_sib21):
+    """The real `int_m` / `dec_m`, in the state a backend binds them in.
+
+    The synthetic paths above pin the assembly code; this pins the objects a
+    run actually hands to ``_compiled_operator``, on the reduced database CI
+    carries. The 2D operators would need the 329 MB FLUKA rc7 database, so
+    they are covered by the synthetic 2D branch here and by the assertion the
+    ``operators2d`` generator makes on all fourteen of its cells.
+    """
+    for name in ("int_m", "dec_m"):
+        assert canonical_csr_problems(getattr(mceq_sib21, name), name) == []
+
+
+# ---------------------------------------------------------------------------
+# the golden sweep's construct-once shortcut == a fresh MCEqRun
+# ---------------------------------------------------------------------------
+
+#: The two cells the equivalence is measured on. ``upwind`` takes the
+#: early-return branch of the stencil dispatch and the default composite takes
+#: the long one, so between them they cover both shapes of
+#: ``_construct_differential_operator``.
+EQUIVALENCE_CELLS = (("upwind", True), ("expfit_low_upwind2", True))
+
+
+def _operator_digests(int_m, dec_m):
+    return sparse_digest(int_m), sparse_digest(dec_m)
+
+
+def _reused_and_fresh_digests():
+    """Both arms of the equivalence, under the `operators1d` config pins.
+
+    The reused arm is the sweep's own :func:`build_cell_operators`, on one run
+    constructed at the pinned default — the generator's exact sequence. The
+    fresh arm sets the two globals and constructs a whole ``MCEqRun`` per cell,
+    which builds ``op_matrix`` in ``MatrixBuilder.__init__`` and the matrices
+    from it, with no state carried in from another cell.
+    """
+    with pinned_config(gen_operators1d.CONFIG_PINS, gen_operators1d.ADV_SET_PINS):
+        mceq = MCEqRun(**gen_operators1d.RUN_KWARGS)
+        try:
+            reused = {
+                cell: _operator_digests(*build_cell_operators(mceq, *cell))
+                for cell in EQUIVALENCE_CELLS
+            }
+        finally:
+            mceq.close()
+
+        fresh = {}
+        for stencil, scatter in EQUIVALENCE_CELLS:
+            config.loss_stencil_method = stencil
+            config.muon_multiple_scattering = scatter
+            run = MCEqRun(**gen_operators1d.RUN_KWARGS)
+            try:
+                fresh[stencil, scatter] = _operator_digests(run.int_m, run.dec_m)
+            finally:
+                run.close()
+    return reused, fresh
+
+
+def _assert_reused_equals_fresh():
+    reused, fresh = _reused_and_fresh_digests()
+    for cell in EQUIVALENCE_CELLS:
+        assert reused[cell] == fresh[cell], (
+            f"{cell}: the sweep's reused run and a fresh MCEqRun disagree. "
+            f"The operators* sections build one run per database and mutate "
+            f"two config globals per cell, so a builder that carries state "
+            f"across cells leaves them self-consistent — comparison and "
+            f"regeneration move together — while they stop pinning a fresh "
+            f"build.\nreused {reused[cell]}\nfresh  {fresh[cell]}"
+        )
+
+
+def test_the_golden_sweeps_reused_run_equals_a_fresh_one():
+    """The 28-cell equivalence the two `operators*` sections rest on.
+
+    Measured once at 28 of 28 cells and then left in a docstring; this is the
+    gate. Two cells on the reduced database, which is the one ``operators1d``
+    uses and the one CI carries: 2.2 s in a cold process, 0.9 s in a session
+    that has already opened it.
+    """
+    _assert_reused_equals_fresh()
+
+
+def test_a_band_memoised_on_the_builder_breaks_the_equivalence(monkeypatch):
+    """The negative control, in the exact shape Phase 5's D27 invites.
+
+    D27 splits ``int_m`` into ``int_m_hadr + dEdx_band``, which puts a band
+    matrix on ``self``. Memoised by pdg id — the obvious way, since it does not
+    change during a solve — it goes stale on a stencil change, and the sweep
+    notices nothing: both the comparison and the regeneration run through the
+    same reused run. Here that cache is monkeypatched in and the equivalence
+    goes red, which is what says the test above can fail.
+    """
+    real = MatrixBuilder.cont_loss_operator
+
+    def memoised(self, pdg_id):
+        cache = self.__dict__.setdefault("_dEdx_band_cache", {})
+        key = tuple(pdg_id)
+        if key not in cache:
+            cache[key] = real(self, pdg_id)
+        return cache[key]
+
+    monkeypatch.setattr(MatrixBuilder, "cont_loss_operator", memoised)
+    with pytest.raises(AssertionError, match="disagree"):
+        _assert_reused_equals_fresh()
+
+
+# ---------------------------------------------------------------------------
 # the _compiled_operator cache
 # ---------------------------------------------------------------------------
 
@@ -326,13 +654,19 @@ EM_BLOCK_W = 0.01
 EM_BLOCK_RHO = EM_BLOCK_W * (EM_BLOCK_N - 1)
 
 
+def _em_matrix(block, dim):
+    """One ``dim x dim`` operator block with `block` in its leading corner."""
+    matrix = -np.eye(dim)  # benign diagonal, stripped by the off-split
+    n_em = block.shape[0]
+    matrix[:n_em, :n_em] += block
+    return matrix
+
+
 class _EmStub:
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
 
     def __init__(self, block, n_em, dim):
-        matrix = -np.eye(dim)  # benign diagonal, stripped by the off-split
-        matrix[:n_em, :n_em] += block
-        self.int_m = sp.csr_matrix(matrix)
+        self.int_m = sp.csr_matrix(_em_matrix(block, dim))
         self.pman = SimpleNamespace(
             all_particles=[
                 SimpleNamespace(is_em=index < n_em, lidx=index, uidx=index + 1)
@@ -342,9 +676,12 @@ class _EmStub:
         self._em_step_scale_cache = None
 
 
+def _positive_em_block(scale=1.0):
+    return scale * EM_BLOCK_W * (np.ones((EM_BLOCK_N, EM_BLOCK_N)) - np.eye(EM_BLOCK_N))
+
+
 def _positive_em_stub():
-    block = EM_BLOCK_W * (np.ones((EM_BLOCK_N, EM_BLOCK_N)) - np.eye(EM_BLOCK_N))
-    return _EmStub(block, EM_BLOCK_N, EM_BLOCK_N + 4)
+    return _EmStub(_positive_em_block(), EM_BLOCK_N, EM_BLOCK_N + 4)
 
 
 @pytest.mark.parametrize(
@@ -424,3 +761,50 @@ def test_em_step_scale_is_cached_against_int_m_identity(monkeypatch):
     stub.int_m = stub.int_m.copy()
     assert MCEqRun._em_cascade_step_scale(stub) == pytest.approx(first)
     assert len(calls) == 2
+
+
+def test_em_step_scale_reads_hankel_mode_0_of_a_stitched_operator(monkeypatch):
+    """``p.lidx`` / ``p.uidx`` are offsets inside one ``dim_states`` block.
+
+    So on the ``(n_k * dim_states)`` operator the 2D assembly produces, the
+    method slices the EM rows and columns of mode 0 and never sees the rest.
+    The two modes here are given different spectral radii — mode 1 is four
+    times mode 0 — so a value that covered both would be visibly different
+    rather than accidentally equal.
+
+    This is what the fourteen ``cells/*/em_step_scale`` keys of the
+    ``operators2d`` golden section were said to pin. They could not: that
+    fixture has ``disabled_particles = [11, -11]`` and ``enable_em`` off, so
+    gamma is the only EM species, its off-diagonal block is empty in all 48
+    modes and not merely in mode 0, and all fourteen keys were exactly 0.0
+    whichever modes were read. They also carried a rel-L2 1e-9 entry that
+    ``compare_key`` short-circuits to exact equality in front of an all-zero
+    reference. The keys and the entry are gone; the behaviour is pinned here,
+    database-free and therefore in CI, where a phase that makes the indexing
+    ``n_k``-aware sees a named test instead of nothing at all.
+    """
+    monkeypatch.setattr(config, "em_step_dense_eig_max", 4000)
+    mode_scales = (1.0, 4.0)
+
+    stub = _positive_em_stub()
+    dim_states = stub.int_m.shape[0]
+    stub.int_m = sp.block_diag(
+        [
+            sp.csr_matrix(_em_matrix(_positive_em_block(scale), dim_states))
+            for scale in mode_scales  # kappa-block per Hankel mode
+        ],
+        format="csr",
+    )
+    stub._em_step_scale_cache = None
+
+    assert stub.int_m.shape == (len(mode_scales) * dim_states,) * 2
+    assert MCEqRun._em_cascade_step_scale(stub) == pytest.approx(
+        mode_scales[0] * EM_BLOCK_RHO, rel=1e-8
+    ), "the EM step scale stopped being the mode-0 value"
+    assert MCEqRun._em_cascade_step_scale(stub) != pytest.approx(
+        max(mode_scales) * EM_BLOCK_RHO, rel=1e-8
+    ), (
+        "the EM step scale now covers every Hankel mode. That is the Phase 6 "
+        "fix, not a regression: update this test, and note that the "
+        "operators1d golden section is 1D (n_k == 1) and does not move."
+    )

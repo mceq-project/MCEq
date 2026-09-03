@@ -52,6 +52,18 @@ HOST_RTOL = 1e-12
 
 PROVENANCE_KEY = "__provenance__"
 
+#: Environment variables a BLAS reads when it loads, for :func:`blas_threads`.
+#: `MCEq.config` publishes its own list at import and that one is preferred at
+#: read time, so a variable the tree adds is recorded without a second edit;
+#: this is the fallback for a config module that stops exporting the list.
+THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
 
 # --------------------------------------------------------------------------
 # digests
@@ -72,12 +84,104 @@ def array_digest(arr) -> str:
     return h.hexdigest()
 
 
+def canonical_csr_problems(mat, label="matrix") -> list:
+    """Every way `mat` is not a canonical CSR, as sentences. Empty when it is.
+
+    Canonical is what MKL and cuSPARSE assume of the buffers they bind: one
+    entry per `(row, column)`, columns ascending within a row. Unsorted indices
+    are *invisible* to every digest in this harness — :func:`sparse_digest`
+    sorts a copy before hashing, so a matrix that came back with two entries of
+    a row transposed hashes identically to the sorted one and compares green
+    against the stored digest. Duplicate entries do move the hash, but only as
+    an unexplained digest change that regenerating the section absorbs, after
+    which the section pins a non-canonical operator forever. Either way the
+    live buffers a backend has bound are wrong and nothing here says so.
+
+    The buffers are checked directly, not through `has_sorted_indices` /
+    `has_canonical_format`: scipy caches both flags on first read, so an
+    in-place edit of `indices` leaves them answering True over unsorted data.
+    Each flag is then checked *against* the buffers, sorting for the first and
+    sorting-plus-uniqueness for the second, because a backend that reads a flag
+    and skips its own sort is misled by a stale one exactly as badly as by
+    unsorted data.
+    """
+    problems = []
+    if mat.format != "csr":
+        return [f"{label}: format {mat.format!r}, not 'csr'"]
+
+    n_rows, n_cols = mat.shape
+    indptr, indices, data = mat.indptr, mat.indices, mat.data
+
+    if len(indptr) != n_rows + 1:
+        return [f"{label}: indptr has {len(indptr)} entries, expected {n_rows + 1}"]
+    if indptr[0] != 0:
+        problems.append(f"{label}: indptr[0] is {indptr[0]}, not 0")
+    if len(data) != len(indices):
+        problems.append(
+            f"{label}: {len(data)} values against {len(indices)} column indices"
+        )
+    if indptr[-1] != len(indices):
+        problems.append(
+            f"{label}: indptr[-1] is {indptr[-1]}, {len(indices)} column indices"
+        )
+    if np.any(np.diff(indptr) < 0):
+        problems.append(f"{label}: indptr is not non-decreasing")
+    if problems:
+        return problems
+
+    nnz = len(indices)
+    if nnz and (indices.min() < 0 or indices.max() >= n_cols):
+        problems.append(
+            f"{label}: column index out of range [0, {n_cols}): "
+            f"[{indices.min()}, {indices.max()}]"
+        )
+
+    descending = duplicate = 0
+    if nnz > 1:
+        # Strictly increasing within every row is sorted *and* duplicate-free.
+        # A step counts only when it stays inside a row: position p ends its
+        # row exactly when p + 1 starts one, which `indptr` marks directly and
+        # correctly for empty rows too.
+        starts = np.zeros(nnz + 1, dtype=bool)
+        starts[indptr] = True
+        inside = ~starts[1:nnz]
+        steps = np.diff(indices)
+        descending = int(np.count_nonzero((steps < 0) & inside))
+        duplicate = int(np.count_nonzero((steps == 0) & inside))
+        if descending:
+            problems.append(f"{label}: {descending} descending column step(s)")
+        if duplicate:
+            problems.append(f"{label}: {duplicate} duplicate (row, column) entry/ies")
+
+    for flag, truth in (
+        ("has_sorted_indices", not descending),
+        ("has_canonical_format", not (descending or duplicate)),
+    ):
+        claim = bool(getattr(mat, flag))
+        if claim != truth:
+            problems.append(
+                f"{label}: {flag} is {claim} and the buffers say {truth}; "
+                f"a backend that trusts the flag skips work it needs"
+            )
+    return problems
+
+
+def assert_canonical_csr(mat, label="matrix") -> None:
+    """Raise `AssertionError` naming every canonical-form defect of `mat`."""
+    problems = canonical_csr_problems(mat, label)
+    assert not problems, "; ".join(problems)
+
+
 def sparse_digest(mat) -> dict:
     """Digest a scipy sparse matrix without disturbing it.
 
     Copies before any canonicalisation: `sort_indices()` mutates in place and
     MKL sparse handles hold raw pointers into the live `data`/`indices`
     buffers, so sorting a matrix that a backend has bound corrupts that handle.
+
+    The copy is also why the digest says nothing about canonical form — the
+    matrix it hashes is canonical whatever came in. That is the job of
+    :func:`canonical_csr_problems`.
     """
     m = mat.tocsr(copy=True)
     m.sort_indices()
@@ -154,6 +258,87 @@ def environment_stanza() -> dict:
         except Exception:
             stanza[name] = None
     return stanza
+
+
+def blas_threads() -> dict:
+    """The BLAS thread count in force, and the evidence behind it.
+
+    The one host input that moves a golden with no MCEq change and no version
+    bump, so `environment_stanza` alone does not explain such a move. A
+    threaded LAPACK fixes no reduction order, and
+    `MCEqRun._em_cascade_step_scale` reaches LAPACK through
+    `numpy.linalg.eigvals`: rebuilding `operators1d` at 1, 2, 4 and 8 threads
+    reproduces every key bitwise but shifts the EM step scale of
+    `expfit_low_upwind2` by 6.9e-13 relative.
+
+    `pools` is what the loaded libraries answer now, through the same
+    `threadpoolctl` that `config.set_mkl_threads` limits them with, and is
+    therefore the effective setting rather than the requested one; it is empty
+    on a host where no BLAS has loaded yet, and `None` without threadpoolctl.
+    `effective` is that count when the pools agree on one and `None` when they
+    do not — a routine state, not an error: numpy and scipy each bundle their
+    own OpenBLAS at their own limit, so a host with no explicit
+    `set_mkl_threads` shows two. Then the count that matters is numpy's, since
+    `eigvals` reaches LAPACK through it, and `pools[*]["filepath"]` is what
+    names which is which.
+
+    `mkl_threads` is what MCEq last asked for and `mkl_get_max_threads` MKL's
+    own answer, read off the `config.mkl` handle only when something already
+    loaded it: a provenance stanza must not dlopen a library into the process
+    it describes. `env` is what a BLAS still to load will read.
+
+    `gen_solve2d` records an int under the same `extra` name because it *pins*
+    the count with `set_mkl_threads`; the sections that leave the pools ambient
+    record this stanza instead, because there the count is an observation.
+    """
+    import os
+
+    from MCEq import config
+
+    try:
+        from threadpoolctl import threadpool_info
+    except ImportError:
+        pools = None
+    else:
+        pools = [
+            {
+                "internal_api": entry.get("internal_api"),
+                "num_threads": entry.get("num_threads"),
+                "prefix": entry.get("prefix"),
+                "version": entry.get("version"),
+                # numpy and scipy ship their own OpenBLAS builds, at their own
+                # limits; the path is the only field that tells them apart, and
+                # numpy's is the one `np.linalg.eigvals` reaches.
+                "filepath": entry.get("filepath"),
+            }
+            for entry in threadpool_info()
+            if entry.get("user_api") == "blas"
+        ]
+
+    counts = {entry["num_threads"] for entry in pools or ()}
+
+    mkl_max = None
+    if getattr(config, "mkl", None) is not None:
+        from ctypes import c_int
+
+        try:
+            symbol = config.mkl.mkl_get_max_threads
+            symbol.restype = c_int
+            mkl_max = int(symbol())
+        except Exception:
+            mkl_max = None
+
+    return {
+        "effective": counts.pop() if len(counts) == 1 else None,
+        "pools": pools,
+        "mkl_threads": getattr(config, "mkl_threads", None),
+        "mkl_get_max_threads": mkl_max,
+        "env": {
+            var: os.environ.get(var)
+            for var in getattr(config, "_THREAD_ENV", THREAD_ENV_KEYS)
+        },
+        "cpu_count": os.cpu_count(),
+    }
 
 
 #: Every config global that any generator in this package reads, directly or

@@ -37,6 +37,15 @@ and "``dec_m`` is invariant under the stencil and under muon scattering"
 would be a tautology instead of a measurement. The extra cost is 5.6 s on the
 2D section.
 
+That equivalence is a *gate*, not a measurement left in a docstring:
+:func:`build_cell_operators` is the whole shortcut, and
+``tests/test_operators_pin.py`` runs two cells of it against a fresh
+``MCEqRun`` and compares digests. Without that, a builder that memoised
+anything across cells — which the Phase 5 ``int_m_hadr + dEdx_band`` split
+invites, since it puts a band matrix on ``self`` — would leave the sweep
+self-consistent (comparison and regeneration move together) while the section
+silently stopped pinning a fresh build.
+
 What the sweep buys
 -------------------
 Across both sections the 28 ``int_m`` digests take 21 distinct values, and the
@@ -51,21 +60,40 @@ collision structure is the section's own consistency check:
   is a no-op there. 7 distinct of 14.
 * in 2D they **differ**, at every stencil: 14 distinct of 14.
 
-BLAS threads are left ambient. ``_fill_matrices`` reaches BLAS through the
-``dprop.dot(pprod_mat)`` products of ``_follow_chains``, but rebuilding either
-section at 1, 2, 4 and 8 threads reproduces every key bitwise except
-``em_step_scale`` — see :data:`EM_SCALE_RTOL`, which is the one tolerance
-either section carries.
+BLAS threads are left ambient — unlike ``gen_solve2d``, which pins them with
+``config.set_mkl_threads`` and so leaves a process-wide limiter behind.
+``_fill_matrices`` reaches BLAS through the ``dprop.dot(pprod_mat)`` products
+of ``_follow_chains``, but rebuilding either section at 1, 2, 4 and 8 threads
+reproduces every key bitwise except ``em_step_scale`` — see
+:data:`EM_SCALE_RTOL`, which is the one tolerance either section carries. What
+is ambient still has to be *recorded*, since it is the one input that key
+demonstrably depends on: ``extra["blas_threads"]``, from
+:func:`._harness.blas_threads`.
+
+``em_step_scale`` is recorded only by the section where it has content. On the
+2D fixture ``disabled_particles = [11, -11]`` leaves gamma the only ``is_em``
+species and ``enable_em`` is off, so the EM off-diagonal block is empty and
+the value is identically 0 in all fourteen cells — a statement about the
+fixture, not about the assembly the section exists to pin. Hence the
+``em_step_scale`` flag of :func:`build_section`; the mode-0-only indexing that
+``_em_cascade_step_scale`` uses on a stitched 2D operator is pinned instead as
+a behaviour, database-free, in ``tests/test_operators_pin.py``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import time
 
 import numpy as np
 
-from ._harness import make_provenance, sparse_digest
+from ._harness import (
+    assert_canonical_csr,
+    blas_threads,
+    make_provenance,
+    sparse_digest,
+)
 
 #: Every interior stencil ``MatrixBuilder._construct_differential_operator``
 #: accepts (:data:`MCEq.operators.loss_stencil.STENCIL_METHODS`, since Phase 5
@@ -109,12 +137,74 @@ CELLS = tuple(
 EM_SCALE_RTOL = 1e-9
 
 
-def tolerances() -> dict:
-    """The section tolerance table: ``em_step_scale`` on rel-L2, rest bitwise."""
+def tolerances(em_step_scale: bool = True) -> dict:
+    """The section tolerance table: ``em_step_scale`` on rel-L2, rest bitwise.
+
+    Empty for a section that records no ``em_step_scale``. An entry matching no
+    key is worse than no entry: a reader credits the section with a 1e-9
+    tolerance that :func:`._harness.tolerance_entry_for` never resolves.
+    """
+    if not em_step_scale:
+        return {}
     return {
         f"cells/{label}/em_step_scale": {"mode": "rel_l2", "rtol": EM_SCALE_RTOL}
         for label, _, _ in CELLS
     }
+
+
+# --------------------------------------------------------------------------
+# the construct-once shortcut
+# --------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def pinned_config(config_pins, adv_set_pins):
+    """Hold one section's config pins in force, then put the globals back.
+
+    The generator and the fresh-build equivalence test enter the fixture
+    through this, so the test cannot drift onto a different one. The
+    ``hasattr`` sweep fails loudly on a pin block naming a config global the
+    tree has dropped, rather than silently pinning nothing.
+    """
+    from MCEq import config
+
+    missing = sorted(key for key in config_pins if not hasattr(config, key))
+    assert not missing, f"config globals absent, pin block is stale: {missing}"
+
+    saved_config = {key: getattr(config, key) for key in config_pins}
+    saved_adv_set = copy.deepcopy(config.adv_set)
+    try:
+        for key, value in config_pins.items():
+            setattr(config, key, value)
+        config.adv_set.update(adv_set_pins)
+        yield config
+    finally:
+        for key, value in saved_config.items():
+            setattr(config, key, value)
+        config.adv_set.clear()
+        config.adv_set.update(saved_adv_set)
+
+
+def build_cell_operators(mceq, stencil, scattering):
+    """Assemble ``(int_m, dec_m)`` for one cell on an already-built run.
+
+    The sweep's whole construct-once shortcut, in one function, so the
+    generator and the equivalence test in ``tests/test_operators_pin.py``
+    exercise the same three calls instead of two copies that can drift.
+
+    ``_construct_differential_operator()`` is explicit because ``core.py``
+    calls it from ``MatrixBuilder.__init__`` and nowhere else, so
+    ``construct_matrices`` alone refills the blocks against the ``op_matrix``
+    the constructor left behind. ``skip_decay_matrix`` stays False so ``dec_m``
+    is rebuilt and its invariance is measured, not assumed.
+    """
+    from MCEq import config
+
+    config.loss_stencil_method = stencil
+    config.muon_multiple_scattering = scattering
+    builder = mceq.matrix_builder
+    builder._construct_differential_operator()
+    return builder.construct_matrices(skip_decay_matrix=False)
 
 
 # --------------------------------------------------------------------------
@@ -179,22 +269,30 @@ def _record_fixture(arrays, mceq):
     arrays["fixture/e_bins"] = np.asarray(mceq.e_bins)
 
 
-def _record_cell(arrays, label, stencil, mceq, n_k, n_species):
+def _record_cell(
+    arrays, label, stencil, scattering, mceq, n_k, n_species, em_step_scale
+):
     """Assemble one cell and store the operators and the EM step scale.
 
     ``op_matrix`` depends on the stencil alone, so it is stored once per
     stencil under ``stencil/`` and the second cell of a pair only asserts that
     it did not move.
 
-    ``int_m`` / ``dec_m`` are written back onto the run before the step scale
-    is read: ``_em_cascade_step_scale`` caches against the identity of
-    ``self.int_m``, so a builder-only rebuild would be answered out of the
-    stale entry.
+    ``int_m`` / ``dec_m`` are written back onto the run so it describes what
+    was built, and because ``_em_cascade_step_scale`` caches against the
+    identity of ``self.int_m``: a builder-only rebuild would be answered out
+    of the stale entry.
     """
     mb = mceq.matrix_builder
-    mb._construct_differential_operator()
-    int_m, dec_m = mb.construct_matrices(skip_decay_matrix=False)
+    int_m, dec_m = build_cell_operators(mceq, stencil, scattering)
     mceq.int_m, mceq.dec_m = int_m, dec_m
+
+    # Canonical form is the property the digests below cannot see, and the 2D
+    # assembly is where it can be lost: the muon damping is scattered in as
+    # further COO entries over an occupied diagonal, so it rests on
+    # `coo.tocsr()` summing duplicates. 18 ms per operator at 6.2M nonzeros.
+    assert_canonical_csr(int_m, f"{label}/int_m")
+    assert_canonical_csr(dec_m, f"{label}/dec_m")
 
     op_matrix = np.asarray(mb.op_matrix, dtype=np.float64)
     key = f"stencil/{stencil}/op_matrix"
@@ -210,10 +308,11 @@ def _record_cell(arrays, label, stencil, mceq, n_k, n_species):
     _record_reductions(arrays, f"cells/{label}/int_m", int_m, n_k, n_species)
     dec_digest = _record_csr(arrays, f"cells/{label}/dec_m", dec_m)
 
-    mceq._em_step_scale_cache = None
-    arrays[f"cells/{label}/em_step_scale"] = np.asarray(
-        float(mceq._em_cascade_step_scale())
-    )
+    if em_step_scale:
+        mceq._em_step_scale_cache = None
+        arrays[f"cells/{label}/em_step_scale"] = np.asarray(
+            float(mceq._em_cascade_step_scale())
+        )
     return int_digest["data"], dec_digest["data"]
 
 
@@ -289,22 +388,25 @@ def _check_invariants(is_2d, int_digests, dec_digests):
 # --------------------------------------------------------------------------
 
 
-def build_section(section, *, config_pins, adv_set_pins, run_kwargs, note, extra=None):
-    """Produce ``(arrays, provenance)`` for one database's operator sweep."""
-    from MCEq import config
+def build_section(
+    section,
+    *,
+    config_pins,
+    adv_set_pins,
+    run_kwargs,
+    note,
+    extra=None,
+    em_step_scale=True,
+):
+    """Produce ``(arrays, provenance)`` for one database's operator sweep.
 
-    missing = sorted(key for key in config_pins if not hasattr(config, key))
-    assert not missing, f"config globals absent, pin block is stale: {missing}"
-
-    saved_config = {key: getattr(config, key) for key in config_pins}
-    saved_adv_set = copy.deepcopy(config.adv_set)
+    ``em_step_scale`` False drops the EM step scale and its tolerance entry,
+    for a fixture on which the value carries nothing — see the module
+    docstring.
+    """
     arrays = {}
     seconds = {}
-    try:
-        for key, value in config_pins.items():
-            setattr(config, key, value)
-        config.adv_set.update(adv_set_pins)
-
+    with pinned_config(config_pins, adv_set_pins):
         from MCEq.core import MCEqRun
 
         started = time.perf_counter()
@@ -319,10 +421,15 @@ def build_section(section, *, config_pins, adv_set_pins, run_kwargs, note, extra
             int_digests, dec_digests = {}, {}
             started = time.perf_counter()
             for label, stencil, scattering in CELLS:
-                config.loss_stencil_method = stencil
-                config.muon_multiple_scattering = scattering
                 int_digests[label], dec_digests[label] = _record_cell(
-                    arrays, label, stencil, mceq, n_k, n_species
+                    arrays,
+                    label,
+                    stencil,
+                    scattering,
+                    mceq,
+                    n_k,
+                    n_species,
+                    em_step_scale,
                 )
             seconds["cells"] = time.perf_counter() - started
         finally:
@@ -334,21 +441,17 @@ def build_section(section, *, config_pins, adv_set_pins, run_kwargs, note, extra
         provenance = make_provenance(
             section,
             note=note,
-            tolerances=tolerances(),
+            tolerances=tolerances(em_step_scale),
             extra={
                 "stencils": list(STENCILS),
                 "scattering": [label for label, _ in SCATTERING],
                 "cells": [label for label, _, _ in CELLS],
+                "blas_threads": blas_threads(),
                 "seconds": seconds,
                 **summary,
                 **(extra or {}),
             },
         )
-    finally:
-        for key, value in saved_config.items():
-            setattr(config, key, value)
-        config.adv_set.clear()
-        config.adv_set.update(saved_adv_set)
 
     db = provenance["databases"].get("mceq_db_fname", {})
     assert "sha256" in db, f"database not resolvable, provenance incomplete: {db}"

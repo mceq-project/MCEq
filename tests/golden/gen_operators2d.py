@@ -21,15 +21,33 @@ distinct: unlike 1D, ``_muon_scattering_damping`` fires here and adds
 ``-kappa^2 theta_s^2(E) / 4`` to the muon diagonals of every mode with
 kappa != 0. ``dec_m`` still takes one value over all fourteen.
 
-``em_step_scale`` is identically 0 on this fixture and is pinned as such:
-``disabled_particles = [11, -11]`` leaves gamma as the only ``is_em`` species,
-and with ``enable_em`` off it has no self-production, so the EM off-diagonal
-block is empty. ``_em_cascade_step_scale`` also indexes with ``p.lidx`` /
-``p.uidx``, which are offsets inside one ``dim_states`` block, so on a 2D
-operator it reads mode 0 alone — pinned here as it behaves today. Its rel-L2
-entry (:data:`._operator_sweep.EM_SCALE_RTOL`) never bites: an all-zero
-reference cannot support a relative bound, so ``compare_key`` demands exact
-equality of these fourteen keys. The 1D section is where the value is pinned.
+``em_step_scale`` is NOT recorded here. On this fixture the value is exactly
+0.0 in all fourteen cells: ``disabled_particles = [11, -11]`` leaves gamma the
+only ``is_em`` species, and with ``enable_em`` off it has no self-production,
+so the EM off-diagonal block is empty. Fourteen copies of that zero state a
+property of ``adv_set`` — already pinned, as a compared array, by
+``fixture/em_species`` — and nothing about the assembly this section exists to
+pin. They also carried a tolerance that could not apply: a rel-L2 entry at
+1e-9 in front of an all-zero reference, which ``compare_key`` short-circuits
+to exact equality, so the declared bound was dead text on a section that is
+both ``golden_slow`` and ``golden_host`` and therefore never runs in CI to
+warn anyone.
+
+What those keys were also said to pin — that ``_em_cascade_step_scale``
+indexes with ``p.lidx`` / ``p.uidx``, offsets inside one ``dim_states`` block,
+and so reads Hankel mode 0 alone on a stitched 2D operator — is a behaviour,
+and is pinned as one in ``tests/test_operators_pin.py``: database-free, on a
+synthetic two-mode operator whose modes have different spectral radii, so it
+runs in CI and fails there with a message naming Phase 6 when the indexing is
+made ``n_k``-aware. The value itself is pinned with real content, seven
+distinct numbers, by ``operators1d``.
+
+Measured on this fixture: gamma is at offsets 372..403 of a 2170-wide block,
+and the off-diagonal EM sub-block is empty in *every* one of the 48 modes, not
+only in mode 0 — 0 nonzeros over 1488 x 1488. So an ``n_k``-aware
+``_em_cascade_step_scale`` would still return 0.0 here, and these keys would
+not have moved when Phase 6 landed. Vacuity and the dead tolerance are why
+they are gone, not a pending golden break.
 """
 
 from __future__ import annotations
@@ -124,13 +142,18 @@ NOTE = (
     " -kappa^2 theta_s^2 / 4 to the muon diagonals of every mode with kappa"
     " != 0 — against one dec_m digest, which neither knob reaches. BLAS threads"
     " are ambient: rebuilding at 1, 2, 4 and 8 reproduces every key bitwise."
-    " em_step_scale is identically 0 here (gamma is the only is_em species and"
-    " has no self-production with enable_em off) and is pinned as such;"
-    " _em_cascade_step_scale indexes with the dim_states-block offsets"
-    " p.lidx/p.uidx, so on a stitched 2D operator it reads mode 0 alone. It"
-    " carries the rel-L2 1e-9 entry the 1D section needs, but an all-zero"
-    " reference supports no relative bound, so these fourteen keys are compared"
-    " exactly like the rest."
+    " The count in force is recorded in extra.blas_threads. em_step_scale is"
+    " NOT recorded: it is exactly 0.0 in all fourteen cells here (gamma is the"
+    " only is_em species, already pinned by fixture/em_species, and has no"
+    " self-production with enable_em off), so the keys stated a property of"
+    " adv_set rather than of the assembly, and their rel-L2 1e-9 entry was dead"
+    " — compare_key short-circuits an all-zero reference to exact equality."
+    " Every tolerance entry of this section would therefore have matched no"
+    " key, and the table is empty. That _em_cascade_step_scale reads Hankel mode"
+    " 0 alone on a stitched 2D operator — p.lidx/p.uidx are offsets inside one"
+    " dim_states block — is pinned as a behaviour in"
+    " tests/test_operators_pin.py, database-free and therefore in CI; the value"
+    " is pinned with content by operators1d."
 )
 
 
@@ -163,4 +186,5 @@ def build():
         run_kwargs=RUN_KWARGS,
         note=NOTE,
         extra={"db_path": str(db_path)},
+        em_step_scale=False,
     )

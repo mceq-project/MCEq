@@ -39,6 +39,108 @@ pytestmark = pytest.mark.golden
 
 
 # --------------------------------------------------------------------------
+# blas_threads
+# --------------------------------------------------------------------------
+
+
+def test_blas_threads_reports_the_pools_and_the_request():
+    """The provenance stanza behind the one non-bitwise key of `operators1d`.
+
+    `em_step_scale` is `max|eigvals|` through LAPACK, so it moves with the
+    thread count and with nothing else the environment stanza records. What
+    matters is that the stanza is complete and that reading it is free of side
+    effects: it must not dlopen MKL into the process it is describing, so
+    `mkl_get_max_threads` stays None until something else has loaded the
+    library.
+    """
+    from MCEq import config
+
+    loaded = config.mkl is not None
+    stanza = _harness.blas_threads()
+    assert (config.mkl is not None) == loaded, "reading the stanza loaded MKL"
+
+    assert set(stanza) == {
+        "effective",
+        "pools",
+        "mkl_threads",
+        "mkl_get_max_threads",
+        "env",
+        "cpu_count",
+    }
+    assert stanza["mkl_threads"] == config.mkl_threads
+    assert (stanza["mkl_get_max_threads"] is None) or loaded
+    assert set(stanza["env"]) >= {"OMP_NUM_THREADS", "MKL_NUM_THREADS"}
+
+    counts = {entry["num_threads"] for entry in stanza["pools"] or ()}
+    assert stanza["effective"] == (counts.pop() if len(counts) == 1 else None)
+
+
+def test_blas_threads_effective_is_none_when_the_pools_disagree(monkeypatch):
+    """Two pools at different limits have no single effective count.
+
+    A host can reach that state — `config.set_mkl_threads` limits every pool
+    `threadpoolctl` finds, but a library loaded afterwards reads the
+    environment instead — and the stanza has to say so rather than pick one.
+    """
+    import threadpoolctl
+
+    monkeypatch.setattr(
+        threadpoolctl,
+        "threadpool_info",
+        lambda: [
+            {"user_api": "blas", "internal_api": "openblas", "num_threads": 8},
+            {"user_api": "blas", "internal_api": "mkl", "num_threads": 2},
+            {"user_api": "openmp", "internal_api": "openmp", "num_threads": 99},
+        ],
+    )
+    stanza = _harness.blas_threads()
+    assert stanza["effective"] is None
+    assert [entry["num_threads"] for entry in stanza["pools"]] == [8, 2]
+
+    monkeypatch.setattr(
+        threadpoolctl,
+        "threadpool_info",
+        lambda: [
+            {"user_api": "blas", "internal_api": "openblas", "num_threads": 4},
+            {"user_api": "blas", "internal_api": "mkl", "num_threads": 4},
+        ],
+    )
+    assert _harness.blas_threads()["effective"] == 4
+
+
+# --------------------------------------------------------------------------
+# canonical_csr_problems
+# --------------------------------------------------------------------------
+
+
+def test_canonical_csr_problems_reports_the_structural_defects():
+    """indptr and column-range damage, before any per-row work.
+
+    The per-row and flag checks live in `tests/test_operators_pin.py`, next to
+    the assembly they guard; these are the cases a hand-built CSR reaches that
+    a matrix out of the builder cannot, and they have to report rather than
+    raise out of a numpy index.
+    """
+    import scipy.sparse as sp
+
+    good = sp.csr_matrix(np.array([[1.0, 2.0], [0.0, 3.0]]))
+    assert _harness.canonical_csr_problems(good, "m") == []
+    assert "not 'csr'" in _harness.canonical_csr_problems(good.tocsc(), "m")[0]
+
+    short = sp.csr_matrix(np.array([[1.0, 2.0], [0.0, 3.0]]))
+    short.indptr = short.indptr[:-1]
+    problems = _harness.canonical_csr_problems(short, "m")
+    assert "indptr has 2 entries, expected 3" in problems[0], problems
+
+    out_of_range = sp.csr_matrix(np.array([[1.0, 2.0], [0.0, 3.0]]))
+    out_of_range.indices = out_of_range.indices + 5
+    problems = _harness.canonical_csr_problems(out_of_range, "m")
+    assert "column index out of range" in problems[0], problems
+
+    assert _harness.canonical_csr_problems(sp.csr_matrix((3, 3)), "m") == []
+
+
+# --------------------------------------------------------------------------
 # tolerance_for
 # --------------------------------------------------------------------------
 

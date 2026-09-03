@@ -20,14 +20,15 @@ the construct-once equivalence measurement and the rest of the rationale.
 loaded the EM off-diagonal block is 7 species x 31 bins and carries the
 continuous-loss bands, so the spectral radius moves with the stencil — seven
 distinct values, 0.0454 (``upwind``) to 0.1181 (``centered``) 1/(g/cm^2), and
-0.0958 on the default ``expfit_low_upwind2``. The 2D section's counterpart is
-identically 0 (``disabled_particles = [11, -11]`` leaves gamma as the only EM
-species, and with ``enable_em`` off it has no self-production), which is why
-the value is pinned here and only guarded there.
+0.0958 on the default ``expfit_low_upwind2``. This is the only section that
+records it: on the 2D fixture the same quantity is identically 0
+(``disabled_particles = [11, -11]`` leaves gamma the only EM species, and with
+``enable_em`` off it has no self-production), so ``operators2d`` records
+neither the value nor its tolerance.
 
 It is also the only key of this section that is not bitwise: see
 :data:`._operator_sweep.EM_SCALE_RTOL` for the thread measurement behind its
-1e-9 bound.
+1e-9 bound, and ``extra["blas_threads"]`` for the count that was in force.
 """
 
 from __future__ import annotations
@@ -120,7 +121,11 @@ NOTE = (
     " non-normal block through LAPACK and moves by up to 6.9e-13 relative"
     " (expfit_low_upwind2). It is therefore the one key not on bitwise, at"
     " rel-L2 1e-9 — 1400x the measured spread, against a 1.5e-3 relative gap"
-    " between the two closest stencils."
+    " between the two closest stencils. The thread count in force is recorded"
+    " in extra.blas_threads, since it is the one input that key depends on."
+    " This is the only section that records em_step_scale: on the 2D fixture"
+    " the value is identically 0 and operators2d records neither it nor its"
+    " tolerance."
 )
 
 

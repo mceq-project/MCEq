@@ -8,11 +8,18 @@ job, including the ones that skip both sections.
 
 What they state: the sweep covers the whole cross product; ``dec_m`` sees
 neither knob; muon multiple scattering is a no-op in 1D and moves every stencil
-in 2D; the seven stencils are mutually distinct; and the 28 cells therefore
-take 21 distinct ``int_m`` values. A section that stopped discriminating —
-because a refactor made the builder ignore ``config.loss_stencil_method``, say
-— would still compare green against its own regenerated self, and these are
-what catch that.
+in 2D; the seven stencils are mutually distinct; the 28 cells therefore take 21
+distinct ``int_m`` values; and each section's tolerance table matches exactly
+the keys it holds — ``em_step_scale``, the one key of either section that is
+not bitwise, which only ``operators1d`` records. A section that stopped
+discriminating — because a refactor made the builder ignore
+``config.loss_stencil_method``, say — would still compare green against its own
+regenerated self, and these are what catch that.
+
+Two other properties of the sections need a build and are therefore not here:
+that the construct-once shortcut equals a fresh ``MCEqRun``, and that the
+assembled operators are canonical CSRs. Both live in
+``tests/test_operators_pin.py``, on the reduced database.
 """
 
 from __future__ import annotations
@@ -124,6 +131,39 @@ def test_the_two_sections_take_21_distinct_int_m_values():
         counts[section] = len(set(digests.values()))
         assert counts[section] == len(STENCILS) * (len(SCATTERING) if is_2d else 1)
     assert sum(counts.values()) == 21, counts
+
+
+@pytest.mark.parametrize("section,is_2d", OPERATOR_SECTIONS)
+def test_em_step_scale_is_recorded_only_where_it_has_content(section, is_2d):
+    """One key per cell in 1D, none in 2D, and no tolerance entry either way.
+
+    On the 2D fixture ``disabled_particles = [11, -11]`` leaves gamma the only
+    ``is_em`` species and ``enable_em`` is off, so the EM off-diagonal block is
+    empty and the value was exactly 0.0 in all fourteen cells — a property of
+    ``adv_set``, already pinned by the compared ``fixture/em_species`` array,
+    rather than of the assembly. The rel-L2 1e-9 entry those keys carried never
+    applied: ``compare_key`` short-circuits an all-zero reference to exact
+    equality. So a tolerance table matching no key is the defect this also
+    guards, in either direction — an entry a reader would credit and the
+    harness would never resolve.
+    """
+    if not section_path(section).exists():
+        pytest.skip(f"golden section {section!r} has not been generated")
+    arrays, prov = load_section(section)
+    expected = {f"cells/{label}/em_step_scale" for label, _, _ in CELLS}
+    found = {key for key in arrays if key.endswith("/em_step_scale")}
+    if is_2d:
+        assert found == set()
+        assert list(arrays["fixture/em_species"]) == ["gamma"]
+    else:
+        assert found == expected
+        assert np.any([float(arrays[key]) != 0.0 for key in found])
+
+    table = prov.get("tolerances") or {}
+    assert set(table) == found, (
+        f"{section}: the tolerance table and the em_step_scale keys disagree; "
+        f"an entry matching no key is a bound the harness never resolves"
+    )
 
 
 @pytest.mark.parametrize("section,is_2d", OPERATOR_SECTIONS)
