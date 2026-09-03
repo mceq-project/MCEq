@@ -1222,59 +1222,32 @@ class MCEqRun:
         if not isinstance(
             density_model_or_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)
         ):
+            from MCEq.geometry import registry
+
             base_model, model_config = density_model_or_config
 
-            available_models = [
-                "MSIS00",
-                "MSIS00_IC",
-                "MSIS21",
-                "MSIS21_IC",
-                "MSIS21_KM3NeT",
-                "CORSIKA",
-                "AIRS",
-                "Isothermal",
-                "GeneralizedTarget",
-            ]
-
-            if base_model not in available_models:
+            if base_model not in registry.DENSITY_MODELS:
                 info(
                     0,
                     "Unknown density model. Available choices are:\n",
-                    "\n".join(available_models),
+                    "\n".join(registry.available_models()),
                 )
                 raise ValueError("Choose a different profile.")
 
             info(1, "Setting density profile to", base_model, model_config)
 
-            if base_model == "MSIS00":
-                self.density_model = dprof.MSIS00Atmosphere(*model_config)
-            elif base_model == "MSIS00_IC":
-                self.density_model = dprof.MSIS00IceCubeCentered(*model_config)
-            elif base_model == "MSIS21":
-                self.density_model = dprof.MSIS21Atmosphere(*model_config)
-            elif base_model == "MSIS21_IC":
-                self.density_model = dprof.MSIS21IceCubeCentered(*model_config)
-            elif base_model == "MSIS21_KM3NeT":
-                self.density_model = dprof.MSIS21KM3NeTCentered(*model_config)
-            elif base_model == "CORSIKA":
-                self.density_model = dprof.CorsikaAtmosphere(*model_config)
-            elif base_model == "AIRS":
-                self.density_model = dprof.AIRSAtmosphere(*model_config)
-            elif base_model == "Isothermal":
-                self.density_model = dprof.IsothermalAtmosphere(*model_config)
-            elif base_model == "GeneralizedTarget":
-                self.density_model = dprof.GeneralizedTarget()
+            self.density_model = registry.build(base_model, model_config)
         else:
             self.density_model = density_model_or_config
 
         if self.theta_deg is not None and isinstance(
             self.density_model, dprof.EarthsAtmosphere
         ):
-            if self.theta_deg is None:
-                info(1, "Using default zenith angle theta=0.")
-                self.set_zenith_azimuth(0)
-            else:
-                self.set_zenith_azimuth(self.theta_deg)
+            # The ``if self.theta_deg is None`` branch that sat here, logging
+            # "Using default zenith angle theta=0." and calling
+            # set_zenith_azimuth(0), was unreachable: the enclosing condition
+            # already requires the attribute to be non-None.
+            self.set_zenith_azimuth(self.theta_deg)
         elif isinstance(self.density_model, dprof.GeneralizedTarget):
             self.integration_path = None
         else:
@@ -1323,6 +1296,15 @@ class MCEqRun:
 
         if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
+
+        # Track the angle actually requested (bug B13). This used to keep its
+        # constructor value forever, so ``MCEqRun.theta_deg`` disagreed with
+        # ``density_model.theta_deg`` after the first change of angle -- which
+        # is why the paths golden labels its rows by the latter. Assigned
+        # before the cache check below, so the attribute is right even when
+        # the recomputation is skipped and even if the atmosphere was driven
+        # directly, behind this method's back.
+        self.theta_deg = zenith_deg
 
         # Cache check: skip if nothing has changed
         cached_theta = self.density_model.theta_deg

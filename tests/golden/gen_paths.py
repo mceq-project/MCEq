@@ -70,12 +70,15 @@ MSIS21, ValueError in the LocationCentered variants). pytest.raises(ValueError)
 does not catch it. Pinned as the exception type name in
 zenith_guard/exception_above_max_theta.
 
-available_density_models is the literal inside MCEqRun.set_density_model, read
-from the source so no MCEqRun is constructed. Its absences are part of the
-golden: "MSIS00_KM3NeT" is missing although MSIS00KM3NeTCentered is implemented
-at density_profiles.py:1150 (bug B15), while "MSIS21_KM3NeT" is present. The
-list is the golden rather than the ValueError it raises, because an unknown
-model name raises the identical ValueError("Choose a different profile.").
+available_density_models is MCEq.geometry.registry.available_models(), the same
+table set_density_model dispatches through, so a name can no longer be offered
+without being buildable or the reverse. It used to be a list literal local to
+that method with a parallel elif ladder beside it, and the two disagreed:
+"MSIS00_KM3NeT" was absent although MSIS00KM3NeTCentered is implemented, which
+was bug B15. Fixed, so this key is (10,) where the first build of this section
+recorded (9,). The list is the golden rather than the ValueError it raises,
+because every unknown model name raises the identical
+ValueError("Choose a different profile.").
 
 max_den_type_before_set_theta pins the type of config.environment.max_density,
 which EarthsAtmosphere.__init__ copies into _max_den: the public max_den
@@ -90,24 +93,19 @@ model, which max_X already does.
 """
 
 
-def _available_density_models(mceq_run_cls) -> list[str]:
-    """The ``available_models`` literal inside ``set_density_model``.
+def _available_density_models() -> list[str]:
+    """The model names ``set_density_model`` accepts.
 
-    The list is a local variable, so it is read out of the method source with
-    ``ast`` instead of by constructing an MCEqRun, which would pull in the
-    HDF5 database this section does not otherwise need.
+    Until the registry existed this had to be recovered by parsing the
+    ``available_models`` list literal out of the method's source with ``ast``,
+    because it was a local variable. It is now a module-level table, so the
+    section reads it directly -- and reads the same object the dispatch uses,
+    which is what made bug B15 possible: the literal and the ``elif`` ladder
+    could disagree, and did.
     """
-    import ast
-    import inspect
-    import textwrap
+    from MCEq.geometry.registry import available_models
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(mceq_run_cls.set_density_model)))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            getattr(target, "id", None) == "available_models" for target in node.targets
-        ):
-            return list(ast.literal_eval(node.value))
-    raise RuntimeError("available_models literal not found in set_density_model")
+    return available_models()
 
 
 def _path_arrays(prefix: str, path, max_X) -> dict:
@@ -139,7 +137,6 @@ def _zenith_guard_exception(atmosphere, zenith_deg: float) -> str:
 def build() -> tuple[dict, dict]:
     """Produce (arrays, provenance) for this section."""
     from MCEq import config
-    from MCEq.core import MCEqRun
     from MCEq.geometry import density_profiles as dprof
     from MCEq.solvers import etd2_nonuniform_path
 
@@ -206,9 +203,7 @@ def build() -> tuple[dict, dict]:
         arrays["zenith_guard/exception_above_max_theta"] = np.asarray(
             _zenith_guard_exception(corsika, OUT_OF_RANGE_ZENITH_DEG)
         )
-        arrays["available_density_models"] = np.asarray(
-            _available_density_models(MCEqRun)
-        )
+        arrays["available_density_models"] = np.asarray(_available_density_models())
 
         provenance = make_provenance(
             SECTION,
@@ -223,7 +218,7 @@ def build() -> tuple[dict, dict]:
                 "snapshot_grid_X": list(SNAPSHOT_GRID_X),
                 "out_of_range_zenith_deg": OUT_OF_RANGE_ZENITH_DEG,
                 "hybrid_sample_sizes": {"geomspace": 6001, "linspace": 4001},
-                "pinned_bugs": ["B15"],
+                "fixed_bugs": ["B13", "B15"],
             },
         )
     finally:
