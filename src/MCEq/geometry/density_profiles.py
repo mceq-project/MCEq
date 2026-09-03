@@ -10,6 +10,7 @@ from MCEq.geometry.atmosphere_parameters import (
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
+from MCEq.geometry.geometry import impact_point, local_zenith_deg, surface_dip_deg
 from MCEq.misc import info
 
 
@@ -838,90 +839,34 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
     def _impact_point(self, zenith_deg, azimuth_deg):
         """Return the geographic coordinates of the shower impact point.
 
-        Finds the crossing of the shower axis (a straight line through the
-        detector, followed toward the incoming shower source) with the
-        surface sphere at the current observation level (``geom.r_obs``)
-        using full 3-D ECEF (Earth-Centred, Earth-Fixed) Cartesian
-        geometry.  The surface crossing on the source side is where the
-        atmospheric shower column stands.
+        Thin wrapper around
+        :func:`MCEq.geometry.geometry.impact_point`, which holds the ECEF
+        ray/sphere intersection shared with the MSIS21 tree and the tabulated
+        atmospheres.  The surface sphere is the current observation level
+        (``geom.r_obs``) and the detector sits *depth_m* below the local
+        surface elevation.
 
-        Azimuth convention: 0° = North, 90° = East (clockwise from North).
-        The full zenith range [0°, 180°] is supported: for downgoing
-        showers the crossing is near the detector; for upgoing showers
-        (zenith > 90°) the toward-source ray traverses the Earth and the
-        crossing is on the far side, where the shower actually developed.
-        The original (theta, azimuth) at the detector is passed in — no
-        mirroring of either angle is needed.
-
-        At South Pole and zenith ≤ 90° this formula is algebraically
-        equivalent to the original 2-D formula in the legacy
+        At South Pole and zenith <= 90 deg this is algebraically equivalent to
+        the original 2-D formula in the legacy
         :class:`MSIS00IceCubeCentered`.
 
         Args:
             zenith_deg (float): Zenith angle at the detector in degrees
-                (0°–180°).
-            azimuth_deg (float): Azimuth angle in degrees (0° = North,
-                90° = East).
+                (0-180 deg).
+            azimuth_deg (float): Azimuth angle in degrees (0 = North,
+                90 = East).
 
         Returns:
             tuple: ``(latitude_deg, longitude_deg)`` of the impact point.
         """
-        r = self.geom.r_obs / 1e2  # cm → m
-        r_det = self.geom.r_E / 1e2 + self._surface_elevation_m - self._detector_depth_m
-
-        theta = np.deg2rad(zenith_deg)
-        alpha = np.deg2rad(azimuth_deg)
-        lat0 = np.deg2rad(self._detector_latitude)
-        lon0 = np.deg2rad(self._detector_longitude)
-
-        # Detector position in ECEF (metres)
-        P_det = np.array(
-            [
-                r_det * np.cos(lat0) * np.cos(lon0),
-                r_det * np.cos(lat0) * np.sin(lon0),
-                r_det * np.sin(lat0),
-            ]
+        return impact_point(
+            self.geom.r_obs,
+            self.geom.r_E + (self._surface_elevation_m - self._detector_depth_m) * 1e2,
+            self._detector_longitude,
+            self._detector_latitude,
+            zenith_deg,
+            azimuth_deg,
         )
-
-        # Shower direction in ENU frame (pointing toward incoming source)
-        # azimuth 0° → North, 90° → East
-        d_ENU = np.array(
-            [
-                np.sin(theta) * np.sin(alpha),  # East component
-                np.sin(theta) * np.cos(alpha),  # North component
-                np.cos(theta),  # Up component
-            ]
-        )
-
-        # ENU → ECEF rotation matrix (columns: East, North, Up basis vectors)
-        T = np.array(
-            [
-                [
-                    -np.sin(lon0),
-                    -np.sin(lat0) * np.cos(lon0),
-                    np.cos(lat0) * np.cos(lon0),
-                ],
-                [
-                    np.cos(lon0),
-                    -np.sin(lat0) * np.sin(lon0),
-                    np.cos(lat0) * np.sin(lon0),
-                ],
-                [0.0, np.cos(lat0), np.sin(lat0)],
-            ]
-        )
-        d_ECEF = T @ d_ENU
-
-        # Crossing with the surface sphere |P_det + x * d_ECEF|² = r².
-        # The larger root is the surface crossing on the source side; it is
-        # valid for detectors below (r_det < r) and above (r_det > r) the
-        # sphere, and for the full zenith range 0°–180°.
-        A = np.dot(d_ECEF, P_det)
-        x = -A + np.sqrt(A**2 + (r**2 - r_det**2))
-
-        P_impact = P_det + x * d_ECEF
-        lat_imp = np.rad2deg(np.arcsin(np.clip(P_impact[2] / r, -1.0, 1.0)))
-        lon_imp = np.rad2deg(np.arctan2(P_impact[1], P_impact[0]))
-        return lat_imp, lon_imp
 
     # ------------------------------------------------------------------
     # Density
@@ -1051,7 +996,7 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         r_E = self.geom.r_E  # cm
         elev_cm = self._surface_elevation_m * 1e2
         r_det = r_E + elev_cm - self._detector_depth_m * 1e2
-        dip_deg = np.rad2deg(np.arccos(min(r_det / (r_E + elev_cm), 1.0)))
+        dip_deg = surface_dip_deg(r_det, r_E + elev_cm)
         far_side = theta_deg > 90.0 + dip_deg
 
         # Near side: column ends at the local surface elevation.
@@ -1062,10 +1007,7 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
 
         # Local zenith angle of the shower axis at the surface crossing
         # (the impact parameter r*sin(theta) is conserved along the axis).
-        sin_loc = np.clip(
-            r_det / self.geom.r_obs * np.sin(np.deg2rad(theta_deg)), 0.0, 1.0
-        )
-        effective_theta = np.rad2deg(np.arcsin(sin_loc))
+        effective_theta = local_zenith_deg(r_det, self.geom.r_obs, theta_deg)
 
         if azimuth_deg is not None:
             lat, lon = self._impact_point(theta_deg, azimuth_deg)
@@ -1237,6 +1179,114 @@ _R_GAS = 8.314e4
 _TABLE_PAD_CM = 100.0
 #: Number of table bins blended into MSIS00 by ``top_extension="msis00"``.
 _MSIS_BLEND_BINS = 5
+#: Grid points used for the shared height grid when averaging columns.
+_AVERAGING_STEPS = 500
+
+
+class AtmosphereTable:
+    """A tabulated atmosphere: one vertical column, or a grid of them.
+
+    Built by :func:`load_atmosphere_table` and consumed by
+    :class:`TabulatedAtmosphere` and :class:`TabulatedLocationCentered`.  A
+    gridded table stores one column per (longitude, latitude) node of a regular
+    grid; :meth:`column` interpolates it to an arbitrary position.
+
+    Attributes:
+      h_cm (numpy.ndarray): heights above sea level in cm, shaped ``(n_lev,)``
+        for a single column and ``(n_lat, n_lon, n_lev)`` for a grid.
+      rho_gcm3 (numpy.ndarray): densities in g/cm**3, same shape.
+      T_K (numpy.ndarray or None): temperatures in K, same shape.
+      p_hPa (numpy.ndarray or None): pressures in hPa, same shape.
+      lat_deg (numpy.ndarray or None): latitude axis of a gridded table.
+      lon_deg (numpy.ndarray or None): longitude axis of a gridded table,
+        normalised to [0, 360).
+    """
+
+    def __init__(
+        self, h_cm, rho_gcm3, T_K=None, p_hPa=None, lat_deg=None, lon_deg=None
+    ):
+        self.h_cm = h_cm
+        self.rho_gcm3 = rho_gcm3
+        self.T_K = T_K
+        self.p_hPa = p_hPa
+        self.lat_deg = lat_deg
+        self.lon_deg = lon_deg
+
+    @property
+    def is_gridded(self):
+        """True if the table holds a longitude/latitude grid of columns."""
+        return self.lat_deg is not None
+
+    def __repr__(self):
+        if self.is_gridded:
+            n_lat, n_lon, n_lev = self.h_cm.shape
+            return (
+                f"AtmosphereTable(grid {n_lat}x{n_lon}, {n_lev} levels, "
+                f"lat {self.lat_deg[0]:.2f}..{self.lat_deg[-1]:.2f}, "
+                f"lon {self.lon_deg[0]:.2f}..{self.lon_deg[-1]:.2f})"
+            )
+        return f"AtmosphereTable(single column, {self.h_cm.size} levels)"
+
+    def column(self, longitude, latitude):
+        """Returns the vertical column at *longitude*, *latitude*.
+
+        Bilinear interpolation between the four surrounding grid nodes, applied
+        level by level: heights and temperatures linearly, densities in
+        ``log(rho)``.  The table's own level ordering is preserved, so an
+        ERA5-derived table keeps its pressure levels.
+
+        Args:
+          longitude (float): longitude in degrees, any branch cut
+          latitude (float): latitude in degrees
+
+        Returns:
+          AtmosphereTable: a single-column table
+        """
+        if not self.is_gridded:
+            return self
+
+        lat = float(np.clip(latitude, self.lat_deg[0], self.lat_deg[-1]))
+        lon = float(longitude) % 360.0
+
+        j, wj = _bracket(self.lat_deg, lat, periodic=False)
+        i, wi = _bracket(self.lon_deg, lon, periodic=True)
+        i_next = (i + 1) % len(self.lon_deg)
+
+        # Bilinear weights of the four surrounding nodes.
+        corners = (
+            (j, i, (1 - wj) * (1 - wi)),
+            (j, i_next, (1 - wj) * wi),
+            (j + 1, i, wj * (1 - wi)),
+            (j + 1, i_next, wj * wi),
+        )
+
+        def blend(values, logarithmic=False):
+            if values is None:
+                return None
+            stack = np.log(values) if logarithmic else values
+            out = sum(weight * stack[jj, ii] for jj, ii, weight in corners)
+            return np.exp(out) if logarithmic else out
+
+        return AtmosphereTable(
+            h_cm=blend(self.h_cm),
+            rho_gcm3=blend(self.rho_gcm3, logarithmic=True),
+            T_K=blend(self.T_K),
+            p_hPa=blend(self.p_hPa),
+        )
+
+
+def _bracket(axis, value, periodic):
+    """Index of the node below *value* and the fractional weight above it."""
+    if periodic:
+        # The axis wraps, so the last cell spans axis[-1] -> axis[0] + 360.
+        extended = np.concatenate([axis, [axis[0] + 360.0]])
+        idx = int(np.clip(np.searchsorted(extended, value) - 1, 0, len(axis) - 1))
+        span = extended[idx + 1] - extended[idx]
+    else:
+        idx = int(np.clip(np.searchsorted(axis, value) - 1, 0, len(axis) - 2))
+        span = axis[idx + 1] - axis[idx]
+    weight = 0.0 if span == 0 else (value - axis[idx]) / span
+    return idx, float(np.clip(weight, 0.0, 1.0))
 
 
 def load_atmosphere_table(filename):
@@ -1251,9 +1301,8 @@ def load_atmosphere_table(filename):
       filename (str): path to the CSV file
 
     Returns:
-      dict: ``{"h_cm": ndarray, "rho_gcm3": ndarray}``, plus ``"T_K"`` when the
-      file provides a temperature column.  Rows are sorted by height and rows
-      with missing height or density are dropped.
+      AtmosphereTable: a single column, or a longitude/latitude grid of columns
+      when the file carries ``lat_deg`` and ``lon_deg``.
     """
     # Strip full-line comments and blanks first: numpy's ``names=True`` always
     # takes the *first* line as the header, comment marker or not.
@@ -1306,32 +1355,94 @@ def load_atmosphere_table(filename):
             "finite height and a positive density are required."
         )
 
-    order = np.argsort(h_cm[valid])
-    table = {"h_cm": h_cm[valid][order], "rho_gcm3": dens[valid][order]}
-    if "t_k" in columns:
-        table["T_K"] = columns["t_k"][valid][order]
+    optional = {
+        key: columns[low][valid]
+        for key, low in (("T_K", "t_k"), ("p_hPa", "p_hpa"))
+        if low in columns
+    }
+    h_cm, dens = h_cm[valid], dens[valid]
 
-    info(
-        2,
-        f"loaded {len(table['h_cm'])} rows from {filename}, "
-        f"h = {table['h_cm'][0]:.3e} - {table['h_cm'][-1]:.3e} cm",
+    gridded = "lat_deg" in columns and "lon_deg" in columns
+    if not gridded:
+        order = np.argsort(h_cm)
+        table = AtmosphereTable(
+            h_cm=h_cm[order],
+            rho_gcm3=dens[order],
+            **{key: value[order] for key, value in optional.items()},
+        )
+        info(2, f"loaded {filename}: {table!r}")
+        return table
+
+    table = _grid_from_rows(
+        filename,
+        columns["lat_deg"][valid],
+        columns["lon_deg"][valid] % 360.0,
+        h_cm,
+        dens,
+        optional,
     )
+    info(2, f"loaded {filename}: {table!r}")
     return table
 
 
-class TabulatedAtmosphere(EarthsAtmosphere):
-    """Atmosphere interpolated from a tabulated vertical density profile.
+def _grid_from_rows(filename, lat, lon, h_cm, dens, optional):
+    """Reshapes long-format rows into a regular (lat, lon, level) grid."""
+    lat_axis = np.unique(lat)
+    lon_axis = np.unique(lon)
+    n_lat, n_lon = lat_axis.size, lon_axis.size
+    n_rows = h_cm.size
 
-    The table is a **CSV file describing one vertical column above one site at
-    one point in time**.  It replaces the former ``AIRSAtmosphere`` and is the
-    supported way to drive MCEq with measured or reanalysed atmospheric data;
-    ``docs/examples/ERA5_density_spline.ipynb`` shows how to turn an ERA5
-    download into such a table.
+    if n_rows % (n_lat * n_lon) != 0:
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} has {n_rows} usable rows, "
+            f"which is not a whole number of columns for the {n_lat} latitudes "
+            f"x {n_lon} longitudes it names. Gridded tables must be a regular "
+            "grid with the same number of levels in every column."
+        )
+    n_lev = n_rows // (n_lat * n_lon)
+
+    j = np.searchsorted(lat_axis, lat)
+    i = np.searchsorted(lon_axis, lon)
+    # Sort by (lat, lon, height) so every column lands contiguously, ascending.
+    order = np.lexsort((h_cm, i, j))
+    j, i = j[order], i[order]
+
+    counts = np.bincount(j * n_lon + i, minlength=n_lat * n_lon)
+    if not np.all(counts == n_lev):
+        bad = int(np.argmin(counts))
+        raise ValueError(
+            f"load_atmosphere_table(): {filename} is a gridded table whose "
+            f"columns do not all have {n_lev} levels -- the column at "
+            f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
+            f"has {counts[bad]}. Keep every level in every column (mark gaps "
+            "with nan in a data column rather than dropping the row)."
+        )
+
+    def reshape(values):
+        return values[order].reshape(n_lat, n_lon, n_lev)
+
+    return AtmosphereTable(
+        h_cm=reshape(h_cm),
+        rho_gcm3=reshape(dens),
+        lat_deg=lat_axis,
+        lon_deg=lon_axis,
+        **{key: reshape(value) for key, value in optional.items()},
+    )
+
+
+class TabulatedAtmosphere(EarthsAtmosphere):
+    """Atmosphere interpolated from a tabulated density profile.
+
+    The table is a **CSV file** holding either one vertical column, or a
+    longitude/latitude grid of columns.  It replaces the former
+    ``AIRSAtmosphere`` and is the supported way to drive MCEq with measured or
+    reanalysed atmospheric data; ``docs/examples/ERA5_density_spline.ipynb``
+    shows how to turn an ERA5 download into such a table.
 
     **Table format (v1)**::
 
-        # MCEq tabulated atmosphere v1 -- comment lines are ignored
-        # South Pole, ERA5 pressure levels, 2012-01-03 12:00 UTC
+        # MCEq tabulated atmosphere v1
+        # South Pole, ERA5 pressure levels, 2026-07-01 daily mean
         h_cm,T_K,p_hPa
         283400.0,247.1,681.2
         510000.0,231.4,500.0
@@ -1340,7 +1451,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
     * ``h_cm`` (required) -- height above sea level in cm.
     * Density, either directly as ``rho_gcm3`` in g/cm**3, or derived from
       ``T_K`` (K) and ``p_hPa`` (hPa) via the dry-air ideal gas law.
-    * ``T_K`` also feeds :func:`get_temperature`.
+    * ``T_K`` also feeds :func:`get_temperature`, and ``p_hPa`` is kept so that
+      results can be plotted against pressure.
+    * ``lat_deg`` and ``lon_deg`` (optional, but both together) turn the table
+      into a **grid of columns**: one column per grid node, in long format, one
+      row per (node, level).  The nodes must form a regular longitude/latitude
+      grid and every column must carry the same number of levels.  A gridded
+      table needs a *coord* here, and is what
+      :class:`TabulatedLocationCentered` samples at the shower impact point.
     * Column order is irrelevant and unknown columns are ignored, so a table may
       carry extra data products alongside the ones MCEq reads.  Rows may be in
       any order; they are sorted by height on load.
@@ -1348,22 +1466,21 @@ class TabulatedAtmosphere(EarthsAtmosphere):
       row-wise.
 
     .. note::
-       **This model uses a single vertical column for every direction.**  The
-       shower impact point moves away from the detector as the zenith angle
-       grows (~100 km at 80 deg), and the atmosphere it develops in varies with
-       that position -- which a one-column table cannot express.  The zenith
-       range is therefore limited to downgoing angles, and the azimuth angle is
-       ignored.  For a direction-resolved atmosphere use
-       :class:`MSIS00LocationCentered` or :class:`MSIS21LocationCentered`.
-       Extending the table format with ``lat_deg``/``lon_deg`` columns so the
-       profile can be sampled at the impact point (and upgoing angles supported)
-       is planned; see the MCEq issue tracker.
+       This class uses **one column for every direction**: the azimuth angle is
+       ignored and the zenith range stops at the horizon.  The shower impact
+       point moves away from the detector as the zenith angle grows (~100 km at
+       80 deg), and the atmosphere it develops in varies with that position.
+       Use :class:`TabulatedLocationCentered` with a gridded table to resolve
+       that, or :class:`MSIS00LocationCentered` for an empirical model.
 
     Args:
-      table (str or dict): path to a CSV file, or a table already parsed by
-        :func:`load_atmosphere_table`.
+      table (str or AtmosphereTable): path to a CSV file, or a table already
+        parsed by :func:`load_atmosphere_table`.
+      coord (tuple, optional): ``(longitude, latitude)`` in degrees, selecting a
+        column from a gridded table.  Required for gridded tables, ignored for
+        single-column ones.
       surface_elevation_m (float, optional): observation level in metres above
-        sea level.  ``None`` (default) uses the lowest height in the table,
+        sea level.  ``None`` (default) uses the lowest height in the column,
         clipped at sea level -- reanalysis products commonly extrapolate below
         ground and report negative heights.
       top_extension (str): how to continue the profile above the topmost
@@ -1387,6 +1504,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
     def __init__(
         self,
         table,
+        coord=None,
         surface_elevation_m=None,
         top_extension="isothermal",
         location=None,
@@ -1402,35 +1520,65 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         # below reads for h_atm and h_obs.
         EarthsAtmosphere.__init__(self)
 
-        parsed = table if isinstance(table, dict) else load_atmosphere_table(table)
-        # Copy: the profile is completed in place below, and a caller-supplied
-        # table must not be modified by building an atmosphere from it.
-        self.h = np.array(parsed["h_cm"], dtype=np.float64)
-        self.dens = np.array(parsed["rho_gcm3"], dtype=np.float64)
-        self.temp = (
-            np.array(parsed["T_K"], dtype=np.float64) if "T_K" in parsed else None
+        self.table = (
+            table
+            if isinstance(table, AtmosphereTable)
+            else (load_atmosphere_table(table))
         )
-
         self.location = location
         self.season = season
         self.top_extension = top_extension
 
+        column = self._select_column(coord)
         if surface_elevation_m is None:
-            h_obs_cm = max(float(self.h[0]), 0.0)
+            h_obs_cm = max(float(np.min(column.h_cm)), 0.0)
         else:
             h_obs_cm = surface_elevation_m * 1e2
 
-        self._extend_below(h_obs_cm - _TABLE_PAD_CM)
-        self._extend_above(self.geom.h_atm + _TABLE_PAD_CM)
-        self._log_dens = np.log(self.dens)
+        self._set_profile(column, h_obs_cm)
 
         # Cleared before set_h_obs so that it does not try to build a spline.
         self.theta_deg = None
         self.set_h_obs(h_obs_cm)
 
+    def _select_column(self, coord):
+        """Returns the single column this atmosphere is built on."""
+        if not self.table.is_gridded:
+            return self.table
+        if coord is None:
+            raise ValueError(
+                f"{self.__class__.__name__}(): the table is gridded "
+                f"({self.table!r}), so coord=(longitude, latitude) is required "
+                "to pick a column. Use TabulatedLocationCentered to sample the "
+                "grid at the shower impact point instead."
+            )
+        return self.table.column(*coord)
+
     # ------------------------------------------------------------------
     # Profile completion
     # ------------------------------------------------------------------
+
+    def _set_profile(self, column, h_obs_cm):
+        """Installs *column* as the active profile, completed at both ends."""
+        order = np.argsort(column.h_cm)
+        # Copy: the profile is completed in place below, and a caller-supplied
+        # table must not be modified by building an atmosphere from it.
+        self.h = np.array(column.h_cm, dtype=np.float64)[order]
+        self.dens = np.array(column.rho_gcm3, dtype=np.float64)[order]
+        self.temp = (
+            np.array(column.T_K, dtype=np.float64)[order]
+            if column.T_K is not None
+            else None
+        )
+        self.pressure = (
+            np.array(column.p_hPa, dtype=np.float64)[order]
+            if column.p_hPa is not None
+            else None
+        )
+
+        self._extend_below(h_obs_cm - _TABLE_PAD_CM)
+        self._extend_above(self.geom.h_atm + _TABLE_PAD_CM)
+        self._log_dens = np.log(self.dens)
 
     def _log_linear_point(self, h_target, i_near, i_far):
         """Density at *h_target* from a log-linear fit through two table rows."""
@@ -1444,7 +1592,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         if self.h[0] <= h_bottom:
             return
         info(
-            2,
+            3,
             f"{self.__class__.__name__}: table starts at {self.h[0]:.3e} cm, "
             f"extrapolating down to {h_bottom:.3e} cm.",
         )
@@ -1453,6 +1601,8 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         self.dens = np.hstack([rho_bottom, self.dens])
         if self.temp is not None:
             self.temp = np.hstack([self.temp[0], self.temp])
+        if self.pressure is not None:
+            self.pressure = np.hstack([self.pressure[0], self.pressure])
 
     def _extend_above(self, h_top):
         """Extends the profile up to *h_top* according to *top_extension*."""
@@ -1472,6 +1622,8 @@ class TabulatedAtmosphere(EarthsAtmosphere):
             self.dens = np.hstack([self.dens, rho_top])
             if self.temp is not None:
                 self.temp = np.hstack([self.temp, self.temp[-1]])
+            if self.pressure is not None:
+                self.pressure = np.hstack([self.pressure, self.pressure[-1]])
             return
 
         # top_extension == "msis00": blend the top of the table into MSIS00 so
@@ -1500,9 +1652,13 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         self.dens = np.hstack([self.dens[:-1], msis_dens])
         if self.temp is not None:
             self.temp = np.hstack([self.temp[:-1], msis_temp])
+        if self.pressure is not None:
+            self.pressure = np.hstack(
+                [self.pressure[:-1], np.full(h_extra.size, np.nan)]
+            )
 
     # ------------------------------------------------------------------
-    # Density and temperature
+    # Density, temperature and pressure
     # ------------------------------------------------------------------
 
     def get_density(self, h_cm):
@@ -1537,6 +1693,27 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                 "no 'T_K' column."
             )
         return np.interp(h_cm, self.h, self.temp, left=np.nan, right=np.nan)
+
+    def get_pressure(self, h_cm):
+        """Returns the pressure in hPa.
+
+        Interpolated logarithmically, since pressure falls exponentially with
+        height.  Only available if the table carries a ``p_hPa`` column.
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: pressure :math:`p(h_{cm})` in hPa
+        """
+        if self.pressure is None:
+            raise ValueError(
+                f"{self.__class__.__name__}::get_pressure(): the table has no "
+                "'p_hPa' column."
+            )
+        return np.exp(
+            np.interp(h_cm, self.h, np.log(self.pressure), left=np.nan, right=np.nan)
+        )
 
     # ------------------------------------------------------------------
     # Density spline (vectorised)
@@ -1578,6 +1755,253 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
         self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
         self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+
+
+class TabulatedLocationCentered(TabulatedAtmosphere):
+    """Tabulated atmosphere sampled at the shower impact point.
+
+    Couples a **gridded** table to a detector position, the way
+    :class:`MSIS00LocationCentered` couples NRLMSISE-00 to one.  For a given
+    zenith and azimuth the shower axis is followed from the detector toward the
+    source until it crosses the surface, and the table column at that impact
+    point becomes the density profile.  That is what makes the model usable for
+    neutrinos: at large zenith angles the shower develops hundreds of km away
+    from the detector, in air the column overhead does not describe.
+
+    Azimuth convention: 0 deg = geographic North, 90 deg = East.  Zenith: 0 deg
+    = above the detector, 90 deg = horizontal, > 90 deg = upgoing, which needs
+    *max_theta* = 180 **and a table that covers the far side of the Earth** --
+    a global table, not a regional crop.
+
+    Calling :meth:`set_theta` without an azimuth averages the profile over
+    *n_azimuth* equally-spaced directions, giving one representative column for
+    the zenith angle.
+
+    Args:
+      table (str or AtmosphereTable): a gridded table, see
+        :class:`TabulatedAtmosphere` for the format.
+      detector_coord (tuple): ``(longitude, latitude)`` of the detector in
+        degrees.
+      depth_m (float): depth of the detector below the local surface in metres.
+      n_azimuth (int): number of azimuth samples used for averaging
+        (default 36, i.e. every 10 deg).
+      max_theta (float): maximum allowed zenith angle in degrees.  90 (default)
+        for downgoing only, 180 to accept grazing and upgoing angles.
+      surface_elevation_m (float): elevation of the local surface above sea
+        level in metres (default 0).
+      top_extension (str): see :class:`TabulatedAtmosphere`.
+      location (str, optional): name of the site, for bookkeeping.
+      season (str, optional): month name, for bookkeeping.
+    """
+
+    #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
+    _preserve_max_theta: bool = True
+
+    #: The impact point, and with it the profile, depends on the azimuth angle.
+    depends_on_azimuth: bool = True
+
+    def __init__(
+        self,
+        table,
+        detector_coord,
+        depth_m,
+        n_azimuth=36,
+        max_theta=90.0,
+        surface_elevation_m=0.0,
+        top_extension="isothermal",
+        location=None,
+        season=None,
+    ):
+        longitude, latitude = detector_coord
+        self._detector_longitude = longitude
+        self._detector_latitude = latitude
+        self._detector_depth_m = depth_m
+        self._surface_elevation_m = surface_elevation_m
+        self._n_azimuth = n_azimuth
+        self._azimuth_averaging = False
+        self._effective_theta_deg = 0.0
+        self._current_azimuth_deg = None
+        self._azimuth_avg_coords = []
+        self._current_impact_latitude = None
+        self._current_impact_longitude = None
+
+        super().__init__(
+            table,
+            coord=(longitude, latitude),
+            surface_elevation_m=surface_elevation_m,
+            top_extension=top_extension,
+            location=location or f"({longitude:.3f}°E, {latitude:.3f}°N)",
+            season=season,
+        )
+        if not self.table.is_gridded:
+            raise ValueError(
+                f"{self.__class__.__name__}(): needs a gridded table with "
+                "'lat_deg' and 'lon_deg' columns to sample the impact point. "
+                "Use TabulatedAtmosphere for a single column."
+            )
+        self.max_theta = max_theta
+
+    # ------------------------------------------------------------------
+    # Geometry
+    # ------------------------------------------------------------------
+
+    def _radius_detector(self):
+        """Distance of the detector from the Earth's centre in cm."""
+        return (
+            self.geom.r_E + (self._surface_elevation_m - self._detector_depth_m) * 1e2
+        )
+
+    def _impact_point(self, zenith_deg, azimuth_deg):
+        """Geographic coordinates of the shower impact point.
+
+        Delegates to :func:`MCEq.geometry.geometry.impact_point`, the single
+        implementation shared with the MSIS class trees.
+
+        Args:
+          zenith_deg (float): zenith angle at the detector [deg], 0-180
+          azimuth_deg (float): azimuth angle [deg], 0 = North, 90 = East
+
+        Returns:
+          tuple: ``(latitude_deg, longitude_deg)`` of the impact point
+        """
+        return impact_point(
+            self.geom.r_obs,
+            self._radius_detector(),
+            self._detector_longitude,
+            self._detector_latitude,
+            zenith_deg,
+            azimuth_deg,
+        )
+
+    # ------------------------------------------------------------------
+    # Direction
+    # ------------------------------------------------------------------
+
+    def set_theta(self, theta_deg, azimuth_deg=None):
+        """Configures the zenith (and optionally azimuth) angle.
+
+        *theta_deg* is the zenith angle **at the detector**.  The column is
+        taken from the table at the impact point and integrated at the local
+        zenith angle where the shower axis crosses the surface -- the same
+        impact-parameter treatment as :class:`MSIS00LocationCentered`, so the
+        two are directly comparable.
+
+        Args:
+          theta_deg (float): zenith angle at the detector in degrees,
+            [0, max_theta]
+          azimuth_deg (float, optional): azimuth angle in degrees (0 = North,
+            90 = East).  ``None`` (default) averages over all azimuths.
+        """
+        if theta_deg < 0.0 or theta_deg > self.max_theta:
+            raise ValueError(
+                f"Zenith angle {theta_deg} not in allowed range [0, {self.max_theta}]."
+            )
+
+        r_E = self.geom.r_E
+        elev_cm = self._surface_elevation_m * 1e2
+        r_det = self._radius_detector()
+        far_side = theta_deg > 90.0 + surface_dip_deg(r_det, r_E + elev_cm)
+
+        # Near side: the column ends at the local surface elevation.
+        # Far side: it ends at sea level, the generic far-side surface.
+        h_obs_cm = 0.0 if far_side else elev_cm
+        if self.geom.h_obs != h_obs_cm:
+            self.geom.set_h_obs(h_obs_cm)
+
+        effective_theta = local_zenith_deg(r_det, self.geom.r_obs, theta_deg)
+
+        if azimuth_deg is not None:
+            lat, lon = self._impact_point(theta_deg, azimuth_deg)
+            self._current_impact_latitude = lat
+            self._current_impact_longitude = lon
+            self._azimuth_averaging = False
+            self._azimuth_avg_coords = []
+            self._set_profile(self.table.column(lon, lat), h_obs_cm)
+            info(
+                2,
+                f"zenith={theta_deg:.1f}°, azimuth={azimuth_deg:.1f}°"
+                f" → impact lat={lat:.2f}°, lon={lon:.2f}°,"
+                f" local zenith={effective_theta:.2f}°",
+            )
+        else:
+            azi_grid = np.linspace(0.0, 360.0, self._n_azimuth, endpoint=False)
+            self._azimuth_avg_coords = [
+                self._impact_point(theta_deg, azi) for azi in azi_grid
+            ]
+            self._azimuth_averaging = True
+            self._current_impact_latitude = None
+            self._current_impact_longitude = None
+            self._set_profile(self._averaged_column(h_obs_cm), h_obs_cm)
+
+        self._effective_theta_deg = effective_theta
+        self._current_azimuth_deg = azimuth_deg
+        self.thrad = np.deg2rad(effective_theta)
+        self.theta_deg = theta_deg  # keep original; may be > 90 for upgoing
+        self.calculate_density_spline()
+
+    def _averaged_column(self, h_obs_cm):
+        """Mean of the impact-point columns over the cached azimuth grid.
+
+        The columns sit at different geographic positions and therefore on
+        different height grids, so they are resampled onto a shared one before
+        ``log(rho)``, the temperature and ``log(p)`` are averaged.  The shared
+        grid stops at the lowest of the column tops: extrapolating there would
+        flatten the profile, and completing it above is
+        :meth:`_extend_above`'s job.
+        """
+        columns = [self.table.column(lon, lat) for lat, lon in self._azimuth_avg_coords]
+        h_lo = max([h_obs_cm, *(np.min(c.h_cm) for c in columns)])
+        h_hi = min(np.max(c.h_cm) for c in columns)
+        if not h_lo < h_hi:
+            raise ValueError(
+                f"{self.__class__.__name__}: the impact-point columns for "
+                f"zenith {self.theta_deg} do not overlap in height "
+                f"({h_lo:.4e} >= {h_hi:.4e} cm); cannot average them."
+            )
+        h_grid = np.linspace(h_lo, h_hi, _AVERAGING_STEPS)
+
+        log_dens = np.zeros_like(h_grid)
+        temp = np.zeros_like(h_grid)
+        log_pressure = np.zeros_like(h_grid)
+        has_temp = all(c.T_K is not None for c in columns)
+        has_pressure = all(c.p_hPa is not None for c in columns)
+
+        for column in columns:
+            order = np.argsort(column.h_cm)
+            h_col = column.h_cm[order]
+            log_dens += np.interp(h_grid, h_col, np.log(column.rho_gcm3[order]))
+            if has_temp:
+                temp += np.interp(h_grid, h_col, column.T_K[order])
+            if has_pressure:
+                log_pressure += np.interp(h_grid, h_col, np.log(column.p_hPa[order]))
+
+        n = len(columns)
+        return AtmosphereTable(
+            h_cm=h_grid,
+            rho_gcm3=np.exp(log_dens / n),
+            T_K=temp / n if has_temp else None,
+            p_hPa=np.exp(log_pressure / n) if has_pressure else None,
+        )
+
+    # ------------------------------------------------------------------
+    # Impact coordinate properties
+    # ------------------------------------------------------------------
+
+    @property
+    def current_impact_latitude(self):
+        """Latitude of the shower impact point for the current angle (degrees).
+
+        ``None`` while azimuth-averaging, or before :meth:`set_theta` ran.
+        """
+        return self._current_impact_latitude
+
+    @property
+    def current_impact_longitude(self):
+        """Longitude of the shower impact point for the current angle (degrees).
+
+        ``None`` while azimuth-averaging, or before :meth:`set_theta` ran.
+        """
+        return self._current_impact_longitude
 
 
 class GeneralizedTarget:

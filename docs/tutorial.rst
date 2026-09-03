@@ -120,14 +120,19 @@ Available models are:
   Kept for back-compat. Not fork-safe; `path_workers` must be 0.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
   (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
-- 'Tabulated' - a measured or reanalysed vertical profile read from a CSV table,
-  e.g. ``mceq.set_density_model(('Tabulated', ('south_pole_20120103.csv',)))``.
+- 'Tabulated' and 'Tabulated_LC' - a measured or reanalysed atmosphere read from
+  a CSV table, e.g.
+  ``mceq.set_density_model(('Tabulated', ('era5_2026-07-01.csv', (16.1, 36.267))))``.
   The table gives ``h_cm`` plus either ``rho_gcm3`` or ``T_K`` and ``p_hPa``, and
   is extended above its topmost point with an isothermal tail (or with MSIS00).
-  It describes **one column above one site**, so the azimuth angle is ignored and
-  the zenith range stops at the horizon; see
-  :class:`MCEq.geometry.density_profiles.TabulatedAtmosphere` for the full format
-  and ``docs/examples/ERA5_density_spline.ipynb`` for converting ERA5 data to it.
+  With ``lat_deg``/``lon_deg`` columns it holds a whole longitude/latitude grid of
+  columns, and ``'Tabulated_LC'``
+  (:class:`MCEq.geometry.density_profiles.TabulatedLocationCentered`) samples it
+  at the shower impact point, so azimuth is resolved and — with a global table —
+  upgoing zenith angles up to 180° are supported. Without a grid the single
+  column is used for every direction. See
+  :class:`MCEq.geometry.density_profiles.TabulatedAtmosphere` for the format and
+  ``docs/examples/ERA5_density_spline.ipynb`` for converting ERA5 data to it.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
 
