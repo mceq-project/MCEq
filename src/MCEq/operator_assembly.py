@@ -75,7 +75,12 @@ def secant_layout(sec_ops, dim):
     inv_perm = np.empty_like(perm)
     inv_perm[perm] = np.arange(dim)
     return SimpleNamespace(
-        n_k=n_k, N=N, n_P=len(P), n_g=len(g), perm=perm, inv_perm=inv_perm,
+        n_k=n_k,
+        N=N,
+        n_P=len(P),
+        n_g=len(g),
+        perm=perm,
+        inv_perm=inv_perm,
         coupled=True,
     )
 
@@ -105,9 +110,7 @@ class CompiledOperator:
     Attributes:
       dim: state dimension (``n_k * dim_states`` for 2D databases).
       d_int, d_dec: ``(dim,)`` fp64 diagonals of A and B in the layout.
-      int_off, dec_off: canonical CSR off-diagonals in the layout, or
-        ``None`` when the caller supplies library handles directly (the
-        compatibility entry points of :mod:`MCEq.solvers`).
+      int_off, dec_off: canonical CSR off-diagonals in the layout.
       layout: :func:`identity_layout` or :func:`secant_layout` namespace.
       coupling: :func:`secant_coupling` namespace, or ``None`` (paraxial).
       sec_ops: the operator set the coupling was built from (identity is
@@ -131,18 +134,6 @@ class CompiledOperator:
     @property
     def split(self):
         return self.d_int, self.d_dec, self.int_off, self.dec_off
-
-    @classmethod
-    def from_split(cls, d_int, d_dec, int_off=None, dec_off=None, sec_ops=None):
-        """Wrap an already split (and, with ``sec_ops``, already permuted)
-        operator — the entry point for callers holding backend handles."""
-        dim = int(np.shape(d_int)[0])
-        if sec_ops is None:
-            return cls(d_int, d_dec, int_off, dec_off, identity_layout(dim), None, None)
-        return cls(
-            d_int, d_dec, int_off, dec_off, secant_layout(sec_ops, dim),
-            secant_coupling(sec_ops), sec_ops,
-        )
 
 
 def compile_operator(int_m, dec_m, sec_ops=None):

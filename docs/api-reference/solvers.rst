@@ -53,10 +53,14 @@ The solver is layered like the matrix build:
    the kernels (≤ 1e-11 relative in fp64) is a property of this object.
 3. A backend binds the compiled operator to its library: :func:`numpy_backend`
    (scipy CSR SpMM), :func:`mkl_backend` (MKL sparse BLAS handles,
-   row-major SpMM over the ``(dim, K)`` state) or :func:`cuda_backend`
-   (cuSPARSE via cupy, fp64 or fp32 with fp64 diagonal factors). The
-   backend owns the handles / device buffers and executes the stages of the
-   step on its array module — nothing else differs between backends.
+   row-major SpMM over the ``(dim, K)`` state), :func:`accelerate_backend`
+   (Apple Accelerate sparse handles, column-major SpMM in 64-column tiles
+   over staged buffers) or :func:`cuda_backend` (cuSPARSE via cupy, fp64 or
+   fp32 with fp64 diagonal factors). The backend owns the handles / device
+   buffers and executes the stages of the step on its array module —
+   nothing else differs between backends. The sparse product itself is one
+   small ``apply_off`` binding per library: :class:`ScipyApplyOff`,
+   :class:`MklApplyOff`, :class:`SpaccApplyOff`.
 4. :func:`etd2_driver` is the one step loop. It runs the single-axis solve
    (``K = 1``), the shared-path multi-RHS solve (``(dim, K)`` state, one
    path) and the LPT carousel (``(nsteps, K)`` per-lane paths with harvest /
@@ -69,13 +73,17 @@ coupling) and one backend per (``kernel_config``, precision, coupling);
 ``close()`` releases them. ``kernel_config`` selects the backend:
 ``numpy_etd2`` (always available), ``mkl_etd2`` (Linux/Windows when
 ``libmkl_rt`` is found; the ``"auto"`` choice), ``cuda_etd2`` (explicit
-opt-in) and ``accelerate_etd2`` (macOS; the ``"auto"`` choice there). The
-Accelerate kernels (:func:`solv_spacc_etd2` and siblings) and the MKL fp32
-multi-RHS kernel are not on the driver yet and keep their own step loops.
+opt-in) and ``accelerate_etd2`` (macOS; the ``"auto"`` choice there). Every
+one of them runs :func:`etd2_driver`, so every route — single axis,
+multi-RHS, the LPT carousel, the sec(θ) coupling — is available on all four,
+as is fp32, and so is any combination of them: the coupled route at fp32
+agrees between the host kernels and ``cuda_etd2`` to ~1e-6 per species.
 
-The ``solv_<backend>_etd2[_secant][_multirhs|_carousel]`` names are thin
-entry points that bind the matrices / handles / device operator a caller
-holds to the corresponding backend and run the driver.
+:func:`~MCEq.solvers.solve_etd2` is the entry point: it compiles the
+operator, binds the backend named by ``backend=`` and runs the driver,
+releasing the handles it created. ``MCEqRun`` does not use it — it caches
+its own operator and backend and calls :func:`~MCEq.solvers.etd2_driver`
+directly.
 
 Sparse storage
 ==============
@@ -86,8 +94,16 @@ on the 2D operators it is slower than CSR at every K; on the 1D operators
 it gains 15–20 % on the single SpMV alone and loses at K > 1, so it was
 dropped from the driver. MKL's row-major SpMM over the C-ordered ``(dim, K)``
 state runs 1.3–2× faster than the column-major tiled SpMM the former
-multi-RHS kernels used. ``config.numpy_bsr_blocksize`` remains for the
-numpy EM ρ-stack kernels only.
+multi-RHS kernels used.
+
+Accelerate offers no row-major SpMM, so :class:`SpaccApplyOff` keeps the
+column-major staging: it copies the row-major state into Fortran-ordered
+scratch allocated once per bind, and issues one accumulating SpMM per
+64-column tile (``solvers.backends.accelerate._SPACC_SPMM_TILE``, from the
+K-to-1000 bench —
+Accelerate peaks at K ≈ 32–64 and drops to ≈ 1.4× per RHS at K ≥ 128). At
+K = 1 the two layouts are the same bytes and the driver's own buffers go
+straight to the SpMV.
 
 Reference/API
 =============

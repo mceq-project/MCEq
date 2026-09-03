@@ -12,6 +12,7 @@ authors = [
   { name = "Stefan Fröse", email = "stefanfroese@as.edu.tw" },
 ]
 license = { text = "BSD 3-Clause License" }
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -42,8 +43,24 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     # NRLMSIS 2.1 (pure-Python) so CI can exercise the opt-in MSIS21 atmosphere.
-    # Requires Python >= 3.10; on 3.9 the MSIS21 smoke test importorskips.
-    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1 ; python_version >= '3.10'",
+    "nrlmsis @ git+https://github.com/afedynitch/nrlmsis2.1",
+]
+lint = [
+    # Layer contracts (.importlinter). 2.14 is the first release with
+    # acyclic_siblings.
+    "import-linter>=2.14",
+]
+notebooks = [
+    # Executes docs/examples/ and examples/ as a pytest gate; see
+    # .github/workflows/notebooks.yaml. nbmake already requires pytest and
+    # ipykernel, but the gate forces `--nbmake-kernel=python3`, so the kernel
+    # provider is a direct requirement of the invocation, not an accident of
+    # nbmake's dependency tree.
+    "nbmake>=1.5",
+    "ipykernel",
+    # Every example notebook imports pyplot, and matplotlib is not a runtime
+    # dependency of MCEq.
+    "matplotlib>=3.10",
 ]
 docs = [
     # Core
@@ -74,8 +91,12 @@ Documentation = "https://mceq.readthedocs.io/en/latest"
 Homepage = "https://github.com/afedynitch/MCEq"
 Issues = "https://github.com/afedynitch/MCEq/issues"
 
+[tool.ruff]
+# Notebooks are user-facing demonstrations, not library code, and one of them
+# does not even parse as Python source. Excluded from both check and format.
+exclude = ["docs/examples/**", "examples/**"]
+
 [tool.ruff.lint]
-exclude = ["docs/examples/**"]
 
 extend-select = [
     "I", # enable isort
@@ -116,6 +137,19 @@ name = "Documentation Updates"
 
 [tool.towncrier.fragment.feat]
 name="New Features"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# No addopts: the CI invocation in .github/workflows/_run_tests.yml passes its
+# own -m/-n arguments, and an addopts marker expression would silently compose
+# with them. golden_slow and golden_host are deselected by the root conftest
+# instead.
+markers = [
+    "golden: regression against a stored golden section under tests/golden/data",
+    "golden_slow: golden section costing minutes or a database CI does not carry (needs --run-golden-slow)",
+    "golden_host: golden section pinned bitwise to the numpy/BLAS build of the host that generated it, compared on the reference job only (needs --run-golden-host)",
+    "cuda: requires a usable CUDA device, not merely an importable cupy",
+]
 
 [tool.coverage.report]
 exclude_lines = [

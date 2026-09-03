@@ -8,7 +8,34 @@ import pytest
 
 from MCEq import config
 from MCEq.core import MCEqRun
-from MCEq.solvers import solv_numpy_etd2
+from MCEq.solvers import solve_etd2
+
+#: Globals :func:`mceq_2d` sets. ``conftest._restore_global_config_state``
+#: snapshots ``mceq_db_fname``, but it is function-scoped and so runs *after*
+#: this module-scoped fixture: its snapshot already holds the mutated value.
+#: Every name here is therefore restored locally, and the rest of the suite
+#: runs against a different database, so leaking the grid bounds or the
+#: muon/secant switches would change later solves.
+_MUTATED = (
+    "mceq_db_fname",
+    "e_min",
+    "e_max",
+    "muon_helicity_dependence",
+    "muon_multiple_scattering",
+    "secant_theta_transport",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_2d_config():
+    """Keep this module's database, grid bounds and muon/secant switches from
+    leaking into later tests, which run against a different database."""
+    saved = {name: getattr(config, name) for name in _MUTATED}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(config, name, value)
 
 
 @pytest.fixture(scope="module")
@@ -52,8 +79,15 @@ def test_stitched_etd2_matches_per_mode_loop(mceq_2d):
     grid_idcs = []
 
     # Stitched run
-    out_stitched, _ = solv_numpy_etd2(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_stacked.copy(), grid_idcs
+    out_stitched, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_stacked.copy(),
+        grid_idcs,
+        backend="numpy",
     )
 
     # Per-mode reference
@@ -61,8 +95,15 @@ def test_stitched_etd2_matches_per_mode_loop(mceq_2d):
     for k in range(n_k):
         int_m_k = int_m[k * N : (k + 1) * N, k * N : (k + 1) * N].tocsr()
         dec_m_k = dec_m[k * N : (k + 1) * N, k * N : (k + 1) * N].tocsr()
-        out_k, _ = solv_numpy_etd2(
-            nsteps, dX, rho_inv, int_m_k, dec_m_k, phi0.copy(), grid_idcs
+        out_k, _ = solve_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            int_m_k,
+            dec_m_k,
+            phi0.copy(),
+            grid_idcs,
+            backend="numpy",
         )
         out_per_mode[k * N : (k + 1) * N] = out_k
 

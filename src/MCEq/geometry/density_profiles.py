@@ -2,9 +2,6 @@ from abc import ABCMeta, abstractmethod
 from os.path import join
 
 import numpy as np
-from six import with_metaclass
-
-from MCEq import config
 
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import (
@@ -14,7 +11,7 @@ from MCEq.geometry.atmosphere_parameters import (
 from MCEq.misc import info
 
 
-class EarthsAtmosphere(with_metaclass(ABCMeta)):
+class EarthsAtmosphere(metaclass=ABCMeta):
     """
     Abstract class containing common methods on atmosphere.
     You have to inherit from this class and implement the virtual method
@@ -50,9 +47,17 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         from MCEq.geometry.geometry import EarthGeometry
 
         self.geom = kwargs.pop("geometry", EarthGeometry())
+        environment = kwargs.pop("environment", None)
+        if environment is None:
+            from MCEq import config
+
+            environment = config.environment
         self.thrad = None
         self.theta_deg = None
-        self._max_den = config.max_density
+        # Configured surface density, so ``max_den`` reads before the first
+        # ``set_theta``; that call overwrites it with ``get_density(geom.h(0,
+        # thrad))``, the atmosphere top -- the path minimum, not the maximum.
+        self._max_den = environment.max_density
         self.max_theta = 90.0
         self.location = None
         self.season = None
@@ -1427,8 +1432,8 @@ class GeneralizedTarget:
     """This class provides a way to run MCEq on piece-wise constant
     one-dimenional density profiles.
 
-    The default values for the average density are taken from
-    config file variables `len_target`, `env_density` and `env_name`.
+    The default values for the average density mirror the config file
+    variables `len_target`, `env_density` and `env_name` as of import.
     The density profile has to be built by calling subsequently
     :func:`add_material`. The current composition of the target
     can be checked with :func:`draw_materials` or :func:`print_table`.
@@ -1440,17 +1445,33 @@ class GeneralizedTarget:
       adjust the nuclear mass in :mod:`mceq_config`.
 
     Args:
-      len_target (float): total length of the target in meters
+      len_target (float): total length of the target in cm
       env_density (float): density of the default material in g/cm**3
       env_name (str): title for this environment
     """
 
     def __init__(
         self,
-        len_target=config.len_target * 1e2,  # cm
-        env_density=config.env_density,  # g/cm3
-        env_name=config.env_name,
+        len_target=None,  # cm
+        env_density=None,  # g/cm3
+        env_name=None,
+        environment=None,
     ):
+        # Resolved here rather than as signature defaults: a default binds when
+        # this module is first imported, which happens lazily from
+        # MCEqRun.set_density_model, so whether a caller's `config.len_target`
+        # was seen depended on whether it was written before that import.
+        if len_target is None or env_density is None or env_name is None:
+            from MCEq import config
+
+            env = config.environment if environment is None else environment
+            if len_target is None:
+                len_target = env.len_target * 1e2
+            if env_density is None:
+                env_density = env.env_density
+            if env_name is None:
+                env_name = env.env_name
+
         self.len_target = len_target
         self.env_density = env_density
         self.env_name = env_name

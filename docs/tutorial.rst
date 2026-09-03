@@ -117,7 +117,7 @@ Available models are:
   IceCube at the South Pole (upgoing supported up to 180°) and `_KM3NeT`
   on ORCA / ARCA. Fork-safe — use `path_workers > 1` in :func:`MCEqRun.solve_fullsky`.
 - 'MSIS00' and 'MSIS00_IC' - the legacy NRLMSISE-00 backend (Fortran-via-C).
-  Kept for back-compat. Not fork-safe; `path_workers` must be 0.
+  Kept for back-compat. Also fork-safe.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
   (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
 - 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
@@ -188,7 +188,7 @@ carousel (pipeline width ``carousel_K``, default ``min(K, 128)``), and
 batches whose conditions collapse onto a single path take a cheaper
 shared-path route that also supports ``int_grid`` snapshots. For large
 grids, ``path_workers=N`` forks a process pool for the path build
-(MSIS21 + CORSIKA only; MSIS00 is rejected as not fork-safe).
+(every atmosphere; a worker's paths are bitwise equal to the serial ones).
 
 For sky grids, ``solve_fullsky`` additionally applies the geomagnetic
 rigidity cutoff: when ``geomagnetic_cutoff`` is on (auto-detected for

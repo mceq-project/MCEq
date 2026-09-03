@@ -25,10 +25,19 @@ python_add_library(_libcorsikaatm MODULE
                    src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
 install(TARGETS _libcorsikaatm DESTINATION ${INSTALL_DIR}/geometry/corsikaatm)
 
-# Platform-neutral fused ETD2 post-apply kernels — no sparse-backend deps,
-# builds on every platform. Used by the MKL multi-RHS path on Linux/Windows.
+# Platform-neutral fused ETD2 step stages — no sparse-backend deps, builds on
+# every platform. The host backend runs them on every route and precision.
 python_add_library(_libetd2_kernels MODULE
                    src/MCEq/etd2_kernels/etd2_kernels.c WITH_SOABI)
+# These must produce the same bits as the numpy lowering of the same formula
+# table (MCEq.solvers.numerics), which tests/test_solvers.py pins. Contracting
+# a * b + c into an FMA is a different rounding of the same association, so it
+# would break that wherever FMA is baseline — aarch64, or x86-64 built with
+# -march=native. It does not fire on baseline x86-64 only for want of an FMA
+# instruction, which is luck, not a guarantee.
+target_compile_options(
+  _libetd2_kernels PRIVATE
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang,IntelLLVM>:-ffp-contract=off>)
 install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/etd2_kernels)
 
 if(APPLE)

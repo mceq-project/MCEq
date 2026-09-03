@@ -50,9 +50,9 @@ cap — 0.28 / 0.46 / 0.57 at caps 50 / 60 / 65 deg, 1.07 at the default
 75, 2.65 at 85 (current operator, 48-mode grid) — so at production
 settings the iteration diverges, and even below the rho = 1 crossover
 (~70 deg) the stitched form showed transient blow-ups at moderate
-stiffness in prototyping. Instead the kernels
-(``solv_numpy_etd2_secant`` / ``solv_mkl_etd2_secant`` /
-``solv_cuda_etd2_secant``) treat the coupled same-(species,E) block
+stiffness in prototyping. Instead the step loop
+(``MCEq.solvers.etd2_driver``, on any backend, once this operator set is
+compiled into the ETD2 operator) treats the coupled same-(species,E) block
 ``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
 (constant, shared by every state), which is unconditionally stable at
 any cap and reproduces the S-corrected equilibrium exactly in the
@@ -97,12 +97,16 @@ def secant_coupling_matrix(
     w_flat=1.0,
     n_theta=24001,
     entry_tol=1e-4,
+    paths=None,
 ):
     """Return ``T`` such that ``S = I + T`` represents multiplication by
     ``min(sec theta, sec theta_cap)`` on the Hankel mode amplitudes.
 
     Rows with ``k_grid > row_kmax`` and entries below ``entry_tol`` are
     zeroed. The result is cached per (k_grid, parameters).
+
+    ``paths`` is the ``paths`` config group; its ``data_dir`` holds the
+    on-disk operator cache. Without it only the in-process cache applies.
     """
     key = (
         tuple(np.asarray(k_grid, dtype=float)),
@@ -116,21 +120,23 @@ def secant_coupling_matrix(
     if key in _T_CACHE:
         return _T_CACHE[key]
 
-    # Disk cache in the MCEq data directory: the dense-grid construction
-    # takes ~4 minutes. The MCEq version is part of the hash so a version
-    # bump invalidates stale operators.
-    import hashlib
+    # Disk cache under paths.data_dir: the dense-grid construction takes
+    # ~4 minutes. The MCEq version is part of the hash so a version bump
+    # invalidates stale operators. Without paths there is nowhere to put
+    # it and only the in-process cache applies.
+    cache_dir = cache_file = None
+    if paths is not None:
+        import hashlib
 
-    from MCEq import config
-    from MCEq.version import __version__
+        from MCEq.version import __version__
 
-    digest = hashlib.sha256(repr((__version__, key)).encode()).hexdigest()[:16]
-    cache_dir = config.data_dir / "secant_cache"
-    cache_file = cache_dir / f"T_{digest}.npy"
-    if cache_file.exists():
-        T = np.load(cache_file)
-        _T_CACHE[key] = T
-        return T
+        digest = hashlib.sha256(repr((__version__, key)).encode()).hexdigest()[:16]
+        cache_dir = paths.data_dir / "secant_cache"
+        cache_file = cache_dir / f"T_{digest}.npy"
+        if cache_file.exists():
+            T = np.load(cache_file)
+            _T_CACHE[key] = T
+            return T
 
     k_grid = np.asarray(k_grid, dtype=np.float64)
     n_k = len(k_grid)
@@ -171,19 +177,26 @@ def secant_coupling_matrix(
     T[k_grid > row_kmax, :] = 0.0
     T[np.abs(T) < entry_tol] = 0.0
     _T_CACHE[key] = T
-    try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        np.save(cache_file, T)
-    except OSError:
-        pass
+    if cache_file is not None:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            np.save(cache_file, T)
+        except OSError:
+            pass
     return T
 
 
-def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=None):
+def build_secant_kernel_ops(
+    k_grid, e_centers, n_species, spec, theta_cap_deg=None, paths=None
+):
     """Assemble the constant data the secant ETD2RK kernel needs.
 
-    ``theta_cap_deg`` overrides ``config.secant_theta_cap_deg``; it must
-    be a number in [50, 90) (see the config docstring).
+    ``spec`` is the ``secant`` config group (``cap_deg``, ``row_kmax``,
+    ``lam_rel``, ``w_flat``, ``e_max``); ``paths`` is the ``paths`` group,
+    forwarded to :func:`secant_coupling_matrix` for its disk cache.
+
+    ``theta_cap_deg`` overrides ``spec.cap_deg``; it must be a number in
+    [50, 90) (see the config docstring).
 
     Returns a dict with:
       P          -- indices of the coupled modes (kappa <= row_kmax)
@@ -191,21 +204,22 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=
       T_PP       -- the (n_P, n_P) same-subspace block
       V, Vi, lam -- eigendecomposition of S_P = I + T_PP (real)
       low_e_idx  -- state columns (species x energy) with
-                    E_kin < config.secant_theta_e_max
+                    E_kin < spec.e_max
       n_k        -- number of Hankel modes
     """
     if theta_cap_deg is None:
-        theta_cap_deg = config.secant_theta_cap_deg
+        theta_cap_deg = spec.cap_deg
     theta_cap_deg = float(theta_cap_deg)
     T = secant_coupling_matrix(
         np.asarray(k_grid, dtype=np.float64),
         theta_cap_deg=theta_cap_deg,
-        row_kmax=config.secant_theta_row_kmax,
-        lam_rel=config.secant_theta_lam_rel,
-        w_flat=config.secant_theta_w_flat,
+        row_kmax=spec.row_kmax,
+        lam_rel=spec.lam_rel,
+        w_flat=spec.w_flat,
+        paths=paths,
     )
     k_grid = np.asarray(k_grid, dtype=np.float64)
-    P = np.where(k_grid <= config.secant_theta_row_kmax)[0]
+    P = np.where(k_grid <= spec.row_kmax)[0]
     T_P = T[P, :]
     T_PP = T[np.ix_(P, P)]
     S_P = np.eye(len(P)) + T_PP
@@ -229,7 +243,8 @@ def build_secant_kernel_ops(k_grid, e_centers, n_species, config, theta_cap_deg=
         f"{np.linalg.cond(V):.1e}",
     )
 
-    e_max = getattr(config, "secant_theta_e_max", None)
+    # e_max is optional: absent or None couples every energy.
+    e_max = getattr(spec, "e_max", None)
     e_centers = np.asarray(e_centers)
     if e_max is None:
         low_e = np.ones(len(e_centers), dtype=bool)

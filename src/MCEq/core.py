@@ -3,10 +3,10 @@ from time import time
 
 import numpy as np
 import scipy.sparse as sp
-import six
 
 import MCEq.data
 from MCEq import config
+from MCEq.download import ensure_db_available
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.operator_assembly import compile_operator
 from MCEq.particlemanager import ParticleManager
@@ -19,13 +19,15 @@ else:
 
 
 # Module-level worker state for the optional process-pool path build
-# inside :meth:`MCEqRun._build_pixel_paths`. Workers fork from the parent
+# inside :meth:`MCEqRun._build_condition_paths`. Workers fork from the parent
 # and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
 # instance itself never has to be picklable. Each worker process gets
 # its own CoW copy of the density model, so per-worker
 # ``set_zenith_azimuth`` mutations stay process-local. Only used when
 # ``solve_fullsky(path_workers=N>0)`` is requested *and* the atmosphere
-# is not azimuth-symmetric (MSIS location-centered case).
+# is not azimuth-symmetric (MSIS location-centered case). Every atmosphere
+# is fork-reproducible; the paths a worker returns are bitwise equal to the
+# serial ones.
 _PATH_WORKER_MCEQ = None
 
 
@@ -123,15 +125,11 @@ class MCEqBatchResult:
         """
         n_selected = sum(x is not None for x in (k, pixel, zenith))
         if n_selected > 1:
-            raise ValueError(
-                "column_index: provide only one of k, pixel, or zenith"
-            )
+            raise ValueError("column_index: provide only one of k, pixel, or zenith")
         if k is not None:
             k = int(k)
             if not -self.K <= k < self.K:
-                raise IndexError(
-                    f"column_index: k={k} out of range for K={self.K}"
-                )
+                raise IndexError(f"column_index: k={k} out of range for K={self.K}")
             return k % self.K
 
         if pixel is not None or zenith is not None:
@@ -153,8 +151,7 @@ class MCEqBatchResult:
             match = np.flatnonzero(np.isclose(self.zenith_grid, zenith))
             if match.size == 0:
                 raise ValueError(
-                    f"column_index: zenith {zenith} not in grid "
-                    f"{self.zenith_grid}"
+                    f"column_index: zenith {zenith} not in grid {self.zenith_grid}"
                 )
             i_zen = int(match[0])
             if azimuth is None:
@@ -222,8 +219,7 @@ class MCEqBatchResult:
         else:
             if self.grid_sol is None or len(self.grid_sol) == 0:
                 raise Exception(
-                    "Solution has not been computed on a grid. "
-                    "Re-run with int_grid."
+                    "Solution has not been computed on a grid. Re-run with int_grid."
                 )
             if grid_idx >= len(self.grid_sol):
                 state = self.grid_sol[-1][:, col]
@@ -256,9 +252,7 @@ class MCEqBatchResult:
           (np.ndarray[n_zen, n_az]): flux map, kinetic-energy units.
         """
         if self.zenith_grid is None:
-            raise ValueError(
-                "skymap() is only available on solve_fullsky results"
-            )
+            raise ValueError("skymap() is only available on solve_fullsky results")
         e_grid = self._mceq.e_grid
         if not e_grid[0] <= kin_energy <= e_grid[-1]:
             raise ValueError(
@@ -293,9 +287,7 @@ class MCEqBatchResult:
     def __repr__(self):
         parts = [f"K={self.sol.shape[1]}"]
         if self.zenith_grid is not None:
-            parts.append(
-                f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}"
-            )
+            parts.append(f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}")
         if self.grid_sol is not None and len(self.grid_sol):
             parts.append(f"n_snapshots={len(self.grid_sol)}")
         return f"MCEqBatchResult({', '.join(parts)})"
@@ -337,7 +329,7 @@ class MCEqRun:
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-        config.ensure_db_available()
+        ensure_db_available()
         if config.enable_em and config.muon_helicity_dependence:
             # Helicity L/R muon variants add semi-Lagrangian rows without
             # diagonal damping that destabilize the EM system
@@ -354,14 +346,17 @@ class MCEqRun:
         he_le_transition = kwargs.pop(
             "he_le_transition", le_config.get("he_le_transition", 80.0)
         )
-        he_le_trwidth = kwargs.pop(
-            "he_le_trwidth", le_config.get("he_le_trwidth", 0.3)
-        )
+        he_le_trwidth = kwargs.pop("he_le_trwidth", le_config.get("he_le_trwidth", 0.3))
+        # Group views, not snapshots: a config write after construction is seen.
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=self.medium,
             low_energy_model=low_energy_model,
             he_le_transition=he_le_transition,
             he_le_trwidth=he_le_trwidth,
+            paths=config.paths,
+            grid=config.grid,
+            physics=config.physics,
+            em=config.em,
         )
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
@@ -371,7 +366,9 @@ class MCEqRun:
         self.theta_deg = theta_deg
 
         #: Interface to interaction tables of the HDF5 database
-        self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
+        self._interactions = MCEq.data.Interactions(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._int_cs = MCEq.data.InteractionCrossSections(
@@ -379,10 +376,14 @@ class MCEqRun:
         )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db)
+        self._cont_losses = MCEq.data.ContinuousLosses(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: Interface to decay tables of the HDF5 database
-        self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
+        self._decays = MCEq.data.Decays(
+            mceq_hdf_db=self._mceq_db, physics=config.physics
+        )
 
         #: Particle manager (initialized/updated in set_interaction_model)
         self.pman = None
@@ -808,7 +809,11 @@ class MCEqRun:
             self._particle_list = self._interactions.particles + self._decays.particles
             # Create particle database
             self.pman = ParticleManager(
-                self._particle_list, self._energy_grid, self._int_cs, self.medium
+                self._particle_list,
+                self._energy_grid,
+                self._int_cs,
+                self.medium,
+                physics=config.physics,
             )
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
@@ -843,85 +848,6 @@ class MCEqRun:
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False
         )
-
-    def enable_em_density_interpolation(self, rho_grid=None):
-        """Build an int_m stack indexed by air density ρ for LPM-realistic runs.
-
-        Reads the ρ-stack written by mceq-maintenance-tools's
-        ``5_assemble_em_db --air-density-grid`` from the active EM HDF5 file
-        and rebuilds the interaction matrix once per slice.  The solver
-        kernel (currently only ``numpy_etd2``) will log-linear-interpolate
-        between bracketing slices at each integration step using ρ(X).
-
-        Default behaviour (no call) keeps the single-density legacy slice —
-        which for air showers below ~10 EeV is what the project's
-        validated CORSIKA closures use, so this method is opt-in.
-
-        Args:
-          rho_grid: 1-D array of densities (g/cm³).  Defaults to the
-            ``rho_grid`` dataset present in the EM DB.
-
-        Raises:
-          RuntimeError: when ``config.enable_em`` is False, the EM DB has
-            no ρ-stack, or the medium is not air.
-        """
-        if not config.enable_em:
-            raise RuntimeError("EM module disabled (config.enable_em is False).")
-        if self.medium != "air":
-            raise RuntimeError(
-                f"ρ-stratified EM is only available for the air medium "
-                f"(self.medium={self.medium!r})."
-            )
-        if rho_grid is None:
-            rho_grid = self._mceq_db.em_rho_grid(self.medium)
-        if rho_grid is None or len(rho_grid) < 2:
-            raise RuntimeError(
-                "No ρ-stack in the active EM database — build one with "
-                "5_assemble_em_db --air-density-grid=lo,hi,N."
-            )
-
-        info(
-            1,
-            f"Building int_m stack for {len(rho_grid)} ρ slices "
-            f"({float(rho_grid[0]):.2e} – {float(rho_grid[-1]):.2e} g/cm³)...",
-        )
-        prev_density = getattr(config, "em_air_density", None)
-        int_m_stack = []
-        try:
-            for rho in rho_grid:
-                config.em_air_density = float(rho)
-                # Force-reload EM cross sections and yield matrices for this slice.
-                self._int_cs.load(self._interactions.iam)
-                self._interactions.load(
-                    self._interactions.iam, parent_list=self._particle_list
-                )
-                self.pman.set_interaction_model(self._int_cs, self._interactions)
-                int_m_slice, _ = self.matrix_builder.construct_matrices(
-                    skip_decay_matrix=True
-                )
-                int_m_stack.append(int_m_slice)
-        finally:
-            config.em_air_density = prev_density
-            # Restore the working int_m to the previously active density slice.
-            self._int_cs.load(self._interactions.iam)
-            self._interactions.load(
-                self._interactions.iam, parent_list=self._particle_list
-            )
-            self.pman.set_interaction_model(self._int_cs, self._interactions)
-            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-                skip_decay_matrix=False
-            )
-
-        self._int_m_stack = int_m_stack
-        self._em_rho_grid = np.asarray(rho_grid, dtype=float)
-        info(1, f"int_m stack ready ({len(int_m_stack)} slices).")
-
-    def disable_em_density_interpolation(self):
-        """Drop the ρ-stack; subsequent solves use the single int_m."""
-        if hasattr(self, "_int_m_stack"):
-            del self._int_m_stack
-        if hasattr(self, "_em_rho_grid"):
-            del self._em_rho_grid
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -1199,8 +1125,7 @@ class MCEqRun:
 
             # response matrix: one column per primary energy
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries],
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
                 axis=1,
             )
             res = mceq.solve_batch(phi0)
@@ -1591,8 +1516,12 @@ class MCEqRun:
         start = time()
 
         self._solution, self.grid_sol = self._run_etd2(
-            nsteps, dX, rho_inv, phi0, grid_idcs,
-            sec_ops=self._resolve_secant("solve"),
+            nsteps,
+            dX,
+            rho_inv,
+            phi0,
+            grid_idcs,
+            sec_ops=self._resolve_secant(),
         )
 
         if isinstance(self.grid_sol, list):
@@ -1700,8 +1629,12 @@ class MCEqRun:
             phi0 = np.copy(self._phi0)
 
         self._solution, self.grid_sol = self._run_etd2(
-            nsteps, dX, rho_inv, phi0, grid_idcs,
-            sec_ops=self._resolve_secant("solve"),
+            nsteps,
+            dX,
+            rho_inv,
+            phi0,
+            grid_idcs,
+            sec_ops=self._resolve_secant(),
         )
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
@@ -1734,8 +1667,7 @@ class MCEqRun:
 
         * ``conditions=None`` (default): all columns share the current
           ``(zenith, atmosphere)``. K is the number of ``phi0`` columns.
-          Supports ``int_grid`` snapshots, fp32 (non-numpy backends) and
-          the EM ρ-stack.
+          Supports ``int_grid`` snapshots and fp32 (non-numpy backends).
         * ``conditions=[...]``: one dict per batch member with optional
           keys ``zenith_deg``, ``azimuth_deg`` and ``density_model``
           (config tuple or instance); missing keys fall back to the
@@ -1754,24 +1686,24 @@ class MCEqRun:
         For 2D databases the sec(theta) transport correction resolves
         through ``config.secant_mode(is_2d)`` exactly as in
         :meth:`solve`: one constant operator set (the cap is not zenith
-        dependent) is shared by every column, applied on the
-        ``numpy_etd2`` / ``mkl_etd2`` (fp64) / ``cuda_etd2`` backends;
-        other configurations downgrade to paraxial with a warning under
-        ``"auto"`` and refuse under ``"require"``.
+        dependent) is shared by every column, on every backend and at
+        either ``dtype``.
 
         Examples::
 
             # K single primaries (response matrix) at the current angle
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries], axis=1)
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
+                axis=1,
+            )
             res = mceq.solve_batch(phi0)
 
             # one spectrum through 12 months x 3 zeniths
             conditions = [
-                {"zenith_deg": z,
-                 "density_model": ("MSIS21", ("SouthPole", month))}
-                for month in months for z in (0.0, 30.0, 60.0)]
+                {"zenith_deg": z, "density_model": ("MSIS21", ("SouthPole", month))}
+                for month in months
+                for z in (0.0, 30.0, 60.0)
+            ]
             res = mceq.solve_batch(conditions=conditions)
             res.get_solution("conv_numu", k=5, mag=3)
 
@@ -1788,19 +1720,17 @@ class MCEqRun:
             Only supported for shared-path batches (``conditions=None``).
           grid_var (str): only ``"X"`` is supported.
           dtype (np.float32 | np.float64): precision of the state
-            buffers. fp32 is wired for ``accelerate_etd2`` /
-            ``cuda_etd2`` / ``mkl_etd2`` shared-path batches and the
-            ``cuda_etd2`` carousel; the diagonal-factor pipeline
-            (``exp(h·D)``, φ₁, φ₂) is always computed in fp64 on every
-            backend (fp32 φ-functions suffer catastrophic
-            cancellation), so relative error vs fp64 is ≤ 1e-4 for the
-            production particle set on all fp32 routes.
+            buffers, on every backend and every route. The diagonal-factor
+            pipeline (``exp(h·D)``, φ₁, φ₂) is always computed in fp64
+            (fp32 φ-functions suffer catastrophic cancellation) and cast
+            once on the way out, so relative error vs fp64 is ≤ 1e-4 for
+            the production particle set on all fp32 routes. See
+            ``MCEq.solvers.backends.base._PRECISION_CONTRACT``.
           carousel_K (int | None): pipeline width for the LPT scheduler
             (heterogeneous batches only). ``None`` → ``min(K, 128)``.
           path_workers (int): fork-pool size for a parallel path build
-            (heterogeneous batches only). Must be 0 with MSIS00-based
-            atmospheres (not fork-safe) and with ``density_model``
-            overrides; fine with MSIS21/CORSIKA zenith/azimuth batches.
+            (heterogeneous batches only). Must be 0 with ``density_model``
+            overrides; every atmosphere is fork-reproducible.
           X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
             non-uniform path knobs forwarded to
             :meth:`_calculate_integration_path`; same semantics as
@@ -1817,7 +1747,7 @@ class MCEqRun:
                 f"solve_batch: dtype must be float32 or float64, got {dtype}"
             )
 
-        sec_ops = self._resolve_secant("solve_batch", dtype)
+        sec_ops = self._resolve_secant()
 
         # --- resolve phi0 ------------------------------------------------
         if phi0 is None:
@@ -1840,8 +1770,7 @@ class MCEqRun:
             n_cols = phi0_arr.shape[1]
         else:
             raise ValueError(
-                f"solve_batch: phi0 must be 1-D or 2-D, "
-                f"got shape {phi0_arr.shape}"
+                f"solve_batch: phi0 must be 1-D or 2-D, got shape {phi0_arr.shape}"
             )
 
         if conditions is not None:
@@ -1869,9 +1798,7 @@ class MCEqRun:
         # same amplitude, so tile the rows across the n_k blocks — the
         # exact analogue of the np.tile in solve().
         if self._mceq_db.is_2d:
-            phi0_mat = np.ascontiguousarray(
-                np.tile(phi0_mat, (self._mceq_db.n_k, 1))
-            )
+            phi0_mat = np.ascontiguousarray(np.tile(phi0_mat, (self._mceq_db.n_k, 1)))
 
         # --- build integration paths -------------------------------------
         path_kwargs = dict(
@@ -1880,8 +1807,7 @@ class MCEqRun:
         if conditions is None:
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be "
-                    "strictly increasing."
+                    "The X values in int_grid are required to be strictly increasing."
                 )
             self._calculate_integration_path(int_grid, grid_var, **path_kwargs)
             paths = [self.integration_path] * K
@@ -1918,18 +1844,16 @@ class MCEqRun:
             # zenith).
             phi0_typed = phi0_mat.astype(dtype, copy=True)
             sol, grid_sol = self._run_etd2(
-                nsteps, dX, rho_inv, phi0_typed, grid_idcs, dtype=dtype,
+                nsteps,
+                dX,
+                rho_inv,
+                phi0_typed,
+                grid_idcs,
+                dtype=dtype,
                 sec_ops=sec_ops,
             )
             legacy = (sol, grid_sol)
         else:
-            if getattr(self, "_int_m_stack", None) is not None:
-                raise NotImplementedError(
-                    "solve_batch: the EM ρ-stack "
-                    "(enable_em_density_interpolation) is not wired for "
-                    "heterogeneous-path (carousel) batches yet. Disable it "
-                    "or use a shared-path batch."
-                )
             from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
             if carousel_K is None:
@@ -1944,10 +1868,15 @@ class MCEqRun:
             info(
                 2,
                 f"solve_batch: carousel route K={K} K_pipe={K_pipe} T={T} "
-                f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
+                f"sum_nsteps={sum_ns} waste={waste * 100:.2f}%",
             )
             sol = self._run_etd2_carousel(
-                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype,
+                dX_c,
+                ri_c,
+                phi_init,
+                sched,
+                phi0_mat,
+                dtype=dtype,
                 sec_ops=sec_ops,
             )
             grid_sol = None
@@ -2046,12 +1975,10 @@ class MCEqRun:
           X_start, eps, dX_max, dX_min, fd_span: ETD2 path knobs, see
             :meth:`solve`.
           path_workers (int): fork-pool size for a parallel path build.
-            Only allowed without ``density_model`` overrides and with a
-            fork-safe atmosphere (MSIS00 is rejected — the nrlmsise-00
-            Fortran library has SAVE state that drifts ~1e-7 relative
-            under fork CoW; the pure-Python MSIS21 tree is fork-safe and
-            is the production user of this pool, see
-            results/allsky-orca-msis21.md).
+            Only allowed without ``density_model`` overrides. A worker's
+            paths are bitwise equal to the serial ones on every
+            atmosphere, MSIS00 included. Ignored where fork is
+            unavailable (Windows), which builds serially.
 
         Returns:
           list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
@@ -2086,15 +2013,12 @@ class MCEqRun:
                     "on the active atmosphere; build density_model "
                     "overrides serially (path_workers=0)."
                 )
-            from MCEq.geometry.density_profiles import MSIS00Atmosphere
+            import multiprocessing as _mp
 
-            if isinstance(self.density_model, MSIS00Atmosphere):
-                raise ValueError(
-                    "path_workers > 1 is not safe with MSIS-based "
-                    "atmospheres (nrlmsise-00 is not fork-safe; "
-                    "paths drift by ~1e-7 relative and are not "
-                    "reproducible). Use path_workers=0 for MSIS."
-                )
+            # Windows and any spawn-only platform: the pool needs fork to
+            # share the atmosphere, so build serially instead. Same paths.
+            if "fork" not in _mp.get_all_start_methods():
+                n_workers = 0
 
         def dm_key_of(c):
             dm_spec = c.get("density_model")
@@ -2204,63 +2128,6 @@ class MCEqRun:
                 self.set_zenith_azimuth(saved_zen, saved_az)
             self.integration_path = None
 
-    def _build_pixel_paths(
-        self,
-        zenith_grid,
-        azimuth_grid=None,
-        *,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-        path_workers=0,
-    ):
-        """Build per-pixel ETD2 integration paths for a (zenith × azimuth) grid.
-
-        Thin wrapper around :meth:`_build_condition_paths`: flattens the
-        grid into per-pixel conditions with azimuth as the inner axis.
-        Azimuth-independent atmospheres (``density_model.depends_on_azimuth``
-        False) automatically share one path per zenith through the
-        condition dedup.
-
-        Returns ``(paths, pixel_index, K)`` where ``paths`` is a list of
-        ``(nsteps, dX, rho_inv, grid_idcs)`` tuples (one per pixel) and
-        ``pixel_index`` is a ``(K, 2)`` int array mapping each column
-        back to its ``(i_zen, i_az)`` grid coordinates.
-        """
-        zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
-        if azimuth_grid is not None:
-            azimuth_grid = np.asarray(azimuth_grid, dtype=np.float64).reshape(-1)
-        n_zen = zenith_grid.size
-        n_az = azimuth_grid.size if azimuth_grid is not None else 1
-        K = n_zen * n_az
-        if K < 1:
-            raise ValueError("_build_pixel_paths: empty (zenith, azimuth) grid")
-
-        conditions = []
-        pixel_index = np.empty((K, 2), dtype=np.int32)
-        k = 0
-        for i_zen, zen in enumerate(zenith_grid):
-            for i_az in range(n_az):
-                cond = {"zenith_deg": float(zen)}
-                if azimuth_grid is not None:
-                    cond["azimuth_deg"] = float(azimuth_grid[i_az])
-                conditions.append(cond)
-                pixel_index[k] = (i_zen, i_az)
-                k += 1
-
-        paths = self._build_condition_paths(
-            conditions,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-            path_workers=path_workers,
-        )
-        return paths, pixel_index, K
-
     def _is_geomag_eligible_atmosphere(self):
         """True if the active atmosphere has a meaningful geographic location.
 
@@ -2329,9 +2196,8 @@ class MCEqRun:
                 knobs.
             return_pixel_index: also return the ``(K, 2)`` mapping
                 ``(i_zen, i_az)`` for reshaping back to grid.
-            path_workers: fork-pool size for parallel path build. Must
-                be 0 with MSIS00 (not fork-safe); any value ≥ 1 is fine
-                with MSIS21 and CORSIKA-style atmospheres.
+            path_workers: fork-pool size for parallel path build. Any
+                value >= 1 is fine on every atmosphere.
             geomagnetic_cutoff: override the constructor-level toggle for
                 this call. ``None`` means "use ``self.geomagnetic_cutoff``"
                 (auto-detect from the atmosphere if also ``None``).
@@ -2419,11 +2285,11 @@ class MCEqRun:
             )
         if cutoff_flag and not phi0_is_2d:
             from MCEq.geometry.gtracr_cutoff import (
-                build_phi0_with_cutoff, get_cutoff_map,
+                build_phi0_with_cutoff,
+                get_cutoff_map,
             )
-            az_centres = (
-                azimuth_grid if azimuth_grid is not None else np.array([0.0])
-            )
+
+            az_centres = azimuth_grid if azimuth_grid is not None else np.array([0.0])
             primary = getattr(self, "pmodel", None)
             if primary is None:
                 info(
@@ -2434,7 +2300,10 @@ class MCEqRun:
             else:
                 ck = dict(cutoff_kwargs or {})
                 rc_grid = get_cutoff_map(
-                    self.density_model, zenith_grid, az_centres, **ck,
+                    self.density_model,
+                    zenith_grid,
+                    az_centres,
+                    **ck,
                 )
                 # Pixel order: (i_zen, i_az) flattened with az inner.
                 rc_flat = rc_grid.flatten(order="C")
@@ -2497,47 +2366,20 @@ class MCEqRun:
     # operator set) into one CompiledOperator; a backend of
     # ``config.kernel_config`` binds it; ``etd2_driver`` runs every route on
     # it. Both objects are cached here against the identity of their inputs.
-    # Two kernels are not on the driver yet and keep their own handles:
-    # Accelerate (all routes) and the MKL fp32 multi-RHS kernel.
+    # fp32 is a dtype the backends carry, not a kernel family of its own.
 
-    def _resolve_secant(self, caller, dtype=np.float64):
+    def _resolve_secant(self):
         """The sec(theta) operator set for a solve, or ``None`` for the
         paraxial transport.
 
         One constant set serves every column of every batch (the cap is
-        not zenith dependent). Configurations without a secant route —
-        the Accelerate backend, fp32 state buffers outside cuda, the EM
-        rho-stack — fall back to the paraxial transport under ``"auto"``
-        and raise under ``"require"``.
+        not zenith dependent). The coupled route is driver code plus the
+        ``apply_off`` binding, so every kernel carries it at every
+        precision; only ``config.secant_mode`` decides.
         """
-        mode = config.secant_mode(self._mceq_db.is_2d)
-        if mode == "off":
+        if config.secant_mode(self._mceq_db.is_2d) == "off":
             return None
-        kc = config.kernel_config.lower()
-        blockers = []
-        if kc not in ("numpy_etd2", "mkl", "mkl_etd2", "cuda", "cuda_etd2"):
-            blockers.append(f"kernel_config = {config.kernel_config}")
-        if np.dtype(dtype) == np.float32 and kc not in ("cuda", "cuda_etd2"):
-            blockers.append("fp32 state buffers outside cuda_etd2")
-        if getattr(self, "_int_m_stack", None) is not None:
-            blockers.append("the EM rho-stack")
-        if not blockers:
-            return self._build_secant_ops()
-        why = " and ".join(blockers)
-        if mode == "require":
-            raise NotImplementedError(
-                f"{caller}: secant_theta_transport is implemented for the "
-                "numpy_etd2, mkl_etd2 (fp64) and cuda_etd2 kernels, without "
-                f"the EM rho-stack — not with {why}"
-            )
-        info(
-            1,
-            f"{caller}: sec(theta) transport correction is not available "
-            f"with {why} — proceeding with the paraxial 2D transport.",
-        )
-        return None
-
-    _resolve_batch_secant = _resolve_secant
+        return self._build_secant_ops()
 
     def _build_secant_ops(self):
         """The constant sec(theta) operator set for the current geometry
@@ -2562,8 +2404,12 @@ class MCEqRun:
         cached = getattr(self, "_secant_ops_cache", None)
         if cached is None or cached[0] != key:
             ops = build_secant_kernel_ops(
-                k_grid, e_centers, n_species, config,
+                k_grid,
+                e_centers,
+                n_species,
+                config.secant,
                 theta_cap_deg=config.secant_theta_cap(),
+                paths=config.paths,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]
@@ -2587,15 +2433,15 @@ class MCEqRun:
 
     def _etd2_backend(self, sec_ops=None, dtype=np.float64):
         """The step-loop backend of ``config.kernel_config`` bound to the
-        compiled operator: scipy CSR, MKL handles or the device upload.
-        Cached per (kernel, precision, coupling); a backend whose operator
-        or device rotated is closed and rebuilt.
+        compiled operator: scipy CSR, MKL or Accelerate handles, or the
+        device upload. Cached per (kernel, precision, coupling); a backend
+        whose operator or device rotated is closed and rebuilt.
         """
         import MCEq.solvers as solvers
 
         kc = config.kernel_config.lower()
         on_cuda = kc in ("cuda", "cuda_etd2")
-        fp = 32 if (on_cuda and np.dtype(dtype) == np.float32) else 64
+        fp = 32 if np.dtype(dtype) == np.float32 else 64
         op = self._compiled_operator(sec_ops)
         cache = self.__dict__.setdefault("_backend_cache", {})
         key = (kc, fp, op.coupled)
@@ -2608,9 +2454,11 @@ class MCEqRun:
             be = None
         if be is None:
             if kc == "numpy_etd2":
-                be = solvers.numpy_backend(op)
+                be = solvers.numpy_backend(op, fp_precision=fp)
+            elif kc in ("accelerate", "accelerate_etd2"):
+                be = solvers.accelerate_backend(op, fp_precision=fp)
             elif kc in ("mkl", "mkl_etd2"):
-                be = solvers.mkl_backend(op)
+                be = solvers.mkl_backend(op, fp_precision=fp)
             elif on_cuda:
                 be = solvers.cuda_backend(
                     op, device_id=self._cuda_device, fp_precision=fp
@@ -2623,82 +2471,14 @@ class MCEqRun:
             cache[key] = be
         return be
 
-    def _legacy_handles(self, kind):
-        """Sparse handles of the paraxial operator for the kernels not yet on
-        :func:`~MCEq.solvers.etd2_driver`: Accelerate (``"spacc"`` /
-        ``"spacc_f32"``) and the MKL fp32 multi-RHS kernel (``"mkl_f32"``).
-        Cached and closed like the backends."""
-        from types import SimpleNamespace
-
-        op = self._compiled_operator()
-        cache = self.__dict__.setdefault("_backend_cache", {})
-        h = cache.get(kind)
-        if h is not None and h.op is not op:
-            h.close()
-            del cache[kind]
-            h = None
-        if h is None:
-            if kind == "mkl_f32":
-                from MCEq.solvers import MklSparseMatrixF32 as cls
-            else:
-                import MCEq.spacc as spacc
-
-                cls = spacc.SpaccMatrixF32 if kind == "spacc_f32" else spacc.SpaccMatrix
-            handles = tuple(cls(off) if off.nnz else None for off in (op.int_off, op.dec_off))
-
-            def close():
-                for m in handles:
-                    if m is not None:
-                        m.close()
-
-            h = SimpleNamespace(op=op, int_off=handles[0], dec_off=handles[1], close=close)
-            cache[kind] = h
-        return h
-
-    def _run_etd2(self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None):
+    def _run_etd2(
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
+    ):
         """One integration path for a ``(dim,)`` or ``(dim, K)`` state —
         the single-axis and the shared-path multi-RHS route."""
         import MCEq.solvers as solvers
 
-        kc = config.kernel_config.lower()
         dtype = np.dtype(dtype)
-        batched = phi0.ndim == 2
-        int_m_stack = getattr(self, "_int_m_stack", None)
-        if int_m_stack is not None and kc == "numpy_etd2":
-            # EM rho-stack: per-step log-linear blend of the air block.
-            kernel = (
-                solvers.solv_numpy_etd2_rho_stack_multirhs
-                if batched
-                else solvers.solv_numpy_etd2_rho_stack
-            )
-            return kernel(
-                nsteps, dX, rho_inv, int_m_stack, self._em_rho_grid, self.dec_m,
-                phi0, grid_idcs,
-            )
-        if kc == "accelerate_etd2":
-            f32 = dtype == np.float32
-            h = self._legacy_handles("spacc_f32" if f32 else "spacc")
-            if not batched:
-                kernel = solvers.solv_spacc_etd2
-            elif f32:
-                kernel = solvers.solv_spacc_etd2_multirhs_f32
-            else:
-                kernel = solvers.solv_spacc_etd2_multirhs
-            return kernel(
-                nsteps, dX, rho_inv, h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                phi0, grid_idcs,
-            )
-        if dtype == np.float32 and kc in ("mkl", "mkl_etd2"):
-            h = self._legacy_handles("mkl_f32")
-            return solvers.solv_mkl_etd2_multirhs_f32(
-                nsteps, dX, rho_inv, h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                phi0, grid_idcs,
-            )
-        if dtype == np.float32 and kc == "numpy_etd2":
-            raise NotImplementedError(
-                "solve_batch(dtype=float32) is currently wired only for "
-                "kernel_config in {'accelerate_etd2', 'cuda_etd2', 'mkl_etd2'}."
-            )
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
         if dtype != np.float64:
@@ -2707,26 +2487,30 @@ class MCEqRun:
         return sol, grid_sol
 
     def _run_etd2_carousel(
-        self, dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-        dtype=np.float64, sec_ops=None,
+        self,
+        dX_c,
+        rho_inv_c,
+        phi_initial,
+        schedule,
+        phi0_per_pixel,
+        dtype=np.float64,
+        sec_ops=None,
     ):
         """One LPT carousel launch (per-lane paths); returns the
         ``(dim, K_total)`` final states in pixel order."""
         import MCEq.solvers as solvers
 
-        kc = config.kernel_config.lower()
-        if kc in ("accelerate_etd2", "spacc_etd2"):
-            h = self._legacy_handles("spacc")
-            sol = solvers.solv_spacc_etd2_carousel(
-                h.int_off, h.dec_off, h.op.d_int, h.op.d_dec,
-                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
-            )
-        else:
-            be = self._etd2_backend(sec_ops, dtype)
-            sol = solvers.etd2_driver(
-                schedule.T, dX_c, rho_inv_c, be, phi_initial, [],
-                schedule=schedule, phi0_per_pixel=phi0_per_pixel,
-            )
+        be = self._etd2_backend(sec_ops, dtype)
+        sol = solvers.etd2_driver(
+            schedule.T,
+            dX_c,
+            rho_inv_c,
+            be,
+            phi_initial,
+            [],
+            schedule=schedule,
+            phi0_per_pixel=phi0_per_pixel,
+        )
         return np.asarray(sol, dtype=np.dtype(dtype))
 
     def close(self):
@@ -2740,7 +2524,6 @@ class MCEqRun:
             except Exception:
                 pass
         self.__dict__.pop("_operator_cache", None)
-
 
     def __del__(self):
         # Best-effort cleanup; never raise from __del__.
@@ -3332,7 +3115,7 @@ class MatrixBuilder:
             per_mode_csr = []
             for k in range(self.n_k):
                 rows, cols, vals = [], [], []
-                for (c, p), d in six.iteritems(blocks):
+                for (c, p), d in iter(blocks.items()):
                     rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
                     slab = d[k]
                     if slab.shape != (rc.uidx - rc.lidx, rp.uidx - rp.lidx):
@@ -3374,7 +3157,7 @@ class MatrixBuilder:
             return stitched
 
         new_mat = np.zeros((self.dim_states, self.dim_states), dtype=config.floatlen)
-        for (c, p), d in six.iteritems(blocks):
+        for (c, p), d in iter(blocks.items()):
             rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
             try:
                 new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d

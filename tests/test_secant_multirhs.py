@@ -5,7 +5,7 @@ state, so it exercises the production tensor layout, all modes,
 independent initial columns, carousel harvest/reset and frozen-lane
 pinning without the minutes-scale fitted operator or the external
 production database. The batched kernels must reproduce independent
-single-axis :func:`solv_numpy_etd2_secant` solves; tolerances are
+single-axis :func:`solve_etd2` solves; tolerances are
 ~1e-11 relative — SpMM and K-fold SpMV need not agree to round-off
 across BLAS implementations (the production fp64 CUDA carousel
 validation closed at 4.6e-12).
@@ -19,16 +19,11 @@ import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.solvers import (
-    MklSparseMatrix,
     compile_carousel_schedule,
+    compile_operator,
     schedule_lpt,
     secant_layout,
-    secant_split,
-    solv_mkl_etd2_secant_carousel,
-    solv_mkl_etd2_secant_multirhs,
-    solv_numpy_etd2_secant,
-    solv_numpy_etd2_secant_carousel,
-    solv_numpy_etd2_secant_multirhs,
+    solve_etd2,
 )
 
 RTOL = 1e-11
@@ -116,7 +111,7 @@ def _single_axis_columns(problem, paths, sec_ops):
     out = []
     for rhs, path in enumerate(paths):
         nsteps, dX, rho_inv, _ = path
-        col, _ = solv_numpy_etd2_secant(
+        col, _ = solve_etd2(
             nsteps,
             dX,
             rho_inv,
@@ -124,7 +119,8 @@ def _single_axis_columns(problem, paths, sec_ops):
             problem["dec_m"],
             problem["phi0"][:, rhs],
             [],
-            sec_ops,
+            backend="numpy",
+            sec_ops=sec_ops,
         )
         out.append(col)
     return np.stack(out, axis=1)
@@ -137,14 +133,16 @@ def _carousel_inputs(problem, K_pipe):
     )
 
 
-def _mkl_operators(problem, sec_ops):
-    """MKL CSR handles + diagonals of the secant-layout split."""
-    d_int, d_dec, int_off, dec_off = secant_split(
-        problem["int_m"], problem["dec_m"], sec_ops
-    )
-    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
-    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
-    return mkl_int, mkl_dec, d_int, d_dec
+def test_schedule_lpt_assignment_and_makespan():
+    """Longest pixel first onto the currently shortest slot; the makespan is
+    the longest slot's summed length. ``K`` clamps to the pixel count."""
+    # [6, 3, 5, 2] longest-first is [0, 2, 1, 3]: slot 0 takes 6 then 2,
+    # slot 1 takes 5 then 3 -- both 8, the optimal makespan here.
+    assert schedule_lpt([6, 3, 5, 2], 2) == ([[0, 3], [2, 1]], 8)
+    # One slot per pixel: the makespan is the longest single pixel.
+    assert schedule_lpt([6, 3, 5, 2], 7) == ([[0], [2], [1], [3]], 6)
+    with pytest.raises(ValueError):
+        schedule_lpt([], 4)
 
 
 def test_secant_layout_and_split(secant_48mode_problem):
@@ -161,13 +159,13 @@ def test_secant_layout_and_split(secant_48mode_problem):
     np.testing.assert_array_equal(corner, plane)
     assert np.array_equal(xp[lay.inv_perm], x)
 
-    d_int, d_dec, int_off, dec_off = secant_split(p["int_m"], p["dec_m"], ops)
+    d_int, d_dec, int_off, dec_off = compile_operator(p["int_m"], p["dec_m"], ops).split
     assert np.array_equal(d_int, p["int_m"].diagonal()[lay.perm])
     for m, off in ((p["int_m"], int_off), (p["dec_m"], dec_off)):
         ref = (m - sp.diags(m.diagonal())) @ x
         np.testing.assert_array_equal((off @ xp)[lay.inv_perm], ref)
     # (Caching of the compiled operator is MCEqRun._compiled_operator's
-    # job; compile_operator / secant_split are pure.)
+    # job; compile_operator is pure.)
 
     bad = dict(ops, P=np.array([0, 2, 3]))
     with pytest.raises(ValueError):
@@ -182,17 +180,31 @@ def test_numpy_secant_multirhs_matches_repeated_single(
     ops = _secant_ops(p["n_k"], operator_scale)
     snapshots = [1, 5]
     nsteps = len(p["dX"])
-    batched, batched_grid = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
-        snapshots, ops,
+    batched, batched_grid = solve_etd2(
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        snapshots,
+        backend="numpy",
+        sec_ops=ops,
     )
 
     reference = []
     reference_grid = []
     for rhs in range(p["K"]):
-        col, grid = solv_numpy_etd2_secant(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"][:, rhs], snapshots, ops,
+        col, grid = solve_etd2(
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"][:, rhs],
+            snapshots,
+            backend="numpy",
+            sec_ops=ops,
         )
         reference.append(col)
         reference_grid.append(grid)
@@ -200,9 +212,7 @@ def test_numpy_secant_multirhs_matches_repeated_single(
     reference_grid = np.stack(reference_grid, axis=2)
 
     np.testing.assert_allclose(batched, reference, rtol=RTOL, atol=ATOL)
-    np.testing.assert_allclose(
-        batched_grid, reference_grid, rtol=RTOL, atol=ATOL
-    )
+    np.testing.assert_allclose(batched_grid, reference_grid, rtol=RTOL, atol=ATOL)
     # The zero/cutoff-like column stays exactly zero (no cross-talk).
     assert np.count_nonzero(batched[:, 2]) == 0
 
@@ -215,9 +225,18 @@ def test_numpy_secant_carousel_matches_independent_paths(
     reference = _single_axis_columns(p, p["paths"], ops)
 
     dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
-    carousel = solv_numpy_etd2_secant_carousel(
-        p["int_m"], p["dec_m"], dX_c, rho_c, phi_initial, schedule,
-        p["phi0"], ops,
+    carousel = solve_etd2(
+        schedule.T,
+        dX_c,
+        rho_c,
+        p["int_m"],
+        p["dec_m"],
+        phi_initial,
+        [],
+        backend="numpy",
+        sec_ops=ops,
+        schedule=schedule,
+        phi0_per_pixel=p["phi0"],
     )
 
     np.testing.assert_allclose(carousel, reference, rtol=RTOL, atol=ATOL)
@@ -233,34 +252,47 @@ def test_mkl_secant_multirhs_and_carousel_match_numpy(secant_48mode_problem):
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
     nsteps = len(p["dX"])
-    mkl_int, mkl_dec, d_int, d_dec = _mkl_operators(p, ops)
-    try:
-        numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"],
-            p["phi0"], [], ops,
-        )
-        mkl_shared, _ = solv_mkl_etd2_secant_multirhs(
-            nsteps, p["dX"], p["rho_inv"], mkl_int, mkl_dec, d_int, d_dec,
-            p["phi0"], [], ops,
-        )
-        np.testing.assert_allclose(
-            mkl_shared, numpy_shared, rtol=RTOL, atol=ATOL
-        )
+    numpy_shared, _ = solve_etd2(
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        [],
+        backend="numpy",
+        sec_ops=ops,
+    )
+    mkl_shared, _ = solve_etd2(
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        [],
+        backend="mkl",
+        sec_ops=ops,
+    )
+    np.testing.assert_allclose(mkl_shared, numpy_shared, rtol=RTOL, atol=ATOL)
 
-        dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
-        mkl_carousel = solv_mkl_etd2_secant_carousel(
-            mkl_int, mkl_dec, d_int, d_dec, dX_c, rho_c, phi_initial,
-            schedule, p["phi0"], ops,
-        )
-        reference = _single_axis_columns(p, p["paths"], ops)
-        np.testing.assert_allclose(
-            mkl_carousel, reference, rtol=RTOL, atol=ATOL
-        )
-        assert np.count_nonzero(mkl_carousel[:, 2]) == 0
-    finally:
-        for m in (mkl_int, mkl_dec):
-            if m is not None:
-                m.close()
+    dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=2)
+    mkl_carousel = solve_etd2(
+        schedule.T,
+        dX_c,
+        rho_c,
+        p["int_m"],
+        p["dec_m"],
+        phi_initial,
+        [],
+        backend="mkl",
+        sec_ops=ops,
+        schedule=schedule,
+        phi0_per_pixel=p["phi0"],
+    )
+    reference = _single_axis_columns(p, p["paths"], ops)
+    np.testing.assert_allclose(mkl_carousel, reference, rtol=RTOL, atol=ATOL)
+    assert np.count_nonzero(mkl_carousel[:, 2]) == 0
 
 
 def _cuda_available():
@@ -276,51 +308,67 @@ def _cuda_available():
 def test_cuda_secant_multirhs_and_carousel_backend_parity(
     secant_48mode_problem,
 ):
-    from MCEq.solvers import (
-        CudaEtd2Context,
-        CudaEtd2MultiRHSContext,
-        solv_cuda_etd2_secant,
-        solv_cuda_etd2_secant_carousel,
-        solv_cuda_etd2_secant_multirhs,
-    )
-
     p = secant_48mode_problem
     ops = _secant_ops(p["n_k"])
     nsteps = len(p["dX"])
-    d_int, d_dec, int_off, dec_off = secant_split(p["int_m"], p["dec_m"], ops)
 
-    multi_ctx = CudaEtd2MultiRHSContext(
-        int_off, dec_off, d_int, d_dec, K=p["K"], device_id=0, fp_precision=64
+    cuda_shared, _ = solve_etd2(
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        [],
+        backend="cuda",
+        sec_ops=ops,
     )
-    cuda_shared, _ = solv_cuda_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], multi_ctx, p["phi0"], [], ops
-    )
-    numpy_shared, _ = solv_numpy_etd2_secant_multirhs(
-        nsteps, p["dX"], p["rho_inv"], p["int_m"], p["dec_m"], p["phi0"],
-        [], ops,
+    numpy_shared, _ = solve_etd2(
+        nsteps,
+        p["dX"],
+        p["rho_inv"],
+        p["int_m"],
+        p["dec_m"],
+        p["phi0"],
+        [],
+        backend="numpy",
+        sec_ops=ops,
     )
     np.testing.assert_allclose(cuda_shared, numpy_shared, rtol=2e-11, atol=2e-12)
 
     dX_c, rho_c, phi_initial, schedule = _carousel_inputs(p, K_pipe=p["K"])
-    cuda_carousel = solv_cuda_etd2_secant_carousel(
-        multi_ctx, dX_c, rho_c, phi_initial, schedule, p["phi0"], ops
+    cuda_carousel = solve_etd2(
+        schedule.T,
+        dX_c,
+        rho_c,
+        p["int_m"],
+        p["dec_m"],
+        phi_initial,
+        [],
+        backend="cuda",
+        sec_ops=ops,
+        schedule=schedule,
+        phi0_per_pixel=p["phi0"],
     )
     numpy_reference = _single_axis_columns(p, p["paths"], ops)
-    np.testing.assert_allclose(
-        cuda_carousel, numpy_reference, rtol=2e-11, atol=2e-12
-    )
+    np.testing.assert_allclose(cuda_carousel, numpy_reference, rtol=2e-11, atol=2e-12)
     assert np.count_nonzero(cuda_carousel[:, 2]) == 0
 
-    # The carousel must also agree with the single-axis CUDA kernel run
-    # per path (same driver, K = 1 without a schedule).
-    single_ctx = CudaEtd2Context(
-        int_off, dec_off, d_int, d_dec, device_id=0, fp_precision=64
-    )
+    # The carousel must also agree with the single-axis CUDA run per path
+    # (same driver, K = 1 without a schedule).
     cuda_single = []
     for rhs, path in enumerate(p["paths"]):
         ns, dXp, rip, _ = path
-        col, _ = solv_cuda_etd2_secant(
-            ns, dXp, rip, single_ctx, p["phi0"][:, rhs], [], ops
+        col, _ = solve_etd2(
+            ns,
+            dXp,
+            rip,
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"][:, rhs],
+            [],
+            backend="cuda",
+            sec_ops=ops,
         )
         cuda_single.append(col)
     np.testing.assert_allclose(
@@ -329,46 +377,141 @@ def test_cuda_secant_multirhs_and_carousel_backend_parity(
 
 
 # ---------------------------------------------------------------------------
-# solve_batch wiring: the tri-state resolver for the batch entry points is a
-# pure function of (config, kernel_config, dtype, rho-stack); test it unbound
-# with a stub, like the single-axis tri-state in test_2d_defaults.py.
+# Solver wiring: ``MCEqRun._resolve_secant``, the one resolver every entry
+# point shares, is a pure function of (config flag, is_2d); test it unbound
+# with a stub, like the tri-state in test_2d_defaults.py.
 # ---------------------------------------------------------------------------
-def _resolve_for(flag, kernel, dtype=np.float64, is_2d=True, rho_stack=False):
+def _resolve_for(flag, kernel, is_2d=True):
     from MCEq.core import MCEqRun
 
     stub = SimpleNamespace(
         _mceq_db=SimpleNamespace(is_2d=is_2d),
         _build_secant_ops=lambda: {"marker": True},
     )
-    if rho_stack:
-        stub._int_m_stack = [None]
     saved = (config.secant_theta_transport, config.kernel_config)
     config.secant_theta_transport = flag
     config.kernel_config = kernel
     try:
-        return MCEqRun._resolve_batch_secant(stub, "test", dtype)
+        return MCEqRun._resolve_secant(stub)
     finally:
         config.secant_theta_transport, config.kernel_config = saved
 
 
-def test_resolve_batch_secant_tri_state():
-    # Supported backends build one constant operator set.
-    for kernel in ("numpy_etd2", "mkl_etd2", "cuda_etd2"):
+def test_resolve_secant_tri_state():
+    # The coupled set is built for every kernel, and the state precision is
+    # not an input at all: the coupled route is driver code plus the
+    # apply_off binding, and fp32 is a dtype the backends carry. The fp32
+    # combination is pinned end to end by
+    # ``test_host_secant_fp32_matches_cuda_fp32``.
+    for kernel in ("numpy_etd2", "mkl_etd2", "accelerate_etd2", "cuda_etd2"):
         assert _resolve_for("auto", kernel) == {"marker": True}
         assert _resolve_for(True, kernel) == {"marker": True}
     # 1D databases and explicit False stay paraxial without building.
     assert _resolve_for("auto", "numpy_etd2", is_2d=False) is None
     assert _resolve_for(False, "numpy_etd2") is None
-    # Unsupported configurations downgrade under "auto", raise under
-    # "require": accelerate backend, fp32 outside cuda, EM rho-stack.
-    assert _resolve_for("auto", "accelerate_etd2") is None
-    assert _resolve_for("auto", "mkl_etd2", dtype=np.float32) is None
-    assert _resolve_for("auto", "numpy_etd2", rho_stack=True) is None
-    assert _resolve_for(True, "cuda_etd2", dtype=np.float32) == {"marker": True}
-    for kwargs in (
-        {"kernel": "accelerate_etd2"},
-        {"kernel": "mkl_etd2", "dtype": np.float32},
-        {"kernel": "numpy_etd2", "rho_stack": True},
-    ):
-        with pytest.raises(NotImplementedError):
-            _resolve_for(True, **kwargs)
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
+def test_cuda_secant_fp32_matches_fp64(secant_48mode_problem):
+    """The coupled branch at fp32 stays within the fp32 budget of its fp64 self.
+
+    The absolute leg of the fp32 sec(theta) corner, where the eigenbasis
+    transform and the block phi factors run on fp64 diagonals writing into an
+    fp32 state; ``test_host_secant_fp32_matches_cuda_fp32`` is the
+    host-vs-device leg.
+    """
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+
+    def run(fp_precision):
+        sol, _ = solve_etd2(
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"],
+            [],
+            backend="cuda",
+            sec_ops=ops,
+            fp_precision=fp_precision,
+        )
+        return sol
+
+    fp64 = run(64)
+    fp32 = run(32)
+
+    # The backends compute in the requested precision and hand back fp64, so
+    # the evidence that fp32 was used is the size of the difference, not the
+    # dtype of the result: fp32 roundoff, well inside the 1e-4 budget, and not
+    # the exact agreement an ignored fp_precision would give.
+    assert np.all(np.isfinite(fp32))
+    rel = np.linalg.norm(fp32 - fp64) / np.linalg.norm(fp64)
+    assert 1e-9 < rel < 1e-4, f"cuda secant fp32 vs fp64 rel-L2 = {rel:.3e}"
+
+
+def _per_block_max_rel(ref, new, n_k, N, floor=1e-12):
+    """The D18 metric on the fixture's ``(n_k, N, K)`` state: per row block
+    of the species-like ``N`` axis, the max ``|dphi / phi_ref|`` over that
+    block's bins, dropping bins below ``floor`` x the block's peak and
+    ``phi_ref == 0`` (the zero/cutoff-like column)."""
+    ref = ref.reshape(n_k, N, -1)
+    new = new.reshape(n_k, N, -1)
+    out = np.empty(N)
+    for s in range(N):
+        r, n = ref[:, s], new[:, s]
+        keep = (r >= floor * r.max()) & (r != 0.0)
+        assert keep.any(), f"row block {s} has no bin above the floor"
+        out[s] = np.max(np.abs(n[keep] - r[keep]) / np.abs(r[keep]))
+    return out
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA/CuPy not available")
+@pytest.mark.parametrize(
+    "backend",
+    [
+        "numpy",
+        pytest.param(
+            "mkl",
+            marks=pytest.mark.skipif(not config.has_mkl, reason="MKL not available"),
+        ),
+    ],
+)
+def test_host_secant_fp32_matches_cuda_fp32(secant_48mode_problem, backend):
+    """fp32 with the coupling runs on the host kernels too (D22), within the
+    per-species fp32 budget of the CUDA route.
+
+    The coupled route is driver code plus the ``apply_off`` binding, and the
+    eigenbasis transform and block phi factors are fp64 diagonals writing
+    into the fp32 state on every backend — so host and device differ only by
+    fp32 roundoff in the sparse product and the transforms.
+    """
+    p = secant_48mode_problem
+    ops = _secant_ops(p["n_k"])
+    nsteps = len(p["dX"])
+
+    def run(be):
+        sol, _ = solve_etd2(
+            nsteps,
+            p["dX"],
+            p["rho_inv"],
+            p["int_m"],
+            p["dec_m"],
+            p["phi0"],
+            [],
+            backend=be,
+            sec_ops=ops,
+            fp_precision=32,
+        )
+        return sol
+
+    host = run(backend)
+    cuda = run("cuda")
+    assert np.all(np.isfinite(host))
+
+    per_block = _per_block_max_rel(cuda, host, p["n_k"], p["N"])
+    assert per_block.max() <= 1e-4, (
+        f"{backend} fp32 vs cuda fp32 per-block max-rel = {per_block.max():.3e} "
+        f"(per block {np.array2string(per_block, precision=2)})"
+    )

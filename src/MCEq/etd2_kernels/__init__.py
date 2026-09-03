@@ -1,14 +1,18 @@
-"""Platform-neutral fused ETD2 post-apply C kernels.
+"""The fused ETD2 predictor and corrector, compiled.
 
-Loads the shared library built from ``etd2_kernels.c`` and exposes the four
-post-apply functions used by the multi-RHS / multipath solvers. The kernels
-themselves have no sparse-backend dependencies (pure stride-1 loops over
-column-major (dim, K) buffers), so the same compiled module works on Mac,
-Linux, and Windows. Used by the MKL multi-RHS path on Linux; the Accelerate
-path on Mac keeps using its in-tree copies in ``MCEq.spacc`` for now.
+Loads the shared library built from ``etd2_kernels.c`` and exposes its four
+symbols: the two state stages of :func:`MCEq.solvers.etd2.etd2_driver` at
+fp64 and at fp32. Both precisions come from one macro body over the
+row-major ``(dim, K)`` state, and the formulas are the table in
+:mod:`MCEq.solvers.numerics`.
 
-Symbol names + ABI match ``MCEq.spacc``'s post-apply bindings exactly, so
-callers can swap one import for the other without touching the call sites.
+The kernels have no sparse-backend dependency, so the same compiled module
+serves the scipy, MKL and Accelerate bindings of
+:class:`MCEq.solvers.backends.host.HostBackend` on Mac, Linux and Windows.
+
+Every kernel takes ``(dim, K, per_lane, *pointers)``: ``per_lane`` says
+whether the factor arrays are ``(dim, K)``, one integration path per lane, or
+``(dim,)``, one path shared by all of them.
 """
 
 import os
@@ -34,136 +38,23 @@ if _lib is None:
         "etd2_kernels CMake target."
     )
 
-# fp64 bindings (signatures match spacc.c).
-_lib.etd2_post_apply1_multirhs.restype = None
-_lib.etd2_post_apply1_multirhs.argtypes = [
-    c_int,
-    c_int,
-    c_double,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-_lib.etd2_post_apply2_multirhs.restype = None
-_lib.etd2_post_apply2_multirhs.argtypes = [
-    c_int,
-    c_int,
-    c_double,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-_lib.etd2_post_apply1_multipath.restype = None
-_lib.etd2_post_apply1_multipath.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-_lib.etd2_post_apply2_multipath.restype = None
-_lib.etd2_post_apply2_multipath.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
 
-# fp32 bindings.
-_lib.etd2_post_apply1_multirhs_f32.restype = None
-_lib.etd2_post_apply1_multirhs_f32.argtypes = [
-    c_int,
-    c_int,
-    c_float,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-_lib.etd2_post_apply2_multirhs_f32.restype = None
-_lib.etd2_post_apply2_multirhs_f32.argtypes = [
-    c_int,
-    c_int,
-    c_float,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-_lib.etd2_post_apply1_multipath_f32.restype = None
-_lib.etd2_post_apply1_multipath_f32.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-_lib.etd2_post_apply2_multipath_f32.restype = None
-_lib.etd2_post_apply2_multipath_f32.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
+def _bind(name, pointer):
+    """Bind one kernel: ``(dim, K, per_lane)`` and five arrays of one dtype."""
+    fn = getattr(_lib, name)
+    fn.restype = None
+    fn.argtypes = [c_int, c_int, c_int] + [pointer] * 5
+    return fn
 
-# row-major (dim, K) state of MCEq.solvers.etd2_driver; factor / h strides
-# select the (dim,) vs (dim, K) and scalar vs (K,) forms.
-_lib.etd2_post_apply1_rowmajor.restype = None
-_lib.etd2_post_apply1_rowmajor.argtypes = [
-    c_int, c_int,
-    POINTER(c_double), c_int,
-    POINTER(c_double), POINTER(c_double), c_int, c_int,
-    POINTER(c_double), POINTER(c_double), POINTER(c_double),
-]
-_lib.etd2_post_apply2_rowmajor.restype = None
-_lib.etd2_post_apply2_rowmajor.argtypes = [
-    c_int, c_int,
-    POINTER(c_double), c_int,
-    POINTER(c_double), c_int, c_int,
-    POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double),
-]
 
-etd2_post_apply1_rowmajor = _lib.etd2_post_apply1_rowmajor
-etd2_post_apply2_rowmajor = _lib.etd2_post_apply2_rowmajor
-etd2_post_apply1_multirhs = _lib.etd2_post_apply1_multirhs
-etd2_post_apply2_multirhs = _lib.etd2_post_apply2_multirhs
-etd2_post_apply1_multipath = _lib.etd2_post_apply1_multipath
-etd2_post_apply2_multipath = _lib.etd2_post_apply2_multipath
-
-etd2_post_apply1_multirhs_f32 = _lib.etd2_post_apply1_multirhs_f32
-etd2_post_apply2_multirhs_f32 = _lib.etd2_post_apply2_multirhs_f32
-etd2_post_apply1_multipath_f32 = _lib.etd2_post_apply1_multipath_f32
-etd2_post_apply2_multipath_f32 = _lib.etd2_post_apply2_multipath_f32
+etd2_predictor_f64 = _bind("etd2_predictor_f64", POINTER(c_double))
+etd2_corrector_f64 = _bind("etd2_corrector_f64", POINTER(c_double))
+etd2_predictor_f32 = _bind("etd2_predictor_f32", POINTER(c_float))
+etd2_corrector_f32 = _bind("etd2_corrector_f32", POINTER(c_float))
 
 __all__ = [
-    "etd2_post_apply1_rowmajor",
-    "etd2_post_apply2_rowmajor",
-    "etd2_post_apply1_multirhs",
-    "etd2_post_apply2_multirhs",
-    "etd2_post_apply1_multipath",
-    "etd2_post_apply2_multipath",
-    "etd2_post_apply1_multirhs_f32",
-    "etd2_post_apply2_multirhs_f32",
-    "etd2_post_apply1_multipath_f32",
-    "etd2_post_apply2_multipath_f32",
+    "etd2_corrector_f32",
+    "etd2_corrector_f64",
+    "etd2_predictor_f32",
+    "etd2_predictor_f64",
 ]

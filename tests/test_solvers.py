@@ -1,3 +1,5 @@
+import multiprocessing
+
 import numpy as np
 import pytest
 
@@ -6,39 +8,49 @@ from MCEq import config
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_spacc_matrix_creation(toy_solver_problem):
-    """SpaccMatrix should be created from a scipy sparse matrix without error."""
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_spacc_matrix_creation(toy_solver_problem, dtype):
+    """SpaccMatrix should be created from a scipy sparse matrix without error.
+
+    Both entry-point families of ``MCEq.spacc._SPACC_TYPES``: the mstore slot
+    is typed at creation, so fp32 goes through ``create_sparse_matrix_f32``.
+    """
     import MCEq.spacc as spacc
 
     int_m = toy_solver_problem[3]
-    sm = spacc.SpaccMatrix(int_m)
+    sm = spacc.SpaccMatrix(int_m, dtype=dtype)
     assert sm.store_id is not None
     assert sm.store_id >= 0
     assert sm.dim_rows == int_m.shape[0]
     assert sm.dim_cols == int_m.shape[1]
     assert sm.nnz == int_m.nnz
+    assert sm.dtype == np.dtype(dtype)
+    assert sm.data.dtype == np.dtype(dtype)
+    sm.close()
 
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_spacc_gemv_matches_scipy(toy_solver_problem):
+@pytest.mark.parametrize(("dtype", "rtol"), [(np.float64, 1e-12), (np.float32, 1e-5)])
+def test_spacc_gemv_matches_scipy(toy_solver_problem, dtype, rtol):
     """gemv_npargs should produce the same result as scipy sparse dot."""
     import MCEq.spacc as spacc
 
     int_m = toy_solver_problem[3]
-    sm = spacc.SpaccMatrix(int_m)
+    sm = spacc.SpaccMatrix(int_m, dtype=dtype)
 
     size = int_m.shape[0]
-    x = np.ones(size)
-    y = np.zeros(size)
+    x = np.ones(size, dtype=dtype)
+    y = np.zeros(size, dtype=dtype)
     alpha = 2.0
 
     sm.gemv_npargs(alpha, x, y)
 
-    expected = alpha * int_m.dot(x)
-    assert np.allclose(y, expected, rtol=1e-12), (
+    expected = alpha * int_m.dot(np.ones(size))
+    assert np.allclose(y, expected, rtol=rtol), (
         f"gemv result {y} does not match scipy result {expected}"
     )
+    sm.close()
 
 
 @pytest.mark.xdist_group("spacc")
@@ -98,20 +110,342 @@ def test_spacc_matrix_store_full():
 # ---------------------------------------------------------------------------
 # ETD2 (numpy_etd2) tests
 # ---------------------------------------------------------------------------
-def test_solv_numpy_etd2_runs(toy_solver_problem):
+def test_step_formula_has_one_source():
+    """The C kernels spell the step out of ``numerics``' table, not their own.
+
+    ``numerics.PREDICTOR_EXPR`` / ``CORRECTOR_EXPR`` fix the association
+    order every backend holds to. The cupy kernels format the strings into
+    their bodies at build time and cannot drift; ``etd2_kernels.c`` carries
+    them verbatim as its two macros, and this is what stops that copy from
+    being edited on its own.
+    """
+    from pathlib import Path
+
+    import MCEq
+    from MCEq.solvers.numerics import CORRECTOR_EXPR, PREDICTOR_EXPR
+
+    source = Path(MCEq.__file__).parent / "etd2_kernels" / "etd2_kernels.c"
+    if not source.exists():  # installed as a wheel: only the .so is shipped
+        pytest.skip(f"{source} is not in this installation")
+    text = source.read_text()
+    for macro, expr in (
+        ("ETD2_PREDICT", PREDICTOR_EXPR),
+        ("ETD2_CORRECT", CORRECTOR_EXPR),
+    ):
+        assert expr in text, (
+            f"{source.name} does not carry numerics' {macro} expression "
+            f"{expr!r}; the C kernels and the table have diverged"
+        )
+
+
+def _c_ternary(expression):
+    """``cond ? a : b`` -> ``np.where(cond, a, b)``, outermost first.
+
+    Depth-tracked so a ternary inside parentheses is not mistaken for the
+    top-level one; text with no ``?`` comes back unchanged.
+    """
+    depth = 0
+    question = colon = -1
+    for index, char in enumerate(expression):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and char == "?" and question < 0:
+            question = index
+        elif depth == 0 and char == ":" and question >= 0 and colon < 0:
+            colon = index
+    if question < 0 or colon < 0:
+        return expression
+    return "np.where({}, {}, {})".format(
+        _c_ternary(expression[:question]),
+        _c_ternary(expression[question + 1 : colon]),
+        _c_ternary(expression[colon + 1 :]),
+    )
+
+
+def _eval_c_body(body, z):
+    """``(p1, p2)`` from a C phi body, evaluated over `z` as numpy.
+
+    The body declares ``double`` scalars and branches with the C conditional
+    operator, so each statement becomes an assignment and each ``?:`` an
+    ``np.where``; the C math names are bound to their numpy counterparts, and
+    one the table does not use raises rather than pass silently. Both arms of a
+    ``where`` are evaluated, hence the ``errstate``: the quotient arm divides by
+    zero at ``z = 0``, where the series arm is the one selected.
+    """
+    namespace = {
+        "np": np,
+        "z": np.asarray(z, dtype=np.float64),
+        "exp": np.exp,
+        "expm1": np.expm1,
+        "fabs": np.abs,
+        "sqrt": np.sqrt,
+        "log": np.log,
+    }
+    lines = []
+    for statement in body.replace("const double", "").split(";"):
+        statement = " ".join(statement.split())
+        if not statement:
+            continue
+        name, expression = statement.split("=", 1)
+        lines.append(f"{name.strip()} = {_c_ternary(expression.strip())}")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        exec("\n".join(lines), namespace)  # noqa: S102
+    return namespace["p1"], namespace["p2"]
+
+
+def _phi_reference(z_values, digits=60):
+    """``phi1(z)``, ``phi2(z)`` at `digits` decimal digits, rounded to double.
+
+        phi1(z) = (e^z - 1) / z        phi2(z) = (e^z - 1 - z) / z^2
+
+    ``e^z`` is summed as a Decimal Taylor series, which converges in ~50 terms
+    for ``|z| <= 1`` at this precision; the cancellation that costs the double
+    forms their last digits is harmless 60 digits up, so rounding the quotient
+    to double gives the correctly rounded value to within half an ulp -- three
+    orders below the errors this pins.
+    """
+    import decimal
+
+    def exp_dec(z):
+        ctx = decimal.getcontext()
+        term = total = decimal.Decimal(1)
+        eps = decimal.Decimal(10) ** (-(ctx.prec - 2))
+        n = 0
+        while abs(term) >= eps * abs(total):
+            n += 1
+            term = term * z / n
+            total += term
+        return total
+
+    decimal.getcontext().prec = digits + 10
+    phi1, phi2 = [], []
+    for value in np.asarray(z_values, dtype=np.float64).ravel():
+        z = decimal.Decimal(float(value))  # exact binary -> decimal
+        if z == 0:
+            phi1.append(1.0)
+            phi2.append(0.5)
+            continue
+        e = exp_dec(z)
+        phi1.append(float((e - 1) / z))
+        phi2.append(float((e - 1 - z) / (z * z)))
+    return np.array(phi1), np.array(phi2)
+
+
+def test_phi_factors_accuracy():
+    """The phi table holds its accuracy, and the C body keeps the same radii.
+
+    ``phi_factors`` is a piecewise formula: a Taylor series inside each radius,
+    the cancelling quotient outside. The worst relative error therefore sits
+    just off the radius -- the quotient's ``2u/|z|`` (phi1) and ``2u/z^2``
+    (phi2) against the series' truncation -- and moving a radius or a series
+    order moves it. Nothing else in the suite evaluates the table against a
+    reference, so a retune that lost accuracy would surface only as a golden
+    that moved for no stated reason.
+
+    Bounds are the measured worst over ``1e-8 <= |z| <= 1`` on this grid, both
+    signs; see :data:`MCEq.solvers.numerics._PHI1_SMALL` for where they come
+    from. The grid is fixed because the worst error is a spike a few points
+    wide: a coarser sampling reads a smaller number.
+
+    :data:`~MCEq.solvers.numerics.PHI_C_BODY` is generated from the same
+    constants and consumed only by the cupy kernels, so the coupling this also
+    has to pin is what the *device* computes, which no test that runs on the
+    host can otherwise show. Grepping the body for the constants cannot show
+    it: the body is an f-string built from those same names in that same
+    module, so no radius, coefficient or branch can be edited in a way the grep
+    notices. So the body is evaluated instead, on the accuracy grid plus the
+    four radius points -- where the strict ``>`` decides the branch -- and
+    required to agree with :func:`~MCEq.solvers.numerics.phi_factors` to the
+    bit. It does today, on all 6407 points.
+    """
+    from MCEq.solvers import numerics
+
+    decade = np.logspace(-8, 0, 8 * 400 + 1)
+    z = np.concatenate([-decade[::-1], [0.0], decade])
+    ref1, ref2 = _phi_reference(z)
+
+    e = np.empty_like(z)
+    phi1 = np.empty_like(z)
+    phi2 = np.empty_like(z)
+    numerics.phi_factors(z, e, phi1, phi2, numerics.phi_work(z.shape))
+
+    for name, got, ref, bound in (
+        ("phi1", phi1, ref1, 9.0e-13),
+        ("phi2", phi2, ref2, 6.0e-12),
+    ):
+        rel = np.abs(got - ref) / np.abs(ref)
+        worst = int(rel.argmax())
+        assert rel[worst] <= bound, (
+            f"{name}: worst relative error {rel[worst]:.4e} at z={z[worst]:+.5e} "
+            f"exceeds {bound:.1e}"
+        )
+
+    probe = np.concatenate(
+        [
+            z,
+            [
+                numerics._PHI1_SMALL,
+                -numerics._PHI1_SMALL,
+                numerics._PHI2_SMALL,
+                -numerics._PHI2_SMALL,
+            ],
+        ]
+    )
+    host = [np.empty_like(probe) for _ in range(3)]
+    numerics.phi_factors(probe, *host, numerics.phi_work(probe.shape))
+    c_p1, c_p2 = _eval_c_body(numerics.PHI_C_BODY, probe)
+
+    for name, got, want in (("p1", c_p1, host[1]), ("p2", c_p2, host[2])):
+        differ = np.flatnonzero((got != want) & ~(np.isnan(got) & np.isnan(want)))
+        assert differ.size == 0, (
+            f"PHI_C_BODY's {name} differs from phi_factors on "
+            f"{differ.size} of {probe.size} points, first at "
+            f"z={probe[differ[0]]:+.5e}: C {got[differ[0]]!r} vs numpy "
+            f"{want[differ[0]]!r}; the C/cupy body and the numpy lowering "
+            f"have drifted"
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32], ids=["fp64", "fp32"])
+@pytest.mark.parametrize(
+    ("dim", "K", "per_lane"),
+    [(4096, 1, 0), (513, 8, 0), (513, 8, 1), (97, 3, 1)],
+    ids=["k1", "shared", "per_lane", "small"],
+)
+def test_c_stages_match_numpy_lowering(dim, K, per_lane, dtype):
+    """The compiled stages and the numpy lowering agree to the bit.
+
+    Both lower the same two expressions of ``numerics``, so "one association
+    order" holds only if the *compiled* code keeps it — which reading the
+    source cannot show. Contracting ``a * b + c`` into an FMA is how this
+    breaks: the same association, one rounding fewer, and it is what a
+    compiler does by default wherever FMA is baseline (aarch64, or
+    ``-march=native`` on x86-64). ``CMakeLists.txt`` passes
+    ``-ffp-contract=off`` to prevent it; this notices if that stops working.
+
+    Arguments span 18 decades so the two products land at different
+    exponents, where a contracted multiply-add differs from a rounded one.
+    """
+    from MCEq.solvers import numerics
+    from MCEq.solvers.backends.host import _C_POINTER, _fused_stages
+
+    stages = _fused_stages(dtype)
+    if stages is None:
+        pytest.skip("MCEq.etd2_kernels is not built")
+    ptr = _C_POINTER[dtype]
+    rng = np.random.default_rng(7)
+    shape, fshape = (dim, K), ((dim, K) if per_lane else (dim, 1))
+
+    def sample(shp):
+        return (
+            rng.uniform(0.5, 2.0, size=shp) * 10.0 ** rng.uniform(-17, 1, shp)
+        ).astype(dtype)
+
+    eD, hphi1, hphi2 = (sample(fshape) for _ in range(3))
+    x, F, F_a, a = (sample(shape) for _ in range(4))
+    work = np.empty(shape, dtype=dtype)
+
+    # The two lowerings take their operands in different orders; both are
+    # spelled out here so a change to either signature fails loudly.
+    for name, c_stage, c_args, py_stage, py_args in (
+        (
+            "predictor",
+            stages[0],
+            (eD, hphi1, x, F),
+            numerics.predictor,
+            (eD, x, hphi1, F),
+        ),
+        (
+            "corrector",
+            stages[1],
+            (hphi2, a, F_a, F),
+            numerics.corrector,
+            (a, hphi2, F_a, F),
+        ),
+    ):
+        got, want = (np.empty(shape, dtype=dtype) for _ in range(2))
+        c_stage(dim, K, per_lane, *[b.ctypes.data_as(ptr) for b in (*c_args, got)])
+        py_stage(*py_args, want, work)
+        bad = int(np.count_nonzero(got.view(np.uint8) != want.view(np.uint8)))
+        assert bad == 0, (
+            f"{name}: C and numpy lowerings differ in {bad} bytes at dim={dim} "
+            f"K={K} per_lane={per_lane} {np.dtype(dtype).name}; max rel "
+            f"{np.max(np.abs(got - want) / np.where(want != 0, np.abs(want), 1)):.3e}"
+        )
+
+
+@pytest.mark.parametrize("K", [1, 4], ids=["k1", "multirhs"])
+def test_host_solves_without_the_c_extension(toy_solver_problem, K):
+    """An unbuilt source tree falls back to numpy and gets the same answer.
+
+    ``MCEq.etd2_kernels`` is a compiled extension; before the step stages
+    moved into it the host backend was pure numpy, and a tree that has not
+    been built must not lose the solver entirely. Runs the same solve twice
+    in subprocesses, once with the extension blocked at import, and requires
+    the two to agree to the bit -- the fallback lowers the same expressions
+    from the same table.
+    """
+    import subprocess
+    import sys
+
+    script = """
+import sys, numpy as np, scipy.sparse as sp
+if {block!r}:
+    class Block:
+        def find_spec(self, name, path=None, target=None):
+            if name == "MCEq.etd2_kernels":
+                raise ImportError("extension not built")
+            return None
+    sys.meta_path.insert(0, Block())
+    from MCEq.solvers.backends.host import _fused_stages
+    assert _fused_stages(np.float64) is None, "the extension was still importable"
+import MCEq.solvers as solvers
+rng = np.random.default_rng(3)
+n = 40
+A = rng.standard_normal((n, n)) * 0.05
+A -= np.diag(np.abs(A).sum(1) + 0.1)
+B = rng.standard_normal((n, n)) * 0.02
+B -= np.diag(np.abs(B).sum(1) + 0.05)
+sol, _ = solvers.solve_etd2(
+    nsteps=25, dX=np.full(25, 0.1), rho_inv=np.linspace(1.3, 2.0, 25),
+    int_m=sp.csr_matrix(A), dec_m=sp.csr_matrix(B),
+    phi=rng.uniform(0.1, 1.0, (n, {K})), grid_idcs=[], backend="numpy",
+)
+sys.stdout.buffer.write(np.ascontiguousarray(sol, dtype=np.float64).tobytes())
+"""
+    out = []
+    for block in (False, True):
+        run = subprocess.run(
+            [sys.executable, "-c", script.format(block=block, K=K)],
+            capture_output=True,
+        )
+        assert run.returncode == 0, run.stderr.decode()[-2000:]
+        out.append(np.frombuffer(run.stdout, dtype=np.float64))
+
+    assert out[0].size == 40 * K
+    assert np.all(np.isfinite(out[1]))
+    assert np.array_equal(out[0], out[1]), (
+        "the numpy fallback does not reproduce the C stages bitwise; max rel "
+        f"{np.max(np.abs(out[1] - out[0]) / np.abs(out[0])):.3e}"
+    )
+
+
+def test_solve_etd2_numpy_runs(toy_solver_problem):
     """ETD2 returns the right shape, no NaN, monotonic decay on the grid.
 
     The toy fixture has only diagonal int_m / dec_m, so ETD2 collapses to
     phi <- exp(h*D) * phi (no off-diagonal stages). We don't compare against
-    a reference here — full-fixture equivalence is covered by the spacc-vs-
-    numpy tests below.
+    a reference here — full-fixture equivalence is covered by the
+    accelerate-vs-numpy tests below.
     """
-    from MCEq.solvers import solv_numpy_etd2
+    from MCEq.solvers import solve_etd2
 
     phi0 = toy_solver_problem[-2].copy()
     grid_idcs = toy_solver_problem[-1]
 
-    solution, grid_sol = solv_numpy_etd2(*toy_solver_problem)
+    solution, grid_sol = solve_etd2(*toy_solver_problem, backend="numpy")
     assert solution.shape == phi0.shape
     assert grid_sol.shape == (len(grid_idcs), phi0.shape[0])
     assert not np.isnan(solution).any()
@@ -121,18 +455,17 @@ def test_solv_numpy_etd2_runs(toy_solver_problem):
         assert np.all(grid_sol[i] <= grid_sol[i - 1])
 
 
-def test_solv_numpy_etd2_does_not_modify_input_phi(toy_solver_setup):
+def test_solve_etd2_numpy_does_not_modify_input_phi(toy_solver_setup):
     """Regression: ETD2 must not mutate the input phi array in place."""
-    from MCEq.solvers import solv_numpy_etd2
+    from MCEq.solvers import solve_etd2
 
     phi_original = toy_solver_setup[-2]
     phi_copy = phi_original.copy()
 
-    solution, _ = solv_numpy_etd2(*toy_solver_setup)
+    solution, _ = solve_etd2(*toy_solver_setup, backend="numpy")
 
     assert np.array_equal(phi_original, phi_copy), (
-        "solv_numpy_etd2 modified the input phi array - this breaks subsequent "
-        "solver calls"
+        "solve_etd2 modified the input phi array - this breaks subsequent solver calls"
     )
     assert not np.array_equal(solution, phi_copy), (
         "Solver should produce a different result"
@@ -140,19 +473,16 @@ def test_solv_numpy_etd2_does_not_modify_input_phi(toy_solver_setup):
 
 
 @pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
+def test_solve_etd2_numpy_multirhs_matches_single_rhs_toy(K):
     """Multi-RHS ETD2 columns match K independent single-RHS solves bit-exactly.
 
     scipy's CSR ``@`` against a 2-D (n, K) RHS issues per-column SpMVs with
-    the same arithmetic as the single-RHS path; the multi-RHS kernel uses
-    CSR off-diagonals throughout (bypassing the production BSR conversion
-    which doesn't vectorise across K), so the per-column result is
-    arithmetically identical to ``solv_numpy_etd2`` with
-    ``config.numpy_bsr_blocksize = None``.
+    the same arithmetic as the single-RHS path, so the per-column result is
+    arithmetically identical to the single-RHS solve.
     """
     import scipy.sparse as sp
 
-    from MCEq.solvers import solv_numpy_etd2, solv_numpy_etd2_multirhs
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(42)
     nsteps = 30
@@ -173,37 +503,29 @@ def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
 
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_multi, grid_multi = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    sol_multi, grid_multi = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="numpy"
     )
     assert sol_multi.shape == (size, K)
     assert grid_multi.shape == (len(grid_idcs), size, K)
 
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-    config.numpy_bsr_blocksize = None
-    try:
-        for k in range(K):
-            try:
-                delattr(int_m, "_etd_split_cache_v2")
-            except AttributeError:
-                pass
-            sol_k, grid_k = solv_numpy_etd2(
-                nsteps,
-                dX,
-                rho_inv,
-                int_m,
-                dec_m,
-                phi0_multi[:, k].copy(),
-                grid_idcs,
-            )
-            assert np.array_equal(sol_multi[:, k], sol_k), (
-                f"column {k} of multi-RHS solution diverges from single-RHS"
-            )
-            assert np.array_equal(grid_multi[:, :, k], grid_k), (
-                f"column {k} of multi-RHS grid snapshots diverges from single-RHS"
-            )
-    finally:
-        config.numpy_bsr_blocksize = saved_bs
+    for k in range(K):
+        sol_k, grid_k = solve_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            int_m,
+            dec_m,
+            phi0_multi[:, k].copy(),
+            grid_idcs,
+            backend="numpy",
+        )
+        assert np.array_equal(sol_multi[:, k], sol_k), (
+            f"column {k} of multi-RHS solution diverges from single-RHS"
+        )
+        assert np.array_equal(grid_multi[:, :, k], grid_k), (
+            f"column {k} of multi-RHS grid snapshots diverges from single-RHS"
+        )
 
 
 @pytest.mark.xdist_group("spacc")
@@ -211,7 +533,7 @@ def test_solv_numpy_etd2_multirhs_matches_single_rhs_toy(K):
 def test_solve_multirhs_dtype_float32():
     """End-to-end fp32 dispatch through MCEqRun.solve_multirhs.
 
-    Compares the fp32 spacc multirhs path to the fp64 reference at K=4
+    Compares the fp32 Accelerate multi-RHS path to the fp64 reference at K=4
     on the real SIBYLL21 config; asserts per-cell relative error stays
     below the empirically established 1e-4 budget for the production
     particle set (e± disabled — they're the ``_EM_BLOWUP_CAVEAT`` rows
@@ -264,37 +586,69 @@ def test_solve_multirhs_dtype_float32():
         config.mceq_db_fname = saved_db
 
 
-def test_solv_numpy_etd2_multirhs_rejects_1d_phi():
-    """Multi-RHS kernel must reject 1-D phi (caller should use solv_numpy_etd2)."""
+def test_solve_etd2_rank_follows_phi():
+    """The solution has the rank of ``phi``: one entry point serves both.
+
+    A 1-D state gives a 1-D solution and a ``(dim, 1)`` batch gives the same
+    values as a column, so the batch route needs no name of its own and
+    ``solve_etd2`` refuses neither rank. The 2-D requirement that a caller
+    asking for a batch does need lives at the API boundary
+    (``MCEqRun.solve_multirhs``), which guards it.
+    """
     import scipy.sparse as sp
 
-    from MCEq.solvers import solv_numpy_etd2_multirhs
+    from MCEq.solvers import solve_etd2
 
     nsteps = 3
     size = 4
     dX = np.full(nsteps, 0.1)
     rho_inv = np.ones(nsteps)
-    grid_idcs = []
+    grid_idcs = [1]
     int_m = sp.csr_matrix(-0.1 * np.eye(size))
     dec_m = sp.csr_matrix(-0.05 * np.eye(size))
-    phi0_1d = np.ones(size)
+    phi0_1d = np.linspace(0.2, 1.0, size)
 
-    with pytest.raises(ValueError, match="phi must be 2-D"):
-        solv_numpy_etd2_multirhs(nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs)
+    sol_1d, grid_1d = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_1d, grid_idcs, backend="numpy"
+    )
+    assert sol_1d.shape == (size,)
+    assert grid_1d.shape == (len(grid_idcs), size)
+
+    sol_2d, grid_2d = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_1d[:, None].copy(),
+        grid_idcs,
+        backend="numpy",
+    )
+    assert sol_2d.shape == (size, 1)
+    assert np.array_equal(sol_2d[:, 0], sol_1d)
+    assert np.array_equal(grid_2d[:, :, 0], grid_1d)
+
+
+def test_solve_etd2_rejects_unknown_backend():
+    """An unknown ``backend`` names the ones that exist."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solve_etd2
+
+    int_m = sp.csr_matrix(-0.1 * np.eye(3))
+    with pytest.raises(ValueError, match="accelerate, cuda, mkl, numpy"):
+        solve_etd2(
+            1, np.ones(1), np.ones(1), int_m, int_m, np.ones(3), [], backend="opencl"
+        )
 
 
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 @pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
+def test_solve_etd2_mkl_multirhs_matches_numpy_multirhs_toy(K):
     """MKL multi-RHS columns match numpy multi-RHS columns within fp64 ε."""
     import scipy.sparse as sp
 
-    from MCEq.solvers import (
-        MklSparseMatrix,
-        _etd_split_cache,
-        solv_mkl_etd2_multirhs,
-        solv_numpy_etd2_multirhs,
-    )
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -311,38 +665,25 @@ def test_solv_mkl_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_numpy, _ = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    sol_numpy, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, [], backend="numpy"
     )
-    mkl_int = MklSparseMatrix(int_off) if int_off.nnz else None
-    mkl_dec = MklSparseMatrix(dec_off) if dec_off.nnz else None
-    try:
-        sol_mkl, _ = solv_mkl_etd2_multirhs(
-            nsteps, dX, rho_inv, mkl_int, mkl_dec, d_int, d_dec, phi0_multi, []
-        )
-        np.testing.assert_allclose(sol_mkl, sol_numpy, rtol=5e-13, atol=0)
-    finally:
-        if mkl_int is not None:
-            mkl_int.close()
-        if mkl_dec is not None:
-            mkl_dec.close()
+    sol_mkl, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, [], backend="mkl"
+    )
+    np.testing.assert_allclose(sol_mkl, sol_numpy, rtol=5e-13, atol=0)
 
 
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
 @pytest.mark.parametrize("K", [1, 4])
-def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
-    """fp32 MKL multi-RHS holds 1e-4 rel-L2 vs numpy fp64 reference."""
+@pytest.mark.parametrize("backend", ["numpy", "mkl"])
+def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
+    """The host backends at fp32 hold 1e-4 rel-L2 vs the fp64 reference."""
     import scipy.sparse as sp
 
-    from MCEq.solvers import (
-        MklSparseMatrixF32,
-        _etd_split_cache,
-        solv_mkl_etd2_multirhs_f32,
-        solv_numpy_etd2_multirhs,
-    )
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -359,135 +700,42 @@ def test_solv_mkl_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_numpy, _ = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    sol_numpy, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, [], backend="numpy"
     )
-    mkl_int32 = (
-        MklSparseMatrixF32(int_off.astype(np.float32)) if int_off.nnz else None
+    sol_f32, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_multi,
+        [],
+        backend=backend,
+        fp_precision=32,
     )
-    mkl_dec32 = (
-        MklSparseMatrixF32(dec_off.astype(np.float32)) if dec_off.nnz else None
-    )
-    try:
-        sol_mkl32, _ = solv_mkl_etd2_multirhs_f32(
-            nsteps, dX, rho_inv, mkl_int32, mkl_dec32,
-            d_int, d_dec, phi0_multi, [],
-        )
-        rel_l2 = np.linalg.norm(sol_mkl32 - sol_numpy) / max(
-            np.linalg.norm(sol_numpy), 1e-30
-        )
-        assert rel_l2 < 1e-4, (
-            f"mkl multirhs f32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
-        )
-    finally:
-        if mkl_int32 is not None:
-            mkl_int32.close()
-        if mkl_dec32 is not None:
-            mkl_dec32.close()
-
-
-@pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_numpy_etd2_rho_stack_multirhs_matches_single_rhs_toy(K):
-    """ρ-stack multi-RHS columns match K independent single-RHS ρ-stack solves.
-
-    Toy: 2-slice ρ-stack with scaled interaction matrices, shared decay
-    matrix, ramped rho_inv. Multi-RHS columns must equal arithmetic-identical
-    single-RHS ρ-stack solves run with BSR disabled (CSR-vs-CSR comparison).
-    """
-    import scipy.sparse as sp
-
-    from MCEq.solvers import (
-        solv_numpy_etd2_rho_stack,
-        solv_numpy_etd2_rho_stack_multirhs,
-    )
-
-    rng = np.random.default_rng(11)
-    nsteps = 30
-    size = 24
-    dX = np.full(nsteps, 0.1)
-    # rho_inv spans the ρ-grid so the per-step blend exercises both slices.
-    rho_inv = np.linspace(1.0, 4.0, nsteps)
-    grid_idcs = [5, 15, 25]
-
-    A_base = rng.standard_normal((size, size)) * 0.05
-    A_base[np.abs(A_base) < 0.02] = 0.0
-    A_base -= np.diag(np.abs(A_base).sum(axis=1) + 0.1)
-    B = rng.standard_normal((size, size)) * 0.02
-    B[np.abs(B) < 0.01] = 0.0
-    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
-
-    # Two distinct slices to make the per-step blend non-trivial.
-    int_m_stack = [
-        sp.csr_matrix(A_base),
-        sp.csr_matrix(A_base * 0.7),
-    ]
-    rho_grid = np.array([1e-4, 1e-3])
-    dec_m = sp.csr_matrix(B)
-
-    phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
-
-    sol_multi, grid_multi = solv_numpy_etd2_rho_stack_multirhs(
-        nsteps, dX, rho_inv, int_m_stack, rho_grid, dec_m, phi0_multi, grid_idcs
-    )
-    assert sol_multi.shape == (size, K)
-    assert grid_multi.shape == (len(grid_idcs), size, K)
-
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-    config.numpy_bsr_blocksize = None
-    try:
-        for k in range(K):
-            for slice_m in int_m_stack:
-                try:
-                    delattr(slice_m, "_etd_split_cache_v2")
-                except AttributeError:
-                    pass
-            sol_k, grid_k = solv_numpy_etd2_rho_stack(
-                nsteps,
-                dX,
-                rho_inv,
-                int_m_stack,
-                rho_grid,
-                dec_m,
-                phi0_multi[:, k].copy(),
-                grid_idcs,
-            )
-            np.testing.assert_allclose(
-                sol_multi[:, k],
-                sol_k,
-                rtol=1e-12,
-                atol=0,
-                err_msg=f"column {k} of ρ-stack multi-RHS solution diverges",
-            )
-            np.testing.assert_allclose(
-                grid_multi[:, :, k],
-                grid_k,
-                rtol=1e-12,
-                atol=0,
-                err_msg=f"column {k} of ρ-stack multi-RHS grid snapshots diverges",
-            )
-    finally:
-        config.numpy_bsr_blocksize = saved_bs
+    assert sol_f32.dtype == np.float64  # the driver hands back fp64
+    rel_l2 = np.linalg.norm(sol_f32 - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
+    assert rel_l2 < 1e-4, f"{backend} fp32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
 
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-@pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
-    """Spacc multi-RHS columns match numpy multi-RHS columns within fp64 eps.
+@pytest.mark.parametrize("K", [1, 4, 16, 70])
+def test_solve_etd2_accelerate_multirhs_matches_numpy_multirhs_toy(K):
+    """Accelerate multi-RHS columns match numpy multi-RHS columns within fp64 eps.
 
-    Both kernels evaluate identical math (Cox–Matthews ETD2 with the same
-    diagonal split and accumulated SpMM); the only difference is the
-    sparse SpMM backend (scipy CSR vs Apple Accelerate
-    ``sparse_matrix_product_dense_double``). Differences are at the few
-    ULP level and the test uses np.allclose with a tight tolerance.
+    Both runs are the same driver over the same operator; the only
+    difference is the ``apply_off`` binding (scipy CSR vs Apple Accelerate
+    ``sparse_matrix_product_dense_double`` on column-major staging).
+    Differences are at the few ULP level and the test uses np.allclose with
+    a tight tolerance. K = 70 crosses the 64-column SpMM tile boundary.
     """
     import scipy.sparse as sp
 
-    from MCEq.solvers import solv_numpy_etd2_multirhs, solv_spacc_etd2_multirhs
-    from MCEq.spacc import SpaccMatrix
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -505,42 +753,21 @@ def test_solv_spacc_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    # Pre-split for spacc — solv_spacc_etd2_multirhs expects SpaccMatrix-wrapped
-    # off-diagonals plus plain numpy diagonals, like the single-RHS spacc kernel.
-    from MCEq.solvers import _etd_split_cache
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    spacc_int = SpaccMatrix(int_off) if int_off.nnz else None
-    spacc_dec = SpaccMatrix(dec_off) if dec_off.nnz else None
-
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_numpy, _ = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    sol_numpy, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="numpy"
     )
-    sol_spacc, _ = solv_spacc_etd2_multirhs(
-        nsteps,
-        dX,
-        rho_inv,
-        spacc_int,
-        spacc_dec,
-        d_int,
-        d_dec,
-        phi0_multi,
-        grid_idcs,
+    sol_spacc, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="accelerate"
     )
 
     np.testing.assert_allclose(sol_spacc, sol_numpy, rtol=5e-13, atol=0)
 
-    if spacc_int is not None:
-        spacc_int.close()
-    if spacc_dec is not None:
-        spacc_dec.close()
-
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 @pytest.mark.parametrize("K", [1, 4, 16])
-def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
+def test_solve_etd2_cuda_multirhs_matches_numpy_multirhs_toy(K):
     """cupy multi-RHS columns match numpy multi-RHS columns within
     cuSPARSE-reorder tolerance.
 
@@ -550,12 +777,7 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
     """
     import scipy.sparse as sp
 
-    from MCEq.solvers import (
-        CudaEtd2MultiRHSContext,
-        _etd_split_cache,
-        solv_cuda_etd2_multirhs,
-        solv_numpy_etd2_multirhs,
-    )
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -573,25 +795,21 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_numpy, grid_numpy = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs
+    sol_numpy, grid_numpy = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, grid_idcs, backend="numpy"
     )
-
-    ctx = CudaEtd2MultiRHSContext(
-        int_off,
-        dec_off,
-        d_int,
-        d_dec,
-        K=K,
+    sol_cuda, grid_cuda = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_multi,
+        grid_idcs,
+        backend="cuda",
         device_id=config.cuda_gpu_id,
-        fp_precision=64,
-    )
-    sol_cuda, grid_cuda = solv_cuda_etd2_multirhs(
-        nsteps, dX, rho_inv, ctx, phi0_multi, grid_idcs
     )
 
     rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
@@ -604,14 +822,12 @@ def test_solv_cuda_etd2_multirhs_matches_numpy_multirhs_toy(K):
         rel_grid = np.linalg.norm(grid_cuda - grid_numpy) / max(
             np.linalg.norm(grid_numpy), 1e-30
         )
-        assert rel_grid < 1e-10, (
-            f"cuda multirhs grid snapshots rel-L2 = {rel_grid:.3e}"
-        )
+        assert rel_grid < 1e-10, f"cuda multirhs grid snapshots rel-L2 = {rel_grid:.3e}"
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 @pytest.mark.parametrize("K", [1, 4])
-def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
+def test_solve_etd2_cuda_multirhs_f32_matches_numpy_multirhs_toy(K):
     """fp32 cupy multi-RHS holds 1e-4 rel-L2 vs the fp64 numpy reference.
 
     Per the multi-RHS handover plan: fp32 stability budget is 1e-4 relative
@@ -620,12 +836,7 @@ def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     """
     import scipy.sparse as sp
 
-    from MCEq.solvers import (
-        CudaEtd2MultiRHSContext,
-        _etd_split_cache,
-        solv_cuda_etd2_multirhs,
-        solv_numpy_etd2_multirhs,
-    )
+    from MCEq.solvers import solve_etd2
 
     rng = np.random.default_rng(7)
     nsteps = 30
@@ -642,24 +853,22 @@ def test_solv_cuda_etd2_multirhs_f32_matches_numpy_multirhs_toy(K):
     int_m = sp.csr_matrix(A)
     dec_m = sp.csr_matrix(B)
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-
     phi0_multi = rng.uniform(0.1, 1.0, size=(size, K))
 
-    sol_numpy, _ = solv_numpy_etd2_multirhs(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, []
+    sol_numpy, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0_multi, [], backend="numpy"
     )
-    ctx = CudaEtd2MultiRHSContext(
-        int_off,
-        dec_off,
-        d_int,
-        d_dec,
-        K=K,
+    sol_cuda32, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        int_m,
+        dec_m,
+        phi0_multi,
+        [],
+        backend="cuda",
         device_id=config.cuda_gpu_id,
         fp_precision=32,
-    )
-    sol_cuda32, _ = solv_cuda_etd2_multirhs(
-        nsteps, dX, rho_inv, ctx, phi0_multi, []
     )
     rel_l2 = np.linalg.norm(sol_cuda32 - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
@@ -693,7 +902,7 @@ def _solve_with_kernel(mceq, kernel_name):
         config.kernel_config = saved
 
 
-def test_solv_numpy_etd2_stable_at_high_zenith():
+def test_etd2_numpy_stable_at_high_zenith():
     """Regression: ETD2 must stay finite at theta=89 deg.
 
     At extreme zenith, rho_inv blows up and forward-Euler-style schemes
@@ -737,9 +946,9 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
     """ETD2RK with `oversample` substeps per native step. Mirrors the
     production kernel's update rule so the convergence test exercises the
     same math."""
-    from MCEq.solvers import _etd_split_cache
+    from MCEq.operator_assembly import split_diagonal
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
+    d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi = phi0.astype(np.float64).copy()
 
     PHI1_SMALL = 1e-6
@@ -770,7 +979,7 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
     return phi
 
 
-def test_solv_numpy_etd2_second_order_convergence():
+def test_solve_etd2_numpy_second_order_convergence():
     """ETD2 must show observed convergence order ~2 on the production path.
 
     Refinement is done the way production accuracy actually depends on it:
@@ -814,7 +1023,7 @@ def test_solv_numpy_etd2_second_order_convergence():
         import crflux.models as pm
 
         from MCEq.core import MCEqRun
-        from MCEq.solvers import solv_numpy_etd2
+        from MCEq.solvers import solve_etd2
 
         config.kernel_config = "numpy_etd2"
         mceq = MCEqRun(
@@ -839,8 +1048,15 @@ def test_solv_numpy_etd2_second_order_convergence():
                 dX_min=1e-10,
             )
             nsteps, dX, rho_inv, _ = mceq.integration_path
-            phi, _ = solv_numpy_etd2(
-                nsteps, dX, rho_inv, int_m, dec_m, mceq._phi0.copy(), []
+            phi, _ = solve_etd2(
+                nsteps,
+                dX,
+                rho_inv,
+                int_m,
+                dec_m,
+                mceq._phi0.copy(),
+                [],
+                backend="numpy",
             )
             return phi
 
@@ -897,60 +1113,45 @@ def test_solv_numpy_etd2_second_order_convergence():
 
 
 # ---------------------------------------------------------------------------
-# ETD2 (spacc / Apple Accelerate) tests
+# ETD2 (Apple Accelerate) tests
 # ---------------------------------------------------------------------------
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solv_spacc_etd2_matches_numpy_etd2_toy(toy_solver_problem):
+def test_solve_etd2_accelerate_matches_numpy_etd2_toy(toy_solver_problem):
     """Trivial-matrix smoke test.
 
     The toy fixture has purely diagonal int_m/dec_m, so both off-diagonals
-    are empty (nnz=0). The kernel should detect that and skip the SpMV
+    are empty (nnz=0). The binding should detect that and skip the SpMV
     calls; the result is just the integrating-factor `exp(h*D) * phi` per
     step. This catches the empty-matrix code path without requiring a
     full MCEqRun.
     """
-    import MCEq.spacc as spacc
-    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+    from MCEq.solvers import solve_etd2
 
     nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs = toy_solver_problem
 
-    sol_numpy, _ = solv_numpy_etd2(
-        nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs
+    sol_numpy, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs, backend="numpy"
     )
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(int_m, dec_m)
-    # int_off / dec_off may be empty here; the kernel should handle that.
-    spacc_int_off = spacc.SpaccMatrix(int_off) if int_off.nnz > 0 else None
-    spacc_dec_off = spacc.SpaccMatrix(dec_off) if dec_off.nnz > 0 else None
-    sol_spacc, _ = solv_spacc_etd2(
-        nsteps,
-        dX,
-        rho_inv,
-        spacc_int_off,
-        spacc_dec_off,
-        d_int,
-        d_dec,
-        phi.copy(),
-        grid_idcs,
+    sol_spacc, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi.copy(), grid_idcs, backend="accelerate"
     )
     assert sol_spacc == pytest.approx(sol_numpy, rel=1e-12, abs=1e-15), (
-        "spacc_etd2 differs from numpy_etd2 on toy diagonal-only problem"
+        "accelerate differs from numpy on toy diagonal-only problem"
     )
 
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
+def test_solve_etd2_accelerate_matches_numpy_etd2_real(mceq_sib21):
     """Equivalence test on real MCEq matrices with non-trivial off-diagonals.
 
     Builds a uniform mid-point sampled path at theta=60 with the default
-    (no-mixing) particle treatment, runs both kernels on that fixed path,
+    (no-mixing) particle treatment, runs both backends on that fixed path,
     asserts agreement to ~1e-12 — the 4 SpMVs/step are the same operation
     in both backends, so equality is essentially arithmetic round-off.
     """
-    import MCEq.spacc as spacc
-    from MCEq.solvers import _etd_split_cache, solv_numpy_etd2, solv_spacc_etd2
+    from MCEq.solvers import solve_etd2
 
     mceq_sib21.set_theta_deg(60.0)
 
@@ -970,7 +1171,7 @@ def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
     nsteps = len(dX)
     phi0 = mceq_sib21._phi0.copy()
 
-    sol_numpy, _ = solv_numpy_etd2(
+    sol_numpy, _ = solve_etd2(
         nsteps,
         dX,
         rho_inv,
@@ -978,34 +1179,32 @@ def test_solv_spacc_etd2_matches_numpy_etd2_real(mceq_sib21):
         mceq_sib21.dec_m,
         phi0.copy(),
         grid_idcs,
+        backend="numpy",
     )
 
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(
-        mceq_sib21.int_m, mceq_sib21.dec_m
-    )
+    from MCEq.operator_assembly import split_diagonal
+
+    _, _, int_off, dec_off = split_diagonal(mceq_sib21.int_m, mceq_sib21.dec_m)
     assert int_off.nnz > 0 and dec_off.nnz > 0, (
         "real matrices should have non-empty off-diagonals"
     )
-    spacc_int_off = spacc.SpaccMatrix(int_off)
-    spacc_dec_off = spacc.SpaccMatrix(dec_off)
-    sol_spacc, _ = solv_spacc_etd2(
+    sol_spacc, _ = solve_etd2(
         nsteps,
         dX,
         rho_inv,
-        spacc_int_off,
-        spacc_dec_off,
-        d_int,
-        d_dec,
+        mceq_sib21.int_m,
+        mceq_sib21.dec_m,
         phi0.copy(),
         grid_idcs,
+        backend="accelerate",
     )
 
-    assert np.all(np.isfinite(sol_spacc)), "spacc_etd2 produced non-finite values"
+    assert np.all(np.isfinite(sol_spacc)), "accelerate produced non-finite values"
     rel_l2 = np.linalg.norm(sol_spacc - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
     )
     assert rel_l2 < 1e-12, (
-        f"spacc_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < 1e-12)"
+        f"accelerate vs numpy rel-L2 = {rel_l2:.3e} (expected < 1e-12)"
     )
 
 
@@ -1065,19 +1264,19 @@ def _uniform_path_theta60(mceq, h=5.0):
 
 @pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-@pytest.mark.parametrize("blocksize", [None, 6], ids=["csr", "bsr6"])
-def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
-    """Equivalence test on real MCEq matrices, both CSR and BSR(6) paths.
+def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
+    """Equivalence test on real MCEq matrices: the MKL backend vs numpy.
 
-    CSR is bit-exact vs numpy (~1e-12); BSR reorders the SpMV partial
-    sums per-block and lands at ~1e-10 on these matrices — still
-    essentially round-off, just looser.
+    The MKL handles are CSR, the same arithmetic and the same summation
+    order as the scipy SpMV, so the two backends agree to round-off
+    (~1e-12) rather than to a looser storage-dependent bound.
     """
     from MCEq.solvers import (
-        MklSparseMatrix,
-        _etd_split_cache,
-        solv_mkl_etd2,
-        solv_numpy_etd2,
+        compile_operator,
+        etd2_driver,
+        mkl_backend,
+        solve_etd2,
+        split_diagonal,
     )
 
     mceq = mceq_sib21_full_db
@@ -1085,54 +1284,143 @@ def test_solv_mkl_etd2_matches_numpy_etd2_real(mceq_sib21_full_db, blocksize):
     grid_idcs = []
     phi0 = mceq._phi0.copy()
 
-    sol_numpy, _ = solv_numpy_etd2(
-        nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
-    )
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
-    assert int_off.nnz > 0 and dec_off.nnz > 0, (
-        "real matrices should have non-empty off-diagonals"
-    )
-    mkl_int_off = MklSparseMatrix(int_off.tocsr(), blocksize=blocksize)
-    mkl_dec_off = MklSparseMatrix(dec_off.tocsr(), blocksize=blocksize)
-    sol_mkl, _ = solv_mkl_etd2(
+    sol_numpy, _ = solve_etd2(
         nsteps,
         dX,
         rho_inv,
-        mkl_int_off,
-        mkl_dec_off,
-        d_int,
-        d_dec,
+        mceq.int_m,
+        mceq.dec_m,
         phi0.copy(),
         grid_idcs,
+        backend="numpy",
     )
+
+    _, _, int_off, dec_off = split_diagonal(mceq.int_m, mceq.dec_m)
+    assert int_off.nnz > 0 and dec_off.nnz > 0, (
+        "real matrices should have non-empty off-diagonals"
+    )
+    # The MKL handles come from the backend factory, not from the entry
+    # point: bind the backend here and run the driver on it
+    be = mkl_backend(compile_operator(mceq.int_m, mceq.dec_m))
+    try:
+        sol_mkl, _ = etd2_driver(nsteps, dX, rho_inv, be, phi0.copy(), grid_idcs)
+    finally:
+        be.close()
 
     assert np.all(np.isfinite(sol_mkl)), "mkl_etd2 produced non-finite values"
     rel_l2 = np.linalg.norm(sol_mkl - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
-    # CSR is the same arithmetic as numpy → bit-exact bound. BSR groups
-    # the SpMV per block, which reorders partial sums and loosens to ~1e-10.
-    tol = 1e-12 if blocksize is None else 1e-9
+    # CSR is the same arithmetic as numpy → bit-exact bound.
+    tol = 1e-12
     assert rel_l2 < tol, (
-        f"mkl_etd2(blocksize={blocksize}) vs numpy_etd2 rel-L2 = {rel_l2:.3e} "
-        f"(expected < {tol})"
+        f"mkl_etd2 vs numpy_etd2 rel-L2 = {rel_l2:.3e} (expected < {tol})"
     )
 
 
+def _per_species_max_rel(mceq, ref, new, floor=1e-12):
+    """The D18 metric: per species, the max ``|dphi / phi_ref|`` over the
+    energy bins, dropping bins below ``floor`` x that species' peak and
+    ``phi_ref == 0``.
+
+    Species blocks are ``[mceqidx * dim : (mceqidx + 1) * dim]``, the slice
+    ``get_solution`` reads. ``nan`` for a species with no bin above the floor.
+    """
+    dim = mceq.dim
+    out = {}
+    for q in mceq.pman.cascade_particles:
+        r = ref[q.mceqidx * dim : (q.mceqidx + 1) * dim]
+        n = new[q.mceqidx * dim : (q.mceqidx + 1) * dim]
+        peak = r.max()
+        keep = (
+            (r >= floor * peak) & (r != 0.0)
+            if peak > 0.0
+            else np.zeros(r.shape, dtype=bool)
+        )
+        out[q.name] = (
+            float(np.max(np.abs(n[keep] - r[keep]) / np.abs(r[keep])))
+            if keep.any()
+            else np.nan
+        )
+    return out
+
+
+@pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_numpy_etd2_empty_dec_off_bsr_padding():
-    """Regression: a pure e±/γ EM-cascade solve disables all decays, so dec_m
-    has no off-diagonal. With BSR padding on (default blocksize), the empty
-    dec_off must pad to the SAME dimension as the non-empty int_off — otherwise
-    the per-step ``dec_off.dot(phc)`` crashes on a dim mismatch (N vs N+pad).
-    This is the bug that broke native ``solve()`` on the EM-cascade DB. See
-    ``_etd_off_to_bsr``.
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
+    """fp32 MKL vs fp32 CUDA on the real operator, per species (D18, D22).
+
+    Two uniform theta=60 paths over one operator and initial state: ``h = 5``
+    is inside the explicit-stepping stiffness limit of the EM block, ``h = 20``
+    (the production ``etd2_path["dX_max"]``) is past it with
+    ``config.em_adaptive_step`` off. Outside e+- the metric is a stable
+    property of the operator — fp32 roundoff in the sparse product and the
+    state buffers, 6e-6 to 1e-5 measured across both steps and both energy
+    grids the shared fixture is built on.
+
+    The e+- lanes are not such a property, which is what excluding them
+    buys: over-integrated, they are a sign-oscillating residual already at
+    fp64, so the metric either leaves the budget (1e-3) or has no bin left
+    above its floor (a reference block with no positive bin). Their value on
+    the fine step is reported, not bounded — it moves from 1.1e-5 to 2.3e-3
+    with the energy grid alone.
+    """
+    from MCEq.solvers import solve_etd2
+
+    mceq = mceq_sib21_full_db
+    em = {q.name for q in mceq.pman.cascade_particles if abs(q.pdg_id[0]) == 11}
+    phi0 = mceq._phi0.copy()
+
+    def run(path, backend):
+        nsteps, dX, rho_inv = path
+        sol, _ = solve_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            mceq.int_m,
+            mceq.dec_m,
+            phi0.copy(),
+            [],
+            backend=backend,
+            fp_precision=32,
+            device_id=config.cuda_gpu_id,
+        )
+        return sol
+
+    for h in (5.0, 20.0):
+        path = _uniform_path_theta60(mceq, h=h)
+        per_species = _per_species_max_rel(mceq, run(path, "mkl"), run(path, "cuda"))
+        # nan (nothing above the floor) is unmeasurable, not inside the budget.
+        worst_em = max(per_species[name] for name in em)
+        worst_other = max(
+            v for name, v in per_species.items() if name not in em and np.isfinite(v)
+        )
+        print(
+            f"h={h:g} ({path[0]} steps) mkl32 vs cuda32 per-species max-rel: "
+            f"e+- {worst_em:.3e}, other {worst_other:.3e}"
+        )
+        assert worst_other <= 1e-4, (
+            f"h={h:g}: worst non-e+- species = {worst_other:.3e} (e+- {worst_em:.3e})"
+        )
+        if h > 5.0:
+            # Over-integrated, the e+- blocks are either past the budget or have
+            # no bin above the floor at all -- either way the exclusion earns its
+            # place. Spelled out rather than left to `not nan <= x`.
+            assert np.isnan(worst_em) or worst_em > 1e-4, (
+                f"h={h:g} over-integrates the EM cascade, so the e+- exclusion "
+                f"should be load bearing, but their worst is {worst_em:.3e}"
+            )
+
+
+def test_numpy_etd2_empty_dec_off():
+    """A pure e±/γ EM-cascade solve disables all decays, so dec_m has no
+    off-diagonal. The kernel must carry an all-zero ``dec_off`` through the
+    per-step SpMV at the same dimension as the non-empty ``int_off``.
     """
     import scipy.sparse as sp
 
-    from MCEq import config
-    from MCEq.solvers import solv_numpy_etd2
+    from MCEq.solvers import solve_etd2
 
-    dim = 50  # 50 % 11 != 0 -> BSR padding is active at the default blocksize
+    dim = 50
     rng = np.random.default_rng(0)
     int_m = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.01)
     int_m.setdiag(-0.5)
@@ -1143,77 +1431,14 @@ def test_numpy_etd2_empty_dec_off_bsr_padding():
     dX = np.full(nsteps, 0.1)
     rho_inv = np.ones(nsteps)
     phi = np.ones(dim)
-    saved = getattr(config, "numpy_bsr_blocksize", None)
-    config.numpy_bsr_blocksize = 11
-    try:
-        sol, _ = solv_numpy_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, [])
-    finally:
-        config.numpy_bsr_blocksize = saved
+    sol, _ = solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi, [], backend="numpy")
     assert sol.shape == (dim,)
     assert np.isfinite(sol).all()
 
 
-@pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_mkl_bsr_handles_padding():
-    """BSR with a dimension that's not a multiple of blocksize must round-trip.
-
-    SIBYLL21 happens to give dim=8712 (divisible by 6). This test uses a
-    synthetic 7x7 matrix with blocksize=3 to exercise the padding code path
-    end-to-end via the kernel. Padding rows/cols stay zero through SpMV, so
-    the result should match a CSR run to round-off.
-    """
-    import scipy.sparse as sp
-
-    from MCEq.solvers import MklSparseMatrix, solv_mkl_etd2
-
-    rng = np.random.default_rng(0)
-    dim = 7  # not a multiple of any common blocksize
-    int_off = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.1)
-    dec_off = sp.csr_matrix(rng.standard_normal((dim, dim)) * 0.05)
-    # zero the diagonals — that's the off-diagonal contract
-    int_off.setdiag(0)
-    dec_off.setdiag(0)
-    int_off.eliminate_zeros()
-    dec_off.eliminate_zeros()
-    d_int = -0.2 * np.ones(dim)
-    d_dec = -0.05 * np.ones(dim)
-    phi0 = np.ones(dim)
-    nsteps = 5
-    dX = np.full(nsteps, 0.5)
-    rho_inv = np.linspace(1.0, 0.5, nsteps)
-
-    sol_csr, _ = solv_mkl_etd2(
-        nsteps,
-        dX,
-        rho_inv,
-        MklSparseMatrix(int_off, blocksize=None),
-        MklSparseMatrix(dec_off, blocksize=None),
-        d_int,
-        d_dec,
-        phi0.copy(),
-        [],
-    )
-    sol_bsr, _ = solv_mkl_etd2(
-        nsteps,
-        dX,
-        rho_inv,
-        MklSparseMatrix(int_off, blocksize=3),  # forces padding 7 -> 9
-        MklSparseMatrix(dec_off, blocksize=3),
-        d_int,
-        d_dec,
-        phi0.copy(),
-        [],
-    )
-    assert sol_csr.shape == (dim,)
-    assert sol_bsr.shape == (dim,)
-    assert np.allclose(sol_csr, sol_bsr, rtol=1e-10, atol=1e-12), (
-        f"BSR padded path differs from CSR: csr={sol_csr}, bsr={sol_bsr}"
-    )
-
-
 @pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")
-def test_solv_mkl_etd2_stable_at_high_zenith():
+def test_etd2_mkl_stable_at_high_zenith():
     """Regression: MKL ETD2 must stay finite at theta=89 deg.
 
     Mirrors the numpy_etd2 stability test — at extreme zenith the
@@ -1251,39 +1476,41 @@ def test_solv_mkl_etd2_stable_at_high_zenith():
 # ---------------------------------------------------------------------------
 @pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
+def test_solve_etd2_cuda_matches_numpy_real(mceq_sib21_full_db):
     """Equivalence test on real MCEq matrices.
 
     cuSPARSE may reorder partial sums vs scipy CSR, so we tolerate a
     rel-L2 of 1e-9 instead of round-off — but anything looser would mask
     a real bug. Path matches the MKL test for parity.
     """
-    from MCEq.solvers import (
-        CudaEtd2Context,
-        _etd_split_cache,
-        solv_cuda_etd2,
-        solv_numpy_etd2,
-    )
+    from MCEq.solvers import solve_etd2
 
     mceq = mceq_sib21_full_db
     nsteps, dX, rho_inv = _uniform_path_theta60(mceq)
     grid_idcs = []
     phi0 = mceq._phi0.copy()
 
-    sol_numpy, _ = solv_numpy_etd2(
-        nsteps, dX, rho_inv, mceq.int_m, mceq.dec_m, phi0.copy(), grid_idcs
+    sol_numpy, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        mceq.int_m,
+        mceq.dec_m,
+        phi0.copy(),
+        grid_idcs,
+        backend="numpy",
     )
-
-    d_int, d_dec, int_off, dec_off = _etd_split_cache(mceq.int_m, mceq.dec_m)
-    ctx = CudaEtd2Context(
-        int_off.tocsr(),
-        dec_off.tocsr(),
-        d_int,
-        d_dec,
+    sol_cuda, _ = solve_etd2(
+        nsteps,
+        dX,
+        rho_inv,
+        mceq.int_m,
+        mceq.dec_m,
+        phi0.copy(),
+        grid_idcs,
+        backend="cuda",
         device_id=config.cuda_gpu_id,
-        fp_precision=64,
     )
-    sol_cuda, _ = solv_cuda_etd2(nsteps, dX, rho_inv, ctx, phi0.copy(), grid_idcs)
 
     assert np.all(np.isfinite(sol_cuda)), "cuda_etd2 produced non-finite values"
     rel_l2 = np.linalg.norm(sol_cuda - sol_numpy) / max(
@@ -1298,7 +1525,7 @@ def test_solv_cuda_etd2_matches_numpy_etd2_real(mceq_sib21_full_db):
 
 @pytest.mark.xdist_group("full_db")
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-def test_solv_cuda_etd2_stable_at_high_zenith():
+def test_etd2_cuda_stable_at_high_zenith():
     """Regression: CUDA ETD2 must stay finite at theta=89 deg."""
     import crflux.models as pm
 
@@ -1329,7 +1556,7 @@ def test_solv_cuda_etd2_stable_at_high_zenith():
 # ---------------------------------------------------------------------------
 # ETD2 on GeneralizedTarget (uniform-density profile)
 # ---------------------------------------------------------------------------
-def test_solv_numpy_etd2_generalized_target_convergence():
+def test_solve_etd2_numpy_generalized_target_convergence():
     """ETD2 must converge with order ~2 on a uniform-density target.
 
     For a constant-density profile, the non-uniform `ρ`-aware path
@@ -1345,7 +1572,7 @@ def test_solv_numpy_etd2_generalized_target_convergence():
 
     from MCEq.core import MCEqRun
     from MCEq.geometry.density_profiles import GeneralizedTarget
-    from MCEq.solvers import solv_numpy_etd2
+    from MCEq.solvers import solve_etd2
 
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
@@ -1369,7 +1596,7 @@ def test_solv_numpy_etd2_generalized_target_convergence():
             dX = np.full(n, h, dtype=np.float64)
             dX[-1] = max_X - (n - 1) * h
             rho_inv = np.full(n, 1.0 / target.env_density, dtype=np.float64)
-            sol, _ = solv_numpy_etd2(
+            sol, _ = solve_etd2(
                 n,
                 dX,
                 rho_inv,
@@ -1377,6 +1604,7 @@ def test_solv_numpy_etd2_generalized_target_convergence():
                 mceq.dec_m,
                 mceq._phi0.copy(),
                 [],
+                backend="numpy",
             )
             assert np.all(np.isfinite(sol)), (
                 f"ETD2 on water at h={h} produced non-finite values"
@@ -1576,9 +1804,7 @@ def test_solve_fullsky_2d_phi0_tiled_matches_1d(mceq_sib21):
         phi0_1d = mceq_sib21._phi0.copy()
 
         sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid)
-        phi0_2d = np.broadcast_to(
-            phi0_1d[:, None], (mceq_sib21.dim_states, K)
-        ).copy()
+        phi0_2d = np.broadcast_to(phi0_1d[:, None], (mceq_sib21.dim_states, K)).copy()
         sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
 
         assert sol_2d.shape == sol_1d.shape
@@ -1710,8 +1936,8 @@ class _StubMCEq:
         self.int_m = sp.csr_matrix(m)
         self.pman = _StubPMan(
             [
-                _StubParticle(True, 0, 1),   # e- (EM)
-                _StubParticle(True, 1, 2),   # e+ (EM)
+                _StubParticle(True, 0, 1),  # e- (EM)
+                _StubParticle(True, 1, 2),  # e+ (EM)
                 _StubParticle(False, 2, 3),  # hadron
                 _StubParticle(False, 3, 4),
                 _StubParticle(False, 4, 5),
@@ -1845,24 +2071,13 @@ def test_em_adaptive_step_off_matches_legacy():
 def test_solve_batch_shared_matches_solve(mceq_sib21):
     """solve_batch(conditions=None) must reproduce K back-to-back solve()
     calls bit-for-bit (the shared-path multi-RHS kernel is bit-exact vs
-    the single-RHS kernel on the CSR path — BSR reorders the SpMV
-    partial sums, so it is disabled here), including int_grid snapshots,
-    and must not mutate the instance solution state.
+    the single-RHS kernel), including int_grid snapshots, and must not
+    mutate the instance solution state.
     """
     saved_kernel = config.kernel_config
-    saved_bs = getattr(config, "numpy_bsr_blocksize", 11)
-
-    def _clear_split_cache():
-        for m in (mceq_sib21.int_m, mceq_sib21.dec_m):
-            try:
-                delattr(m, "_etd_split_cache_v2")
-            except AttributeError:
-                pass
 
     try:
         config.kernel_config = "numpy_etd2"
-        config.numpy_bsr_blocksize = None
-        _clear_split_cache()
         mceq_sib21.set_zenith_azimuth(30.0)
         int_grid = [100.0, 400.0, 900.0]
         phi0_base = mceq_sib21.get_initial_state()
@@ -1892,8 +2107,6 @@ def test_solve_batch_shared_matches_solve(mceq_sib21):
         mceq_sib21._phi0[:] = saved_phi0
     finally:
         config.kernel_config = saved_kernel
-        config.numpy_bsr_blocksize = saved_bs
-        _clear_split_cache()
         mceq_sib21.set_zenith_azimuth(0.0)
 
 
@@ -1958,11 +2171,11 @@ def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
         mceq_sib21.set_zenith_azimuth(20.0)
         theta_before = mceq_sib21.density_model.theta_deg
 
-        seasons = [("CORSIKA", ("BK_USStd", None)),
-                   ("CORSIKA", ("PL_SouthPole", "January"))]
-        conditions = [
-            {"zenith_deg": 60.0, "density_model": dm} for dm in seasons
+        seasons = [
+            ("CORSIKA", ("BK_USStd", None)),
+            ("CORSIKA", ("PL_SouthPole", "January")),
         ]
+        conditions = [{"zenith_deg": 60.0, "density_model": dm} for dm in seasons]
         res = mceq_sib21.solve_batch(conditions=conditions)
 
         assert mceq_sib21.density_model is dm_before, (
@@ -1977,7 +2190,7 @@ def test_solve_batch_density_model_override_matches_serial(mceq_sib21):
             mceq_sib21.set_density_model(dm)
             mceq_sib21.set_zenith_azimuth(60.0)
             mceq_sib21.solve()
-            # rtol allows for BSR-vs-CSR partial-sum reordering between
+            # rtol allows for SpMV-vs-SpMM partial-sum reordering between
             # the single-RHS solve() and the carousel SpMM. Typically
             # ~1e-12 on the e± blowup rows this fixture keeps enabled,
             # but the reordering is BLAS-dependent: macOS-Intel CI hit
@@ -2007,9 +2220,7 @@ def test_solve_batch_phi0_shape_validation(mceq_sib21):
     with pytest.raises(ValueError, match="first axis"):
         mceq_sib21.solve_batch(np.zeros((dim - 1, 2)))
     with pytest.raises(ValueError, match="second axis"):
-        mceq_sib21.solve_batch(
-            np.zeros((dim, 3)), conditions=[{"zenith_deg": 0.0}] * 2
-        )
+        mceq_sib21.solve_batch(np.zeros((dim, 3)), conditions=[{"zenith_deg": 0.0}] * 2)
     with pytest.raises(ValueError, match="must be 1-D or 2-D"):
         mceq_sib21.solve_batch(np.zeros((dim, 2, 2)))
     with pytest.raises(ValueError, match="unknown keys"):
@@ -2076,7 +2287,9 @@ def test_batch_result_get_solution_matches_serial(mceq_sib21):
             mceq_sib21.set_zenith_azimuth(float(zen))
             mceq_sib21.solve()
             for pname, mag in [
-                ("total_mu+", 0), ("conv_numu", 3), ("pr_antinumu", 0),
+                ("total_mu+", 0),
+                ("conv_numu", 3),
+                ("pr_antinumu", 0),
             ]:
                 ref = mceq_sib21.get_solution(pname, mag=mag)
                 got_k = res.get_solution(pname, k=k, mag=mag)
@@ -2092,7 +2305,9 @@ def test_batch_result_get_solution_matches_serial(mceq_sib21):
         ref_int = mceq_sib21.get_solution("total_mu-", integrate=True)
         np.testing.assert_allclose(
             res.get_solution("total_mu-", k=1, integrate=True),
-            ref_int, rtol=1e-12, atol=0,
+            ref_int,
+            rtol=1e-12,
+            atol=0,
         )
 
         # Selector errors
@@ -2125,12 +2340,11 @@ def test_batch_result_skymap(mceq_sib21):
         for i_zen in range(2):
             for i_az in range(2):
                 ref = res.get_solution(
-                    "total_numu", pixel=(i_zen, i_az),
+                    "total_numu",
+                    pixel=(i_zen, i_az),
                     return_as="kinetic energy",
                 )[e_idx]
-                np.testing.assert_allclose(
-                    smap[i_zen, i_az], ref, rtol=1e-12, atol=0
-                )
+                np.testing.assert_allclose(smap[i_zen, i_az], ref, rtol=1e-12, atol=0)
 
         # skymap on a non-fullsky result raises
         res_batch = mceq_sib21.solve_batch(
@@ -2154,9 +2368,7 @@ def test_solve_fullsky_2d_phi0_explicit_cutoff_warns(mceq_sib21):
             (mceq_sib21.dim_states, 2),
         ).copy()
         with pytest.warns(UserWarning, match="NOT applied"):
-            mceq_sib21.solve_fullsky(
-                zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True
-            )
+            mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True)
     finally:
         config.kernel_config = saved_kernel
 
@@ -2185,19 +2397,20 @@ def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
 # cuda fp32 pipeline — fp64-internal diagonal factors
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-def test_cuda_phi_compute_f64diag_accuracy():
-    """The fp32-pipeline diag-factor kernel (fp32 buffers, fp64-internal
-    arithmetic) must reproduce the fp64 phi factors to fp32 roundoff.
+def test_cuda_diag_factors_f64diag_accuracy():
+    """The diag-factor kernel takes fp64 inputs and does fp64 arithmetic
+    whatever the output dtype, so its fp32 outputs are the fp64 phi
+    factors to fp32 roundoff.
 
     The pure-fp32 phi1/phi2 cancellations ((e-1)/hd, (e-1-hd)/hd^2)
     lose 3-7 digits around the Taylor-switch thresholds; this test locks
-    in the fp64-internal fix so a regression to fp32 arithmetic (or a
+    in the fp64-internal contract so a regression to fp32 arithmetic (or a
     threshold recalibration that reopens the cancellation band) fails
     loudly.
     """
     import cupy as cp
 
-    from MCEq.solvers import _cuda_etd2_kernels
+    from MCEq.solvers.backends.cuda import _cuda_etd2_kernels
 
     Kset = _cuda_etd2_kernels()
     rng = np.random.default_rng(11)
@@ -2209,22 +2422,19 @@ def test_cuda_phi_compute_f64diag_accuracy():
     h = rng.uniform(0.05, 15.0, (1, K))
     ri = rng.lognormal(mean=8.0, sigma=2.0, size=(1, K))
 
-    args32 = [
-        cp.asarray(a, dtype=cp.float32)
+    args64 = [
+        cp.asarray(a, dtype=cp.float64)
         for a in (d_int.reshape(dim, 1), d_dec.reshape(dim, 1), h, ri)
     ]
     outs_mixed = [cp.empty((dim, K), cp.float32) for _ in range(3)]
-    Kset.phi_compute_multipath_f64diag(*args32, *outs_mixed)
+    Kset.diag_factors(*args64, *outs_mixed)
 
-    # fp64 reference from the same (fp32-quantised) inputs, so the
-    # comparison isolates kernel arithmetic from input quantisation.
-    args64 = [a.astype(cp.float64) for a in args32]
+    # fp64 reference from the same inputs, so the comparison isolates the
+    # output cast from the arithmetic.
     outs64 = [cp.empty((dim, K), cp.float64) for _ in range(3)]
-    Kset.phi_compute_multipath(*args64, *outs64)
+    Kset.diag_factors(*args64, *outs64)
 
-    for name, mixed, ref in zip(
-        ("eD", "phi1", "phi2"), outs_mixed, outs64
-    ):
+    for name, mixed, ref in zip(("eD", "hphi1", "hphi2"), outs_mixed, outs64):
         m = cp.asnumpy(mixed).astype(np.float64)
         r = cp.asnumpy(ref)
         mask = np.abs(r) > 1e-15 * np.abs(r).max()
@@ -2233,3 +2443,69 @@ def test_cuda_phi_compute_f64diag_accuracy():
             f"{name}: fp64-internal diag kernel rel err {rel.max():.2e} "
             f"exceeds fp32-roundoff budget 5e-7"
         )
+
+
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason="no fork start method; the path build runs serially here",
+)
+def test_msis_condition_paths_are_fork_reproducible():
+    """A forked path build reproduces the serial one on an MSIS atmosphere.
+
+    `cNRLMSISE00` memoised on altitude alone, which made the azimuth-averaged
+    `MSIS00LocationCentered` spline depend on the order the directions were
+    evaluated in; a worker pool changes that order, which is what used to look
+    like nrlmsise-00 not being fork-safe.
+    """
+    import numpy as np
+
+    from MCEq.core import MCEqRun
+
+    mceq = MCEqRun(
+        interaction_model="SIBYLL21",
+        theta_deg=0.0,
+        primary_model=None,
+        density_model=("MSIS00_IC", ("SouthPole", "January")),
+        build_matrices=False,
+    )
+    try:
+        conditions = [
+            {"zenith_deg": zenith, "azimuth_deg": azimuth, "density_model": None}
+            for zenith in (20.0, 60.0)
+            for azimuth in (0.0, 90.0, 180.0)
+        ]
+        serial = mceq._build_condition_paths(conditions, path_workers=0)
+        forked = mceq._build_condition_paths(conditions, path_workers=4)
+
+        assert len(serial) == len(forked) == len(conditions)
+        for one, other in zip(serial, forked):
+            assert one[0] == other[0]
+            assert np.array_equal(one[1], other[1])
+            assert np.array_equal(one[2], other[2])
+    finally:
+        mceq.close()
+
+
+def test_condition_paths_fall_back_to_serial_without_fork(mceq_sib21, monkeypatch):
+    """`path_workers` degrades to a serial build where fork is missing.
+
+    Windows offers only spawn, and `get_context("fork")` there raises
+    `ValueError: cannot find context for 'fork'`. Both are faked here, so the
+    fallback is exercised on a platform that does have fork.
+    """
+
+    def no_fork(method=None):
+        raise ValueError(f"cannot find context for {method!r}")
+
+    conditions = [{"zenith_deg": zenith} for zenith in (0.0, 30.0, 60.0)]
+    serial = mceq_sib21._build_condition_paths(conditions, path_workers=0)
+
+    monkeypatch.setattr(multiprocessing, "get_all_start_methods", lambda: ["spawn"])
+    monkeypatch.setattr(multiprocessing, "get_context", no_fork)
+    fallback = mceq_sib21._build_condition_paths(conditions, path_workers=4)
+
+    assert len(fallback) == len(conditions)
+    for one, other in zip(serial, fallback):
+        assert one[0] == other[0]
+        assert np.array_equal(one[1], other[1])
+        assert np.array_equal(one[2], other[2])

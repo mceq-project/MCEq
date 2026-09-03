@@ -14,6 +14,22 @@ import pytest
 from MCEq import config
 from MCEq.data import HDF5Backend
 
+#: Globals the backend fixtures set. ``conftest._restore_global_config_state``
+#: snapshots ``mceq_db_fname``, but it is function-scoped and so runs *after*
+#: these module-scoped fixtures: its snapshot already holds the mutated value.
+_MUTATED = ("mceq_db_fname",)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_2d_config():
+    """Keep the database this module selects from leaking into later tests."""
+    saved = {name: getattr(config, name) for name in _MUTATED}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(config, name, value)
+
 
 @pytest.fixture(scope="module")
 def backend_1d():
