@@ -15,16 +15,18 @@ damping — reached the goldens only through a solve.
 page and CI does not cache it. ``golden_host``: the CSR buffers are sha256
 digests.
 
-Fourteen cells (7 stencils x muon scattering on/off) at 19.4 s — 5.3 s to
-construct the run, 0.94 s per cell. All fourteen ``int_m`` digests are
-distinct: unlike 1D, ``_muon_scattering_damping`` fires here and adds
+Fifteen cells at 19.8 s — the 7 stencils x muon scattering on/off cross
+product plus one ``average_loss_operator`` cell, 4.1 s to construct the run
+and 1.05 s per cell. All fourteen cross-product ``int_m`` digests are distinct:
+unlike 1D, ``_muon_scattering_damping`` fires here and adds
 ``-kappa^2 theta_s^2(E) / 4`` to the muon diagonals of every mode with
-kappa != 0. ``dec_m`` still takes one value over all fourteen.
+kappa != 0. The averaged cell makes fifteen. ``dec_m`` still takes one value
+over all fifteen.
 
 ``em_step_scale`` is NOT recorded here. On this fixture the value is exactly
-0.0 in all fourteen cells: ``disabled_particles = [11, -11]`` leaves gamma the
+0.0 in every cell: ``disabled_particles = [11, -11]`` leaves gamma the
 only ``is_em`` species, and with ``enable_em`` off it has no self-production,
-so the EM off-diagonal block is empty. Fourteen copies of that zero state a
+so the EM off-diagonal block is empty. Fifteen copies of that zero state a
 property of ``adv_set`` — already pinned, as a compared array, by
 ``fixture/em_species`` — and nothing about the assembly this section exists to
 pin. They also carried a tolerance that could not apply: a rel-L2 entry at
@@ -134,16 +136,23 @@ NOTE = (
     " seven loss_stencil_method families x muon_multiple_scattering on/off."
     " One MCEqRun, then per cell MatrixBuilder._construct_differential_"
     "operator() + construct_matrices(skip_decay_matrix=False); measured"
-    " identical to a fresh MCEqRun per cell in 14 of 14 cells (19.4 s against"
-    " 57.3 s). The explicit differential-operator call is required: core.py"
+    " identical to a fresh MCEqRun per cell in 14 of 14 cross-product cells"
+    " (19.4 s against 57.3 s). The explicit differential-operator call is"
+    " required: core.py"
     " builds op_matrix in MatrixBuilder.__init__ only, so regenerate_matrices()"
-    " alone does not pick up a stencil change. All fourteen int_m digests are"
+    " alone does not pick up a stencil change. All fourteen cross-product int_m"
+    " digests are"
     " distinct — _muon_scattering_damping fires on a 2D database and adds"
     " -kappa^2 theta_s^2 / 4 to the muon diagonals of every mode with kappa"
-    " != 0 — against one dec_m digest, which neither knob reaches. BLAS threads"
+    " != 0 — against one dec_m digest, which no knob reaches. A fifteenth cell"
+    " turns average_loss_operator on at the default stencil, with"
+    " loss_step_for_average pinned at 1e-1 so it runs at ten explicit Euler"
+    " steps; it is the only golden coverage of that branch and of its"
+    " np.linalg.matrix_power, and its int_m is a new digest (6894720 nonzeros"
+    " against 6212352), which is what says the flag reaches int_m. BLAS threads"
     " are ambient: rebuilding at 1, 2, 4 and 8 reproduces every key bitwise."
     " The count in force is recorded in extra.blas_threads. em_step_scale is"
-    " NOT recorded: it is exactly 0.0 in all fourteen cells here (gamma is the"
+    " NOT recorded: it is exactly 0.0 in every cell here (gamma is the"
     " only is_em species, already pinned by fixture/em_species, and has no"
     " self-production with enable_em off), so the keys stated a property of"
     " adv_set rather than of the assembly, and their rel-L2 1e-9 entry was dead"

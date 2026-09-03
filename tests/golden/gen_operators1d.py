@@ -10,11 +10,14 @@ stencil families and the assembly path become real CI coverage rather than a
 host-only pin. It is ``golden_host`` — the CSR buffers are sha256 digests, and
 a digest is bitwise by construction.
 
-Fourteen cells (7 stencils x muon scattering on/off) at 3.1 s. Seven distinct
-``int_m`` digests: ``_muon_scattering_damping`` returns ``None`` unless
-``is_2d``, so the two scattering cells of a stencil are the same operator here,
-and this section is what pins that they are. See :mod:`._operator_sweep` for
-the construct-once equivalence measurement and the rest of the rationale.
+Fifteen cells at 2.8 s: the 7 stencils x muon scattering on/off cross product,
+plus one ``average_loss_operator`` cell at the default stencil. Seven distinct
+``int_m`` digests over the fourteen cross-product cells —
+``_muon_scattering_damping`` returns ``None`` unless ``is_2d``, so the two
+scattering cells of a stencil are the same operator here, and this section is
+what pins that they are — and eight over all fifteen, since the averaged cell
+is an operator none of them is. See :mod:`._operator_sweep` for the
+construct-once equivalence measurement and the rest of the rationale.
 
 ``em_step_scale`` is the interesting scalar of this section: with e+/e-/gamma
 loaded the EM off-diagonal block is 7 species x 31 bins and carries the
@@ -107,15 +110,21 @@ NOTE = (
     " families x muon_multiple_scattering on/off. One MCEqRun, then per cell"
     " MatrixBuilder._construct_differential_operator() +"
     " construct_matrices(skip_decay_matrix=False); measured identical to a"
-    " fresh MCEqRun per cell in 14 of 14 cells. The explicit differential-"
-    "operator call is required: core.py builds op_matrix in"
+    " fresh MCEqRun per cell in 14 of 14 cross-product cells. The explicit"
+    " differential-operator call is required: core.py builds op_matrix in"
     " MatrixBuilder.__init__ only, so regenerate_matrices() alone does not pick"
     " up a stencil change (pinned by tests/test_operators_pin.py). Seven"
-    " distinct int_m digests over the 14 cells and one dec_m digest:"
-    " _muon_scattering_damping returns None unless is_2d, so the scattering"
-    " flag is a no-op on a 1D database, and neither knob is on the decay path."
-    " em_step_scale takes seven distinct values here, 0.0454 (upwind) to 0.1181"
-    " (centered) 1/(g/cm^2), on the 217 x 217 e+/e-/gamma off-diagonal block."
+    " distinct int_m digests over the 14 cross-product cells against one dec_m"
+    " digest: _muon_scattering_damping returns None unless is_2d, so the"
+    " scattering flag is a no-op on a 1D database, and no knob is on the decay"
+    " path. A fifteenth cell turns average_loss_operator on at the default"
+    " stencil, with loss_step_for_average pinned at 1e-1 so it runs at ten"
+    " explicit Euler steps; it is the only golden coverage of that branch and"
+    " of its np.linalg.matrix_power, and its int_m is a new digest (187806"
+    " nonzeros against 169786), which is what says the flag reaches int_m."
+    " em_step_scale takes eight distinct values here, 0.0454 (upwind) to 0.1181"
+    " (centered) 1/(g/cm^2) over the stencils and 0.0922 on the averaged cell,"
+    " on the 217 x 217 e+/e-/gamma off-diagonal block."
     " BLAS threads are ambient: rebuilding at 1, 2, 4 and 8 reproduces every"
     " key bitwise except em_step_scale, which is max|eigvals| of a dense"
     " non-normal block through LAPACK and moves by up to 6.9e-13 relative"

@@ -3,7 +3,8 @@
 The sections pin the assembled cascade operators themselves — ``int_m``,
 ``dec_m`` and the differential operator behind the continuous-loss band —
 across the full cross product of interior stencils and muon multiple
-scattering, on both databases. Nothing here solves; the whole cost is
+scattering, plus one averaged-loss cell beside it, on both databases. Nothing
+here solves; the whole cost is
 :meth:`MCEq.operators.matrix_builder.MatrixBuilder.construct_matrices`.
 
 Why the section exists: Phase 5 moves ``MatrixBuilder`` out of ``core.py``,
@@ -18,9 +19,12 @@ unpinned before this one.
 Construction, and why it is exact
 ---------------------------------
 One :class:`~MCEq.core.MCEqRun` per database. Per cell the generator sets
-``config.loss_stencil_method`` and ``config.muon_multiple_scattering``, calls
+``config.loss_stencil_method``, ``config.muon_multiple_scattering`` and
+``config.average_loss_operator``, calls
 ``MatrixBuilder._construct_differential_operator()`` and then
-``construct_matrices(skip_decay_matrix=False)``, and digests the result.
+``construct_matrices(skip_decay_matrix=False)``, and digests the result. All
+three globals are set on every cell, so the averaged one cannot leak into the
+cell built after it.
 
 The explicit ``_construct_differential_operator()`` is load-bearing: it is
 called from ``MatrixBuilder.__init__`` and nowhere else, so
@@ -48,17 +52,24 @@ silently stopped pinning a fresh build.
 
 What the sweep buys
 -------------------
-Across both sections the 28 ``int_m`` digests take 21 distinct values, and the
-collision structure is the section's own consistency check:
+Across both sections the 28 cross-product ``int_m`` digests take 21 distinct
+values, and the collision structure is the section's own consistency check.
+The two averaged cells add one value each, so the 30 cells take 23:
 
-* ``dec_m`` is invariant — one digest per database over all 14 cells. The
-  stencil enters only through ``cont_loss_operator``, and the muon damping
-  only through ``_csr_from_blocks(apply_muon_scattering=True)``, which the
-  decay path never sets.
+* ``dec_m`` is invariant — one digest per database over all 15 cells. The
+  stencil and the loss averaging enter only through ``cont_loss_operator``,
+  and the muon damping only through
+  ``_csr_from_blocks(apply_muon_scattering=True)``, which the decay path
+  never sets.
 * in 1D the two muon-scattering cells of a stencil are **equal**:
   ``_muon_scattering_damping`` returns ``None`` unless ``is_2d``, so the flag
   is a no-op there. 7 distinct of 14.
 * in 2D they **differ**, at every stencil: 14 distinct of 14.
+* :data:`AVERAGE_CELL` is a fifteenth operator in either section, and a new
+  digest in both: ten explicit Euler steps fill the loss band in, so ``int_m``
+  goes from 169786 to 187806 nonzeros in 1D (+10.6 %) and 6212352 to 6894720
+  in 2D (+11.0 %). That the digest is new is what says the flag reaches
+  ``int_m`` at all, which is what covering ``np.linalg.matrix_power`` is for.
 
 BLAS threads are left ambient — unlike ``gen_solve2d``, which pins them with
 ``config.set_mkl_threads`` and so leaves a process-wide limiter behind.
@@ -115,12 +126,34 @@ STENCILS = (
 #: ``(label, config.muon_multiple_scattering)`` for the second sweep axis.
 SCATTERING = (("ms_on", True), ("ms_off", False))
 
-#: ``(label, stencil, muon_scattering)`` for every cell, in build order.
+#: The one cell outside the cross product: ``average_loss_operator``, at the
+#: default stencil with muon scattering on. The flag sends
+#: ``cont_loss_operator`` through ``_average_operator`` —
+#: ``matrix_power(I + op * step, 1/step) - I`` — and is False in all five
+#: generators, with nothing else in the suite setting it, so the branch and its
+#: ``np.linalg.matrix_power`` have no golden coverage at all. Both generators
+#: pin ``loss_step_for_average`` at 1e-1, so the cell runs at ten explicit
+#: Euler steps rather than at whatever the ambient value happens to be.
+#:
+#: It is not a third axis: the averaging is a property of the band, not of the
+#: stencil dispatch or of the assembly, so fourteen more cells would pin the
+#: same statement seven times over at 0.9 s each in 2D.
+AVERAGE_CELL = ("expfit_low_upwind2/ms_on/avg_loss", "expfit_low_upwind2", True, True)
+
+#: ``(label, stencil, muon_scattering, average_loss_operator)`` per cell, in
+#: build order. The averaged cell is last, so every cross-product cell is built
+#: before the flag is ever True.
 CELLS = tuple(
-    (f"{stencil}/{ms_label}", stencil, ms)
+    (f"{stencil}/{ms_label}", stencil, ms, False)
     for stencil in STENCILS
     for ms_label, ms in SCATTERING
-)
+) + (AVERAGE_CELL,)
+
+#: The (stencil x scattering) cross product alone — :data:`CELLS` less the
+#: averaged cell, whose operator the collision structure below does not
+#: describe. The invariants and the structure tests range over this, so adding
+#: the averaged cell leaves them stating exactly what they stated before.
+SWEEP_CELLS = tuple(cell for cell in CELLS if not cell[3])
 
 #: rel-L2 budget for ``em_step_scale`` — the only key of either section that is
 #: not bitwise. It is ``max|eigvals|`` of a dense, strongly non-normal block
@@ -148,7 +181,7 @@ def tolerances(em_step_scale: bool = True) -> dict:
         return {}
     return {
         f"cells/{label}/em_step_scale": {"mode": "rel_l2", "rtol": EM_SCALE_RTOL}
-        for label, _, _ in CELLS
+        for label, *_ in CELLS
     }
 
 
@@ -185,12 +218,15 @@ def pinned_config(config_pins, adv_set_pins):
         config.adv_set.update(saved_adv_set)
 
 
-def build_cell_operators(mceq, stencil, scattering):
+def build_cell_operators(mceq, stencil, scattering, average=False):
     """Assemble ``(int_m, dec_m)`` for one cell on an already-built run.
 
     The sweep's whole construct-once shortcut, in one function, so the
     generator and the equivalence test in ``tests/test_operators_pin.py``
     exercise the same three calls instead of two copies that can drift.
+
+    All three globals are set on every cell, ``average_loss_operator``
+    included, so the averaged cell cannot leak into the one built after it.
 
     ``_construct_differential_operator()`` is explicit because it is called
     from ``MatrixBuilder.__init__`` and nowhere else, so
@@ -202,6 +238,7 @@ def build_cell_operators(mceq, stencil, scattering):
 
     config.loss_stencil_method = stencil
     config.muon_multiple_scattering = scattering
+    config.average_loss_operator = average
     builder = mceq.matrix_builder
     builder._construct_differential_operator()
     return builder.construct_matrices(skip_decay_matrix=False)
@@ -270,7 +307,7 @@ def _record_fixture(arrays, mceq):
 
 
 def _record_cell(
-    arrays, label, stencil, scattering, mceq, n_k, n_species, em_step_scale
+    arrays, label, stencil, scattering, average, mceq, n_k, n_species, em_step_scale
 ):
     """Assemble one cell and store the operators and the EM step scale.
 
@@ -284,7 +321,7 @@ def _record_cell(
     of the stale entry.
     """
     mb = mceq.matrix_builder
-    int_m, dec_m = build_cell_operators(mceq, stencil, scattering)
+    int_m, dec_m = build_cell_operators(mceq, stencil, scattering, average)
     mceq.int_m, mceq.dec_m = int_m, dec_m
 
     # Canonical form is the property the digests below cannot see, and the 2D
@@ -298,8 +335,9 @@ def _record_cell(
     key = f"stencil/{stencil}/op_matrix"
     if key in arrays:
         assert np.array_equal(arrays[key], op_matrix), (
-            f"{label}: muon_multiple_scattering moved op_matrix. The flag "
-            f"reaches _csr_from_blocks, never _construct_differential_operator."
+            f"{label}: muon_multiple_scattering or average_loss_operator moved "
+            f"op_matrix. The first reaches _csr_from_blocks and the second "
+            f"cont_loss_operator, never _construct_differential_operator."
         )
     else:
         arrays[key] = op_matrix
@@ -324,11 +362,18 @@ def _record_cell(
 def _check_invariants(is_2d, int_digests, dec_digests):
     """Assert the collision structure the sweep makes free; return a summary.
 
-    Three statements, each a property of the builder rather than of a number:
-    ``dec_m`` sees neither knob; muon scattering is a no-op in 1D and moves
-    every stencil in 2D; the seven stencils are mutually distinct at either
-    setting of the flag.
+    Four statements, each a property of the builder rather than of a number:
+    ``dec_m`` sees no knob; muon scattering is a no-op in 1D and moves every
+    stencil in 2D; the seven stencils are mutually distinct at either setting
+    of the flag; and ``average_loss_operator`` moves ``int_m`` off the cell it
+    shares a stencil and a scattering flag with.
+
+    The first three range over :data:`SWEEP_CELLS` — the cross product alone,
+    which is the grid the collision structure describes. The averaged cell is
+    one more operator beside it, so the summary reports both counts: distinct
+    digests over the whole file, and over the cross product the invariants use.
     """
+    sweep = {label: int_digests[label] for label, *_ in SWEEP_CELLS}
     distinct_dec = sorted(set(dec_digests.values()))
     assert len(distinct_dec) == 1, (
         f"dec_m is not invariant under the sweep: {len(distinct_dec)} distinct "
@@ -339,8 +384,8 @@ def _check_invariants(is_2d, int_digests, dec_digests):
     )
 
     for stencil in STENCILS:
-        on = int_digests[f"{stencil}/ms_on"]
-        off = int_digests[f"{stencil}/ms_off"]
+        on = sweep[f"{stencil}/ms_on"]
+        off = sweep[f"{stencil}/ms_off"]
         if is_2d:
             assert on != off, (
                 f"{stencil}: muon_multiple_scattering left int_m unchanged on a "
@@ -355,7 +400,7 @@ def _check_invariants(is_2d, int_digests, dec_digests):
             )
 
     for ms_label, _ in SCATTERING:
-        column = {s: int_digests[f"{s}/{ms_label}"] for s in STENCILS}
+        column = {s: sweep[f"{s}/{ms_label}"] for s in STENCILS}
         collisions = sorted(
             (a, b)
             for i, a in enumerate(STENCILS)
@@ -368,15 +413,27 @@ def _check_invariants(is_2d, int_digests, dec_digests):
             f"the builder ignores."
         )
 
-    n_distinct = len(set(int_digests.values()))
+    n_sweep_distinct = len(set(sweep.values()))
     expected = len(STENCILS) * (len(SCATTERING) if is_2d else 1)
-    assert n_distinct == expected, (
-        f"expected {expected} distinct int_m digests over {len(int_digests)} "
-        f"cells, got {n_distinct}"
+    assert n_sweep_distinct == expected, (
+        f"expected {expected} distinct int_m digests over {len(sweep)} cross-"
+        f"product cells, got {n_sweep_distinct}"
+    )
+
+    # The averaged cell is a cell, not an axis: what it has to state is that
+    # the flag reaches int_m at all, which is the whole point of covering the
+    # matrix_power branch.
+    avg_label, avg_stencil = AVERAGE_CELL[0], AVERAGE_CELL[1]
+    assert int_digests[avg_label] != sweep[f"{avg_stencil}/ms_on"], (
+        "average_loss_operator left int_m unchanged. cont_loss_operator "
+        "returns _average_operator(op_mat) under the flag: matrix_power("
+        "I + op * step, 1/step) - I, which is not op."
     )
     return {
         "n_cells": len(int_digests),
-        "n_distinct_int_m": n_distinct,
+        "n_sweep_cells": len(sweep),
+        "n_distinct_int_m": len(set(int_digests.values())),
+        "n_distinct_sweep_int_m": n_sweep_distinct,
         "n_distinct_dec_m": len(distinct_dec),
         "int_m_digests": dict(int_digests),
         "dec_m_digest": distinct_dec[0],
@@ -420,12 +477,13 @@ def build_section(
 
             int_digests, dec_digests = {}, {}
             started = time.perf_counter()
-            for label, stencil, scattering in CELLS:
+            for label, stencil, scattering, average in CELLS:
                 int_digests[label], dec_digests[label] = _record_cell(
                     arrays,
                     label,
                     stencil,
                     scattering,
+                    average,
                     mceq,
                     n_k,
                     n_species,
@@ -445,7 +503,8 @@ def build_section(
             extra={
                 "stencils": list(STENCILS),
                 "scattering": [label for label, _ in SCATTERING],
-                "cells": [label for label, _, _ in CELLS],
+                "cells": [label for label, *_ in CELLS],
+                "average_loss_cell": AVERAGE_CELL[0],
                 "blas_threads": blas_threads(),
                 "seconds": seconds,
                 **summary,
