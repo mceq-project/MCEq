@@ -2,7 +2,8 @@
 
 One test per section. `--regenerate-goldens` rewrites the section instead of
 comparing it; `--run-golden-slow` enables the sections that need a database CI
-does not carry.
+does not carry; `--run-golden-host` enables the sections pinned bitwise to the
+generating host's numpy/BLAS build, which only the reference job passes.
 
 The sections share no state — each generator constructs and tears down its own
 `MCEqRun` — but they do mutate process-global `MCEq.config` while they run, so
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from . import SECTIONS, SLOW_SECTIONS
+from . import HOST_SECTIONS, SECTIONS, SLOW_SECTIONS
 from ._harness import CUDA_RTOL, compare_section, load_section, section_path
 from .make_goldens import SectionUnavailable, load_generator, regenerate
 
@@ -26,7 +27,11 @@ BACKEND_SECTIONS = ("solve1d",)
 
 def _params():
     for section in SECTIONS:
-        marks = [pytest.mark.golden_slow] if section in SLOW_SECTIONS else []
+        marks = []
+        if section in SLOW_SECTIONS:
+            marks.append(pytest.mark.golden_slow)
+        if section in HOST_SECTIONS:
+            marks.append(pytest.mark.golden_host)
         yield pytest.param(section, marks=marks, id=section)
 
 
@@ -76,8 +81,30 @@ def _check_database_identity(section, golden_prov, produced_prov):
             )
 
 
-def _report(section, prov, problems, produced):
-    """Build the failure message: the mismatches, then a generator's own diff.
+def _environment_note(golden_prov, produced_prov):
+    """One line naming the build the golden was generated with and this one.
+
+    A diagnostic, never a gate: the sections in `HOST_SECTIONS` are bitwise
+    against the generating host's numpy/BLAS, so a 1e-14 mismatch is usually
+    explained here, and the line says `same` when it is not. Making an
+    environment difference fail on its own would turn a numpy patch bump red.
+    """
+
+    def signature(prov):
+        env = prov.get("environment") or {}
+        return (
+            f"numpy {env.get('numpy')} / scipy {env.get('scipy')} / "
+            f"{env.get('platform')}"
+        )
+
+    golden, current = signature(golden_prov), signature(produced_prov)
+    verdict = "same" if golden == current else "differs"
+    return f"environment ({verdict}): golden {golden}; here {current}"
+
+
+def _report(section, prov, problems, produced, produced_prov):
+    """Build the failure message: the mismatches, a generator's own diff, the
+    environment.
 
     Concatenated, not either-or: for the flux sections the mismatch lines name
     the keys and the renderer explains them (which species, at which energy),
@@ -93,7 +120,8 @@ def _report(section, prov, problems, produced):
         f"golden section {section!r} differs from {str(prov.get('git_commit'))[:12]}\n"
         f"note: {prov.get('note', '')}\n"
     )
-    return head + "\n".join(f"  - {line}" for line in detail)
+    body = "\n".join(f"  - {line}" for line in detail)
+    return f"{head}{body}\n{_environment_note(prov, produced_prov)}"
 
 
 @pytest.mark.parametrize("section", list(_params()))
@@ -119,7 +147,9 @@ def test_golden_section(section, request):
 
     problems = compare_section(section, produced)
     if problems:
-        pytest.fail(_report(section, prov, problems, produced), pytrace=False)
+        pytest.fail(
+            _report(section, prov, problems, produced, produced_prov), pytrace=False
+        )
 
 
 @pytest.mark.cuda
@@ -146,11 +176,13 @@ def test_golden_section_cuda_matches_host(section, request, monkeypatch):
     from MCEq import config
 
     monkeypatch.setattr(config, "kernel_config", "cuda_etd2")
-    produced, _ = _build(section)
+    produced, produced_prov = _build(section)
     problems = compare_section(section, produced, rtol_floor=CUDA_RTOL)
     if problems:
         _, prov = load_section(section)
-        pytest.fail(_report(section, prov, problems, produced), pytrace=False)
+        pytest.fail(
+            _report(section, prov, problems, produced, produced_prov), pytrace=False
+        )
 
 
 def test_every_section_has_a_generator():
