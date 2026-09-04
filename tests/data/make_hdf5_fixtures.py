@@ -20,12 +20,12 @@ Written from what the reader actually requires (``HDF5Backend.__init__`` and
   ``e_dim``; a 2D file adds scalar ``k_dim`` and ``k_grid`` (n_k,).
   ``e_grid`` is the geometric centre of ``e_bins`` and ``widths`` is
   ``diff(e_bins)`` (verified on the reduced database).
-* A channel pack is a ``(2, N)`` float64 dataset (float64 in every shipped
+* A channel pack is a ``(2, N)`` float dataset (float64 in every shipped
   file and by default here; ``build_database(pack_dtype=...)`` writes another
-  dtype) -- row 0 CSR ``data``, row 1 CSR ``indices`` **stored as float64** --
-  with attrs ``tuple_idcs``
-  (n_ch, width) int64, ``len_data`` (n_ch,) int64 and an optional
-  ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
+  dtype) -- row 0 CSR ``data``, row 1 CSR ``indices`` **stored in the pack
+  dtype, not as integers** (``_write_pack`` casts both rows) -- with attrs
+  ``tuple_idcs`` (n_ch, width) int64, ``len_data`` (n_ch,) int64 and an
+  optional ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
   (n_ch, dim_full+1).
 * ``len_data[i]`` is the nnz of **one Hankel-mode block**, not of the whole
   channel: on the rc7 2D file ``data.shape[1] == len_data.sum() * n_k``
@@ -35,7 +35,10 @@ Written from what the reader actually requires (``HDF5Backend.__init__`` and
   are asserted below, so a malformed fixture fails here rather than
   decoding to a wrong-but-finite matrix.
 * ``/cross_sections/<medium>/<MODEL>`` is ``(n_e, n_parents)`` with a
-  ``parents`` attribute. ``/continuous_losses/<medium>/{ionization,total}``
+  ``parents`` attribute (:func:`cross_section_table`; a second such table is
+  written for ``build_database(low_energy_model=...)``, at a different scale
+  and with its ``parents`` reversed, see :func:`cross_section_parents`).
+  ``/continuous_losses/<medium>/{ionization,total}``
   holds one ``(n_e,)`` dataset per PDG-as-string plus a ``(2, M)``
   ``hadron`` dataset of ``(beta*gamma, dE/dX)``. Sign convention copied from
   the reduced database: the per-lepton curves are **negative**, the two
@@ -190,6 +193,34 @@ def channel_block(channel_index, mode_index=0):
     return block
 
 
+def cross_section_parents(model_index=0):
+    """The ``parents`` attribute of one model's cross-section table, in file order.
+
+    ``model_index`` 0 is :data:`MODEL` and stores :data:`CS_PARENTS` as they
+    are (sorted); the optional low-energy model of :func:`build_database` is 1
+    and stores them REVERSED. A raw ``_cs_db_single`` read keeps the file
+    order while ``blend_cross_sections`` sorts, so requesting the LE model
+    itself returns something a blend of the table with itself could not.
+    """
+    return list(CS_PARENTS) if model_index == 0 else list(CS_PARENTS[::-1])
+
+
+def cross_section_table(model_index=0):
+    """The ``(N_E, len(CS_PARENTS))`` cross-section table stored for one model.
+
+    Column ``ip`` belongs to ``cross_section_parents(model_index)[ip]``.
+    ``model_index`` 0 is :data:`MODEL`; the optional low-energy model of
+    :func:`build_database` is 1 and is stored with a different scale, so a
+    ``cs_db`` blend of the two is visible in the numbers, not only in the
+    ``parents`` list.
+    """
+    return (
+        1e-3
+        * (1.0 + 2.0 * model_index)
+        * np.outer(1.0 + np.log10(E_GRID), 1 + np.arange(len(CS_PARENTS)))
+    )
+
+
 def pack_channels(channels, n_k, tuple_width):
     """Pack channels the way a database stores them.
 
@@ -213,7 +244,8 @@ def pack_channels(channels, n_k, tuple_width):
 
         len_data.append(nnz.pop())
         data_parts.append(full.data)
-        # Row 1 of the pack is the CSR index array, stored as float64.
+        # Row 1 of the pack is the CSR index array, as floats; `_write_pack`
+        # casts the whole pack (this row included) to its `pack_dtype`.
         index_parts.append(full.indices.astype(np.float64))
         indptrs.append(full.indptr.astype(np.int64))
 
@@ -299,8 +331,13 @@ def build_database(
     ``pack_dtype`` is the on-disk dtype of every channel pack (the shipped
     databases are float64). ``low_energy_model``, when given, is the name of a
     second interaction model written next to :data:`MODEL` with the
-    :data:`LOW_ENERGY_CHANNELS`, so a backend built with that
-    ``low_energy_model`` can run the runtime HE/LE blend against this file.
+    :data:`LOW_ENERGY_CHANNELS` and its own ``cross_sections`` table
+    (:func:`cross_section_table` and :func:`cross_section_parents` with
+    ``model_index=1``), so a backend built with that ``low_energy_model`` can
+    run both runtime HE/LE blends -- ``interaction_db`` and ``cs_db`` --
+    against this file. Without it (and with the default ``pack_dtype``) the
+    file's datasets and attributes are exactly what they were before these two
+    keywords existed, which the :func:`build_all` variants rely on.
     """
     path = pathlib.Path(path)
     is_2d = n_k > 1
@@ -358,9 +395,14 @@ def build_database(
             )
 
         cross_sections = db.create_group(f"cross_sections/{MEDIUM}")
-        table = 1e-3 * np.outer(1.0 + np.log10(E_GRID), 1 + np.arange(len(CS_PARENTS)))
-        cs_dset = cross_sections.create_dataset(MODEL, data=table)
-        cs_dset.attrs["parents"] = np.array(CS_PARENTS, dtype=np.int64)
+        cs_models = [MODEL] if low_energy_model is None else [MODEL, low_energy_model]
+        for model_index, name in enumerate(cs_models):
+            cs_dset = cross_sections.create_dataset(
+                name, data=cross_section_table(model_index)
+            )
+            cs_dset.attrs["parents"] = np.array(
+                cross_section_parents(model_index), dtype=np.int64
+            )
 
         for loss_case in ("ionization", "total"):
             group = db.create_group(f"continuous_losses/{MEDIUM}/{loss_case}")
