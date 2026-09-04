@@ -82,9 +82,6 @@ docs = [
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["mceq_config", "src/MCEq"]
 
-[tool.setuptools.package-data]
-"MCEq" = ["data/README.md", "data/DDM_1.0.npy"]
-
 [project.urls]
 Changelog = "https://mceq.readthedocs.io/en/latest/en/latest/changelog.html"
 Documentation = "https://mceq.readthedocs.io/en/latest"
