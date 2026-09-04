@@ -502,6 +502,8 @@ def test_data_public_surface_is_exactly_this_set():
         f"unexpected: {sorted(public - DATA_PUBLIC_SURFACE)}; "
         f"missing: {sorted(DATA_PUBLIC_SURFACE - public)}"
     )
+    # Consistency between the two literals in this file (the lower bound must
+    # be inside the upper bound), not a pin on `MCEq.data` itself.
     assert set(SURFACE["MCEq.data"]) <= DATA_PUBLIC_SURFACE
 
 
@@ -519,6 +521,8 @@ def test_data_equivalences_attribute_is_the_dict_not_the_submodule():
     import MCEq.data
 
     assert isinstance(MCEq.data.equivalences, dict)
+    # Literal-vs-literal consistency check (the name is in the upper bound
+    # above), not a pin on `MCEq.data`; the pins are the isinstance/is lines.
     assert "equivalences" in DATA_PUBLIC_SURFACE
     assert isinstance(sys.modules["MCEq.data.equivalences"], ModuleType)
     assert sys.modules["MCEq.data.equivalences"].equivalences is MCEq.data.equivalences

@@ -159,10 +159,13 @@ def test_family_of_reproduces_both_former_implementations(name):
 
 
 def _backend_on(path):
-    """An `HDF5Backend` on one synthetic file, config groups injected.
+    """An `HDF5Backend` on one synthetic file, all four config groups injected.
 
-    The idiom of `tests/test_data_hdf5_decode.py::backend`: no process-wide
-    `MCEq.config` is read, no `MCEqRun` is built.
+    The idiom of `tests/test_data_hdf5_decode.py::backend`, plus `em`: with
+    `paths`/`grid`/`physics`/`em` all given, `HDF5Backend.__init__` takes no
+    setting from the process-wide `MCEq.config` (which it would otherwise read
+    `config.em` from, unused while `enable_em` is off), and no `MCEqRun` is
+    built.
     """
     paths = SimpleNamespace(
         data_dir=path.parent,
@@ -184,7 +187,10 @@ def _backend_on(path):
         interaction_medium=fixtures.MEDIUM,
         muon_helicity_dependence=False,
     )
-    return HDF5Backend(medium=fixtures.MEDIUM, paths=paths, grid=grid, physics=physics)
+    em = SimpleNamespace(air_density=None)
+    return HDF5Backend(
+        medium=fixtures.MEDIUM, paths=paths, grid=grid, physics=physics, em=em
+    )
 
 
 def test_unknown_family_is_none():
@@ -215,8 +221,13 @@ def test_the_two_reactions_to_an_unknown_family_stay_different(tmp_path, monkeyp
         backend._interaction_db_single("URQMD34")
 
     proton_column = np.array([1.0, 2.0, 3.0])
-    index_d = {2212: proton_column}
-    assert 3122 not in index_d
+    neutron_column = np.array([4.0, 5.0, 6.0])
+    # 3122 is absent by construction. The neutron column is there so that a
+    # family mapping of 3122 -> 2112 (SIBYLL21, QGSJETII and PYTHIA8 all have
+    # one) would be visible: with no family the mapping step is skipped and the
+    # baryon fallback lands on the proton column; with one it would land on the
+    # neutron column and `is proton_column` fails.
+    index_d = {2212: proton_column, 2112: neutron_column}
     assert family_fallback(3122) == [2212, 2212]
     assert mapped_cross_section(index_d, 3122, "URQMD34") is proton_column
     # and the fallthrough is the only route: with no proton column there is

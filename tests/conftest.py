@@ -9,7 +9,8 @@ from scipy.sparse import csr_matrix
 from MCEq import config
 from MCEq.core import MCEqRun
 
-#: Config attributes every test is guaranteed to leave as it found them.
+#: Config attributes every test is guaranteed to leave as it found them (plus
+#: ``adv_set``, snapshotted and restored separately because it is deep-copied).
 _SNAPSHOT_KEYS = (
     "kernel_config",
     "mceq_db_fname",
@@ -46,7 +47,8 @@ def _restore_config(saved):
 
     ``mkl_threads`` is process-wide BLAS state, so it is put back through
     ``config.set_mkl_threads`` -- and only when it actually changed, because
-    that call loads ``libmkl_rt`` and re-registers the threadpoolctl limiter.
+    that call re-registers the threadpoolctl limiter (and dlopens ``libmkl_rt``
+    on its first use in the process; ``_load_mkl`` returns early afterwards).
     ``set_mkl_threads`` is safe when MKL is absent (it checks ``mkl is not
     None``). ``config.has_mkl`` is deliberately not read here: it is a lazy
     probe with side effects.
