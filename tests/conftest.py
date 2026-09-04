@@ -196,3 +196,23 @@ def toy_solver_setup():
     phi = np.ones(size)
 
     return nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs
+
+
+@pytest.fixture(scope="session")
+def hdf5_fixture_dbs(tmp_path_factory):
+    """Synthetic MCEq HDF5 databases for ``tests/test_data_hdf5_decode.py``.
+
+    Built once per session into a tmp directory; they are never committed as
+    ``.h5``. Returns ``{variant name: path}`` exactly as produced by
+    ``tests/data/make_hdf5_fixtures.build_all`` -- see that module for the
+    on-disk layout and for which decode branch each variant reaches.
+
+    Imported by file path because ``tests/data`` is not an importable package.
+    """
+    import importlib.util
+
+    source = pathlib.Path(__file__).parent / "data" / "make_hdf5_fixtures.py"
+    spec = importlib.util.spec_from_file_location("make_hdf5_fixtures", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.build_all(tmp_path_factory.mktemp("hdf5_fixtures"))
