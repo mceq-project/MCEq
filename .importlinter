@@ -56,7 +56,9 @@ layers =
 exhaustive = True
 exhaustive_ignores =
 # environment; sits beside the stack, constrained by C2 and C3 instead.
-# Phase 3 renames it to `environment` -- update this line, do not delete it.
+# Phase 3 landed the rename. `geometry` stays listed because the shim package
+# is still there for user code; Phase 7 deletes the shims and this line.
+    environment
     geometry
 # models, imported by the driver only (C4). Phase 4 moves ddm and ddm_utils
 # under `models`; Phase 7 deletes charm_models (plan decision D6).
@@ -93,6 +95,7 @@ ignore_imports =
 name = C2 environment does not import data/species/operators/solvers
 type = forbidden
 source_modules =
+    MCEq.environment
     MCEq.geometry
 forbidden_modules =
     MCEq.data
@@ -117,6 +120,7 @@ source_modules =
     MCEq.misc
     MCEq.config
 forbidden_modules =
+    MCEq.environment
     MCEq.geometry
 
 # -------------------------------------------------------------- C4: models
@@ -132,6 +136,7 @@ source_modules =
     MCEq.solvers
     MCEq.misc
     MCEq.config
+    MCEq.environment
     MCEq.geometry
 forbidden_modules =
     MCEq.ddm
@@ -155,6 +160,7 @@ source_modules =
     MCEq.secant
     MCEq.solvers
     MCEq.misc
+    MCEq.environment
     MCEq.geometry
     MCEq.ddm
     MCEq.ddm_utils
@@ -181,12 +187,24 @@ ignore_imports =
 # solvers/path.py:82 `config.solver` for the step-size defaults -- removed when
 # the path takes its settings group as an argument.
     MCEq.solvers.path -> MCEq.config
-# geometry/density_profiles.py:7 -- Phase 3
-    MCEq.geometry.density_profiles -> MCEq.config
-# geometry/geometry.py:3 -- Phase 3
-    MCEq.geometry.geometry -> MCEq.config
-# geometry/gtracr_cutoff.py:82 -- Phase 3
-    MCEq.geometry.gtracr_cutoff -> MCEq.config
+# `EarthsAtmosphere.__init__`'s `environment=` fallback. Phase 6, not Phase 3:
+# the kwarg is unreachable today (no concrete subclass forwards it), so
+# removing the fallback is a ~10-signature API change, not a module move.
+    MCEq.environment.base -> MCEq.config
+# `GeneralizedTarget.__init__`'s len_target/env_density/env_name fallback.
+# Phase 6: `registry.build` constructs it with zero arguments and the tutorial
+# advertises it as a no-config model, so there is nothing to inject from yet.
+    MCEq.environment.target -> MCEq.config
+# `EarthGeometry.__init__`'s r_E/h_atm/h_obs fallback. Phase 6, and the hardest
+# of the three: tests/geometry/test_geometry.py monkeypatches `config.h_obs`
+# and asserts a no-arg `EarthGeometry()` reads it, so the fallback is pinned
+# behaviour, and MCEqRun never constructs one to inject at.
+    MCEq.environment.geometry -> MCEq.config
+# `_cache_dir(paths=None)` and `build_phi0_with_cutoff(physics=None)`. The only
+# callers are in the driver, which already holds both groups -- removable, but
+# it needs the defaults to become required, which breaks the golden generators.
+# Deferred to Phase 6 with the other two.
+    MCEq.environment.geomagnetic.cutoff -> MCEq.config
 # data.py:8 -- Phase 4
     MCEq.data -> MCEq.config
 # particlemanager.py:7 -- Phase 4
@@ -210,16 +228,14 @@ forbidden_modules =
 # Needs import-linter >= 2.14; 2.5.2 (what uv resolves on Python 3.9) has no
 # acyclic_siblings contract.
 [importlinter:contract:C7]
-name = C7 no cycles among MCEq.geometry siblings
+name = C7 no cycles among MCEq.environment siblings
 type = acyclic_siblings
 ancestors =
+    MCEq.environment
     MCEq.geometry
-unmatched_ignore_imports_alerting = error
-ignore_imports =
-# density_profiles' module-level `__getattr__` re-exports the MSIS21 names
-# through PEP 562, while msis21_atmosphere imports `EarthsAtmosphere` and
-# `_KM3NET_DETECTORS` back out of it. Phase 3 breaks the cycle by giving both
-# a common base in environment/base.py and moving the site table to
-# environment/parameters.py. (Symbols, not line numbers -- the previous
-# version of this comment cited lines that two commits had already moved.)
-    MCEq.geometry.msis21_atmosphere -> MCEq.geometry.density_profiles
+# No ignores. The one cycle this contract carried -- msis21_atmosphere
+# importing `EarthsAtmosphere` and `_KM3NET_DETECTORS` out of density_profiles
+# while density_profiles re-exported the MSIS21 names back through a PEP-562
+# `__getattr__` -- is gone: both backends now take their base from
+# environment/base.py and their site table from environment/parameters.py, and
+# the re-export lives only in the shim, pointing out of the package.

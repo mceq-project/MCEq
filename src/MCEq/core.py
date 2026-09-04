@@ -1216,13 +1216,14 @@ class MCEqRun:
           density_model_or_config (obj or tuple of strings):
             (parametrization type, arguments)
         """
-        import MCEq.geometry.density_profiles as dprof
+        from MCEq.environment.base import EarthsAtmosphere
+        from MCEq.environment.target import GeneralizedTarget
 
         # Check if string arguments or an instance of the density class is provided
         if not isinstance(
-            density_model_or_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)
+            density_model_or_config, (EarthsAtmosphere, GeneralizedTarget)
         ):
-            from MCEq.geometry import registry
+            from MCEq.environment import registry
 
             base_model, model_config = density_model_or_config
 
@@ -1241,14 +1242,14 @@ class MCEqRun:
             self.density_model = density_model_or_config
 
         if self.theta_deg is not None and isinstance(
-            self.density_model, dprof.EarthsAtmosphere
+            self.density_model, EarthsAtmosphere
         ):
             # The ``if self.theta_deg is None`` branch that sat here, logging
             # "Using default zenith angle theta=0." and calling
             # set_zenith_azimuth(0), was unreachable: the enclosing condition
             # already requires the attribute to be non-None.
             self.set_zenith_azimuth(self.theta_deg)
-        elif isinstance(self.density_model, dprof.GeneralizedTarget):
+        elif isinstance(self.density_model, GeneralizedTarget):
             self.integration_path = None
         else:
             raise ValueError(f"Density model {self.density_model} not supported.")
@@ -1286,7 +1287,7 @@ class MCEqRun:
                 ``None`` (default) triggers azimuth-averaging for capable
                 models.
         """
-        import MCEq.geometry.density_profiles as dprof
+        from MCEq.environment.target import GeneralizedTarget
 
         info(
             2,
@@ -1294,7 +1295,7 @@ class MCEqRun:
             + (f", azimuth {azimuth_deg:6.2f}" if azimuth_deg is not None else ""),
         )
 
-        if isinstance(self.density_model, dprof.GeneralizedTarget):
+        if isinstance(self.density_model, GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
 
         # Cache check: skip if nothing has changed
@@ -2140,18 +2141,19 @@ class MCEqRun:
         hierarchies) and any other atmosphere whose ``self.location``
         appears in :data:`atmosphere_parameters.LOCATIONS`.
         """
-        import MCEq.geometry.density_profiles as dprof
-        from MCEq.geometry.atmosphere_parameters import LOCATIONS
+        from MCEq.environment.msis00 import MSIS00Atmosphere
+        from MCEq.environment.msis21 import MSIS21Atmosphere
+        from MCEq.environment.parameters import LOCATIONS
 
         dm = self.density_model
         if dm is None:
             return False
-        if isinstance(dm, dprof.MSIS00Atmosphere):
+        if isinstance(dm, MSIS00Atmosphere):
             return True
-        # MSIS21 is a parallel class tree (not MSIS00 subclass).
-        if hasattr(dprof, "MSIS21Atmosphere") and isinstance(
-            dm, dprof.MSIS21Atmosphere
-        ):
+        # MSIS21 is a parallel class tree (not MSIS00 subclass). Importing the
+        # module is cheap -- it defers `nrlmsis` to the constructor -- so the
+        # `hasattr` guard the PEP-562 re-export needed is gone.
+        if isinstance(dm, MSIS21Atmosphere):
             return True
         loc = getattr(dm, "location", None)
         return isinstance(loc, str) and loc in LOCATIONS
@@ -2287,7 +2289,7 @@ class MCEqRun:
                 stacklevel=2,
             )
         if cutoff_flag and not phi0_is_2d:
-            from MCEq.geometry.gtracr_cutoff import (
+            from MCEq.environment.geomagnetic.cutoff import (
                 build_phi0_with_cutoff,
                 get_cutoff_map,
             )

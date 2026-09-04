@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from MCEq.geometry import registry
+from MCEq.environment import registry
 
 
 def test_every_offered_name_resolves_to_a_class():
@@ -85,21 +85,23 @@ def test_entries_are_dotted_strings_not_imported_classes():
     """
     for target in registry.DENSITY_MODELS.values():
         module_name, _, qualname = target.partition(":")
-        assert module_name.startswith("MCEq.geometry."), target
+        assert module_name.startswith("MCEq.environment."), target
         assert qualname and ":" not in qualname, target
 
 
 @pytest.mark.parametrize(
     ("name", "must_not_import"),
     [
-        ("MSIS00", "MCEq.geometry.msis21_atmosphere"),
-        ("MSIS00_KM3NeT", "MCEq.geometry.msis21_atmosphere"),
-        ("CORSIKA", "MCEq.geometry.msis21_atmosphere"),
-        ("MSIS21", "MCEq.geometry.density_profiles"),
+        ("MSIS00", "MCEq.environment.msis21"),
+        ("MSIS00_KM3NeT", "MCEq.environment.msis21"),
+        ("CORSIKA", "MCEq.environment.msis21"),
+        ("CORSIKA", "MCEq.environment.msis00"),
+        ("MSIS21", "MCEq.environment.msis00"),
+        ("AIRS", "MCEq.environment.msis00"),
     ],
 )
 def test_resolution_is_lazy(name, must_not_import):
-    """Resolving one model must not drag in the other MSIS tree.
+    """Resolving one model must not drag in another backend's tree.
 
     The ``elif`` ladder imported ``density_profiles`` inside the method and
     only touched the MSIS21 names if one was selected. Dotted-string entries
@@ -107,17 +109,20 @@ def test_resolution_is_lazy(name, must_not_import):
     side, which is a property of the whole import graph and not of the table.
     So this runs a fresh interpreter and looks at ``sys.modules``.
 
-    The MSIS21 case is the one that can regress silently: ``msis21_atmosphere``
-    imports ``EarthsAtmosphere`` back out of ``density_profiles`` today, so it
-    is *expected* to fail until Phase 3's package split gives it its own base
-    module. It is marked xfail rather than omitted so the split flips it.
+    The ``MSIS21 -> msis00`` direction was impossible before the
+    ``environment/`` split: ``msis21_atmosphere`` took ``EarthsAtmosphere`` and
+    the KM3NeT table out of ``density_profiles``, so selecting MSIS21 imported
+    the whole MSIS00 tree. Both now come from ``environment.base`` and
+    ``environment.parameters``, which is the same edge removal that let the C7
+    cycle-ignore be deleted. ``AIRS`` is here because ``tabulated`` uses
+    ``MSIS00Atmosphere`` for its interpolation grid and must defer it.
     """
     import subprocess
     import sys
 
     probe = (
         "import sys;"
-        "from MCEq.geometry import registry;"
+        "from MCEq.environment import registry;"
         f"registry.density_model_class({name!r});"
         f"print({must_not_import!r} in sys.modules)"
     )
@@ -127,13 +132,7 @@ def test_resolution_is_lazy(name, must_not_import):
         text=True,
         check=True,
     )
-    imported = out.stdout.strip() == "True"
-    if name == "MSIS21":
-        pytest.xfail(
-            "msis21_atmosphere imports EarthsAtmosphere from density_profiles; "
-            "the Phase 3 environment/ split breaks that edge"
-        )
-    assert not imported, (
+    assert out.stdout.strip() == "False", (
         f"resolving {name} imported {must_not_import}; the registry is no longer lazy"
     )
 
@@ -145,9 +144,10 @@ def test_registry_import_alone_pulls_in_no_atmosphere():
 
     probe = (
         "import sys;"
-        "import MCEq.geometry.registry;"
-        "print([m for m in ('MCEq.geometry.density_profiles',"
-        "'MCEq.geometry.msis21_atmosphere') if m in sys.modules])"
+        "import MCEq.environment.registry;"
+        "print([m for m in ('MCEq.environment.msis00',"
+        "'MCEq.environment.msis21', 'MCEq.environment.corsika',"
+        "'MCEq.environment.tabulated') if m in sys.modules])"
     )
     out = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
