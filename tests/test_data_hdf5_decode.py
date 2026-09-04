@@ -22,7 +22,7 @@ noise: ``decay_db`` passes ``equivalences={}``.
 
 import importlib.util
 import pathlib
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import h5py
 import numpy as np
@@ -402,4 +402,130 @@ def test_width_two_file_loses_the_dedicated_antiproton_channels(hdf5_fixture_dbs
         (2212, 0),
         (211, 0),
         (-211, 0),
+    ]
+
+
+# --------------------------------------------------------------------------
+# Object identity in the equivalence machinery (data/equivalences.py)
+# --------------------------------------------------------------------------
+
+
+def test_fluka_and_dpmjet_share_one_equivalence_table():
+    """``equivalences["FLUKA"] is equivalences["DPMJET"]`` -- one dict, not two.
+
+    ``data/equivalences.py`` builds the FLUKA entry by aliasing the DPMJET one
+    (``equivalences["FLUKA"] = equivalences["DPMJET"]``), so an edit to either
+    family is an edit to both. A rewrite that copies -- ``dict(...)``, a
+    comprehension, a per-family literal -- keeps every existing test and every
+    golden green while changing that, which is why the identity is asserted
+    here rather than left to the values agreeing.
+
+    The mutation half is what makes this a real identity test: two dicts with
+    equal contents pass an ``==`` comparison forever.
+    """
+    from MCEq.data import equivalences
+
+    assert equivalences["FLUKA"] is equivalences["DPMJET"]
+
+    probe = "__identity_probe__"
+    equivalences["DPMJET"][probe] = probe
+    try:
+        assert equivalences["FLUKA"].get(probe) == probe
+    finally:
+        del equivalences["DPMJET"][probe]
+    assert probe not in equivalences["FLUKA"]
+
+
+def test_the_equivalences_package_attribute_is_the_dict_not_the_submodule():
+    """``MCEq.data.equivalences`` is the table; the module is in ``sys.modules``.
+
+    The name is both a submodule of ``MCEq.data`` and the dict that submodule
+    defines. The import system binds the *module* onto the package while
+    loading it, and ``data/__init__.py``'s ``from MCEq.data.equivalences import
+    equivalences`` rebinds the name to the dict afterwards. That order is what
+    keeps ``MCEq.data.equivalences`` the object it has always been
+    (``tests/test_phase4_surface.py`` pins the name; this pins the resolution),
+    and it is fragile: dropping the dict from that import list, or reaching the
+    module through the package attribute, silently swaps the two.
+    """
+    import sys
+
+    import MCEq.data
+
+    assert isinstance(MCEq.data.equivalences, dict)
+    module = sys.modules["MCEq.data.equivalences"]
+    assert isinstance(module, ModuleType)
+    assert module.equivalences is MCEq.data.equivalences
+
+
+def test_equivalence_injection_aliases_rather_than_copies(hdf5_fixture_dbs):
+    """The stand-in shares the matrix *object* and the ``relations`` *list*.
+
+    ``apply_equivalences`` does ``index_d[(eqv_parent, child)] =
+    index_d[(parent, child)]`` and ``relations[eqv_parent] =
+    relations[parent]``. Both are aliases, and the second one is observable
+    beyond the call: the alias is installed while decoding the proton's *first*
+    channel, and the proton's two later channels append to the very list 3112
+    now holds, so 3112 ends up with the proton's complete child list rather
+    than with the one child that was known when the alias was made.
+
+    3112 is the one equivalence replacement that fires on this fixture (see
+    ``make_hdf5_fixtures.INTERACTION_CHANNELS``): SIBYLL21 maps it to 2212, it
+    appears as a child so it is in ``model_particles``, and it is not a parent
+    so the ``available_parents`` guard does not skip it.
+
+    ``test_width_four_keeps_a_dedicated_antiproton_channel`` above asserts the
+    same copy with ``array_equal``, which a deep copy would satisfy too.
+    """
+    index = backend(hdf5_fixture_dbs["one_d_width4"]).interaction_db(fixtures.MODEL)
+    index_d, relations = index["index_d"], index["relations"]
+    parent, stand_in = (2212, 0), (3112, 0)
+
+    children = [(2212, 0), (211, 0), (-211, 0)]
+    for child in children:
+        assert index_d[(stand_in, child)] is index_d[(parent, child)], (
+            f"{child} was copied instead of aliased"
+        )
+
+    assert relations[stand_in] is relations[parent]
+    assert relations[stand_in] == children
+
+
+def test_equivalence_aliasing_on_the_shipped_reduced_database():
+    """The alias counts on real data, measured: 40 matrix groups, 2 lists.
+
+    The fixture test above reaches one stand-in with three channels. This one
+    records the scale on the reduced 1D database with SIBYLL21 and the default
+    ``disabled_particles = [11, -11]``: 40 groups of channel matrices that
+    share one object (60 keys beyond the first of each group), and exactly two
+    shared ``relations`` lists -- 310 sharing 130's, and both 3122 and -3122
+    sharing 2112's.
+
+    The numbers are the point: a rewrite that copies instead of aliasing
+    changes them to 0 and 0 while every value stays equal.
+    """
+    from collections import defaultdict
+
+    from MCEq import config
+
+    path = pathlib.Path(config.data_dir) / "mceq_db_v140reduced_compact.h5"
+    if not path.exists():
+        pytest.skip("reduced database not available; symlink it into src/MCEq/data/")
+
+    index = backend(path, disabled=[11, -11]).interaction_db("SIBYLL2.1")
+
+    def groups(mapping):
+        by_id = defaultdict(list)
+        for key, value in mapping.items():
+            by_id[id(value)].append(key)
+        return [keys for keys in by_id.values() if len(keys) > 1]
+
+    matrix_groups = groups(index["index_d"])
+    assert len(matrix_groups) == 40
+    assert sum(len(keys) - 1 for keys in matrix_groups) == 60
+
+    relation_groups = groups(index["relations"])
+    assert sorted(sorted(int(pdg) for pdg, _ in keys) for keys in relation_groups) == [
+        [-3122, 2112, 3122],
+        [130, 310],
     ]

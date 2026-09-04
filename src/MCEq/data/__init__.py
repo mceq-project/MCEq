@@ -5,138 +5,21 @@ import h5py
 import numpy as np
 
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
+
+# `equivalences` is both a submodule of this package and the dict that submodule
+# defines. The import machinery binds the *module* onto `MCEq.data` while loading
+# it; the `from ... import equivalences` below runs afterwards and rebinds the
+# name to the dict, which is the object `MCEq.data.equivalences` has always been
+# (pinned by tests/test_phase4_surface.py). Reach the module itself through
+# `sys.modules`, never through the package attribute.
+from MCEq.data.equivalences import (
+    apply_equivalences,
+    equivalences,
+    mapped_cross_section,
+    reverse_equivalences,
+)
 from MCEq.data.model_names import family_of, normalize_hadronic_model_name
 from MCEq.misc import info
-
-# TODO: Convert this to some functional generic class. Very erro prone to
-# enter stuff by hand
-equivalences = {
-    "SIBYLL23": {
-        -4132: 4122,
-        -4122: 4122,
-        -3334: -3312,
-        -3322: -2112,
-        -3212: -3122,
-        -413: -411,
-        113: 211,
-        221: 211,
-        111: 211,
-        310: 130,
-        413: 411,
-        3212: 3122,
-        3334: 3312,
-    },
-    "SIBYLL21": {
-        -3322: 2112,
-        -3312: 2212,
-        -3222: 2212,
-        -3212: 2112,
-        -3122: 2112,
-        -3112: 2212,
-        -2212: 2212,
-        -2112: 2112,
-        310: 130,
-        111: 211,
-        3112: 2212,
-        3122: 2112,
-        3212: 2112,
-        3222: 2212,
-        3312: 2212,
-        3322: 2112,
-    },
-    "QGSJET01": {
-        -4122: 2212,
-        -3322: 2212,
-        -3312: 2212,
-        -3222: 2212,
-        -3122: 2212,
-        -3112: 2212,
-        -2212: 2212,
-        -2112: 2212,
-        -421: 321,
-        -411: 321,
-        -211: 211,
-        -321: 321,
-        111: 211,
-        221: 211,
-        130: 321,
-        310: 321,
-        411: 321,
-        421: 321,
-        2112: 2212,
-        3112: 2212,
-        3122: 2212,
-        3222: 2212,
-        3312: 2212,
-        3322: 2212,
-        4122: 2212,
-    },
-    "QGSJETII": {
-        -3122: -2112,
-        111: 211,
-        113: 211,
-        221: 211,
-        310: 130,
-        3122: 2112,
-    },
-    "DPMJET": {
-        -4122: -3222,
-        -3334: -3312,
-        -3212: -3122,
-        -431: -321,
-        -421: -321,
-        -413: -321,
-        -411: -321,
-        310: 130,
-        113: 211,
-        221: 211,
-        111: 211,
-        411: 321,
-        413: 321,
-        421: 321,
-        431: 321,
-        3212: 3122,
-        3334: 3312,
-        4122: 3222,
-    },
-    "EPOSLHC": {
-        -3334: 2212,
-        -3322: -3122,
-        -3312: 2212,
-        -3222: -2212,
-        -3212: -3122,
-        -3112: 2212,
-        111: 211,
-        113: 211,
-        221: 211,
-        310: 130,
-        3112: -2212,
-        3212: 3122,
-        3222: 2212,
-        3312: -2212,
-        3322: 3122,
-        3334: -2212,
-    },
-    "PYTHIA8": {
-        -3122: -2112,
-        -431: -321,
-        -421: -321,
-        -413: -321,
-        -411: -321,
-        111: 211,
-        113: 211,
-        221: 211,
-        310: 321,
-        130: 321,
-        411: 321,
-        413: 321,
-        421: 321,
-        431: 321,
-        3122: 2112,
-    },
-}
-
-equivalences["FLUKA"] = equivalences["DPMJET"]
 
 
 def _select_em_rho_slice(em_group, medium, em):
@@ -335,9 +218,7 @@ class HDF5Backend:
         available_parents = sorted(list(set(available_parents)))
 
         # Reverse equivalences
-        eqv_lookup = defaultdict(list)
-        for k in equivalences:
-            eqv_lookup[(equivalences[k], 0)].append((k, 0))
+        eqv_lookup = reverse_equivalences(equivalences)
 
         for tupidx, tup in enumerate(hdf_root.attrs["tuple_idcs"]):
             # In 2D each channel stores n_k Hankel-mode blocks back-to-back,
@@ -414,34 +295,19 @@ class HDF5Backend:
                 condition=len(equivalences) > 0,
             )
             if self._physics.assume_nucleon_interactions_for_exotics:
-                for eqv_parent in eqv_lookup[parent_pdg]:
-                    if eqv_parent[0] not in model_particles:
-                        info(
-                            10,
-                            "No equiv. replacement needed of",
-                            eqv_parent,
-                            "for",
-                            parent_pdg,
-                            "parent.",
-                        )
-                        continue
-                    # plain ``if`` (not ``elif``): no behaviour change — the
-                    # branch above always ``continue``s, the elif was redundant
-                    if eqv_parent in available_parents:
-                        info(
-                            10,
-                            f"Parent {eqv_parent[0]} has dedicated simulation.",
-                        )
-                        continue
-                    particle_list.append(eqv_parent)
-                    index_d[(eqv_parent, child_pdg)] = index_d[(parent_pdg, child_pdg)]
-                    relations[eqv_parent] = relations[parent_pdg]
-                    _e = eqv_parent[0]
-                    _p = parent_pdg[0]
-                    info(
-                        15,
-                        f"equivalence of {_e} and {_p} interactions",
-                    )
+                # Aliases, deliberately: the stand-in shares this channel's
+                # matrix object and this parent's `relations` list, which later
+                # iterations of this loop keep appending to.
+                apply_equivalences(
+                    eqv_lookup,
+                    parent_pdg,
+                    child_pdg,
+                    model_particles,
+                    available_parents,
+                    particle_list,
+                    index_d,
+                    relations,
+                )
 
             read_idx += expand_len * len_data[tupidx]
 
@@ -694,35 +560,6 @@ class HDF5Backend:
             )
         return dec_index
 
-    def _mapped_cross_section(self, index_d, projectile, model_name):
-        """Return a model cross section using the established equivalences."""
-        candidates = [projectile, abs(projectile)]
-        family = family_of(model_name)
-        model_eqv = None if family is None else equivalences[family]
-        if model_eqv is not None:
-            mapped = model_eqv.get(projectile, model_eqv.get(abs(projectile)))
-            if mapped is not None:
-                candidates.extend([mapped, abs(mapped)])
-
-        # Family fallback, sign-preserving: a negative projectile tries the
-        # antiparticle representative first (antibaryons carry annihilation
-        # channels — nbar, lambda-bar etc. must map to pbar, not p; same
-        # logic for K-/pi- when the model stores dedicated columns) before
-        # falling back to the positive one.
-        apid = abs(projectile)
-        sign = -1 if projectile < 0 else 1
-        if apid in (130, 310, 311) or 300 < apid < 1000:
-            candidates.extend([sign * 321, 321])
-        elif 100 < apid < 300:
-            candidates.extend([sign * 211, 211])
-        elif 1000 < apid < 5000:
-            candidates.extend([sign * 2212, 2212])
-
-        for candidate in candidates:
-            if candidate in index_d:
-                return index_d[candidate]
-        return None
-
     def cs_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
         if self.low_energy_model is None or mname == self.low_energy_model:
@@ -734,7 +571,7 @@ class HDF5Backend:
         w_le = 1.0 - w_he
         blended = {}
         for projectile, he_cs in he_index["index_d"].items():
-            le_cs = self._mapped_cross_section(
+            le_cs = mapped_cross_section(
                 le_index["index_d"], projectile, self.low_energy_model
             )
             # Historical behaviour: an HE-only projectile remains unchanged.
@@ -749,7 +586,7 @@ class HDF5Backend:
         for projectile, le_cs in le_index["index_d"].items():
             if projectile in blended:
                 continue
-            he_cs = self._mapped_cross_section(he_index["index_d"], projectile, mname)
+            he_cs = mapped_cross_section(he_index["index_d"], projectile, mname)
             blended[projectile] = (
                 le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
             )
