@@ -21,6 +21,12 @@ _MOVED_TO_DATA = {
 }
 
 
+#: Memo of the resolved submodules, so that only the FIRST access to a moved
+#: name executes an import. See :func:`_moved_to_data` on why `sys.modules` is
+#: not enough for this.
+_RESOLVED = {}
+
+
 def _moved_to_data(name):
     """The :mod:`MCEq.data` submodule that owns the moved `name`.
 
@@ -30,15 +36,41 @@ def _moved_to_data(name):
     silently turn into the tuple type. The statements are still written out so
     that `grimp` -- and `tests/golden/gen_structure.py`, which parses the same
     text -- sees the two `MCEq.misc -> MCEq.data.*` edges.
-    """
-    import MCEq.data.energy_grid  # noqa: F401
-    import MCEq.data.model_names  # noqa: F401
 
-    return sys.modules[_MOVED_TO_DATA[name]]
+    Only the FIRST access imports; later ones come out of `_RESOLVED`. That
+    matters at interpreter shutdown: once `sys.meta_path` has been torn down an
+    `import` raises `ImportError: sys.meta_path is None`, so a `__del__`
+    reading one of these names -- a plain global lookup before the move --
+    would have started failing. Measured: with the memo warm the shutdown read
+    succeeds; without it, it raises.
+
+    `sys.modules.get(target)` is NOT sufficient in its place, which is why the
+    memo is a separate dict: `sys.modules` is itself cleared before late
+    `__del__`s run, so the lookup misses and falls through to the import. That
+    was measured too -- the first attempt at this fix used `sys.modules` and
+    still raised.
+
+    **The remaining hole, stated rather than papered over:** a *cold* first
+    access during finalization still raises, because the import genuinely has
+    to run once. Nothing in the tree does that (the three `__del__`s under
+    `src/` all swallow exceptions and none touches a moved name), and this
+    repository carries `tests/test_exit.py` because exit-time behaviour has
+    bitten it before, so the warm path is worth having and the cold one is
+    worth naming.
+    """
+    target = _MOVED_TO_DATA[name]
+    module = _RESOLVED.get(target)
+    if module is None:
+        import MCEq.data.energy_grid  # noqa: F401
+        import MCEq.data.model_names  # noqa: F401
+
+        module = _RESOLVED[target] = sys.modules[target]
+    return module
 
 
 class _MiscCompatModule(ModuleType):
-    """`MCEq.misc` with read *and write* forwarding for `_MOVED_TO_DATA`.
+    """`MCEq.misc` forwarding reads, writes, deletes and `dir()` for the
+    names in `_MOVED_TO_DATA`.
 
     A module-level PEP-562 `__getattr__` answers reads and nothing else, and
     `_xmat` is mutable module state: a write to `MCEq.misc._xmat` would put a
@@ -48,6 +80,18 @@ class _MiscCompatModule(ModuleType):
     subclass installed over this module -- and `misc._xmat` stays an alias of
     the live object (`tests/test_data_bug_pins.py::clean_xmat_cache` sets and
     restores it, and one pin asserts identity against the returned array).
+
+    All four hooks are needed to make the shim invisible, and only the first
+    two were here originally:
+
+    * `__getattr__`/`__setattr__` -- reads and writes, as above.
+    * `__delattr__` -- `del MCEq.misc._xmat` was legal before the move (it
+      removed the module global) and raised `AttributeError` on the subclass,
+      because deletion is not covered by the other two hooks.
+    * `__dir__` -- without it `dir()`, `inspect.getmembers()`, `help()` and
+      tab completion all lose the six moved names, since they read the
+      instance dictionary rather than going through `__getattr__`. PEP 562
+      specifies a module-level `__dir__` for exactly this.
     """
 
     def __getattr__(self, name):
@@ -60,6 +104,15 @@ class _MiscCompatModule(ModuleType):
             setattr(_moved_to_data(name), name, value)
             return
         super().__setattr__(name, value)
+
+    def __delattr__(self, name):
+        if name in _MOVED_TO_DATA:
+            delattr(_moved_to_data(name), name)
+            return
+        super().__delattr__(name)
+
+    def __dir__(self):
+        return sorted(set(super().__dir__()) | set(_MOVED_TO_DATA))
 
 
 sys.modules[__name__].__class__ = _MiscCompatModule

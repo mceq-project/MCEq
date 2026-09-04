@@ -361,3 +361,91 @@ def test_core_imports_the_data_module_not_its_names():
         for alias in node.names
     ]
     assert from_data == []
+
+
+# The `MCEq.misc` compat shim. Phase 4 moved six names out of `misc` into
+# `MCEq.data`, and `misc` keeps forwarding them (D14, plan section 8.6) through
+# a `ModuleType` subclass rather than a PEP-562 `__getattr__`, because `_xmat`
+# is mutable module state that a bare hook cannot forward writes for. Reads and
+# writes were covered from the start; the three below were not, and an
+# adversarial audit found all three.
+
+
+def test_the_misc_shim_forwards_dir_not_only_getattr():
+    """`dir()` reads the instance dict, so `__getattr__` alone loses the names.
+
+    Without `__dir__`, `dir(MCEq.misc)`, `inspect.getmembers()`, `help()` and
+    tab completion all silently stop listing the six moved names, which the
+    module did list before the move. PEP 562 specifies a module-level
+    `__dir__` for exactly this.
+    """
+    import inspect
+
+    import MCEq.misc
+
+    moved = set(MCEq.misc._MOVED_TO_DATA)
+    assert moved, "the shim table is empty; this test has nothing to check"
+    assert moved <= set(dir(MCEq.misc))
+    assert moved <= {name for name, _ in inspect.getmembers(MCEq.misc)}
+
+
+def test_the_misc_shim_forwards_deletion():
+    """`del MCEq.misc._xmat` was legal before the move.
+
+    It removed the module global, and a read afterwards raised
+    `AttributeError`. `__getattr__`/`__setattr__` do not cover deletion, so
+    without `__delattr__` the *deletion itself* raised on the subclass. With
+    it, the delete reaches the owning module and the read raises as before --
+    faithful, and equally a foot-gun in both versions, since `gen_xmat`'s
+    `global _xmat` then hits a `NameError`. Restored in a `finally` so the rest
+    of the session is unaffected. Nothing in the tree deletes these attributes;
+    this keeps the shim honest rather than reporting a live bug.
+    """
+    import numpy as np
+
+    import MCEq.misc
+    from MCEq.data.energy_grid import energy_grid, gen_xmat
+
+    grid = energy_grid(c=np.logspace(0.0, 2.0, 3), b=None, w=None, d=3)
+    gen_xmat(grid)
+    assert MCEq.misc._xmat is not None
+
+    try:
+        del MCEq.misc._xmat
+        # The delete reached the owning module, not this namespace.
+        with pytest.raises(AttributeError, match="MCEq.data.energy_grid"):
+            MCEq.misc._xmat
+    finally:
+        MCEq.misc._xmat = None
+
+
+def test_the_misc_shim_survives_a_read_during_finalization():
+    """A warm read of a moved name must not import at interpreter shutdown.
+
+    `_moved_to_data` memoizes the resolved submodule so only the first access
+    imports. Once `sys.meta_path` is torn down an `import` raises
+    `ImportError: sys.meta_path is None`, and `sys.modules` is cleared before
+    late `__del__`s run, so a `sys.modules.get` fallback is not enough either.
+    Run in a subprocess because the property is about this interpreter dying.
+    """
+    import subprocess
+    import sys
+
+    program = (
+        "import warnings; warnings.filterwarnings('ignore')\n"
+        "import numpy as np, MCEq.misc as m\n"
+        "from MCEq.data.energy_grid import energy_grid, gen_xmat\n"
+        "gen_xmat(energy_grid(c=np.logspace(0.,2.,3), b=None, w=None, d=3))\n"
+        "_ = m._xmat\n"
+        "class Late:\n"
+        "    def __del__(self):\n"
+        "        try:\n"
+        "            print('OK', type(m._xmat).__name__)\n"
+        "        except BaseException as exc:\n"
+        "            print('FAILED', type(exc).__name__)\n"
+        "import builtins; builtins._keep = Late()\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, timeout=180
+    )
+    assert "OK ndarray" in out.stdout, (out.stdout, out.stderr)
