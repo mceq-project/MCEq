@@ -20,8 +20,10 @@ Written from what the reader actually requires (``HDF5Backend.__init__`` and
   ``e_dim``; a 2D file adds scalar ``k_dim`` and ``k_grid`` (n_k,).
   ``e_grid`` is the geometric centre of ``e_bins`` and ``widths`` is
   ``diff(e_bins)`` (verified on the reduced database).
-* A channel pack is a ``(2, N)`` float64 dataset -- row 0 CSR ``data``, row 1
-  CSR ``indices`` **stored as float64** -- with attrs ``tuple_idcs``
+* A channel pack is a ``(2, N)`` float64 dataset (float64 in every shipped
+  file and by default here; ``build_database(pack_dtype=...)`` writes another
+  dtype) -- row 0 CSR ``data``, row 1 CSR ``indices`` **stored as float64** --
+  with attrs ``tuple_idcs``
   (n_ch, width) int64, ``len_data`` (n_ch,) int64 and an optional
   ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
   (n_ch, dim_full+1).
@@ -126,6 +128,15 @@ INTERACTION_CHANNELS = [
     (-211, -211),
     (-211, 3112),
 ]
+
+#: The channels of the optional second ("low-energy") interaction model that
+#: :func:`build_database` writes when ``low_energy_model`` is given: the six
+#: nucleon-parent channels only, so ``pi+- -> ...`` are HE-only in a blend.
+#: The order is REVERSED on purpose: :func:`channel_block` scales with the
+#: channel index, so a channel shared by both packs is stored with different
+#: values in each and a blend is visible in the numbers, not just in the
+#: description string.
+LOW_ENERGY_CHANNELS = INTERACTION_CHANNELS[:6][::-1]
 
 #: Channel 4 and channel 7 have an ``e+-`` child, so the default
 #: ``disabled_particles = [11, -11]`` skips them -- which is what the
@@ -257,9 +268,20 @@ def _check_pack(data, indptrs, len_data, tuple_idcs, n_k):
             )
 
 
-def _write_pack(group, name, channels, n_k, tuple_width, description, layout=None):
+def _write_pack(
+    group,
+    name,
+    channels,
+    n_k,
+    tuple_width,
+    description,
+    layout=None,
+    pack_dtype=np.float64,
+):
     data, indptrs, len_data, tuple_idcs = pack_channels(channels, n_k, tuple_width)
-    dset = group.create_dataset(name, data=data)
+    # The shipped databases store float64 packs; a float32 pack is what the
+    # dtype tests in tests/test_low_energy_blending.py read back.
+    dset = group.create_dataset(name, data=data.astype(pack_dtype))
     dset.attrs["len_data"] = len_data
     dset.attrs["tuple_idcs"] = tuple_idcs
     if description is not None:
@@ -269,8 +291,17 @@ def _write_pack(group, name, channels, n_k, tuple_width, description, layout=Non
     group.create_dataset(name + "_indptrs", data=indptrs)
 
 
-def build_database(path, *, n_k=1, tuple_width=4):
-    """Write one synthetic database and return its path."""
+def build_database(
+    path, *, n_k=1, tuple_width=4, pack_dtype=np.float64, low_energy_model=None
+):
+    """Write one synthetic database and return its path.
+
+    ``pack_dtype`` is the on-disk dtype of every channel pack (the shipped
+    databases are float64). ``low_energy_model``, when given, is the name of a
+    second interaction model written next to :data:`MODEL` with the
+    :data:`LOW_ENERGY_CHANNELS`, so a backend built with that
+    ``low_energy_model`` can run the runtime HE/LE blend against this file.
+    """
     path = pathlib.Path(path)
     is_2d = n_k > 1
     # The malformed-width file is also the one that omits the optional
@@ -291,14 +322,26 @@ def build_database(path, *, n_k=1, tuple_width=4):
             common.attrs["k_dim"] = n_k
             common.attrs["k_grid"] = K_GRID[:n_k]
 
+        interactions = db.create_group(f"hadronic_interactions/{MEDIUM}")
         _write_pack(
-            db.create_group(f"hadronic_interactions/{MEDIUM}"),
+            interactions,
             MODEL,
             INTERACTION_CHANNELS,
             n_k,
             tuple_width,
             f"synthetic {MODEL} yields" if described else None,
+            pack_dtype=pack_dtype,
         )
+        if low_energy_model is not None:
+            _write_pack(
+                interactions,
+                low_energy_model,
+                LOW_ENERGY_CHANNELS,
+                n_k,
+                tuple_width,
+                f"synthetic {low_energy_model} yields",
+                pack_dtype=pack_dtype,
+            )
 
         decays = db.create_group("decays")
         for dset_name in ("polarized", "unpolarized"):
@@ -311,6 +354,7 @@ def build_database(path, *, n_k=1, tuple_width=4):
                 f"synthetic {dset_name} decays" if described else None,
                 # decay_db() refuses a 2D 'polarized' set without this.
                 layout="superset" if (is_2d and dset_name == "polarized") else None,
+                pack_dtype=pack_dtype,
             )
 
         cross_sections = db.create_group(f"cross_sections/{MEDIUM}")
