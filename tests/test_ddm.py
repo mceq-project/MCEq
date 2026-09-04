@@ -90,21 +90,20 @@ def test_DDMSplineDB_channels(ddm_spline_db):
 
 
 def test_DDMSplineDB_get_entry_by_ebeam(ddm_spline_db):
-    from MCEq import ddm_utils
-
     entry = ddm_spline_db.get_entry(2212, 211, ebeam=158)
     assert entry.projectile == 2212
     assert entry.secondary == 211
-    assert entry.ebeam == ddm_utils.fmteb(158.0)
+    # Literal, not ``fmteb(158.0)``: the stored value is itself produced by
+    # fmteb, so comparing the two only ever restates fmteb against itself.
+    assert entry.ebeam == "158.0"
 
 
 def test_DDMSplineDB_get_entry_by_idx(ddm_spline_db):
-    from MCEq import ddm_utils
-
     entry = ddm_spline_db.get_entry(2212, 211, idx=0)
     assert entry.projectile == 2212
     assert entry.secondary == 211
-    assert entry.ebeam == ddm_utils.fmteb(31.0)
+    # Literal for the same reason as above; idx=0 is the 31 GeV dataset.
+    assert entry.ebeam == "31.0"
 
 
 def test_DDMSplineDB_get_entry_raises_error(ddm_spline_db):
@@ -158,9 +157,9 @@ def test_ddm_utils_fmteb():
     formatted_str = ddm_utils.fmteb(ebeam_str)
     formatted_int = ddm_utils.fmteb(ebeam_int)
 
-    formatted_float == "2.5"
-    formatted_str == "2.5"
-    formatted_int == "3.0"
+    assert formatted_float == "2.5"
+    assert formatted_str == "2.5"
+    assert formatted_int == "3.0"
 
 
 def test_ddm_utils_spline_min_max_at_knot():
@@ -223,29 +222,44 @@ def test_ddm_utils_eval_spline():
 
     x17 = True
 
+    # Shape + non-negativity alone are satisfied by an _eval_spline that
+    # returns all zeros, so each block below also asserts a relation that a
+    # degenerate return cannot meet: the y_fit = exp(-x) fit, divided by
+    # x**1.7 under x17, must come back strictly decreasing and non-zero.
+
     # Test without error
     res = ddm_utils._eval_spline(x, tck, x17, cov)
     assert res.shape == (10,)
-    assert np.all(res >= 0)
+    assert np.all(res > 0)
+    assert np.all(np.diff(res) < 0)
 
     # Test with error
     res, err = ddm_utils._eval_spline(x, tck, x17, cov, return_error=True)
     assert res.shape == (10,)
     assert err.shape == (10,)
-    assert np.all(res >= 0)
-    assert np.all(err >= 0)
+    assert np.all(res > 0)
+    assert np.all(np.diff(res) < 0)
+    assert np.all(err > 0)
+
+    # x17 is not a no-op: the same spline evaluated without it differs.
+    assert not np.allclose(res, ddm_utils._eval_spline(x, tck, False, cov))
 
     # Test with gamma_zfac
     gamma_zfac = 0.5
-    res = ddm_utils._eval_spline(x, tck, x17, cov, gamma_zfac=gamma_zfac)
-    assert res.shape == (10,)
-    assert np.all(res >= 0)
+    res_zfac = ddm_utils._eval_spline(x, tck, x17, cov, gamma_zfac=gamma_zfac)
+    assert res_zfac.shape == (10,)
+    assert np.all(res_zfac > 0)
+    assert not np.allclose(res_zfac, res)
 
 
 def test_gen_dndx(data_driven_model):
     from MCEq import ddm_utils
 
-    xbins = np.linspace(0.1, 1, 11)
+    # Log binning down to 1e-3 so that entry.x_min (0.0045 for 211 at 31 GeV)
+    # falls *inside* the grid. The old linear 0.1..1 binning started an order
+    # of magnitude above x_min, so the x < x_min mask selected zero elements
+    # and the last assertion below was true no matter what _gen_dndx returned.
+    xbins = np.logspace(-3, 0, 11)
     entry = data_driven_model.spline_db.get_entry(2212, 211, 31)
     dndx = ddm_utils._gen_dndx(xbins, entry)
 
@@ -255,14 +269,19 @@ def test_gen_dndx(data_driven_model):
     # Check that dndx values are non-negative
     assert np.all(dndx >= 0)
 
-    # Check that dndx values are zero where x < entry.x_min
-    assert np.all(dndx[xbins[:-1] < entry.x_min] == 0)
+    # _gen_dndx zeroes on the geometric bin centre, not the left edge.
+    below = np.sqrt(xbins[1:] * xbins[:-1]) < entry.x_min
+    assert below.sum() == 2, "the mask must be non-empty or the next line is vacuous"
+    assert np.all(dndx[below] == 0)
+    assert np.all(dndx[~below] > 0)
 
 
 def test_gen_averaged_dndx(data_driven_model):
     from MCEq import ddm_utils
 
-    xbins = np.linspace(0.1, 1, 11)
+    # Same reason as in test_gen_dndx: the old 0.1..1 binning left the
+    # x < x_min mask empty, so the final assertion could not fail.
+    xbins = np.logspace(-3, 0, 11)
     entry = data_driven_model.spline_db.get_entry(2212, 211, 31)
     averaged_dndx = ddm_utils._gen_averaged_dndx(xbins, entry)
 
@@ -272,8 +291,12 @@ def test_gen_averaged_dndx(data_driven_model):
     # Check that averaged dndx values are non-negative
     assert np.all(averaged_dndx >= 0)
 
-    # Check that averaged dndx values are zero where x < entry.x_min
-    assert np.all(averaged_dndx[xbins[:-1] < entry.x_min] == 0)
+    # _gen_averaged_dndx zeroes a bin only when its *right* edge is below
+    # x_min; a straddling bin is integrated from x_min upwards instead.
+    below = xbins[1:] < entry.x_min
+    assert below.sum() == 2, "the mask must be non-empty or the next line is vacuous"
+    assert np.all(averaged_dndx[below] == 0)
+    assert np.all(averaged_dndx[~below] > 0)
 
 
 def test_calc_zfactor_and_error(data_driven_model):
