@@ -4,6 +4,7 @@ from os.path import isfile, join
 import h5py
 import numpy as np
 
+from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 
 # `equivalences` is both a submodule of this package and the dict that submodule
@@ -15,7 +16,6 @@ from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 from MCEq.data.equivalences import (
     apply_equivalences,
     equivalences,
-    mapped_cross_section,
     reverse_equivalences,
 )
 from MCEq.data.model_names import family_of, normalize_hadronic_model_name
@@ -327,68 +327,28 @@ class HDF5Backend:
             raise Exception("Unknown selections.")
 
     def _he_le_weight(self):
-        """High-energy model weight on the active kinetic-energy grid."""
+        """:func:`MCEq.data.blending.he_le_weight` on this backend's settings."""
         from MCEq import config
 
         grid = config.grid if self._grid is None else self._grid
-        energy = np.asarray(self._energy_grid.c, dtype=float)
-        if self.he_le_trwidth == 0.0:
-            return (energy >= self.he_le_transition).astype(grid.dtype)
-        # Define trwidth as the full 10--90% width in log10 energy.
-        arg = (
-            2.0
-            * np.log(9.0)
-            * np.log10(energy / self.he_le_transition)
-            / self.he_le_trwidth
+        return he_le_weight(
+            self._energy_grid.c,
+            self.he_le_transition,
+            self.he_le_trwidth,
+            grid.dtype,
         )
-        arg = np.clip(arg, -700.0, 700.0)
-        return np.asarray(1.0 / (1.0 + np.exp(-arg)), dtype=grid.dtype)
 
     def _blend_interaction_dbs(self, he_index, le_index, he_name, le_name):
-        """Blend yield matrices column-wise, preserving historical semantics.
-
-        The HE model defines the channel set. Channels absent from the LE
-        model remain unchanged, matching the former compiled low-energy
-        extension. Model-specific projectile equivalences have already been
-        applied by ``_gen_db_dictionary`` before this step.
-
-        On 2D databases the channel matrices are ``(n_k, n_e, n_e)`` Hankel-
-        mode tensors and the ``(1, n_e)`` column weights broadcast over every
-        mode: the blend weight depends on the projectile energy only, so
-        blending commutes with the Hankel transform and applies per kappa.
-        Both models must be stored on the database's common grid (a model's
-        blocks are zero outside its production range, so the transition
-        window must lie inside both models' coverage — the multi-model 2D
-        database build guarantees this).
-        """
-        w_he = self._he_le_weight()[np.newaxis, :]
-        w_le = 1.0 - w_he
-        he_yields = he_index["index_d"]
-        le_yields = le_index["index_d"]
-        blended = {}
-        for channel, he_matrix in he_yields.items():
-            if channel in le_yields:
-                blended[channel] = he_matrix * w_he + le_yields[channel] * w_le
-            else:
-                blended[channel] = he_matrix
-
-        relations = defaultdict(list)
-        particles = set()
-        for parent, child in blended:
-            relations[parent].append(child)
-            particles.add(parent)
-            particles.add(child)
-        return {
-            "parents": sorted(relations),
-            "particles": sorted(particles),
-            "relations": dict(relations),
-            "index_d": blended,
-            "description": (
-                f"Runtime HE/LE blend: {he_name} + {le_name}; "
-                f"transition={self.he_le_transition:g} GeV, "
-                f"10-90 width={self.he_le_trwidth:g} decades"
-            ),
-        }
+        """:func:`MCEq.data.blending.blend_yields` on this backend's settings."""
+        return blend_yields(
+            he_index,
+            le_index,
+            he_name,
+            le_name,
+            self._he_le_weight(),
+            self.he_le_transition,
+            self.he_le_trwidth,
+        )
 
     def interaction_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
@@ -567,30 +527,13 @@ class HDF5Backend:
 
         he_index = self._cs_db_single(mname)
         le_index = self._cs_db_single(self.low_energy_model)
-        w_he = self._he_le_weight()
-        w_le = 1.0 - w_he
-        blended = {}
-        for projectile, he_cs in he_index["index_d"].items():
-            le_cs = mapped_cross_section(
-                le_index["index_d"], projectile, self.low_energy_model
-            )
-            # Historical behaviour: an HE-only projectile remains unchanged.
-            blended[projectile] = (
-                he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
-            )
-        # LE-only projectiles (e.g. FLUKA's dedicated n, nbar, K0, hyperon
-        # columns) keep their identity instead of being dropped: their own
-        # sigma below the transition, the mapped HE equivalent above it.
-        # Without this, get_cs falls back to the proton column, which for
-        # antibaryons misses the annihilation part entirely.
-        for projectile, le_cs in le_index["index_d"].items():
-            if projectile in blended:
-                continue
-            he_cs = mapped_cross_section(he_index["index_d"], projectile, mname)
-            blended[projectile] = (
-                le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
-            )
-        return {"parents": sorted(blended), "index_d": blended}
+        return blend_cross_sections(
+            he_index,
+            le_index,
+            mname,
+            self.low_energy_model,
+            self._he_le_weight(),
+        )
 
     def _cs_db_single(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
