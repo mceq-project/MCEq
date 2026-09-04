@@ -28,6 +28,19 @@ Both are asserted in ``tests/test_data_hdf5_decode.py``
 (``test_equivalence_injection_aliases_rather_than_copies``,
 ``test_fluka_and_dpmjet_share_one_equivalence_table``).
 
+**Importing from this module: use ``from … import``, never ``import … as``.**
+``MCEq.data`` re-exports the :data:`equivalences` *dict* under the same name as
+this submodule, and the re-export runs after the import machinery has bound the
+module, so the dict wins: ``MCEq.data.equivalences`` **is the dict**. CPython
+resolves ``import MCEq.data.equivalences as x`` by ``getattr``, so that binds
+the dict too, and ``MCEq.data.equivalences.family_fallback`` raises
+``AttributeError: 'dict' object has no attribute 'family_fallback'`` even after
+a plain ``import MCEq.data.equivalences``. Only
+``from MCEq.data.equivalences import family_fallback`` (or a ``sys.modules``
+lookup) reaches the functions. The dict has to win -- it is
+``MCEq.data.equivalences``'s pinned public surface
+(``tests/test_phase4_surface.py``).
+
 No config, no HDF5, no numpy: the module reads only :mod:`MCEq.data.model_names`
 and ``misc.info``.
 """
@@ -239,12 +252,19 @@ def family_fallback(projectile):
     to pbar, not p; same logic for K-/pi- when the model stores dedicated
     columns) before falling back to the positive one.
 
-    The three windows are mutually exclusive, so this returns the branch that
-    matches and ``[]`` for anything outside them -- leptons, the diffractive
-    ``10313``/``10323`` ids, nuclei above 5000. It is one of three
-    ``PDG -> family representative`` policies in the tree and deliberately not
-    unified with the other two; see :mod:`MCEq.data.model_names` and
-    ``tests/test_data_model_names.py::test_pdg_family_fallbacks_are_not_unified``.
+    The branches are tested in order and each returns, so **first match wins**,
+    exactly as the ``elif`` chain this replaced did. They are *not* disjoint:
+    ``130`` (K_L) satisfies both the first window (``apid in (130, 310, 311)``)
+    and the second (``100 < apid < 300``), and keeps the kaon representative
+    only because the kaon branch is tested first. Reordering the three ``if``
+    statements would silently reroute K_L to the pion column.
+
+    Anything outside all three windows gets ``[]`` -- leptons, the diffractive
+    ``10313``/``10323`` ids, nuclei at or above 5000. This is one of three
+    ``PDG -> family representative`` policies in the tree and is deliberately
+    not unified with the other two; see :mod:`MCEq.data.model_names` and
+    ``tests/test_data_model_names.py::test_the_two_pdg_policies_are_not_unified``,
+    which drives both real callables and fails if they are unified.
     """
     apid = abs(projectile)
     sign = -1 if projectile < 0 else 1

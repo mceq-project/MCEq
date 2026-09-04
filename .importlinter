@@ -127,7 +127,8 @@ forbidden_modules =
 unmatched_ignore_imports_alerting = error
 ignore_imports =
 # Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
-# compat shim: eleven environment modules take `info` from `misc`, and `misc`'s
+# compat shim: nine modules take `info` from `misc` -- eight under
+# `environment/` plus `geometry/density_profiles.py` -- and `misc`'s
 # `_moved_to_data()` reaches the `MCEq.data` submodules that own the moved names
 # on attribute access (see C1 above). `allow_indirect_imports` is left at False
 # so a real `environment -> data` chain still fails; only these two hops are cut.
