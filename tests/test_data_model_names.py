@@ -14,29 +14,44 @@ blended cross sections), so the disagreement is written down rather than fixed
 them. An earlier version of that test compared two local closures against each
 other, which could not fail for any change to the code it named.
 
-DB-free: the model-name universe below is a literal, measured off the databases
-symlinked into `src/MCEq/data` on the machine that wrote it (ten links, of
-which five resolved), so the test runs without opening one. It is a convenience
-sample of real spellings, not a property of the package.
+No shipped database is opened: the model-name universe below is a literal,
+measured off the databases symlinked into `src/MCEq/data` on the machine that
+wrote it (ten links, of which five resolved). It is a convenience sample of
+real spellings, not a property of the package. The one test that needs a
+file builds a synthetic one into `tmp_path` with
+`tests/data/make_hdf5_fixtures.build_database`.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import itertools
+import pathlib
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from MCEq.data import equivalences
+from MCEq.data import HDF5Backend, equivalences
 
 # `MCEq.data.equivalences` the attribute is the DICT, not the submodule (the
 # package rebinds it on import), so the functions have to come through
 # `from ... import`. `import MCEq.data.equivalences as x` would bind the dict.
-from MCEq.data.equivalences import family_fallback
+from MCEq.data.equivalences import family_fallback, mapped_cross_section
 from MCEq.data.model_names import (
     HADRONIC_MODEL_FAMILIES,
     family_of,
     normalize_hadronic_model_name,
 )
+
+#: `tests/data/make_hdf5_fixtures.py`, loaded by path -- `tests/data` is not a
+#: package. Same idiom as `tests/test_data_hdf5_decode.py`.
+_SPEC = importlib.util.spec_from_file_location(
+    "make_hdf5_fixtures_model_names",
+    pathlib.Path(__file__).parent / "data" / "make_hdf5_fixtures.py",
+)
+fixtures = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(fixtures)
 
 #: Every hadronic-model name appearing under `hadronic_interactions/*` or
 #: `cross_sections/*` in the shipped databases, plus two un-normalized spellings
@@ -143,15 +158,70 @@ def test_family_of_reproduces_both_former_implementations(name):
     assert family_of(mname) == expected
 
 
-def test_unknown_family_is_none_and_the_two_reactions_stay_different():
-    """URQMD34 is the shipped model in no family.
+def _backend_on(path):
+    """An `HDF5Backend` on one synthetic file, config groups injected.
 
-    `_interaction_db_single` raises `ValueError` on it and `_mapped_cross_section`
-    falls through to an unmapped cross section. `family_of` reports the fact and
-    leaves both reactions where they are.
+    The idiom of `tests/test_data_hdf5_decode.py::backend`: no process-wide
+    `MCEq.config` is read, no `MCEqRun` is built.
     """
+    paths = SimpleNamespace(
+        data_dir=path.parent,
+        mceq_db_fname=path.name,
+        # No EM database exists for the fixtures; enable_em is False.
+        em_db_fname="no_such_em_db.h5",
+    )
+    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
+    physics = SimpleNamespace(
+        filters={
+            "disabled_particles": [],
+            "forced_int_cs": None,
+            "replace_meson_cross_sections_with": None,
+        },
+        assume_nucleon_interactions_for_exotics=True,
+        enable_em=False,
+        enable_cont_rad_loss=False,
+        fallback_to_air_cs=True,
+        interaction_medium=fixtures.MEDIUM,
+        muon_helicity_dependence=False,
+    )
+    return HDF5Backend(medium=fixtures.MEDIUM, paths=paths, grid=grid, physics=physics)
+
+
+def test_unknown_family_is_none():
+    """URQMD34 is the shipped model in no family; the empty string is in none."""
     assert family_of("URQMD34") is None
     assert family_of("") is None
+
+
+def test_the_two_reactions_to_an_unknown_family_stay_different(tmp_path, monkeypatch):
+    """One caller raises, the other degrades: both real reactions, driven.
+
+    `HDF5Backend._interaction_db_single` raises `ValueError("Unknown
+    equivalence table for", mname)` -- but only after
+    `_check_subgroup_exists` found the model in the file, so the synthetic
+    database is rebuilt here with `URQMD34` as its model name
+    (`build_database` reads the module constant `MODEL` at call time).
+    `mapped_cross_section` never raises: with no family it skips the
+    equivalence mapping and falls through to `family_fallback`, so a Lambda
+    (3122) whose column is absent from `index_d` gets the proton column.
+    Both are the behaviour today, recorded so that unifying them is a
+    visible change and not an accident.
+    """
+    monkeypatch.setattr(fixtures, "MODEL", "URQMD34")
+    path = fixtures.build_database(tmp_path / "urqmd34_1d.h5")
+    backend = _backend_on(path)
+
+    with pytest.raises(ValueError, match="Unknown equivalence table"):
+        backend._interaction_db_single("URQMD34")
+
+    proton_column = np.array([1.0, 2.0, 3.0])
+    index_d = {2212: proton_column}
+    assert 3122 not in index_d
+    assert family_fallback(3122) == [2212, 2212]
+    assert mapped_cross_section(index_d, 3122, "URQMD34") is proton_column
+    # and the fallthrough is the only route: with no proton column there is
+    # nothing to fall through to.
+    assert mapped_cross_section({}, 3122, "URQMD34") is None
 
 
 def test_the_two_former_orders_differ_only_where_no_database_goes():
