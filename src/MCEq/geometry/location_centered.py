@@ -3,20 +3,45 @@
 Where the detector sits, where a shower of a given zenith and azimuth crosses
 the surface, and what local zenith the column is then integrated at -- none of
 that depends on which MSIS implementation supplies the densities. Both MSIS
-families nevertheless carried their own copy of all of it, and the copies were
-identical in arithmetic and differed only in prose. This is the single copy.
+families nevertheless carried their own copy of all of it. This is the single
+copy.
 
-Measured before the collapse, MSIS00 against MSIS21 at the same site: the
-impact coordinates agree to 0.000e+00 degrees over 40 (zenith, azimuth) pairs
-including 90, 91 and 179 degrees; the full 36-direction averaged tables agree
-bitwise at four zeniths; and ``theta_deg``, ``thrad``, the azimuth mode, the
-impact latitude/longitude and the ``max_theta`` rejection all agree.
+The copies agreed to within floating-point reassociation, not exactly: MSIS00
+spelled the impact-point discriminant ``A**2`` and MSIS21 ``A*A``. ``A`` is a
+float64 *scalar*, and numpy sends ``scalar**2`` through libm ``pow`` while
+``A*A`` is a multiply, so the two differ by 1 ULP at some arguments -- the same
+hazard already recorded at ``tests/golden/gen_environment.py``. This module
+keeps the MSIS00 spelling, so ``MSIS21LocationCentered``'s impact points moved.
+
+How far is sample-dependent and small: over 200k random (zenith, azimuth) pairs
+per shipped site on this host (x86-64, glibc, numpy 2.0.2), 0.01--0.03 % of
+directions differ at all, and the largest latitude shift was 2.6e-12 degrees at
+IceCube -- amplified there because ``arcsin(z/r)`` is ill-conditioned at
+latitude -89.98. Longitude stays at ~1e-14 degrees. That is far below the 1e-11
+D18 bound in relative density, and a direct diff of ``environment.npz`` across
+the collapse shows no MSIS21 array moved: the golden's sampled angles do not
+hit it. Treat the numbers as the order of magnitude, not a bound -- a different
+sweep finds a different worst case.
+
+The ``max_theta`` rejection agrees in type (``ValueError``). Its *message* did
+not: MSIS00 said "not in allowed range [0, X]." and MSIS21 "not in [0, X]."
+Both now use the MSIS00 wording, as does the ``info()`` line. Nothing in the
+suite matches either text -- only the exception type is pinned.
+
+Otherwise, measured before the collapse, MSIS00 against MSIS21 at the same
+site: the impact coordinates agree to 0.000e+00 degrees over 40 (zenith,
+azimuth) pairs including 90, 91 and 179 degrees; the full 36-direction averaged
+tables agree bitwise at four zeniths; and ``theta_deg``, ``thrad``, the azimuth
+mode and the impact latitude/longitude all agree.
 
 The mixin imports nothing from :mod:`MCEq.geometry.density_profiles`, which is
 what keeps the geometry siblings acyclic (contract C7): the density backend
-calls into the mixin, never the reverse. It therefore does not run
-``EarthsAtmosphere.__init__`` itself -- the concrete class does that first, and
-then calls :meth:`LocationCenteredMixin._init_detector_geometry`.
+calls into the mixin, never the reverse. It does not reach the base initialiser
+through ``super()`` for an unrelated reason -- the next class in the MRO is the
+backend atmosphere, whose ``__init__`` takes ``(location, season, doy, ...)``,
+not detector arguments. The concrete class runs ``EarthsAtmosphere.__init__``
+itself and then calls
+:meth:`LocationCenteredMixin._init_detector_geometry`.
 """
 
 from __future__ import annotations
@@ -36,8 +61,10 @@ class LocationCenteredMixin:
       it for the next batched call, which is the one thing in
       :meth:`set_theta` that was ever genuinely per-backend.
     * ``calculate_density_spline`` and ``get_density``, which are per-backend by
-      design -- the scalar-loop and batched forms differ by 1.9e-13 and that
-      divergence is pinned, not a defect.
+      design -- the scalar-loop and batched forms differ at the 1e-14 level
+      (7.2e-15 to 1.4e-14 measured over theta = 0/30/60/85/90 on this host) and
+      that divergence is pinned by ``tests/geometry/test_environment_pins.py``
+      at < 1e-11, not a defect.
     * ``self.geom``, i.e. ``EarthsAtmosphere.__init__`` must have run.
     """
 
@@ -100,9 +127,12 @@ class LocationCenteredMixin:
         The original (theta, azimuth) at the detector is passed in — no
         mirroring of either angle is needed.
 
-        At South Pole and zenith ≤ 90° this formula is algebraically
-        equivalent to the original 2-D formula in the legacy
-        :class:`MSIS00IceCubeCentered`.
+        At the South Pole and zenith ≤ 90° this reduces to the 2-D formula the
+        IceCube-centred model used before the ECEF rewrite (see the git history
+        of :class:`MSIS00IceCubeCentered`, which is a live class registered as
+        ``"MSIS00_IC"`` and holds no formula of its own today). That
+        equivalence is why the ``msis00_icecube`` golden cell did not move when
+        the 2-D form was replaced.
 
         Args:
             zenith_deg (float): Zenith angle at the detector in degrees

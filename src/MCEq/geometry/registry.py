@@ -48,10 +48,7 @@ def available_models() -> list[str]:
 
 def density_model_class(name: str) -> type:
     """Resolve one registry entry to its class, importing it on first use."""
-    try:
-        target = DENSITY_MODELS[name]
-    except KeyError:
-        raise KeyError(name) from None
+    target = DENSITY_MODELS[name]
     module_name, _, qualname = target.partition(":")
     return getattr(import_module(module_name), qualname)
 

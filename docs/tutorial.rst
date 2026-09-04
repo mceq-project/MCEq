@@ -116,8 +116,9 @@ Available models are:
   pure-Python and vectorised. The default since v2.x; `_IC` is centered on
   IceCube at the South Pole (upgoing supported up to 180°) and `_KM3NeT`
   on ORCA / ARCA. Fork-safe — use `path_workers > 1` in :func:`MCEqRun.solve_fullsky`.
-- 'MSIS00' and 'MSIS00_IC' - the legacy NRLMSISE-00 backend (Fortran-via-C).
-  Kept for back-compat. Also fork-safe.
+- 'MSIS00', 'MSIS00_IC' and 'MSIS00_KM3NeT' - the legacy NRLMSISE-00 backend
+  (Fortran-via-C), offering the same sites as the MSIS21 family. Kept for
+  back-compat. Also fork-safe.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
   (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
 - 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.

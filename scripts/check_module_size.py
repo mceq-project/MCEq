@@ -31,7 +31,9 @@ ROOTS = ("src/MCEq", "mceq_config")
 LIMIT = 600
 
 #: Modules over budget at the Phase-0 commit (06fdd7e), with the phase that
-#: removes each entry. 6 modules, 5977 lines above the limit.
+#: removes each entry. 6 modules, 5977 lines above the limit -- six of the
+#: original eight, after ``solvers.py`` went at 34b5611 and
+#: ``geometry/msis21_atmosphere.py`` at c23ab88.
 ALLOW = {
     "src/MCEq/config/__init__.py": 661,  # Phase 1 -> config/{schema,defaults,legacy,detect}
     "src/MCEq/core.py": 3538,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)

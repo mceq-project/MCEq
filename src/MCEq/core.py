@@ -1297,20 +1297,17 @@ class MCEqRun:
         if isinstance(self.density_model, dprof.GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
 
-        # Track the angle actually requested (bug B13). This used to keep its
-        # constructor value forever, so ``MCEqRun.theta_deg`` disagreed with
-        # ``density_model.theta_deg`` after the first change of angle -- which
-        # is why the paths golden labels its rows by the latter. Assigned
-        # before the cache check below, so the attribute is right even when
-        # the recomputation is skipped and even if the atmosphere was driven
-        # directly, behind this method's back.
-        self.theta_deg = zenith_deg
-
         # Cache check: skip if nothing has changed
         cached_theta = self.density_model.theta_deg
         cached_azi = getattr(self.density_model, "_current_azimuth_deg", None)
         if cached_theta == zenith_deg and cached_azi == azimuth_deg:
             info(2, "Angle selection corresponds to cached value, skipping calc.")
+            # Track the angle here too (bug B13): the attribute has to be
+            # right even when the recomputation is skipped, and even if the
+            # atmosphere was driven directly, behind this method's back. Safe
+            # on this branch because a cache hit means an earlier ``set_theta``
+            # already accepted the angle.
+            self.theta_deg = zenith_deg
             return
 
         # Dispatch to set_theta with or without azimuth_deg depending on
@@ -1321,6 +1318,19 @@ class MCEqRun:
             self.density_model.set_theta(zenith_deg, azimuth_deg=azimuth_deg)
         else:
             self.density_model.set_theta(zenith_deg)
+
+        # Track the angle actually applied (bug B13). It used to keep its
+        # constructor value forever, so ``MCEqRun.theta_deg`` disagreed with
+        # ``density_model.theta_deg`` after the first change of angle -- which
+        # is why the paths golden labels its rows by the latter.
+        #
+        # Assigned only once ``set_theta`` has accepted the angle. Assigning
+        # it earlier is observable: an atmosphere with ``max_theta = 90``
+        # rejects 120 deg, and ``set_density_model`` replays ``self.theta_deg``
+        # into the next model (l.1250), so a caller who caught the range error
+        # and then swapped atmospheres would silently solve at an angle that
+        # was never accepted.
+        self.theta_deg = zenith_deg
         self.integration_path = None
 
     def set_theta_deg(self, theta_deg):
@@ -2020,9 +2030,10 @@ class MCEqRun:
                 return ("cfg", repr(tuple(dm_spec)))
             return ("obj", id(dm_spec))
 
-        # Save the *current* direction from the density model — the
-        # MCEqRun-level ``theta_deg`` attribute only reflects the
-        # constructor argument and is not updated by set_zenith_azimuth.
+        # Save the *current* direction from the density model, which is the
+        # only place the azimuth lives. ``MCEqRun.theta_deg`` does track the
+        # zenith since B13 was fixed, but it carries no azimuth, so restoring
+        # from the atmosphere keeps both halves of the direction together.
         saved_dm = self.density_model
         saved_zen = getattr(saved_dm, "theta_deg", None)
         saved_az = getattr(saved_dm, "_current_azimuth_deg", None)

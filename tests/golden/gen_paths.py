@@ -14,9 +14,10 @@ MCEqRun and no HDF5 database. The output is bitwise equal to
 ``dX_max`` with ``min(dX_max, _em_cascade_dx_cap())`` when it is True, so the
 equivalence holds only for the flag value recorded in the config stanza.
 
-Paths are labelled by ``density_model.theta_deg``; ``MCEqRun.theta_deg`` keeps
-its constructor value forever (bug B13) and would mislabel every angle but the
-first.
+Paths are labelled by ``density_model.theta_deg``. That was originally forced:
+``MCEqRun.theta_deg`` kept its constructor value forever (bug B13, fixed at
+f087d25) and would have mislabelled every angle but the first. The atmosphere
+remains the label source because it is also where the azimuth lives.
 
 Everything is compared bitwise. The values reproduce across processes, across
 OMP / MKL / OPENBLAS thread counts and through a fork pool, and are invariant
@@ -65,8 +66,9 @@ to the MCEqRun route while config.em_adaptive_step is False.
 
 Zenith guard: max_theta is 90.0 for all three models, theta=90.0 is accepted,
 and anything above it raises a BARE Exception("Zenith angle not in allowed
-range.") at density_profiles.py:185-186 (msis21_atmosphere.py:275-276 for
-MSIS21, ValueError in the LocationCentered variants). pytest.raises(ValueError)
+range.") from ``EarthsAtmosphere.set_theta`` (``MSIS21Atmosphere.set_theta``
+for MSIS21; ValueError from ``LocationCenteredMixin.set_theta`` in the
+LocationCentered variants). pytest.raises(ValueError)
 does not catch it. Pinned as the exception type name in
 zenith_guard/exception_above_max_theta.
 

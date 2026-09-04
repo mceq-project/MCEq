@@ -28,9 +28,18 @@ def test_every_offered_name_resolves_to_a_class():
         assert isinstance(cls, type), f"{name} resolved to {cls!r}, not a class"
 
 
-def test_available_models_is_exactly_the_table():
-    """No second list to fall out of step with the first."""
-    assert registry.available_models() == list(registry.DENSITY_MODELS)
+def test_available_models_hands_out_a_copy():
+    """The equality is true by construction; what is worth pinning is the copy.
+
+    ``available_models()`` feeds both the user-facing error message and
+    ``tests/golden/gen_paths.py``. Returning the live table would let either
+    of them corrupt the registry for the rest of the process.
+    """
+    names = registry.available_models()
+    assert names == list(registry.DENSITY_MODELS)
+    names.append("NotAModel")
+    assert "NotAModel" not in registry.available_models()
+    assert "NotAModel" not in registry.DENSITY_MODELS
 
 
 def test_km3net_is_present_for_both_backends():
@@ -66,15 +75,81 @@ def test_unknown_name_raises_keyerror_not_something_stranger():
         registry.density_model_class("NoSuchAtmosphere")
 
 
-def test_resolution_is_lazy():
-    """Importing the registry must not import either MSIS tree.
+def test_entries_are_dotted_strings_not_imported_classes():
+    """The shape that makes laziness possible.
 
-    The ``elif`` ladder imported ``density_profiles`` inside the method and
-    only touched the MSIS21 names if one was selected. Entries are dotted
-    strings to keep that property, so selecting an MSIS00 model does not drag
-    in the MSIS21 module and vice versa.
+    Kept separate from the laziness test itself: this one only asserts the
+    table holds ``module:qualname`` strings. It would still pass against a
+    registry that eagerly imported both trees, which is why
+    :func:`test_resolution_is_lazy` measures ``sys.modules`` instead.
     """
     for target in registry.DENSITY_MODELS.values():
         module_name, _, qualname = target.partition(":")
         assert module_name.startswith("MCEq.geometry."), target
         assert qualname and ":" not in qualname, target
+
+
+@pytest.mark.parametrize(
+    ("name", "must_not_import"),
+    [
+        ("MSIS00", "MCEq.geometry.msis21_atmosphere"),
+        ("MSIS00_KM3NeT", "MCEq.geometry.msis21_atmosphere"),
+        ("CORSIKA", "MCEq.geometry.msis21_atmosphere"),
+        ("MSIS21", "MCEq.geometry.density_profiles"),
+    ],
+)
+def test_resolution_is_lazy(name, must_not_import):
+    """Resolving one model must not drag in the other MSIS tree.
+
+    The ``elif`` ladder imported ``density_profiles`` inside the method and
+    only touched the MSIS21 names if one was selected. Dotted-string entries
+    keep that property -- but only if nothing along the way imports the other
+    side, which is a property of the whole import graph and not of the table.
+    So this runs a fresh interpreter and looks at ``sys.modules``.
+
+    The MSIS21 case is the one that can regress silently: ``msis21_atmosphere``
+    imports ``EarthsAtmosphere`` back out of ``density_profiles`` today, so it
+    is *expected* to fail until Phase 3's package split gives it its own base
+    module. It is marked xfail rather than omitted so the split flips it.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys;"
+        "from MCEq.geometry import registry;"
+        f"registry.density_model_class({name!r});"
+        f"print({must_not_import!r} in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    imported = out.stdout.strip() == "True"
+    if name == "MSIS21":
+        pytest.xfail(
+            "msis21_atmosphere imports EarthsAtmosphere from density_profiles; "
+            "the Phase 3 environment/ split breaks that edge"
+        )
+    assert not imported, (
+        f"resolving {name} imported {must_not_import}; the registry is no longer lazy"
+    )
+
+
+def test_registry_import_alone_pulls_in_no_atmosphere():
+    """Importing the table itself must cost nothing."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys;"
+        "import MCEq.geometry.registry;"
+        "print([m for m in ('MCEq.geometry.density_profiles',"
+        "'MCEq.geometry.msis21_atmosphere') if m in sys.modules])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]", out.stdout

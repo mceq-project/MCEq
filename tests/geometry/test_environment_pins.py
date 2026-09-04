@@ -426,10 +426,14 @@ def test_the_two_msis21_backends_disagree_more_than_the_scaling_order_does():
     """``get_density`` and the spline tail also differ in *which* backend call.
 
     One is scalar ``calc`` per height, the other one batched
-    ``calc_altitude_array``, and that difference is two orders larger than the
-    scaling order above — 1.9e-13 against 1e-15 on this host. So a phase that
-    unifies only the scaling order has not made the two paths agree, and this
-    is what says so.
+    ``calc_altitude_array``, and that difference is an order larger than the
+    scaling order above — 7.2e-15 to 1.4e-14 against 1e-15 on this host,
+    measured over theta = 0/30/60/85/90 at 200 and 2000 samples. So a phase
+    that unifies only the scaling order has not made the two paths agree, and
+    this is what says so.
+
+    The assertion below pins the 1e-11 bound; the measured figures say only
+    which order of magnitude is normal here.
     """
     pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
     atm = dp.MSIS21Atmosphere("SouthPole", "January")
@@ -459,7 +463,7 @@ def test_the_two_msis21_backends_disagree_more_than_the_scaling_order_does():
     )
     assert maxrel < 1e-11, (
         f"scalar calc and calc_altitude_array differ by {maxrel:.3e} relative, "
-        f"far above the 1.9e-13 this pins — a backend regression, not a "
+        f"far above the ~1e-14 normal here — a backend regression, not a "
         f"reassociation"
     )
 

@@ -104,16 +104,43 @@ class cNRLMSISE00(NRLMSISE00Base):
         """Keep local apparent solar time consistent with the longitude.
 
         NRLMSISE-00 takes ``lst`` as a separate input from ``sec`` and
-        ``g_long``, and its own documentation requires
-        ``lst = sec/3600 + g_long/15``; the model uses it for the diurnal and
-        semidiurnal tides. Before this was called from
-        :meth:`set_location_coord`, ``lst`` was written once at construction
-        and never again, so every site was evaluated at the *default*
-        location's solar time -- 12.0, since the default is the South Pole at
-        longitude 0. The error reached 9.3 hours of solar time (Tsukuba) and
-        25.8 % in density near 95 km, while staying under 0.25 % at sea level;
-        it was exactly zero at the South Pole, which is why the flagship
-        MSIS00 use case never showed it.
+        ``g_long``. Its own documentation (``nrlmsise-00.h``, NOTES ON INPUT
+        VARIABLES) says the three "are used independently in the model" but
+        that "for the most physically realistic calculation these three
+        variables should be consistent (lst=sec/3600 + g_long/15)" -- a
+        recommendation, not a hard requirement, and it notes that Equation of
+        Time departures are legitimate. The model uses ``lst`` for the diurnal
+        and semidiurnal tides.
+
+        Before this was called from :meth:`set_location_coord`, ``lst`` was
+        written once at construction and never again, so every site was
+        evaluated at the *default* location's solar time -- 12.0, since the
+        default is the South Pole at longitude 0.
+
+        Measured over the 12 shipped ``LOCATIONS`` x 12 months on this host,
+        comparing against ``lst`` pinned at 12.0:
+
+        * up to 9.34 h of solar time (Tsukuba, longitude 140.1);
+        * 0.41 % at sea level in the worst case (LynnLake, January), above
+          0.25 % at 14 of the 144 site-months -- consistent with ``max_X``
+          moving by at most 4.1e-03, since the column is low-altitude
+          dominated;
+        * 22.97 % at exactly 95 km (LynnLake, July), and up to 46 % near
+          107 km (KSC, July), where the tide is strongest.
+
+        It was exactly zero at the South Pole, which is why the flagship MSIS00
+        use case never showed it.
+
+        **What time of day this now means.** ``sec`` is seconds of day in *UT*
+        and is fixed at 43200 with no setter, so consistency is restored by
+        moving ``lst``, i.e. every site is evaluated at 12:00 UT
+        (``lst = 12 + longitude/15``), not at local noon. That is a choice: the
+        alternative is to hold ``lst = 12`` and derive
+        ``sec = 43200 - 240*longitude``, keeping local noon everywhere and the
+        ``DAY_TIMES_SEC`` day/night naming. This one was taken because it is
+        what MSIS 2.1 already does (``nrlmsis/globe.py`` computes
+        ``lst = utsec/3600 + lon/15``), so the two backends now describe the
+        same instant rather than two different ones.
         """
         self.inp.lst = c_double(
             self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0

@@ -16,8 +16,9 @@ raw spline, and owns only the ``etd2_nonuniform_path`` outputs
 ``(nsteps, dX, rho_inv, grid_idcs)``. That leaves unpinned:
 
 * the two azimuth-averaged ``LocationCentered`` spline tails
-  (``density_profiles.py:925-982``, ``msis21_atmosphere.py:465-545``) — roughly
-  130 of the ~330 lines the Phase-3 MSIS collapse merges;
+  (``MSIS00LocationCentered`` / ``MSIS21LocationCentered``, both now sharing
+  ``LocationCenteredMixin``) — roughly 130 of the ~330 lines the Phase-3 MSIS
+  collapse merged;
 * ``max_den``, and every raw spline: ``s_h2X``, ``s_X2rho``, ``s_lX2h``, and
   the ``h2X`` / ``X2h`` wrappers over them;
 * every ``h_obs`` mutation through ``EarthsAtmosphere.set_h_obs``, and

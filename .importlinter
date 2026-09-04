@@ -216,7 +216,10 @@ ancestors =
     MCEq.geometry
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# density_profiles.py:1814 re-exports the MSIS21 names through a PEP-562
-# __getattr__ while msis21_atmosphere.py:36 imports EarthsAtmosphere back.
-# Phase 3 breaks the cycle with environment/atmosphere/base.py.
+# density_profiles' module-level `__getattr__` re-exports the MSIS21 names
+# through PEP 562, while msis21_atmosphere imports `EarthsAtmosphere` and
+# `_KM3NET_DETECTORS` back out of it. Phase 3 breaks the cycle by giving both
+# a common base in environment/base.py and moving the site table to
+# environment/parameters.py. (Symbols, not line numbers -- the previous
+# version of this comment cited lines that two commits had already moved.)
     MCEq.geometry.msis21_atmosphere -> MCEq.geometry.density_profiles

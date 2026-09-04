@@ -34,7 +34,23 @@ class ap_array(Structure):
 
 
 class nrlmsise_input(Structure):
-    """The C-struct contains input variables for NRLMSISE."""
+    """The C-struct contains input variables for NRLMSISE.
+
+    ``_field_`` is a typo for ``_fields_`` and has been one since the struct
+    was written. The consequence is that ctypes never lays the struct out:
+    ``sizeof()`` is 0, ``_fields_`` is ``None``, and every ``inp.<name>`` is an
+    ordinary Python attribute holding whatever object was assigned. This is
+    harmless only because ``gtd7_py`` is a scalar shim, so this struct is never
+    passed ``byref`` -- ``nrlmsise_flags`` and ``nrlmsise_output``, which are,
+    both declare ``_fields_`` correctly.
+
+    Do not "fix" the name without auditing the callers: Python code reads these
+    as ctypes objects (``self.inp.sec.value`` in
+    :meth:`MCEq.geometry.nrlmsise00_mceq.cNRLMSISE00._update_lst`), and a real
+    ``_fields_`` would hand back plain floats and break every ``.value``.
+    ``inp.doy`` already carries two different runtime types depending on
+    whether ``set_season`` (bare int) or ``set_doy`` (``c_int``) ran last.
+    """
 
     _field_ = [
         ("year", c_int),
