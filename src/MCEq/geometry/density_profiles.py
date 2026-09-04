@@ -1217,6 +1217,26 @@ class AtmosphereTable:
         """True if the table holds a longitude/latitude grid of columns."""
         return self.lat_deg is not None
 
+    @property
+    def is_global_in_lon(self):
+        """True if the longitude axis closes on itself.
+
+        A global grid is periodic, so the cell between the last node and the
+        first (wrapped by 360 deg) is a real cell to interpolate across.  For a
+        regional crop that same gap is the part of the world the table does
+        *not* cover, and interpolating across it would silently blend the two
+        far edges of the region together.
+        """
+        if not self.is_gridded or len(self.lon_deg) < 2:
+            return False
+        steps = np.diff(self.lon_deg)
+        seam = self.lon_deg[0] + 360.0 - self.lon_deg[-1]
+        # A global axis is uniform all the way round, the closing cell
+        # included.  Comparing against the widest step (rather than any single
+        # one) also rejects a crop that spans the prime meridian, whose sorted
+        # axis has one huge gap in the middle and a narrow seam.
+        return bool(np.isclose(seam, steps.max(), rtol=1e-3, atol=1e-6))
+
     def __repr__(self):
         if self.is_gridded:
             n_lat, n_lon, n_lev = self.h_cm.shape
@@ -1226,6 +1246,32 @@ class AtmosphereTable:
                 f"lon {self.lon_deg[0]:.2f}..{self.lon_deg[-1]:.2f})"
             )
         return f"AtmosphereTable(single column, {self.h_cm.size} levels)"
+
+    def _assert_covers(self, lon, lat, periodic):
+        """Raises if (*lon*, *lat*) falls outside a regional table's domain.
+
+        Clamping to the nearest edge instead would answer every query, but it
+        would answer some of them with a column from the wrong place and no
+        indication that it had done so.
+        """
+        if not (self.lat_deg[0] <= lat <= self.lat_deg[-1]):
+            raise ValueError(
+                f"AtmosphereTable::column(): latitude {lat:.3f} deg is outside "
+                f"the table, which covers {self.lat_deg[0]:.3f}.."
+                f"{self.lat_deg[-1]:.3f} deg. Use a table that covers the "
+                "requested position."
+            )
+        if periodic:
+            return
+        # The loader rejects grids whose longitude axis is not contiguous and
+        # ascending, so a plain range check is enough here.
+        lo, hi = float(self.lon_deg[0]), float(self.lon_deg[-1])
+        if not (lo <= lon <= hi):
+            raise ValueError(
+                f"AtmosphereTable::column(): longitude {lon:.3f} deg is outside "
+                f"the table, which covers {lo:.3f}..{hi:.3f} deg. Use a table "
+                "that covers the requested position."
+            )
 
     def column(self, longitude, latitude):
         """Returns the vertical column at *longitude*, *latitude*.
@@ -1245,12 +1291,14 @@ class AtmosphereTable:
         if not self.is_gridded:
             return self
 
-        lat = float(np.clip(latitude, self.lat_deg[0], self.lat_deg[-1]))
+        periodic = self.is_global_in_lon
+        lat = float(latitude)
         lon = float(longitude) % 360.0
+        self._assert_covers(lon, lat, periodic)
 
         j, wj = _bracket(self.lat_deg, lat, periodic=False)
-        i, wi = _bracket(self.lon_deg, lon, periodic=True)
-        i_next = (i + 1) % len(self.lon_deg)
+        i, wi = _bracket(self.lon_deg, lon, periodic=periodic)
+        i_next = (i + 1) % len(self.lon_deg) if periodic else i + 1
 
         # Bilinear weights of the four surrounding nodes.
         corners = (
@@ -1418,6 +1466,20 @@ def _grid_from_rows(filename, lat, lon, h_cm, dens, optional):
             "with nan in a data column rather than dropping the row)."
         )
 
+    steps = np.diff(lon_axis)
+    if n_lon > 2 and steps.max() > steps.min() * 1.5:
+        seam = lon_axis[0] + 360.0 - lon_axis[-1]
+        if not np.isclose(seam, steps.max(), rtol=1e-3, atol=1e-6):
+            raise ValueError(
+                f"load_atmosphere_table(): {filename} has an unevenly spaced "
+                f"longitude axis ({steps.min():.3f} to {steps.max():.3f} deg "
+                "between neighbours). Longitudes are stored in [0, 360), so a "
+                "region spanning the prime meridian sorts into two blocks with "
+                "a gap between them and cannot be interpolated. Shift such a "
+                "region onto a continuous longitude range, or supply a global "
+                "grid."
+            )
+
     def reshape(values):
         return values[order].reshape(n_lat, n_lon, n_lev)
 
@@ -1459,6 +1521,11 @@ class TabulatedAtmosphere(EarthsAtmosphere):
       grid and every column must carry the same number of levels.  A gridded
       table needs a *coord* here, and is what
       :class:`TabulatedLocationCentered` samples at the shower impact point.
+      The grid may be regional: a position outside it is an error, not a
+      silently clamped edge column.  Longitudes are stored in [0, 360) and the
+      seam at 360/0 is interpolated across only for a grid that closes on
+      itself, so a region spanning the prime meridian must be shifted onto a
+      continuous longitude range.
     * Column order is irrelevant and unknown columns are ignored, so a table may
       carry extra data products alongside the ones MCEq reads.  Rows may be in
       any order; they are sorted by height on load.

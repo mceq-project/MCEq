@@ -787,6 +787,56 @@ def test_gridded_column_wraps_in_longitude():
     assert np.allclose(seam.T_K, 0.5 * (before.T_K + after.T_K))
 
 
+def _regional_table(tmp_path, keep, name="regional.csv"):
+    """Writes a crop of the grid fixture keeping only rows matching *keep*."""
+    lines = [
+        line
+        for line in pathlib.Path(GRID_TABLE_PATH).read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    header, body = lines[0], lines[1:]
+    rows = [row for row in body if keep(*(float(v) for v in row.split(",")[:2]))]
+    path = tmp_path / name
+    path.write_text("\n".join([header, *rows]) + "\n")
+    return str(path)
+
+
+def test_global_longitude_axis_is_detected_as_periodic():
+    assert dp.load_atmosphere_table(GRID_TABLE_PATH).is_global_in_lon
+
+
+def test_regional_table_is_not_periodic_in_longitude(tmp_path):
+    """A crop must not wrap: the gap is the part of the world it lacks."""
+    path = _regional_table(tmp_path, lambda lat, lon: lon <= 135.0)
+    table = dp.load_atmosphere_table(path)
+    assert not table.is_global_in_lon
+
+
+def test_regional_table_raises_outside_its_latitudes(tmp_path):
+    """Clamping would answer with the wrong column and say nothing."""
+    path = _regional_table(tmp_path, lambda lat, lon: lat <= -30.0)
+    table = dp.load_atmosphere_table(path)
+    with pytest.raises(ValueError, match="latitude .* outside the table"):
+        table.column(0.0, 36.267)
+    # The covered part of the domain still works.
+    assert table.column(0.0, -60.0).h_cm.size == table.h_cm.shape[-1]
+
+
+def test_regional_table_raises_outside_its_longitudes(tmp_path):
+    path = _regional_table(tmp_path, lambda lat, lon: lon <= 135.0)
+    table = dp.load_atmosphere_table(path)
+    with pytest.raises(ValueError, match="longitude .* outside the table"):
+        table.column(270.0, 0.0)
+    assert table.column(90.0, 0.0).h_cm.size == table.h_cm.shape[-1]
+
+
+def test_table_spanning_the_prime_meridian_is_rejected(tmp_path):
+    """Sorted into [0, 360) such a crop has a hole in the middle."""
+    path = _regional_table(tmp_path, lambda lat, lon: lon in (0.0, 45.0, 315.0))
+    with pytest.raises(ValueError, match="unevenly spaced longitude axis"):
+        dp.load_atmosphere_table(path)
+
+
 def test_gridded_table_needs_a_coord():
     with pytest.raises(ValueError, match="coord"):
         dp.TabulatedAtmosphere(GRID_TABLE_PATH)
