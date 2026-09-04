@@ -5,29 +5,36 @@ import numpy as np
 
 from MCEq import config
 
-#: Names that moved to :mod:`MCEq.data.energy_grid` and stay reachable here.
+#: Names that moved into the :mod:`MCEq.data` package and stay reachable here,
+#: each mapped to the submodule that owns it now.
 #: A D14 compat shim (plan section 8.6): `misc` is C1's bottom layer, so a
 #: top-of-file re-export would invert `util -> data`; the names are fetched on
-#: demand instead, and C1's ledger carries the one edge that creates. Phase 7
-#: deletes both.
-_MOVED_TO_DATA = frozenset(
-    ("EnergyGrid", "energy_grid", "_eval_energy_cuts", "gen_xmat", "_xmat")
-)
+#: demand instead, and C1's ledger carries the edges that creates. Phase 7
+#: deletes all of it.
+_MOVED_TO_DATA = {
+    "EnergyGrid": "MCEq.data.energy_grid",
+    "energy_grid": "MCEq.data.energy_grid",
+    "_eval_energy_cuts": "MCEq.data.energy_grid",
+    "gen_xmat": "MCEq.data.energy_grid",
+    "_xmat": "MCEq.data.energy_grid",
+    "normalize_hadronic_model_name": "MCEq.data.model_names",
+}
 
 
-def _moved_to_data():
-    """The :mod:`MCEq.data.energy_grid` module object.
+def _moved_to_data(name):
+    """The :mod:`MCEq.data` submodule that owns the moved `name`.
 
-    Read out of `sys.modules` rather than bound by the import statement:
+    Read out of `sys.modules` rather than bound by the import statements:
     `from MCEq.data import energy_grid` resolves the *attribute* of the package,
     which a later re-export of the namedtuple under its lowercase name would
-    silently turn into the tuple type. The import statement is still written out
-    so that `grimp` -- and `tests/golden/gen_structure.py`, which parses the same
-    text -- sees the `MCEq.misc -> MCEq.data.energy_grid` edge.
+    silently turn into the tuple type. The statements are still written out so
+    that `grimp` -- and `tests/golden/gen_structure.py`, which parses the same
+    text -- sees the two `MCEq.misc -> MCEq.data.*` edges.
     """
     import MCEq.data.energy_grid  # noqa: F401
+    import MCEq.data.model_names  # noqa: F401
 
-    return sys.modules["MCEq.data.energy_grid"]
+    return sys.modules[_MOVED_TO_DATA[name]]
 
 
 class _MiscCompatModule(ModuleType):
@@ -45,12 +52,12 @@ class _MiscCompatModule(ModuleType):
 
     def __getattr__(self, name):
         if name in _MOVED_TO_DATA:
-            return getattr(_moved_to_data(), name)
+            return getattr(_moved_to_data(name), name)
         raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
 
     def __setattr__(self, name, value):
         if name in _MOVED_TO_DATA:
-            setattr(_moved_to_data(), name, value)
+            setattr(_moved_to_data(name), name, value)
             return
         super().__setattr__(name, value)
 
@@ -85,23 +92,6 @@ _target_masses = {
     # A of iron, not Z (was 26.0 = Z until 2026)
     "iron": 55.845,
 }
-
-
-def normalize_hadronic_model_name(name):
-    """Converts a hadronic model name into a standard form.
-
-    Args:
-        name: str
-            Hadronic model name.
-
-    Returns:
-        str
-            Normalized hadronic model name.
-
-    """
-    import re
-
-    return re.sub("[-.]", "", name).upper()
 
 
 def average_A_target(mat="auto"):

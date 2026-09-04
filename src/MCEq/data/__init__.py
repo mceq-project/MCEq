@@ -5,7 +5,8 @@ import h5py
 import numpy as np
 
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
-from MCEq.misc import info, normalize_hadronic_model_name
+from MCEq.data.model_names import family_of, normalize_hadronic_model_name
+from MCEq.misc import info
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -558,24 +559,10 @@ class HDF5Backend:
                 )
                 medium = self.medium
 
-            if "SIBYLL21" in mname:
-                eqv = equivalences["SIBYLL21"]
-            elif "SIBYLL23" in mname:
-                eqv = equivalences["SIBYLL23"]
-            elif "QGSJET01" in mname:
-                eqv = equivalences["QGSJET01"]
-            elif "QGSJETII" in mname:
-                eqv = equivalences["QGSJETII"]
-            elif "DPMJET" in mname:
-                eqv = equivalences["DPMJET"]
-            elif "EPOSLHC" in mname:
-                eqv = equivalences["EPOSLHC"]
-            elif "PYTHIA8" in mname:
-                eqv = equivalences["PYTHIA8"]
-            elif "FLUKA" in mname:
-                eqv = equivalences["FLUKA"]
-            else:
+            family = family_of(mname)
+            if family is None:
                 raise ValueError("Unknown equivalence table for", mname)
+            eqv = equivalences[family]
             if self._em_standalone:
                 # Hadronic matrices live on the (coarser) hadronic grid; they
                 # are inert for a γ/e± cascade. Skip them so they never hit the
@@ -710,11 +697,8 @@ class HDF5Backend:
     def _mapped_cross_section(self, index_d, projectile, model_name):
         """Return a model cross section using the established equivalences."""
         candidates = [projectile, abs(projectile)]
-        model_eqv = None
-        for family, mapping in equivalences.items():
-            if family in model_name:
-                model_eqv = mapping
-                break
+        family = family_of(model_name)
+        model_eqv = None if family is None else equivalences[family]
         if model_eqv is not None:
             mapped = model_eqv.get(projectile, model_eqv.get(abs(projectile)))
             if mapped is not None:

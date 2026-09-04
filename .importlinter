@@ -92,6 +92,11 @@ ignore_imports =
 # (it runs on attribute access, not at import), but grimp counts it either way.
 # Phase 7 deletes the misc shim and this line with it.
     MCEq.misc -> MCEq.data.energy_grid
+# The same shim, second target: `normalize_hadronic_model_name` moved to
+# `MCEq.data.model_names`. One line per submodule because the ignores are
+# exact-module -- `MCEq.misc -> MCEq.data` matches nothing and would abort the
+# run. Phase 7 deletes the shim and both lines.
+    MCEq.misc -> MCEq.data.model_names
 
 # ------------------------------------------------------- C2/C3: environment
 # The environment layer knows about geometry and atmospheres, not about the
@@ -123,11 +128,12 @@ unmatched_ignore_imports_alerting = error
 ignore_imports =
 # Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
 # compat shim: eleven environment modules take `info` from `misc`, and `misc`'s
-# `_moved_to_data()` reaches `MCEq.data.energy_grid` on attribute access (see C1
-# above). `allow_indirect_imports` is left at False so a real
-# `environment -> data` chain still fails; only this one hop is cut. Phase 7
-# deletes the misc shim and this line with it.
+# `_moved_to_data()` reaches the `MCEq.data` submodules that own the moved names
+# on attribute access (see C1 above). `allow_indirect_imports` is left at False
+# so a real `environment -> data` chain still fails; only these two hops are cut.
+# Phase 7 deletes the misc shim and these lines with it.
     MCEq.misc -> MCEq.data.energy_grid
+    MCEq.misc -> MCEq.data.model_names
 
 # The shim direction, which no other contract covers. C7's `acyclic_siblings`
 # takes `MCEq.environment` and `MCEq.geometry` as two SEPARATE ancestors, so it
