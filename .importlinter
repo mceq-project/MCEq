@@ -91,8 +91,12 @@ ignore_imports =
 #
 # `operator_assembly` and `secant` are the Phase 5 re-export shims (D14); they
 # stay listed beside `operators` until Phase 7 deletes them.
+#
+# `MCEq.core` and `MCEq.download` are listed too: C1 puts `environment` in
+# `exhaustive_ignores`, so the layers contract does not constrain it at all and
+# an environment -> driver edge would otherwise pass every gate.
 [importlinter:contract:C2]
-name = C2 environment does not import data/species/operators/solvers
+name = C2 environment does not import data/species/operators/solvers/driver
 type = forbidden
 source_modules =
     MCEq.environment
@@ -104,6 +108,24 @@ forbidden_modules =
     MCEq.operator_assembly
     MCEq.secant
     MCEq.solvers
+    MCEq.core
+    MCEq.download
+
+# The shim direction, which no other contract covers. C7's `acyclic_siblings`
+# takes `MCEq.environment` and `MCEq.geometry` as two SEPARATE ancestors, so it
+# looks for cycles inside each and never between them; C2 above has both as
+# sources but not as targets; C3's sources exclude `MCEq.environment`. Without
+# this, `environment.base` importing `MCEq.geometry.density_profiles` back --
+# a real cycle straddling the two packages -- passes every gate.
+#
+# Phase 7 deletes the shims and this contract with them.
+[importlinter:contract:C2b]
+name = C2b the shims import the environment package, never the reverse
+type = forbidden
+source_modules =
+    MCEq.environment
+forbidden_modules =
+    MCEq.geometry
 
 # Phase 3 gives solvers.path a DensityColumn Protocol; drop MCEq.solvers from
 # the sources in that PR, when it starts holding an environment object.

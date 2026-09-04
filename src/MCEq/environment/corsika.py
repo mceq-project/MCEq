@@ -195,3 +195,4 @@ if __name__ == "__main__":
     plt.xlabel(r"Depth (g/cm$^2$)")
     plt.legend(loc="upper left")
     plt.tight_layout()
+    plt.show()

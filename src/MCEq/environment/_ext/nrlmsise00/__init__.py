@@ -19,6 +19,17 @@ for fn in os.listdir(base):
     if fn.startswith("_libnrlmsis") and fn.endswith(suffix):
         msis = cdll.LoadLibrary(os.path.join(base, fn))
         break
+else:
+    # Without this the module imports CLEANLY with no `msis` attribute, and the
+    # failure surfaces much later as `AttributeError: module has no attribute
+    # 'msis'` from the first density call. The likeliest cause since this
+    # package moved out of MCEq/geometry/ is a stale build: the .so is
+    # gitignored, so `git pull` relocates this loader and leaves it behind.
+    raise ImportError(
+        f"No _libnrlmsis*{suffix} found in {base}. The C extensions moved to "
+        "MCEq/environment/_ext/; reinstall (`pip install -e .`) or move the "
+        "stale .so out of MCEq/geometry/nrlmsise00/."
+    )
 
 
 class nrlmsise_flags(Structure):
