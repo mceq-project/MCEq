@@ -9,8 +9,9 @@ LE model requested) and the channel-pack read dtype. That backend is built on
 a tiny synthetic two-model database from ``tests/data/make_hdf5_fixtures.py``
 in ``tmp_path``, with all four settings groups ``HDF5Backend.__init__`` takes
 -- ``paths``/``grid``/``physics``/``em`` -- injected, so no backend setting
-comes from the process-wide ``MCEq.config`` (only the ``info`` logger's debug
-level is read from it) and nothing here writes it. The one direct read of
+comes from the process-wide ``MCEq.config`` (only the ``info`` logger reads it:
+``debug_level``, ``override_debug_fcn``/``override_max_level`` and
+``print_module``) and nothing here writes it. The one direct read of
 ``MCEq.config`` is ``test_grid_dtype_is_none_by_default``, which pins the
 shipped default on purpose.
 
@@ -297,8 +298,13 @@ def test_enabled_backend_cs_db_hands_he_first_and_le_second(two_model_db):
     weight is ``he_le_weight`` on the backend's own grid and transition.
 
     Width 0 so the blend is exact column selection: above 80 GeV the HE table,
-    below it the LE table. A ``cs_db`` that handed the two indices (or the two
-    names) in the other order would put the LE table above the transition.
+    below it the LE table. A ``cs_db`` that handed the two indices in the other
+    order would put the LE table above the transition. The order of the two
+    NAMES is not observable here: both fixture tables carry one parent set, so
+    ``mapped_cross_section`` finds every projectile as its own first candidate
+    and the alias table the names select never decides a lookup. That use of
+    the names is pinned on the free function by
+    ``test_cross_sections_blend_separately_and_use_equivalences``.
     """
     backend = fixture_backend(two_model_db, low_energy_model=LE_MODEL)
     cs = backend.cs_db(fixtures.MODEL)

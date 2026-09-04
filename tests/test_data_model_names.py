@@ -164,8 +164,9 @@ def _backend_on(path):
     The idiom of `tests/test_data_hdf5_decode.py::backend`, plus `em`: with
     `paths`/`grid`/`physics`/`em` all given, `HDF5Backend.__init__` takes no
     setting from the process-wide `MCEq.config` (which it would otherwise read
-    `config.em` from, unused while `enable_em` is off), and no `MCEqRun` is
-    built.
+    `config.em` from, unused while `enable_em` is off); only the `info` logger
+    reads it (`debug_level`, `override_debug_fcn`/`override_max_level`,
+    `print_module`), and no `MCEqRun` is built.
     """
     paths = SimpleNamespace(
         data_dir=path.parent,

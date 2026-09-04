@@ -51,7 +51,8 @@ def test_b_session_config_undone_for_the_next_test():
     assert config.adv_set["disabled_particles"] == [11, -11]
     # Pins the module default only: `_apply_session_config` writes the same
     # True, so this line cannot detect the leak. The discriminating assertions
-    # are disabled_particles, mceq_db_fname and mkl_threads.
+    # are disabled_particles, mceq_db_fname and mkl_threads (the last one only
+    # where MKL is present; without it the old conftest never set 2 either).
     assert config.muon_helicity_dependence is True
     assert config.mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
     assert config.mkl_threads == min(16, os.cpu_count() or 1)

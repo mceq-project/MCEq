@@ -13,11 +13,13 @@ Everything here records what the code does **today**, defects included --
 ``test_width_two_file_loses_the_dedicated_antiproton_channels`` is a pinned
 defect, not a wish.
 
-The probes read the fixtures through a real ``HDF5Backend`` with injected
-config groups (``paths``/``grid``/``physics``), so no test here touches the
-process-wide ``MCEq.config`` state or builds an ``MCEqRun``. Decay packs are
-preferred over interaction packs where the equivalence machinery would be
-noise: ``decay_db`` passes ``equivalences={}``.
+The probes read the fixtures through a real ``HDF5Backend`` with all four
+config groups injected (``paths``/``grid``/``physics``/``em``), so no backend
+setting comes from the process-wide ``MCEq.config``; the tests on the shipped
+databases read ``config.data_dir`` to locate them, the ``info`` logger reads
+its debug settings, and nothing here writes ``MCEq.config`` or builds an
+``MCEqRun``. Decay packs are preferred over interaction packs where the
+equivalence machinery would be noise: ``decay_db`` passes ``equivalences={}``.
 """
 
 import importlib.util
@@ -44,7 +46,7 @@ SKIPPED_CH, NEXT_CH = 4, 5
 
 
 def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
-    """An ``HDF5Backend`` on one fixture file, with injected config groups.
+    """An ``HDF5Backend`` on one fixture file, all four config groups injected.
 
     ``e_min``/``e_max`` are ``None`` so the energy cut is the whole grid and a
     decoded channel matrix is comparable to ``fixtures.channel_block`` as it
@@ -71,7 +73,10 @@ def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
         interaction_medium=medium,
         muon_helicity_dependence=False,
     )
-    return HDF5Backend(medium=medium, paths=paths, grid=grid, physics=physics)
+    # `em` is only read when `physics.enable_em` is set; injecting a stand-in
+    # keeps `__init__` from binding `config.em` off the process-wide module.
+    em = SimpleNamespace(air_density=None)
+    return HDF5Backend(medium=medium, paths=paths, grid=grid, physics=physics, em=em)
 
 
 def decode_decays(path, **kwargs):
