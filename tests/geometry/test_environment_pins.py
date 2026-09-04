@@ -469,6 +469,89 @@ def test_the_two_msis21_backends_disagree_more_than_the_scaling_order_does():
 
 
 # --------------------------------------------------------------------------
+# the local-solar-time convention (Anatoli's ruling, 2026-09-04)
+# --------------------------------------------------------------------------
+
+
+def test_msis00_holds_every_site_at_local_noon():
+    """``lst`` is 12.0 everywhere, and ``sec`` is derived to match.
+
+    NRLMSISE-00 wants ``lst = sec/3600 + g_long/15``. There is no setter for
+    the time of day, so one of the two has to be derived; MCEq holds the
+    *local* time fixed at noon (a representative daytime atmosphere per site)
+    and derives ``sec``, which is UT.
+
+    The previous two states both fail this: the original bug left ``sec`` at
+    43200 while pinning ``lst`` at 12 (relation violated), and the first fix
+    recomputed ``lst`` from the fixed ``sec`` (relation satisfied, but every
+    non-Greenwich site at 12:00 UT -- Tokyo came out at lst 21.3, a night
+    atmosphere).
+    """
+    from MCEq.environment.msis00_backend import cNRLMSISE00
+    from MCEq.environment.parameters import LOCATIONS
+
+    for site, (lon, _lat, _alt) in LOCATIONS.items():
+        msis = cNRLMSISE00()
+        msis.set_location(site)
+        lst, sec, g_long = msis.inp.lst.value, msis.inp.sec.value, msis.inp.g_long.value
+
+        assert lst == pytest.approx(12.0), f"{site} is not at local noon: lst={lst}"
+        assert lst == pytest.approx(sec / 3600.0 + g_long / 15.0, abs=1e-9), (
+            f"{site} violates the NRLMSISE-00 consistency relation"
+        )
+        assert 0.0 <= sec <= 86400.0, f"{site} derived sec={sec} outside one day"
+        assert g_long == pytest.approx(lon)
+
+
+def test_msis00_local_noon_survives_a_coordinate_change():
+    """``set_location_coord`` must re-derive, not keep the previous site's UT."""
+    from MCEq.environment.msis00_backend import cNRLMSISE00
+
+    msis = cNRLMSISE00()
+    for lon in (0.0, 139.0, -117.2, 180.0, -180.0):
+        msis.set_location_coord(lon, 20.0)
+        assert msis.inp.lst.value == pytest.approx(12.0)
+        assert msis.inp.lst.value == pytest.approx(
+            msis.inp.sec.value / 3600.0 + lon / 15.0, abs=1e-9
+        )
+        assert 0.0 <= msis.inp.sec.value <= 86400.0
+
+
+def test_msis00_is_local_noon_and_msis21_is_ut_noon():
+    """The two backends deliberately sample different instants. Pin the gap.
+
+    MSIS 2.1 derives ``lst = utsec/3600 + lon/15`` from a fixed ``utsec``
+    (``nrlmsis/globe.py``), i.e. 12:00 UT, while MCEq's MSIS00 wrapper holds
+    local noon. At a non-zero longitude the two therefore describe different
+    times of day, and a density comparison between them mixes that in with the
+    genuine model difference.
+
+    This is a consequence of the ruling, not an accident, so it is pinned
+    rather than fixed: if MSIS21 is ever moved to local noon as well, this test
+    is what says so.
+    """
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    from MCEq.environment.msis00_backend import cNRLMSISE00
+    from MCEq.environment.msis21 import MSIS21Atmosphere
+    from MCEq.environment.parameters import DAY_TIMES_SEC
+
+    tokyo_lon = 139.0
+
+    msis00 = cNRLMSISE00()
+    msis00.set_location("Tokyo")
+    assert msis00.inp.lst.value == pytest.approx(12.0)
+
+    atm21 = MSIS21Atmosphere("Tokyo", "January")
+    assert atm21._sec == pytest.approx(DAY_TIMES_SEC["day"]), (
+        "MSIS21 no longer uses a fixed UT second; re-derive this pin"
+    )
+    msis21_lst = (atm21._sec / 3600.0 + tokyo_lon / 15.0) % 24.0
+    assert msis21_lst == pytest.approx(21.266, abs=1e-3)
+
+    assert abs(msis21_lst - msis00.inp.lst.value) == pytest.approx(9.266, abs=1e-3)
+
+
+# --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
 

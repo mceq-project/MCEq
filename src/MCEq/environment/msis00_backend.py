@@ -58,6 +58,9 @@ class cNRLMSISE00(NRLMSISE00Base):
 
         self.inp.doy = c_int(self.month2doy["June"])  # Day of year
         self.inp.year = c_int(0)  # No effect
+        # Superseded by ``_update_lst`` below, which derives ``sec`` (UT) from
+        # the longitude so the site sits at local noon. Kept so the field is
+        # never unset if that call order ever changes.
         self.inp.sec = c_double(self.daytimes["day"])  # 12:00
         self.inp.alt = c_double(self.locations[self.current_location][2])
         self.inp.g_lat = c_double(self.locations[self.current_location][1])
@@ -101,7 +104,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self._invalidate()
 
     def _update_lst(self):
-        """Keep local apparent solar time consistent with the longitude.
+        """Hold the site at LOCAL noon, and keep ``sec`` consistent with it.
 
         NRLMSISE-00 takes ``lst`` as a separate input from ``sec`` and
         ``g_long``. Its own documentation (``nrlmsise-00.h``, NOTES ON INPUT
@@ -112,39 +115,57 @@ class cNRLMSISE00(NRLMSISE00Base):
         Time departures are legitimate. The model uses ``lst`` for the diurnal
         and semidiurnal tides.
 
-        Before this was called from :meth:`set_location_coord`, ``lst`` was
-        written once at construction and never again, so every site was
-        evaluated at the *default* location's solar time -- 12.0, since the
-        default is the South Pole at longitude 0.
+        Two things were wrong before. ``lst`` was written once at construction
+        and never again, so every site was evaluated at the *default*
+        location's solar time -- 12.0, the South Pole at longitude 0 -- which
+        violated the consistency relation everywhere else. Then the first fix
+        restored consistency by recomputing ``lst`` from the fixed ``sec``,
+        which satisfies the relation but silently means **12:00 UT**: Tokyo
+        came out at ``lst`` 21.3, a night atmosphere.
 
-        Measured over the 12 shipped ``LOCATIONS`` x 12 months on this host,
-        comparing against ``lst`` pinned at 12.0:
+        What MCEq wants from a named location is a representative *daytime*
+        atmosphere, so the local time of day is the quantity to hold fixed and
+        ``sec`` -- which is UT and has no setter -- is the one to derive.
+        ``DAY_TIMES_SEC`` says as much: its keys are ``day`` and ``night`` and
+        its comment reads "12:00 PM in seconds from midnight", i.e. it was
+        always a local time-of-day selector. So:
 
-        * up to 9.34 h of solar time (Tsukuba, longitude 140.1);
-        * 0.41 % at sea level in the worst case (LynnLake, January), above
-          0.25 % at 14 of the 144 site-months -- consistent with ``max_X``
-          moving by at most 4.1e-03, since the column is low-altitude
-          dominated;
-        * 22.97 % at exactly 95 km (LynnLake, July), and up to 46 % near
-          107 km (KSC, July), where the tide is strongest.
+            lst = DAY_TIMES_SEC[...] / 3600            (12.0, local noon)
+            sec = lst * 3600 - 240 * longitude          (the UT that implies)
 
-        It was exactly zero at the South Pole, which is why the flagship MSIS00
-        use case never showed it.
+        ``sec`` stays inside [0, 86400] for any valid longitude (0 s at +180
+        deg, 86400 s at -180), so no wrapping is needed. Every site is now
+        sampled at its own local noon, and the consistency relation holds
+        exactly.
 
-        **What time of day this now means.** ``sec`` is seconds of day in *UT*
-        and is fixed at 43200 with no setter, so consistency is restored by
-        moving ``lst``, i.e. every site is evaluated at 12:00 UT
-        (``lst = 12 + longitude/15``), not at local noon. That is a choice: the
-        alternative is to hold ``lst = 12`` and derive
-        ``sec = 43200 - 240*longitude``, keeping local noon everywhere and the
-        ``DAY_TIMES_SEC`` day/night naming. This one was taken because it is
-        what MSIS 2.1 already does (``nrlmsis/globe.py`` computes
-        ``lst = utsec/3600 + lon/15``), so the two backends now describe the
-        same instant rather than two different ones.
+        Ruled by Anatoli, 2026-09-04.
+
+        **The original numbers were nearly right, and the intermediate fix was
+        the excursion.** The old bug pinned ``lst`` at 12.0 for every site,
+        which *is* local noon -- it only failed to keep ``sec`` consistent with
+        it. So this restores densities close to the pre-fix values: measured
+        over the 12 shipped ``LOCATIONS`` x 12 months, local noon differs from
+        the original buggy state by **0.000 % at sea level, 0.07 % at 95 km**
+        and at most 0.62 % (SoudanMine/December, 112.8 km) -- the residue is
+        the model's separate UT term, ``cos(sr*(sec - p[79]) + 2*dgtr*g_long)``,
+        which is the part the old code really did get wrong. Against the
+        intermediate 12:00 UT state the differences are the large ones:
+        0.41 % at sea level, 22.95 % at 95 km, 46.6 % near 107 km.
+
+        **This diverges from MSIS 2.1 by construction.** ``nrlmsis/globe.py``
+        computes ``lst = utsec/3600 + lon/15`` from a fixed ``utsec``, so MSIS21
+        samples 12:00 UT. Comparing the two backends at a non-zero longitude
+        therefore compares different times of day, and that is deliberate: the
+        gap is pinned by
+        ``test_msis00_is_local_noon_and_msis21_is_ut_noon`` in
+        ``tests/geometry/test_environment_pins.py`` so it cannot drift
+        unnoticed. Moving MSIS21 to local noon too is a one-line change
+        (``self._sec = DAY_TIMES_SEC["day"] - 240.0 * lon``) if that is ever
+        wanted.
         """
-        self.inp.lst = c_double(
-            self.inp.sec.value / 3600.0 + self.inp.g_long.value / 15.0
-        )
+        lst_hours = self.daytimes["day"] / 3600.0
+        self.inp.lst = c_double(lst_hours)
+        self.inp.sec = c_double(lst_hours * 3600.0 - 240.0 * self.inp.g_long.value)
 
     def set_season(self, tag):
         if tag not in self.month2doy:

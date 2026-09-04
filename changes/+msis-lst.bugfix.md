@@ -1,15 +1,18 @@
 `cNRLMSISE00` wrote the local apparent solar time `inp.lst` once at
-construction and never updated it, so every site was evaluated at the *default*
-location's solar time — 12.0, the South Pole at longitude 0 — while NRLMSISE-00
-documents `lst`, `sec` and `g_long` as inputs that should be kept consistent
-(`lst = sec/3600 + g_long/15`). `set_location_coord` now recomputes it.
+construction and never updated it, so `set_location`/`set_location_coord` left
+it holding the previous site's value while `inp.sec` stayed at 43200 — breaking
+the consistency NRLMSISE-00 asks for between `lst`, `sec` and `g_long`
+(`lst = sec/3600 + g_long/15`).
 
-Densities move: over the 12 shipped `LOCATIONS` × 12 months, up to 9.34 h of
-solar time (Tsukuba), 0.41 % at sea level (LynnLake, January), 22.97 % at 95 km
-(LynnLake, July) and up to 46 % near 107 km (KSC, July). Column depth `max_X`
-moves by at most 4.1e-03 relative. The error was exactly zero at longitude 0,
-so South Pole results — including every IceCube one — are unchanged.
+Named locations are now evaluated at **local noon**: `lst` is held at 12.0 and
+`sec`, which is UT and has no setter, is derived from the longitude. The old
+code already pinned `lst` at 12.0, so this restores column depths to within
+~1e-9 relative of their pre-fix values; what changes is the model's separate
+UT term, up to 0.6 % in density near 110 km and 0.07 % at 95 km, and nothing
+measurable at sea level. South Pole results, including every IceCube one, are
+unchanged.
 
-`sec` is UT and has no setter, so consistency is restored by moving `lst`:
-sites are now evaluated at 12:00 UT rather than at local noon, which is what
-MSIS 2.1 already did. MSIS 2.1 was never affected.
+Note that MSIS 2.1 derives `lst` from a fixed UT second instead, so it samples
+12:00 UT. At non-zero longitude the two backends therefore describe different
+times of day; the gap is pinned by
+`tests/geometry/test_environment_pins.py::test_msis00_is_local_noon_and_msis21_is_ut_noon`.
