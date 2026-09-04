@@ -1,3 +1,4 @@
+import pathlib
 import sys
 
 import crflux.models as pm
@@ -10,6 +11,15 @@ from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospher
 
 if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
+
+#: Shared with tests/geometry: a synthetic US-Standard column above 2834 m.
+ATMOSPHERE_TABLE = str(
+    pathlib.Path(__file__).parent / "geometry" / "atmosphere_table_example.csv"
+)
+#: ... and a global grid of columns, for the location-centred variant.
+ATMOSPHERE_GRID_TABLE = str(
+    pathlib.Path(__file__).parent / "geometry" / "atmosphere_table_grid_example.csv"
+)
 
 
 def test_solve_default(mceq_sib21):
@@ -475,22 +485,22 @@ for atmo in msis_atmospheres:
             pytest.param("MSIS00", (atmo, s), id=f"MSIS00-{atmo}-{s}")
         )
 
-# MSIS00_IC and AIRS: only SouthPole
-for model in ["MSIS00_IC", "AIRS"]:
-    for s in ["January", "July"]:
-        if model == "AIRS":
-            test_densities_cases.append(
-                pytest.param(
-                    model,
-                    ("SouthPole", s),
-                    id=f"{model}-SouthPole-{s}",
-                    marks=pytest.mark.xfail(reason="Fix issure #71"),
-                )
-            )
-        else:
-            test_densities_cases.append(
-                pytest.param(model, ("SouthPole", s), id=f"{model}-SouthPole-{s}")
-            )
+# MSIS00_IC: only SouthPole
+for s in ["January", "July"]:
+    test_densities_cases.append(
+        pytest.param("MSIS00_IC", ("SouthPole", s), id=f"MSIS00_IC-SouthPole-{s}")
+    )
+
+test_densities_cases.append(
+    pytest.param("Tabulated", (ATMOSPHERE_TABLE,), id="Tabulated")
+)
+test_densities_cases.append(
+    pytest.param(
+        "Tabulated_LC",
+        (ATMOSPHERE_GRID_TABLE, (45.0, -30.0), 1948.0),
+        id="Tabulated_LC",
+    )
+)
 
 for density_config in corsika_atmospheres:
     test_densities_cases.append(
@@ -518,7 +528,8 @@ profiles = {
     "MSIS00": dprof.MSIS00Atmosphere,
     "MSIS00_IC": dprof.MSIS00IceCubeCentered,
     "CORSIKA": dprof.CorsikaAtmosphere,
-    "AIRS": dprof.AIRSAtmosphere,
+    "Tabulated": dprof.TabulatedAtmosphere,
+    "Tabulated_LC": dprof.TabulatedLocationCentered,
     "Isothermal": dprof.IsothermalAtmosphere,
     "GeneralizedTarget": dprof.GeneralizedTarget,
 }

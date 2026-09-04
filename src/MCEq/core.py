@@ -1303,7 +1303,8 @@ class MCEqRun:
                 "MSIS21_IC",
                 "MSIS21_KM3NeT",
                 "CORSIKA",
-                "AIRS",
+                "Tabulated",
+                "Tabulated_LC",
                 "Isothermal",
                 "GeneralizedTarget",
             ]
@@ -1330,8 +1331,10 @@ class MCEqRun:
                 self.density_model = dprof.MSIS21KM3NeTCentered(*model_config)
             elif base_model == "CORSIKA":
                 self.density_model = dprof.CorsikaAtmosphere(*model_config)
-            elif base_model == "AIRS":
-                self.density_model = dprof.AIRSAtmosphere(*model_config)
+            elif base_model == "Tabulated":
+                self.density_model = dprof.TabulatedAtmosphere(*model_config)
+            elif base_model == "Tabulated_LC":
+                self.density_model = dprof.TabulatedLocationCentered(*model_config)
             elif base_model == "Isothermal":
                 self.density_model = dprof.IsothermalAtmosphere(*model_config)
             elif base_model == "GeneralizedTarget":
