@@ -449,3 +449,76 @@ def test_the_misc_shim_survives_a_read_during_finalization():
         [sys.executable, "-c", program], capture_output=True, text=True, timeout=180
     )
     assert "OK ndarray" in out.stdout, (out.stdout, out.stderr)
+
+
+#: Every public (non-underscore), non-module name in `vars(MCEq.data)` today.
+#: Incidental imports (`defaultdict`, `isfile`, `join`, `info`, ...) are
+#: listed because they ARE in the namespace -- this is a record of what is
+#: exposed, not an endorsement. Adding a public name to `MCEq.data` is a
+#: deliberate act that updates this list in the same commit.
+DATA_PUBLIC_SURFACE = frozenset(
+    {
+        "ContinuousLosses",
+        "Decays",
+        "EnergyGrid",
+        "HDF5Backend",
+        "InteractionCrossSections",
+        "Interactions",
+        "apply_equivalences",
+        "blend_cross_sections",
+        "blend_yields",
+        "defaultdict",
+        "equivalences",
+        "family_of",
+        "he_le_weight",
+        "info",
+        "isfile",
+        "join",
+        "normalize_hadronic_model_name",
+        "reverse_equivalences",
+    }
+)
+
+
+def test_data_public_surface_is_exactly_this_set():
+    """Upper bound: `MCEq.data` exposes exactly DATA_PUBLIC_SURFACE, no more.
+
+    `SURFACE["MCEq.data"]` above is a lower bound (names that MUST exist). A
+    commit once widened the public surface with a name that should have stayed
+    private, and nothing caught it. Submodules bound onto the package by the
+    import machinery (`blending`, `energy_grid`, `model_names`, `h5py`, `np`)
+    are excluded: they are `ModuleType` objects, not part of the API contract.
+    A new public name is a deliberate act that updates DATA_PUBLIC_SURFACE in
+    the same commit; a mismatch in either direction is a failure.
+    """
+    import MCEq.data
+
+    public = {
+        name
+        for name, value in vars(MCEq.data).items()
+        if not name.startswith("_") and not isinstance(value, ModuleType)
+    }
+    assert public == DATA_PUBLIC_SURFACE, (
+        f"unexpected: {sorted(public - DATA_PUBLIC_SURFACE)}; "
+        f"missing: {sorted(DATA_PUBLIC_SURFACE - public)}"
+    )
+    assert set(SURFACE["MCEq.data"]) <= DATA_PUBLIC_SURFACE
+
+
+def test_data_equivalences_attribute_is_the_dict_not_the_submodule():
+    """`MCEq.data.equivalences` is the DICT; the submodule of the same name is shadowed.
+
+    `src/MCEq/data/__init__.py` imports the submodule `MCEq.data.equivalences`
+    (which binds the module onto the package) and then rebinds the name to the
+    dict with `from MCEq.data.equivalences import equivalences`. The dict is
+    the pinned public object; the module is reachable only through
+    `sys.modules`. See the module docstring of `src/MCEq/data/equivalences.py`.
+    """
+    import sys
+
+    import MCEq.data
+
+    assert isinstance(MCEq.data.equivalences, dict)
+    assert "equivalences" in DATA_PUBLIC_SURFACE
+    assert isinstance(sys.modules["MCEq.data.equivalences"], ModuleType)
+    assert sys.modules["MCEq.data.equivalences"].equivalences is MCEq.data.equivalences
