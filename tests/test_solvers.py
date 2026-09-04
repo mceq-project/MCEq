@@ -1225,6 +1225,7 @@ def mceq_sib21_full_db():
 
     saved_db = config.mceq_db_fname
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
+    saved_mkl_threads = config.mkl_threads
     config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
     config.adv_set["disabled_particles"] = []
     try:
@@ -1239,6 +1240,8 @@ def mceq_sib21_full_db():
     finally:
         config.mceq_db_fname = saved_db
         config.adv_set["disabled_particles"] = saved_disabled
+        if config.mkl_threads != saved_mkl_threads:
+            config.set_mkl_threads(saved_mkl_threads)
 
 
 def _uniform_path_theta60(mceq, h=5.0):

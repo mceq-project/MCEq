@@ -62,8 +62,11 @@ def mceq_2d(baseline):
         pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
 
     saved = {k: getattr(config, k) for k in _CONFIG_KEYS}
+    saved_disabled = list(config.adv_set["disabled_particles"])
     try:
-        # Mirror the fixture-generation configuration exactly.
+        # Mirror the fixture-generation configuration exactly. The generator
+        # sets no ``disabled_particles``, so it ran with the config default.
+        config.adv_set["disabled_particles"] = [11, -11]
         config.mceq_db_fname = fn
         config.e_min = 1e-1
         config.e_max = 1e4
@@ -92,6 +95,7 @@ def mceq_2d(baseline):
     finally:
         for k, v in saved.items():
             setattr(config, k, v)
+        config.adv_set["disabled_particles"] = saved_disabled
 
 
 def test_2d_dim_states_match_baseline(mceq_2d, baseline):
