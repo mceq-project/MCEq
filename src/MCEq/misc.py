@@ -1,14 +1,61 @@
-from collections import namedtuple
+import sys
+from types import ModuleType
 
 import numpy as np
 
 from MCEq import config
 
-#: Energy grid (centers, bind widths, dimension)
-energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
+#: Names that moved to :mod:`MCEq.data.energy_grid` and stay reachable here.
+#: A D14 compat shim (plan section 8.6): `misc` is C1's bottom layer, so a
+#: top-of-file re-export would invert `util -> data`; the names are fetched on
+#: demand instead, and C1's ledger carries the one edge that creates. Phase 7
+#: deletes both.
+_MOVED_TO_DATA = frozenset(
+    ("EnergyGrid", "energy_grid", "_eval_energy_cuts", "gen_xmat", "_xmat")
+)
 
-#: Matrix with x_lab=E_child/E_parent values
-_xmat = None
+
+def _moved_to_data():
+    """The :mod:`MCEq.data.energy_grid` module object.
+
+    Read out of `sys.modules` rather than bound by the import statement:
+    `from MCEq.data import energy_grid` resolves the *attribute* of the package,
+    which a later re-export of the namedtuple under its lowercase name would
+    silently turn into the tuple type. The import statement is still written out
+    so that `grimp` -- and `tests/golden/gen_structure.py`, which parses the same
+    text -- sees the `MCEq.misc -> MCEq.data.energy_grid` edge.
+    """
+    import MCEq.data.energy_grid  # noqa: F401
+
+    return sys.modules["MCEq.data.energy_grid"]
+
+
+class _MiscCompatModule(ModuleType):
+    """`MCEq.misc` with read *and write* forwarding for `_MOVED_TO_DATA`.
+
+    A module-level PEP-562 `__getattr__` answers reads and nothing else, and
+    `_xmat` is mutable module state: a write to `MCEq.misc._xmat` would put a
+    real attribute in this namespace that shadows the hook from then on, leaving
+    two caches where `gen_xmat` has one. Modules have no `__setattr__` hook, so
+    the shim is the pre-562 idiom PEP 562 itself names -- a `ModuleType`
+    subclass installed over this module -- and `misc._xmat` stays an alias of
+    the live object (`tests/test_data_bug_pins.py::clean_xmat_cache` sets and
+    restores it, and one pin asserts identity against the returned array).
+    """
+
+    def __getattr__(self, name):
+        if name in _MOVED_TO_DATA:
+            return getattr(_moved_to_data(), name)
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        if name in _MOVED_TO_DATA:
+            setattr(_moved_to_data(), name, value)
+            return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _MiscCompatModule
 
 _target_masses = {
     # <A> must be the ATOM-number-weighted mean mass so that the
@@ -38,37 +85,6 @@ _target_masses = {
     # A of iron, not Z (was 26.0 = Z until 2026)
     "iron": 55.845,
 }
-
-
-def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
-    """Evaluate the energy cuts and return the corresponding indices and slice.
-
-    Args:
-        e_centers: numpy.ndarray
-            Array of energy grid centers.
-        e_min: float, optional
-            Minimum energy value. Default is None.
-        e_max: float, optional
-            Maximum energy value. Default is None.
-
-    Returns:
-        min_idx: int
-            Index corresponding to the minimum energy value.
-        max_idx: int
-            Index corresponding to the maximum energy value.
-        energy_slice: slice
-            Slice corresponding to the energy range.
-
-    """
-    min_idx, max_idx = 0, len(e_centers)
-    energy_slice = slice(None)
-    if e_min is not None:
-        min_idx = np.argmin(np.abs(e_centers - e_min))
-        energy_slice = slice(min_idx, None)
-    if e_max is not None:
-        max_idx = np.argmin(np.abs(e_centers - e_max)) + 1
-        energy_slice = slice(min_idx, max_idx)
-    return min_idx, max_idx, energy_slice
 
 
 def normalize_hadronic_model_name(name):
@@ -125,18 +141,6 @@ def average_A_target(mat="auto"):
 def theta_deg(cos_theta):
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
     return np.rad2deg(np.arccos(cos_theta))
-
-
-def gen_xmat(energy_grid):
-    """Generates x_lab matrix for a given energy grid"""
-    global _xmat
-    dims = (energy_grid.d, energy_grid.d)
-    if _xmat is None or _xmat.shape != dims:
-        _xmat = np.zeros(dims)
-        for eidx in range(energy_grid.d):
-            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
-            _xmat[: eidx + 1, eidx] = xvec
-    return _xmat
 
 
 def print_in_rows(min_dbg_level, str_list, n_cols=5):

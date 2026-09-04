@@ -4,7 +4,8 @@ from os.path import isfile, join
 import h5py
 import numpy as np
 
-from MCEq.misc import _eval_energy_cuts, info, normalize_hadronic_model_name
+from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
+from MCEq.misc import info, normalize_hadronic_model_name
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand
@@ -257,15 +258,13 @@ class HDF5Backend:
             )
 
         with h5py.File(grid_fname, "r") as grid_db:
-            from MCEq.misc import energy_grid
-
             ca = grid_db["common"].attrs
             self._e_grid_full = np.asarray(ca["e_grid"])
             self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
                 ca["e_grid"], grid.e_min, grid.e_max
             )
 
-            self._energy_grid = energy_grid(
+            self._energy_grid = EnergyGrid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
@@ -1034,7 +1033,7 @@ class Interactions:
         Returns:
           (numpy.array): modification matrix
         """
-        from MCEq.misc import gen_xmat
+        from MCEq.data.energy_grid import gen_xmat
 
         info(2, "Generating modification matrix for", x_func.__name__, args)
 

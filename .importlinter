@@ -15,12 +15,15 @@
 # does not exist aborts the entire run before any contract is checked, while
 # `(name)` marks the layer optional.
 #
-# THE THREE LEDGERS -- C1 `exhaustive_ignores`, C1 `ignore_imports`, C5
-# `ignore_imports` -- record the debt the tree carries at the Phase-0 commit, one
-# entry per line, each naming the phase that deletes it. The two `ignore_imports`
-# ledgers are ratchets: `unmatched_ignore_imports_alerting = error` fails the run
-# on an entry that no longer matches anything, so the phase that removes an
-# import must delete its line here in the same PR. `exhaustive_ignores` only
+# THE FOUR LEDGERS -- C1 `exhaustive_ignores`, C1 `ignore_imports`, C2
+# `ignore_imports` and C5 `ignore_imports` -- record the debt the tree carries at
+# the Phase-0 commit, one entry per line, each naming the phase that deletes it.
+# (C2's opened in Phase 4: the `MCEq.misc` compat shim's deferred reach into
+# `MCEq.data` is a *chain* out of `environment`, not an edge of it.) The three
+# `ignore_imports` ledgers are ratchets: `unmatched_ignore_imports_alerting =
+# error` fails the run on an entry that no longer matches anything, so the phase
+# that removes an import must delete its line here in the same PR.
+# `exhaustive_ignores` only
 # ratchets upwards -- it fails on a module that appears, while a stale entry for
 # a module that is gone is silent, and the `structure` golden section is what
 # reports that.
@@ -83,6 +86,12 @@ ignore_imports =
 # it, when both take their group views (plan decision D11 revised: `misc.info`
 # stays, there is no `util/logging.py`).
     MCEq.misc -> MCEq.config
+# misc.py's `_moved_to_data()` inverts util -> data: the D14 compat shim that
+# keeps `energy_grid`/`EnergyGrid`/`_eval_energy_cuts`/`gen_xmat`/`_xmat`
+# reachable on `MCEq.misc` after they moved to `MCEq.data.energy_grid`. Deferred
+# (it runs on attribute access, not at import), but grimp counts it either way.
+# Phase 7 deletes the misc shim and this line with it.
+    MCEq.misc -> MCEq.data.energy_grid
 
 # ------------------------------------------------------- C2/C3: environment
 # The environment layer knows about geometry and atmospheres, not about the
@@ -110,6 +119,15 @@ forbidden_modules =
     MCEq.solvers
     MCEq.core
     MCEq.download
+unmatched_ignore_imports_alerting = error
+ignore_imports =
+# Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
+# compat shim: eleven environment modules take `info` from `misc`, and `misc`'s
+# `_moved_to_data()` reaches `MCEq.data.energy_grid` on attribute access (see C1
+# above). `allow_indirect_imports` is left at False so a real
+# `environment -> data` chain still fails; only this one hop is cut. Phase 7
+# deletes the misc shim and this line with it.
+    MCEq.misc -> MCEq.data.energy_grid
 
 # The shim direction, which no other contract covers. C7's `acyclic_siblings`
 # takes `MCEq.environment` and `MCEq.geometry` as two SEPARATE ancestors, so it

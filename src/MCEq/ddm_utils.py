@@ -87,7 +87,7 @@ def _generate_DDM_matrix(
         npt.NDArray
             The DDM matrix.
     """
-    from MCEq.misc import _eval_energy_cuts, energy_grid
+    from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 
     projectile = channel.projectile
     secondary = channel.secondary
@@ -96,7 +96,7 @@ def _generate_DDM_matrix(
     e_max = mceq._energy_grid.b[-1] if e_max < 0 else e_max
     mceq_egr = mceq._energy_grid
     min_idx, max_idx, _cuts = _eval_energy_cuts(mceq_egr.c, e_min, e_max)
-    _energy_grid = energy_grid(
+    _energy_grid = EnergyGrid(
         mceq_egr.c[_cuts],
         mceq_egr.b[min_idx : max_idx + 1],
         mceq_egr.w[_cuts],
