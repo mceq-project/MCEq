@@ -4,7 +4,7 @@ from os.path import isfile, join
 import h5py
 import numpy as np
 
-from .misc import _eval_energy_cuts, info, normalize_hadronic_model_name
+from MCEq.misc import _eval_energy_cuts, info, normalize_hadronic_model_name
 
 # TODO: Convert this to some functional generic class. Very erro prone to
 # enter stuff by hand

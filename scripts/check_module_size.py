@@ -38,7 +38,7 @@ LIMIT = 600
 ALLOW = {
     "src/MCEq/config/__init__.py": 661,  # Phase 1 -> config/{schema,defaults,legacy,detect}
     "src/MCEq/core.py": 3538,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
-    "src/MCEq/data.py": 1486,  # Phase 4 -> data/*
+    "src/MCEq/data/__init__.py": 1486,  # Phase 4 -> data/*
     "src/MCEq/ddm.py": 870,  # Phase 4 -> models/ddm/*
     "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
 }
