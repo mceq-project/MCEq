@@ -9,19 +9,31 @@ behaviour would be, which is the expectation the fix commit inherits.
 The probes build ``Interactions`` / ``InteractionCrossSections`` with
 ``object.__new__`` and inject the handful of attributes the method under test
 reads, the way ``tests/test_low_energy_blending.py`` does for ``HDF5Backend``.
-Only the B2 pin needs a real HDF5 read, and it uses the reduced DB directly --
-no ``MCEqRun``.
+B2 reads a real database (the reduced DB directly, no ``MCEqRun``) and B4
+reads synthetic fixture files built by ``tests/data/make_hdf5_fixtures.py``,
+loaded by file path the way ``tests/test_data_hdf5_decode.py`` does it -- B4
+is the only ledger entry whose probe needs an EM database.
 """
 
+import importlib.util
+import pathlib
 from collections import defaultdict
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
 import pytest
 
 import MCEq.misc as misc
 from MCEq.data import InteractionCrossSections, Interactions
 from MCEq.misc import energy_grid, gen_xmat
+
+_spec = importlib.util.spec_from_file_location(
+    "make_hdf5_fixtures",
+    pathlib.Path(__file__).parent / "data" / "make_hdf5_fixtures.py",
+)
+fixtures = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(fixtures)
 
 #: Five bins is enough for every matrix here and keeps ``_gen_mod_matrix`` cheap.
 GRID = energy_grid(c=np.logspace(0.0, 3.0, 5), b=None, w=None, d=5)
@@ -365,3 +377,116 @@ def test_gen_xmat_returns_the_cache_itself_not_a_copy(clean_xmat_cache):
     first = gen_xmat(grid)
     first[0, 0] = -12345.0
     assert gen_xmat(grid)[0, 0] == -12345.0
+
+
+# B4 -- ice->water EM medium substitution rewrites a local, then reads the
+# unswapped medium
+
+
+def em_backend(had_path, em_path, medium):
+    """An ``HDF5Backend`` with ``enable_em`` on, all four groups injected.
+
+    The idiom of ``tests/test_data_hdf5_decode.py::backend``, with two
+    changes the B4 pins need: ``enable_em`` is True and both database files
+    exist, so the EM reads happen; ``interaction_medium`` and the constructor
+    ``medium`` agree, and nothing comes from ``MCEq.config`` except the
+    ``info`` logger's own settings.
+    """
+    from MCEq.data import HDF5Backend
+
+    paths = SimpleNamespace(
+        data_dir=had_path.parent,
+        mceq_db_fname=had_path.name,
+        em_db_fname=em_path.name,
+    )
+    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
+    physics = SimpleNamespace(
+        filters={
+            "disabled_particles": [],
+            "forced_int_cs": None,
+            "replace_meson_cross_sections_with": None,
+        },
+        assume_nucleon_interactions_for_exotics=True,
+        enable_em=True,
+        enable_cont_rad_loss=False,
+        fallback_to_air_cs=True,
+        interaction_medium=medium,
+        muon_helicity_dependence=False,
+    )
+    em = SimpleNamespace(air_density=None)
+    return HDF5Backend(medium=medium, paths=paths, grid=grid, physics=physics, em=em)
+
+
+def b4_dbs(tmp_path):
+    """Hadronic file with an ``ice`` medium, EM file with ``ice`` AND ``water``.
+
+    The two EM media carry distinguishable content on purpose: the ``ice``
+    pack stores the reversed channel list (so every matrix value differs) and
+    the ``ice`` cs table a different scale.
+    """
+    had = fixtures.build_database(tmp_path / "b4_had.h5", medium="ice")
+    em = fixtures.build_em_database(
+        tmp_path / "b4_em.h5",
+        {
+            "water": (fixtures.EM_CHANNELS, 2.0),
+            "ice": (list(reversed(fixtures.EM_CHANNELS)), 1.0),
+        },
+    )
+    return had, em
+
+
+def test_b4_interaction_db_reads_ice_after_saying_water(tmp_path):
+    """B4: the ice->water swap in ``interaction_db`` is dead.
+
+    The block at the head of the EM section rewrites the LOCAL ``medium`` and
+    logs "replaced by water", but every lookup below it uses ``self.medium``,
+    which still says ``ice``. Pin: the matrices that arrive are the ICE
+    group's (channel ``(11, 0) -> (11, 0)`` decodes from the reversed list,
+    position 6, not from the water list, position 0). The fix -- making the
+    EM lookups use the swapped medium, or deleting the swap and substituting
+    at the source -- must flip this expect to the water numbers.
+
+    The hadronic file carries an ``ice`` subgroup for the *cs* leg of the
+    pair (without one, ``_cs_db_single`` raises ``Unknown selections.`` at
+    its own subgroup guard before the EM section runs); this leg alone would
+    also pass on an air-only hadronic file, where the ``fallback_to_air_cs``
+    rewrite of the local ``medium`` to ``air`` skips the swap block but the
+    EM lookups still use ``self.medium``.
+    """
+    had, em = b4_dbs(tmp_path)
+    db = em_backend(had, em, "ice").interaction_db(fixtures.MODEL)
+    ice_pos = list(reversed(fixtures.EM_CHANNELS)).index((11, 11))
+    assert ice_pos == 6
+    matrix = db["index_d"][((11, 0), (11, 0))]
+    assert np.array_equal(matrix, fixtures.channel_block(ice_pos))
+    assert not np.array_equal(matrix, fixtures.channel_block(0))
+
+
+def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(tmp_path):
+    """B4, second leg: ``_cs_db_single`` never mentions ice or water.
+
+    Where ``interaction_db`` at least tries a substitution (a dead one, per
+    the pin above), ``_cs_db_single`` looks the EM ``cs`` table up under the
+    local ``medium`` verbatim, so an ice run reads the ICE table. Pin: the
+    merged EM columns equal the scale-1.0 (ice) table, not scale 2.0 (water).
+    A fix that unifies both paths through one substitution must update this
+    expect to water -- and should say which path is right, since today they
+    disagree. The cs leg's discriminator is the scale alone (the ``cs``
+    table is keyed by its own ``projectiles`` attribute, independently of
+    the pack order); the interaction pin above discriminates the same fix
+    through pack order alone, so a fixture regression that flattened the
+    scales cannot hide a real substitution fix from both pins.
+    """
+    had, em = b4_dbs(tmp_path)
+    with h5py.File(em, "r") as f:
+        assert np.array_equal(
+            f["electromagnetic/water/cs"][:], fixtures.em_cs_table(2.0)
+        )
+        assert np.array_equal(f["electromagnetic/ice/cs"][:], fixtures.em_cs_table(1.0))
+    cs = em_backend(had, em, "ice").cs_db(fixtures.MODEL)
+    ice_table = fixtures.em_cs_table(1.0)
+    water_table = fixtures.em_cs_table(2.0)
+    for ip, p in enumerate(fixtures.EM_CS_PARENTS):
+        assert np.array_equal(cs["index_d"][p], ice_table[ip, :])
+    assert not np.array_equal(cs["index_d"][11], water_table[0, :])
+    assert cs["parents"][-len(fixtures.EM_CS_PARENTS) :] == fixtures.EM_CS_PARENTS

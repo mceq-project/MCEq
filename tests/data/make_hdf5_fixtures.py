@@ -174,6 +174,21 @@ VARIANTS = {
     "two_d_width4": "fixture_2d_w4.h5",
 }
 
+#: Channels of the EM ``emca_mats`` pack: the minimal set a decode of a
+#: 2-column ``tuple_idcs`` pack (every real EM database uses width 2) can
+#: produce, with the parent set a ``cs`` table needs to accompany it.
+EM_CHANNELS = [
+    (11, 11),
+    (11, 22),
+    (22, 22),
+    (-11, -11),
+    (-11, 22),
+    (13, 13),
+    (-13, -13),
+]
+#: The ``projectiles`` attribute of the EM ``cs`` table.
+EM_CS_PARENTS = [11, -11, 22, 13, -13]
+
 
 def channel_block(channel_index, mode_index=0):
     """The ``(N_E, N_E)`` matrix stored for one channel and Hankel mode.
@@ -219,6 +234,41 @@ def cross_section_table(model_index=0):
         * (1.0 + 2.0 * model_index)
         * np.outer(1.0 + np.log10(E_GRID), 1 + np.arange(len(CS_PARENTS)))
     )
+
+
+def em_cs_table(scale=1.0):
+    """The ``(len(EM_CS_PARENTS), N_E)`` cross-section table of one EM medium.
+
+    Transposed relative to :func:`cross_section_table`: ``_cs_db_single``
+    reads the EM table as ``em_cs[ip, self._cuts]``, so its parent axis is
+    the first one (the hadronic table is ``(n_e, n_parents)``). ``scale``
+    lets two media of one file carry distinguishable tables, so a test can
+    tell which medium a merged cross section came from.
+    """
+    return (
+        5e-4
+        * scale
+        * np.outer(1.0 + np.arange(len(EM_CS_PARENTS)), 1.0 + np.log10(E_GRID))
+    )
+
+
+def build_em_database(path, variants):
+    """Write a synthetic EM database and return its path.
+
+    ``variants`` maps a medium to a ``(channels, cs_scale)`` pair. Each
+    medium gets an ``electromagnetic/<medium>`` group holding an
+    ``emca_mats`` pack (2-column ``tuple_idcs``, no ``description``
+    attribute -- as the real EM databases store them) and a ``cs`` table
+    with a ``projectiles`` attribute carrying :data:`EM_CS_PARENTS`.
+    """
+    path = pathlib.Path(path)
+    with h5py.File(path, "w") as db:
+        for medium, (channels, cs_scale) in variants.items():
+            group = db.create_group(f"electromagnetic/{medium}")
+            _write_pack(group, "emca_mats", channels, 1, 2, None)
+            cs_dset = group.create_dataset("cs", data=em_cs_table(cs_scale))
+            cs_dset.attrs["projectiles"] = np.array(EM_CS_PARENTS, dtype=np.int64)
+    return path
 
 
 def pack_channels(channels, n_k, tuple_width):
@@ -324,7 +374,13 @@ def _write_pack(
 
 
 def build_database(
-    path, *, n_k=1, tuple_width=4, pack_dtype=np.float64, low_energy_model=None
+    path,
+    *,
+    n_k=1,
+    tuple_width=4,
+    pack_dtype=np.float64,
+    low_energy_model=None,
+    medium=MEDIUM,
 ):
     """Write one synthetic database and return its path.
 
@@ -338,6 +394,11 @@ def build_database(
     against this file. Without it (and with the default ``pack_dtype``) the
     file's datasets and attributes are exactly what they were before these two
     keywords existed, which the :func:`build_all` variants rely on.
+
+    ``medium`` is the medium subgroup written for interactions, cross
+    sections and continuous losses; the default keeps every file written by
+    :func:`build_all` byte-identical, while a pin that needs a non-air
+    medium (B4 in ``tests/test_data_bug_pins.py``) passes one.
     """
     path = pathlib.Path(path)
     is_2d = n_k > 1
@@ -359,7 +420,7 @@ def build_database(
             common.attrs["k_dim"] = n_k
             common.attrs["k_grid"] = K_GRID[:n_k]
 
-        interactions = db.create_group(f"hadronic_interactions/{MEDIUM}")
+        interactions = db.create_group(f"hadronic_interactions/{medium}")
         _write_pack(
             interactions,
             MODEL,
@@ -394,7 +455,7 @@ def build_database(
                 pack_dtype=pack_dtype,
             )
 
-        cross_sections = db.create_group(f"cross_sections/{MEDIUM}")
+        cross_sections = db.create_group(f"cross_sections/{medium}")
         cs_models = [MODEL] if low_energy_model is None else [MODEL, low_energy_model]
         for model_index, name in enumerate(cs_models):
             cs_dset = cross_sections.create_dataset(
@@ -405,7 +466,7 @@ def build_database(
             )
 
         for loss_case in ("ionization", "total"):
-            group = db.create_group(f"continuous_losses/{MEDIUM}/{loss_case}")
+            group = db.create_group(f"continuous_losses/{medium}/{loss_case}")
             for pdg in LOSS_PDGS:
                 # Negative, as in the shipped database.
                 group.create_dataset(pdg, data=-2e-3 * (1.0 + 0.1 * np.log(E_GRID)))
