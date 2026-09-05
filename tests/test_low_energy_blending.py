@@ -302,9 +302,11 @@ def test_enabled_backend_cs_db_hands_he_first_and_le_second(two_model_db):
     order would put the LE table above the transition. The order of the two
     NAMES is not observable here: both fixture tables carry one parent set, so
     ``mapped_cross_section`` finds every projectile as its own first candidate
-    and the alias table the names select never decides a lookup. That use of
-    the names is pinned on the free function by
-    ``test_cross_sections_blend_separately_and_use_equivalences``.
+    and the alias table the names select never decides a lookup. That the names
+    select an alias table at all is pinned on the free function by
+    ``test_cross_sections_blend_separately_and_use_equivalences``; which name
+    goes to which side is pinned by no test in this file, because the SIBYLL23
+    and FLUKA alias tables agree on every projectile the fixtures exercise.
     """
     backend = fixture_backend(two_model_db, low_energy_model=LE_MODEL)
     cs = backend.cs_db(fixtures.MODEL)

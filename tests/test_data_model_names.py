@@ -161,7 +161,7 @@ def test_family_of_reproduces_both_former_implementations(name):
 def _backend_on(path):
     """An `HDF5Backend` on one synthetic file, all four config groups injected.
 
-    The idiom of `tests/test_data_hdf5_decode.py::backend`, plus `em`: with
+    The idiom of `tests/test_data_hdf5_decode.py::backend`: with
     `paths`/`grid`/`physics`/`em` all given, `HDF5Backend.__init__` takes no
     setting from the process-wide `MCEq.config` (which it would otherwise read
     `config.em` from, unused while `enable_em` is off); only the `info` logger
