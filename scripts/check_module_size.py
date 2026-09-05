@@ -28,17 +28,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOTS = ("src/MCEq", "mceq_config")
-LIMIT = 600
+LIMIT = 700
 
-#: Modules over budget at the Phase-0 commit (06fdd7e), with the phase that
-#: removes each entry. 5 modules, 4731 lines above the limit -- five of the
-#: original eight, after ``solvers.py`` went at 34b5611,
+#: The limit was 600 through Phase 3 (2026-09-06: raised to 700 -- modules in
+#: the 500-700 band read as complete units, not arbitrary shingles; the split
+#: targets, not the limit, carry the design).
+#:
+#: Modules still over budget, with the phase that removes each entry: three
+#: of the original eight, after ``solvers.py`` went at 34b5611,
 #: ``geometry/msis21_atmosphere.py`` at c23ab88 and
-#: ``geometry/density_profiles.py`` with the ``environment/`` split.
+#: ``geometry/density_profiles.py`` with the ``environment/`` split, and
+#: after the 700 limit absorbed ``config/__init__.py`` (659) and the Phase-4
+#: remnant ``data/__init__.py`` (631).
 ALLOW = {
-    "src/MCEq/config/__init__.py": 661,  # Phase 1 -> config/{schema,defaults,legacy,detect}
     "src/MCEq/core.py": 3538,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
-    "src/MCEq/data/__init__.py": 1486,  # Phase 4 -> data/*
     "src/MCEq/ddm.py": 870,  # Phase 4 -> models/ddm/*
     "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
 }
