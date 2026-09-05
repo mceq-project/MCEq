@@ -365,8 +365,10 @@ def test_channel_pack_dtype_survives_the_read(tmp_path, dtype):
     Ledger: risk 8 ("dtype") of the 2026-08-30 data-layer audit, and the Phase 4
     accept item "dtype test (float32 propagates)".
 
-    `_gen_db_dictionary` reads the pack as `np.asarray(hdf_root[:, :],
-    dtype=self._grid.dtype)`, and `np.asarray(x, dtype=None)` keeps `x`'s own
+    `_gen_db_dictionary` reads the pack as `np.asarray(pack.data,
+    dtype=self._grid.dtype)` -- the raw rows of a ``ChannelPack``, which the
+    store hands over without a cast -- and `np.asarray(x, dtype=None)` keeps
+    `x`'s own
     dtype. A float32 channel pack therefore arrives as a float32 yield matrix;
     only float64 packs exist on disk today (the shipped v140 database stores
     (2, N) float64), so this is the read's latent behaviour, not a live one.
