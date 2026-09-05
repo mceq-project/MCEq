@@ -49,9 +49,10 @@ import pytest
 #: Flat module -> the names it must keep exposing, verbatim, after Phase 4.
 #: Private names are included where the tree already imports them; incidental
 #: module-level imports (`np`, `pathlib`, `info`, ...) and the private helpers
-#: nothing else reaches (`_select_em_rho_slice`, `_pname`, `_DDMEntry`,
-#: `_DDMChannel`, `_generate_DDM_matrix`, `_download_file`, ...) are
-#: deliberately absent -- they are not part of the pinned contract.
+#: nothing else reaches (`_pname`, `_DDMEntry`, `_DDMChannel`,
+#: `_generate_DDM_matrix`, `_download_file`, ...) are deliberately absent --
+#: they are not part of the pinned contract. (`_select_em_rho_slice` left the
+#: package for `MCEq.data.em_tables.select_em_rho_slice` in Phase 4.)
 SURFACE: dict[str, tuple[str, ...]] = {
     "MCEq.data": (
         "ContinuousLosses",

@@ -3,7 +3,7 @@ from os.path import isfile, join
 
 import numpy as np
 
-from MCEq.data import hdf5_store
+from MCEq.data import em_tables, hdf5_store
 from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 
@@ -20,55 +20,6 @@ from MCEq.data.equivalences import (
 )
 from MCEq.data.model_names import family_of, normalize_hadronic_model_name
 from MCEq.misc import info
-
-
-def _select_em_rho_slice(store, medium, em):
-    """Return the index into ``rho_grid`` of ``electromagnetic/<medium>``
-    whose stored density is closest in log10 to ``em.air_density`` (g/cm³),
-    or ``None`` when no ρ stack is present / no override is requested.
-
-    Only the air medium has a stacked layout in the current pipeline; for
-    other media this returns ``None`` silently.  See
-    ``mceq-em-integration/wiki/methods/lpm-density-factorization.md`` for
-    the design.
-    """
-    if em.air_density is None:
-        return None
-    if medium != "air":
-        return None
-    rho_path = f"electromagnetic/{medium}/rho_grid"
-    if not store.has(rho_path):
-        info(2, "EM DB has no rho_grid; ignoring config.em_air_density.")
-        return None
-    rho_grid = np.asarray(store.read_dataset(rho_path), dtype=float)
-    if rho_grid.size == 0:
-        return None
-    log_target = np.log10(float(em.air_density))
-    idx = int(np.argmin(np.abs(np.log10(rho_grid) - log_target)))
-    info(
-        2,
-        f"EM ρ-stack: selecting slice {idx} (ρ={rho_grid[idx]:.3e} g/cm³) "
-        f"for requested ρ={em.air_density:.3e} g/cm³.",
-    )
-    return idx
-
-
-def _select_emca_path(store, medium, caller, em):
-    """Group path holding the ``emca_mats`` pack, honoring the ρ-stack."""
-    idx = _select_em_rho_slice(store, medium, em)
-    if idx is None:
-        return f"electromagnetic/{medium}"
-    info(3, f"[{caller}] using ρ slice {idx} of /electromagnetic/{medium}/")
-    return f"electromagnetic/{medium}/rho_{idx:02d}"
-
-
-def _select_em_cs_path(store, medium, caller, em):
-    """Group path holding the ``cs`` table, honoring the ρ-stack."""
-    idx = _select_em_rho_slice(store, medium, em)
-    if idx is None:
-        return f"electromagnetic/{medium}"
-    info(3, f"[{caller}] using ρ slice {idx} of /electromagnetic/{medium}/")
-    return f"electromagnetic/{medium}/rho_{idx:02d}"
 
 
 class HDF5Backend:
@@ -364,48 +315,19 @@ class HDF5Backend:
 
         # Append electromagnetic interaction matrices from the EM database
         if self._physics.enable_em:
-            if medium == "ice":
-                info(5, "Electromagnetic cross sections for ice replaced by water.")
-                medium = "water"
+            medium = em_tables.medium_for_em(medium)
 
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
-            em_group = _select_emca_path(
-                self._em_store, self.medium, "interaction_db", self._em
+            em_group = em_tables.emca_group_path(
+                self._em_store, self.medium, "interaction_db", self._em.air_density
             )
             em_index = self._gen_db_dictionary(
                 self._em_store.read_channel_pack(em_group, "emca_mats"),
             )
             if self._physics.muon_helicity_dependence:
-                # This is only approximately valid and is done for consistency.
-                # Typically electrons would quickly depolarize due to multiple
-                # scattering but this requires additional matrices for
-                # (-11,1) -> (-11,0) etc. that are not available now.
-                from itertools import product
-
-                info(
-                    5,
-                    "Copy bremsstrahlung and photon emission to "
-                    + "polarised electrons and muons.",
-                )
-                for pid, h in product([11, -11, 13, -13], [-1, 1]):
-                    em_index["index_d"][((pid, h), (pid, h))] = em_index["index_d"][
-                        ((pid, 0), (pid, 0))
-                    ]
-                    em_index["index_d"][((pid, h), (22, 0))] = em_index["index_d"][
-                        ((pid, 0), (22, 0))
-                    ]
-                    em_index["parents"].append((pid, h))
-
-                em_index["relations"] = defaultdict(list)
-                em_index["particles"] = []
-
-                for idx_tup in em_index["index_d"]:
-                    parent, child = idx_tup
-                    em_index["relations"][parent].append(child)
-                    em_index["particles"].append(parent)
-                    em_index["particles"].append(child)
+                em_tables.helicity_duplicate(em_index)
 
             int_index["parents"] = sorted(int_index["parents"] + em_index["parents"])
             int_index["particles"] = sorted(
@@ -566,7 +488,9 @@ class HDF5Backend:
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", medium)
-            em_cs_group = _select_em_cs_path(self._em_store, medium, "cs_db", self._em)
+            em_cs_group = em_tables.em_cs_group_path(
+                self._em_store, medium, "cs_db", self._em.air_density
+            )
             em_cs, em_cs_attrs = self._em_store.read_table(f"{em_cs_group}/cs")
             em_parents = list(em_cs_attrs["projectiles"])
 
