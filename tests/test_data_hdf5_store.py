@@ -43,12 +43,21 @@ def test_return_types_are_numpy_and_plain(hdf5_fixture_dbs):
     assert store.members("common") == []
     assert store.has("common") is True
     assert store.has("no_such_group") is False
+    data = store.read_dataset("cross_sections/air/SIBYLL21")
+    assert isinstance(data, np.ndarray)
+    assert np.array_equal(data, fixtures.cross_section_table(0))
     table, attrs = store.read_table("cross_sections/air/SIBYLL21")
     assert isinstance(table, np.ndarray) and type(attrs) is dict
     assert np.array_equal(table, fixtures.cross_section_table(0))
     group = store.read_group_datasets("continuous_losses/air/ionization")
     assert type(group) is dict
     assert all(isinstance(v, np.ndarray) for v in group.values())
+    # values, not just types: the lepton curves are the SAME array for every
+    # pdg key in the fixture, so only the 2-row `hadron` dataset can tell a
+    # store that maps every child to one dataset from one that reads each.
+    assert set(group) == set(fixtures.LOSS_PDGS) | {"hadron"}
+    assert group["hadron"].shape == (2, 30)
+    assert np.array_equal(group["hadron"][0], np.logspace(-3, 1, 30))
 
 
 def test_read_channel_pack_matches_a_direct_h5py_read(hdf5_fixture_dbs):
