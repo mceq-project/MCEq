@@ -87,9 +87,18 @@ def test_rho_slice_guards(tmp_path):
     store = HDF5Store(em_file_with_rho_stack(tmp_path / "stack.h5"))
     pick = em_tables.select_em_rho_slice
     assert pick(store, "air", None) is None
-    assert pick(store, "water", 1e-2) is None
     plain = HDF5Store(plain_em_file(tmp_path / "plain.h5"))
     assert pick(plain, "air", 1e-2) is None
+
+
+def test_rho_slice_is_air_only_even_with_a_water_stack(tmp_path):
+    """The `medium != "air"` guard, observable: a water stack is never used."""
+    path = tmp_path / "water.h5"
+    with h5py.File(path, "w") as db:
+        group = db.create_group("electromagnetic/water")
+        group.create_dataset("rho_grid", data=np.array(RHO_GRID))
+    store = HDF5Store(path)
+    assert em_tables.select_em_rho_slice(store, "water", 1e-2) is None
 
 
 def test_rho_slice_empty_grid(tmp_path):
@@ -123,7 +132,13 @@ def test_stack_selection_decodes_the_selected_slice(tmp_path):
     store = HDF5Store(path)
     group = em_tables.emca_group_path(store, "air", "t", 9.9e-2)
     pack = store.read_channel_pack(group, "emca_mats")
-    pos = list(fixtures.EM_CHANNELS[2:] + fixtures.EM_CHANNELS[:2]).index((11, 11))
+    rot = fixtures.EM_CHANNELS[2:] + fixtures.EM_CHANNELS[:2]
+    pos = rot.index((11, 11))
+    # the slot under (11,11) belongs to THIS slice's ordering, and the cs
+    # scale says which slice the group is; both would break on a wrong pick
+    assert tuple(pack.tuple_idcs[pos]) == (11, 11)
+    cs, _ = store.read_table(f"{group}/cs")
+    assert np.array_equal(cs, fixtures.em_cs_table(3.0))  # slice 2 scale
     from MCEq.data.hdf5_store import unpack_channel
 
     got = unpack_channel(
@@ -142,15 +157,16 @@ def test_stack_selection_decodes_the_selected_slice(tmp_path):
 
 
 def test_helicity_duplicate():
+    # mutable payloads: `is` below then means a real alias, not string interning
     index_d = {
-        ((11, 0), (11, 0)): "a",
-        ((11, 0), (22, 0)): "b",
-        ((-11, 0), (-11, 0)): "c",
-        ((-11, 0), (22, 0)): "d",
-        ((13, 0), (13, 0)): "e",
-        ((13, 0), (22, 0)): "f",
-        ((-13, 0), (-13, 0)): "g",
-        ((-13, 0), (22, 0)): "h",
+        ((11, 0), (11, 0)): np.array([1.0]),
+        ((11, 0), (22, 0)): np.array([2.0]),
+        ((-11, 0), (-11, 0)): np.array([3.0]),
+        ((-11, 0), (22, 0)): np.array([4.0]),
+        ((13, 0), (13, 0)): np.array([5.0]),
+        ((13, 0), (22, 0)): np.array([6.0]),
+        ((-13, 0), (-13, 0)): np.array([7.0]),
+        ((-13, 0), (22, 0)): np.array([8.0]),
     }
     index = {
         "parents": [(11, 0), (-11, 0), (13, 0), (-13, 0)],
@@ -176,7 +192,7 @@ def test_helicity_duplicate():
     }
     assert out["relations"][(11, 1)] == [(11, 1), (22, 0)]
     assert len(out["particles"]) == 48
-    assert (11, 0) in out["particles"]
+    assert (22, 0) in out["particles"]
 
 
 def test_module_reads_no_config():

@@ -470,8 +470,8 @@ def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(tmp_path):
     local ``medium`` verbatim, so an ice run reads the ICE table. Pin: the
     merged EM columns equal the scale-1.0 (ice) table, not scale 2.0 (water).
     A fix that unifies both paths through one substitution must update this
-    expect to water -- and should say which path is right, since today they
-    disagree. The cs leg's discriminator is the scale alone (the ``cs``
+    expect to water -- and should say which path is right, since today the
+    interaction path logs a substitution it does not perform. The cs leg's discriminator is the scale alone (the ``cs``
     table is keyed by its own ``projectiles`` attribute, independently of
     the pack order); the interaction pin above discriminates the same fix
     through pack order alone, so a fixture regression that flattened the

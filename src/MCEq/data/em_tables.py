@@ -4,8 +4,8 @@ Selection policy for the electromagnetic file, on top of the materialized
 reads of :mod:`MCEq.data.hdf5_store` -- nothing here opens a file itself.
 The module imports ``numpy``, ``MCEq.misc.info`` and nothing else from
 ``MCEq`` (data -> misc is the permitted direction); it reads no
-configuration: the requested air density arrives as the value the backend
-read off its injected ``em`` view, never from ``MCEq.config``.
+configuration -- the requested air density is passed in as a value, and
+where it comes from is the caller's business.
 """
 
 from collections import defaultdict
@@ -20,12 +20,13 @@ def medium_for_em(medium):
     """The medium the EM file should be read for, given the hadronic one.
 
     The historical ice -> water substitution, with its log line. B4
-    (``tests/test_data_bug_pins.py``, two pins): ``interaction_db`` today
-    rewrites only its local medium with this result while the EM lookups
-    below read ``self.medium``, and ``_cs_db_single`` never substitutes at
-    all -- the two paths disagree for ice. Until the fix ruling lands the
-    callers keep reading what they always read; a fix must pick one path
-    and update both pins.
+    (``tests/test_data_bug_pins.py``, two pins): ``interaction_db`` calls
+    this and throws the result away -- it rewrites its local ``medium``
+    but then reads the EM group under ``self.medium`` -- and
+    ``_cs_db_single`` never substitutes at all, so an ice run reads the
+    ice EM file on both paths and only the log line claims water. Until
+    the fix ruling lands the callers keep reading what they always read;
+    a fix must pick one path and update both pins (they pin ice-on-both).
     """
     if medium == "ice":
         info(5, "Electromagnetic cross sections for ice replaced by water.")

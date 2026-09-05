@@ -487,8 +487,8 @@ def test_data_public_surface_is_exactly_this_set():
     `SURFACE["MCEq.data"]` above is a lower bound (names that MUST exist). A
     commit once widened the public surface with a name that should have stayed
     private, and nothing caught it. Submodules bound onto the package by the
-    import machinery (`blending`, `energy_grid`, `model_names`, `hdf5_store`,
-    `np`) are excluded: they are `ModuleType` objects, not part of the API
+    import machinery (`blending`, `em_tables`, `energy_grid`, `model_names`,
+    `hdf5_store`, `np`) are excluded: they are `ModuleType` objects, not part of the API
     contract.
     A new public name is a deliberate act that updates DATA_PUBLIC_SURFACE in
     the same commit; a mismatch in either direction is a failure.
