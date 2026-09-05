@@ -35,6 +35,32 @@ from MCEq.data.model_names import (  # noqa: F401  (family_of is surface only)
 )
 from MCEq.misc import info
 
+#: Since the classes moved out of this file, `automodapi` needs the explicit
+#: list to keep rendering them on docs/api-reference/data.rst (an automodapi
+#: page drops names whose `__module__` is not the page's module unless
+#: `__all__` claims them). Same list the upper-bound test records. Side
+#: effect: `import *` no longer binds the incidental module names (`np`,
+#: the submodules) -- callers who wanted those always imported them by name.
+__all__ = [
+    "ContinuousLosses",
+    "Decays",
+    "EnergyGrid",
+    "HDF5Backend",
+    "InteractionCrossSections",
+    "Interactions",
+    "apply_equivalences",
+    "blend_cross_sections",
+    "blend_yields",
+    "equivalences",
+    "family_of",
+    "he_le_weight",
+    "info",
+    "isfile",
+    "join",
+    "normalize_hadronic_model_name",
+    "reverse_equivalences",
+]
+
 
 class Interactions:
     """Class for managing the dictionary of interaction yield matrices.

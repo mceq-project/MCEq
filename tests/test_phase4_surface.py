@@ -25,10 +25,12 @@ Two facts about today that shape what is asserted here:
   (see `tests/geometry/test_geometry_shims.py`). `docs/api-reference/data.rst`
   and `docs/api-reference/particlemanager.rst` both run `.. automodapi::`, so
   the Phase 4 shims for those two need an explicit `__all__` to stay rendered.
-* Each name is still *defined* in the flat module. `test_the_flat_module_still_
-  owns_every_name` records that; it is the one test here that is **expected to
-  flip** when Phase 4 lands, and it flipping is the signal that the code moved
-  rather than being copied.
+* Each name is still *defined* in the flat module -- until Phase 4 moves
+   it, which `test_the_flat_module_still_owns_every_name` records. A moved
+   name is then listed in `DEFINES` with its new home and the test checks
+   that instead: `__module__` still naming the flat module means the code
+   was copied, not moved; a home other than the flat module or the
+   `DEFINES` entry fails too.
 
 DB-free: nothing here constructs an `MCEqRun` or touches the HDF5 database. The
 two `DDMSplineDB` tests do load the packaged `data/DDM_1.0.npy` (0.01 s
@@ -466,10 +468,10 @@ def test_the_misc_shim_survives_a_read_during_finalization():
 
 
 #: Every public (non-underscore), non-module name in `vars(MCEq.data)` today.
-#: Incidental imports (`defaultdict`, `isfile`, `join`, `info`, ...) are
-#: listed because they ARE in the namespace -- this is a record of what is
-#: exposed, not an endorsement. Adding a public name to `MCEq.data` is a
-#: deliberate act that updates this list in the same commit.
+#: Incidental imports (`isfile`, `join`, `info`, ...) are listed because
+#: they ARE in the namespace -- this is a record of what is exposed, not an
+#: endorsement. Adding a public name to `MCEq.data` is a deliberate act
+#: that updates this list in the same commit.
 DATA_PUBLIC_SURFACE = frozenset(
     {
         "ContinuousLosses",
