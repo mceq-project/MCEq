@@ -94,6 +94,13 @@ SURFACE: dict[str, tuple[str, ...]] = {
 #: The `(module, name)` pairs of SURFACE, flattened for parametrisation.
 SURFACE_PAIRS = [(mod, name) for mod, names in SURFACE.items() for name in names]
 
+#: Names that Phase 4 moved out of their flat module, to where they are now
+#: defined. A pinned name not listed here must still be defined in its flat
+#: module (see `test_the_flat_module_still_owns_every_name`).
+DEFINES = {
+    ("MCEq.data", "HDF5Backend"): "MCEq.data.hdf5_backend",
+}
+
 #: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as
 #: literals rather than read back through `MCEq.data.<name>`: an assertion of
 #: the shape `MCEq.data.HDF5Backend is MCEq.data.HDF5Backend` compares a value
@@ -172,12 +179,18 @@ def test_the_flat_module_still_owns_every_name(module_name, name):
     When this starts failing with `__module__` pointing at
     `MCEq.data.interaction_tables`, `MCEq.species.particle`, ... the move
     happened. If it keeps passing after Phase 4, the code was copied rather
-    than relocated and there are now two definitions in the tree.
+    than relocated and there are now two definitions in the tree. Moved
+    names do not have to start failing on their own: they are listed in
+    DEFINES with their new home, which this test then checks instead.
     """
     obj = getattr(importlib.import_module(module_name), name)
     if not (inspect.isclass(obj) or inspect.isroutine(obj)):
         pytest.skip(f"{name} is a value, not a class or function definition")
-    assert obj.__module__ == module_name
+    expected = DEFINES.get((module_name, name), module_name)
+    assert obj.__module__ == expected, (
+        f"{module_name}.{name} is defined in {obj.__module__}, expected "
+        f"{expected}" + ("" if name in DEFINES else " (not in DEFINES)")
+    )
 
 
 def test_ddm_and_particlemanager_share_pdata():
@@ -468,7 +481,6 @@ DATA_PUBLIC_SURFACE = frozenset(
         "apply_equivalences",
         "blend_cross_sections",
         "blend_yields",
-        "defaultdict",
         "equivalences",
         "family_of",
         "he_le_weight",
@@ -487,8 +499,8 @@ def test_data_public_surface_is_exactly_this_set():
     `SURFACE["MCEq.data"]` above is a lower bound (names that MUST exist). A
     commit once widened the public surface with a name that should have stayed
     private, and nothing caught it. Submodules bound onto the package by the
-    import machinery (`blending`, `em_tables`, `energy_grid`, `model_names`,
-    `hdf5_store`, `np`) are excluded: they are `ModuleType` objects, not part of the API
+    import machinery (`blending`, `em_tables`, `energy_grid`,
+    `hdf5_backend`, `model_names`, `hdf5_store`, `np`) are excluded: they are `ModuleType` objects, not part of the API
     contract.
     A new public name is a deliberate act that updates DATA_PUBLIC_SURFACE in
     the same commit; a mismatch in either direction is a failure.
