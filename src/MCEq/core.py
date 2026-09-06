@@ -1361,7 +1361,7 @@ class MCEqRun:
         overwrites DDM with a different model.
         """
 
-        from .ddm import isospin_partners, isospin_symmetries
+        from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
 
         injected = []
         for (prim, sec), mati in ddm.ddm_matrices(self).items():

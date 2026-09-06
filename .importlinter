@@ -66,8 +66,11 @@ exhaustive_ignores =
 # re-exports from `MCEq.data.download` and C5/C2 constrain its one edge; Phase 7
 # deletes the shim (decision D6).
     download
-# models, imported by the driver only (C4). Phase 4 moves ddm and ddm_utils
-# under `models`; Phase 7 deletes charm_models (plan decision D6).
+# models, imported by the driver only (C4). §13.2 item 7 landed the move: the
+# code is `MCEq.models.ddm`, and `ddm`/`ddm_utils` remain as flat re-export
+# shims (D14) constrained against a back-edge by C4b. Phase 7 deletes the shims
+# and charm_models (decision D6).
+    models
     ddm
     ddm_utils
     charm_models
@@ -127,6 +130,7 @@ forbidden_modules =
     MCEq.solvers
     MCEq.core
     MCEq.download
+    MCEq.models
 unmatched_ignore_imports_alerting = error
 ignore_imports =
 # Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
@@ -163,6 +167,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.models
     MCEq.operators
     MCEq.operator_assembly
     MCEq.secant
@@ -189,9 +194,28 @@ source_modules =
     MCEq.environment
     MCEq.geometry
 forbidden_modules =
+    MCEq.models
     MCEq.ddm
     MCEq.ddm_utils
     MCEq.charm_models
+
+# ------------------------------------------------------------- C4b: models shim
+# The analogue of C2b for the models move (§13.2 item 7). C4 forbids the rest of
+# the tree reaching `MCEq.models`, but `MCEq.models` is not itself a C4 source,
+# so nothing there stops the moved code importing back through the flat
+# `MCEq.ddm` / `MCEq.ddm_utils` shims -- a cycle (models -> shim -> models) that
+# every other contract passes. This closes it: the shims may import the package,
+# never the reverse. Proven non-vacuous by a planted probe import (adding
+# `from MCEq import ddm` inside `models/ddm/ddm.py` turns C4b BROKEN), as C2b was.
+[importlinter:contract:C4b]
+name = C4b the models shims import the package, never the reverse
+type = forbidden
+source_modules =
+    MCEq.models
+forbidden_modules =
+    MCEq.ddm
+    MCEq.ddm_utils
+unmatched_ignore_imports_alerting = error
 
 # -------------------------------------------------------------- C5: config
 # The plan's rule "no module below the driver imports MCEq.config": the direct
@@ -205,6 +229,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.models
     MCEq.operators
     MCEq.operator_assembly
     MCEq.secant

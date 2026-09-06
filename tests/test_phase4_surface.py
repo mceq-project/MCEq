@@ -107,6 +107,10 @@ DEFINES = {
     ("MCEq.data", "Interactions"): "MCEq.data.interaction_tables",
     ("MCEq.download", "FileIntegrityCheck"): "MCEq.data.download",
     ("MCEq.download", "ensure_db_available"): "MCEq.data.download",
+    ("MCEq.ddm", "DDMSplineDB"): "MCEq.models.ddm.ddm",
+    ("MCEq.ddm", "DataDrivenModel"): "MCEq.models.ddm.ddm",
+    ("MCEq.ddm_utils", "fmteb"): "MCEq.models.ddm.ddm_utils",
+    ("MCEq.ddm_utils", "gen_matrix_variations"): "MCEq.models.ddm.ddm_utils",
 }
 
 #: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as
