@@ -225,17 +225,16 @@ def test_ddm_and_particlemanager_share_pdata():
 def test_ddm_spline_cache_is_a_class_attribute_on_the_class():
     """`DDMSplineDB._ddm_splines` must stay reachable through the flat name.
 
-    `tests/golden/gen_species.py` saves it (`dict(DDMSplineDB._ddm_splines)`,
-    line 548) and restores it in place (`.clear()` / `.update()`, lines
-    665-666) around its build, because the first instance in a session
-    populates a cache shared by every later one. A shim that re-exported a
-    *wrapper* instead of the class, or a subclass of it, would give that
-    save/restore a different dict and leak channel entries across the session
-    -- silently, since the golden would still be produced.
+    `tests/golden/gen_species.py` saves and restores it around its build.
+    Since the B7 fix (R3) it is an empty default the instances never share --
+    the save/restore is a harmless belt-and-braces -- but the name must stay
+    defined on the class or the generator's `dict(DDMSplineDB._ddm_splines)`
+    line raises. A shim that re-exported a *wrapper* instead of the class
+    would give that save/restore a different object too.
 
-    Structure only. The sharing itself is
-    `test_ddm_spline_cache_is_shared_by_every_instance`; a class can satisfy
-    everything below and still hand each instance its own dict.
+    Structure only. The per-instance behaviour is
+    `test_ddm_spline_cache_is_per_instance_after_the_b7_fix`; a class can
+    satisfy everything below and still share (or not) however it likes.
     """
     from MCEq.ddm import DDMSplineDB
 
@@ -247,84 +246,54 @@ def test_ddm_spline_cache_is_a_class_attribute_on_the_class():
     assert isinstance(DDMSplineDB._ddm_splines, dict)
 
 
-def test_ddm_spline_cache_is_shared_by_every_instance():
-    """Constructing the *first* `DDMSplineDB` fills the class dict. A leak, pinned.
+def test_ddm_spline_cache_is_per_instance_after_the_b7_fix():
+    """B7 FIXED (R3): every DDMSplineDB gets a private dict; the leak is gone.
 
-    This is the behaviour `gen_species.py` works around and the reason the
-    structural test above is not enough: a class can keep `_ddm_splines` in
-    its own `vars()` and still hand each instance a private dict, and then the
-    save/restore at `gen_species.py:548,665-666` would quietly guard nothing.
-    `add_entry` writes `self._ddm_splines[channel] = ...` (`ddm.py:566-569`)
-    and `__init__` never rebinds the attribute, so on a fresh class the write
-    lands on the class and every later instance sees it.
-
-    The class cache is emptied first and restored in `finally`: with a
-    non-empty cache `_load_from_file` takes a different branch
-    (`test_a_second_ddm_spline_db_shadows_the_class_cache`), so without that
-    the outcome would depend on which tests ran before this one in the
-    session. Reads `DDM_1.0.npy` from the package data directory (0.01 s
-    measured); no HDF5 database is touched.
+    Before the fix, the first instance's `add_entry` writes landed on the
+    class attribute (no bind preceded them) and a second instance rebound
+    past it, so a DataDrivenModel built anywhere in a session leaked 13
+    channel entries onto `DDMSplineDB._ddm_splines` -- what
+    `gen_species.py` works around and what the pin
+    `test_ddm_spline_cache_is_shared_by_every_instance` recorded until this
+    rewrite. The fix binds `self._ddm_splines = {}` at the top of
+    `_load_from_file`, so first and second instances are private from the
+    first write, the class default stays empty, and the shadow asymmetry is
+    gone.
     """
     from MCEq.ddm import DDMSplineDB
 
-    saved = dict(DDMSplineDB._ddm_splines)
-    try:
-        DDMSplineDB._ddm_splines.clear()
-        first = DDMSplineDB()
-        assert "_ddm_splines" not in vars(first), (
-            "the first instance shadows the class attribute; gen_species.py's "
-            "save/restore of DDMSplineDB._ddm_splines would no longer see what "
-            "a DataDrivenModel wrote"
-        )
-        assert DDMSplineDB._ddm_splines, "loading wrote nothing onto the class"
-        assert first._ddm_splines is DDMSplineDB._ddm_splines
+    first = DDMSplineDB(enable_channels=[(2212, 211)])
+    assert "_ddm_splines" in vars(first), (
+        "B7 regressed: the first instance writes through to the class default"
+    )
+    assert first._ddm_splines, "a restricted load should hold its one channel"
+    assert DDMSplineDB._ddm_splines == {}, "the class default must stay empty"
 
-        later = DDMSplineDB.__new__(DDMSplineDB)
-        assert later._ddm_splines.keys() == DDMSplineDB._ddm_splines.keys()
-    finally:
-        DDMSplineDB._ddm_splines.clear()
-        DDMSplineDB._ddm_splines.update(saved)
+    second = DDMSplineDB(enable_channels=[(2212, 211)])
+    assert second._ddm_splines is not first._ddm_splines
+    assert second._ddm_splines.keys() == first._ddm_splines.keys()
+    second._ddm_splines["__probe__"] = None
+    assert "__probe__" not in first._ddm_splines
 
 
-def test_a_second_ddm_spline_db_shadows_the_class_cache():
-    """The second instance in a process gets a private dict. Today's bug, pinned.
+def test_repeat_load_on_one_instance_replaces_instead_of_appending():
+    """B7 companion: a second `_load_from_file` on the same instance reloads.
 
-    `_load_from_file` clears "if `_load` is called multiple times" by
-    *rebinding* rather than emptying -- `if self._ddm_splines:
-    self._ddm_splines = {}` (`ddm.py:510-511`) -- and an assignment through
-    `self` creates an instance attribute. So the entries the second instance
-    loads never reach `DDMSplineDB._ddm_splines`, which keeps whatever the
-    first one left there. That asymmetry is why the test above has to empty
-    the cache before it measures anything, and why `gen_species.py` restores
-    the class dict by hand.
-
-    Recording the current behaviour, not endorsing it: if a later commit makes
-    `_load_from_file` clear the dict in place, this pin flips and the flip is
-    the intended signal.
+    The pre-fix code rebound only when the cache was non-empty and the second
+    instance then shadowed the class dict (`..._shadows_the_class_cache` in
+    `ae6830d` pinned that asymmetry); the fix binds a fresh dict every load,
+    so this leg now just pins reload semantics: a restricted second load
+    holds exactly the restricted channel set, nothing from the first load
+    survives, and the class default is still untouched.
     """
     from MCEq.ddm import DDMSplineDB
+    from MCEq.models.ddm.ddm import _DEFAULT_DDM_FILE
 
-    saved = dict(DDMSplineDB._ddm_splines)
-    try:
-        DDMSplineDB._ddm_splines.clear()
-        DDMSplineDB()
-        class_cache = DDMSplineDB._ddm_splines
-        sentinel = object()
-        class_cache["__pin_probe__"] = sentinel
-
-        second = DDMSplineDB()
-        assert "_ddm_splines" in vars(second), (
-            "the second instance no longer shadows; _load_from_file has "
-            "started clearing the class dict in place"
-        )
-        assert second._ddm_splines is not class_cache
-        assert "__pin_probe__" not in second._ddm_splines
-        assert class_cache["__pin_probe__"] is sentinel, (
-            "the class cache was emptied by the second load"
-        )
-    finally:
-        DDMSplineDB._ddm_splines.clear()
-        DDMSplineDB._ddm_splines.update(saved)
+    db = DDMSplineDB()
+    assert len(db._ddm_splines) > 1, "the full load should hold many channels"
+    db._load_from_file(_DEFAULT_DDM_FILE, [(2212, 211)], [])
+    assert set(db._ddm_splines) == {db._mk_channel(2212, 211)}
+    assert DDMSplineDB._ddm_splines == {}
 
 
 def test_core_reaches_the_data_tables_by_these_dotted_paths():

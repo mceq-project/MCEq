@@ -463,6 +463,10 @@ class DDMSplineDB:
     """A class for maintaining DDMEntryCollections for different
     projectile and secondary particle combinations."""
 
+    #: Empty default only. ``_load_from_file`` binds a fresh dict per instance
+    #: (B7 fix, R3): before it, the first instance's writes landed here and
+    #: every later instance shadowed the class attribute instead of sharing
+    #: it, leaking 13 channel entries into the whole session.
     _ddm_splines: Dict[str, _DDMChannel] = {}
 
     def __init__(
@@ -505,9 +509,10 @@ class DDMSplineDB:
             List of projectile codes to exclude.
         """
 
-        # Clean up if _load is called multiple times
-        if self._ddm_splines:
-            self._ddm_splines = {}
+        # Per-instance cache (B7 fix, R3): bind before filling, so add_entry
+        # below never reaches the class default, and a repeat call reloads
+        # cleanly instead of appending to the previous load.
+        self._ddm_splines = {}
 
         spl_file = np.load(filename, allow_pickle=True, encoding="latin1").item()
         for projectile, secondary, ebeam, x17 in spl_file:

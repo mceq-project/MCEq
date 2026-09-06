@@ -45,7 +45,7 @@ LIMIT = 700
 #: headroom.
 ALLOW = {
     "src/MCEq/core.py": 2808,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
-    "src/MCEq/models/ddm/ddm.py": 869,  # split by a later item 7 follow-up
+    "src/MCEq/models/ddm/ddm.py": 874,  # B7 fix re-pin 2026-09-06; split by a later item 7 follow-up
 }
 
 

@@ -487,10 +487,8 @@ def _record_ddm(arrays, mceq, n_species):
     _record_operator(arrays, "ddm/int_m", mceq.int_m, n_species)
     _record_operator(arrays, "ddm/dec_m", mceq.dec_m, n_species)
 
-    # A second model for the tuning: the first DDMSplineDB built in a process
-    # aliases the class-level ``_ddm_splines`` dict (ddm.py:460), and
-    # apply_tuning mutates its entry in place; a later instance reloads from
-    # file, so tuning here leaves nothing behind for other golden sections.
+    # A second model for the tuning: instances are private since the B7 fix,
+    # so apply_tuning's in-place mutation stays inside this model.
     tuned = ddm.DataDrivenModel()
     tuned.apply_tuning(**DDM_ENTRY, tv=0.5, te=0.8)
     tuned_entry = tuned.spline_db.get_entry(**DDM_ENTRY)
@@ -539,10 +537,10 @@ def build():
 
     saved_config = {k: getattr(config, k) for k in CONFIG_PINS}
     saved_adv_set = copy.deepcopy(config.adv_set)
-    # DDMSplineDB._ddm_splines is a class attribute, and the first instance in a
-    # process writes into the class dict rather than an instance one
-    # (ddm.py:460, 503-504), so building a DataDrivenModel here leaks 13 channel
-    # entries into every later test in the same session.
+    # Belt-and-braces: since the B7 fix (R3) each DDMSplineDB instance holds a
+    # private dict and the class default stays empty, so this save/restore
+    # guards nothing -- kept because deleting it is a generator edit with its
+    # own review cost, and it stays correct if the cache ever moves back.
     from MCEq.ddm import DDMSplineDB
 
     saved_ddm_splines = dict(DDMSplineDB._ddm_splines)
