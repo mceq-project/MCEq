@@ -29,10 +29,13 @@ cross-code photon comparison used —
   sha256 ``a6694d740949071c487944a056631ba231da40337e7071ccd9bb5dfee14c32f8``
 
 With ``em_standalone_grid = True`` the energy grid is read from the EM file —
-d = 150 over 1 MeV to 110 PeV — and the hadronic matrices are skipped
-entirely, so the hadronic database is inert here; it is opened at
-construction because ``MCEqRun`` builds the backend before anything else and
-a gamma primary does not need a lext-DPMJET production table.
+d = 150 with bin edges from 1 MeV to 1 EeV (centers 1.12e-3 to 8.91e11 GeV) —
+and ``HDF5Backend._em_standalone`` skips the hadronic interaction and decay
+matrices. The hadronic database is not inert: its
+``continuous_losses/air/ionization`` e+/e- curves are interpolated onto the EM
+grid by the standalone branches of ``hdf5_backend``, and doubling them alone
+moves the solved state by max |Δ| 4.3e+29 — which is why its sha256 is part of
+the provenance identity, not incidental.
 
 ``muon_helicity_dependence`` is pinned True like every other generator's
 table, but ``MCEqRun.__init__`` forces it False under ``enable_em`` (helicity
@@ -50,10 +53,15 @@ not used by ``MCEqRun``.
 The comparison modes: the digest keys and the meta stanza are bitwise (the
 default). ``grid_sol`` — ``m.grid_sol`` as stored, one depth snapshot per row
 — is scored ``per_species_max`` at 1e-11 through the species table in
-``meta/``, the same treatment gen_solve1d's state keys get. ``spectra`` is a
-stacked readout the per-species metric cannot slice (its rows are species,
-not energy), so it is compared at rel-L2 1e-11, the 1D per-species bound —
-which gen_solve1d's single-depth flux keys clear bitwise anyway.
+``meta/``, the same treatment gen_solve1d's state keys get. Measured on this
+run, though, the sign-definite guard admits none of the species/depth lanes, so
+``compare_key`` falls back to whole-array rel-L2 dominated by the final depth
+snapshot (norms by depth 1.2e2, 1.7e5, 4.5e9, 2.6e26); the per-species bound
+still applies through the 1e-12 x peak floor. The disposition of that fallback
+is an open maintainer ruling. ``spectra`` is a stacked readout the per-species
+metric cannot slice (its rows are species, not energy), so it is compared at
+rel-L2 1e-11, the 1D per-species bound — which gen_solve1d's single-depth flux
+keys clear bitwise anyway.
 """
 
 from __future__ import annotations
@@ -378,9 +386,12 @@ def build():
             SECTION,
             note=(
                 "Photon primary (pdg 22, 1e6 GeV, zenith 60 deg) on the PPM"
-                " production EM database with the standalone grid (d = 150, 1"
-                " MeV - 110 PeV, read from the EM file; the inert hadronic DB"
-                " is opened at construction only). This is the pair the"
+                " production EM database with the standalone grid (d = 150,"
+                " edges 1 MeV - 1 EeV, centers 1.12e-3 - 8.91e11 GeV, read"
+                " from the EM file; the hadronic DB's interaction and decay"
+                " matrices are skipped but its continuous_losses/air/"
+                "ionization e+- curves are interpolated onto the EM grid and"
+                " do feed the solve). This is the pair the"
                 " 2026-06-30 cross-code photon comparison used; both payloads"
                 " live in the shared-filesystem runs tree and neither is"
                 " carried by CI, so the section is slow, and it is host"
@@ -393,7 +404,10 @@ def build():
                 " consumer in src/MCEq; it serves the maintenance tools'"
                 " external scorer). disabled_particles [13, -13]: the golden"
                 " transports the EM shower, not muons. grid_sol is compared"
-                " per_species_max at 1e-11 like the solve1d states; spectra"
+                " per_species_max at 1e-11 like the solve1d states, but here"
+                " the sign-definite guard admits no lane so compare_key falls"
+                " back to whole-array rel-L2 (an open maintainer ruling);"
+                " spectra"
                 " (integrated e-/e+/gamma per depth) is a stacked readout the"
                 " metric cannot slice and keeps rel-L2 at the same 1e-11;"
                 " partdigest is the gen_species species-table digest, csdigest"

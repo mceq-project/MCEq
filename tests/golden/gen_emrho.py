@@ -32,14 +32,15 @@ Slices: ``rho_grid = [1e-6, 1e-3, 1e-2]`` g/cm3, slice scales ``[0.5, 2.0,
 8.0]``. The three cases run ``em_air_density`` = 1.2e-6, 9e-4, 8e-3, which the
 closest-in-log10 rule maps to slice 0, 1, 2 respectively, and the ``slice_idx``
 key (produced by calling ``select_em_rho_slice`` directly on the store) pins
-that mapping itself. The scale is applied ONLY through the ``cs`` table
-(``em_cs_table(scale)`` multiplies the whole table); the ``channel_block``
-yield matrices are index- and channel-based and therefore identical in every
-slice. That asymmetry is intentional: ``gamma_cs`` pins that the cs path
-moves with the slice, ``grid_sol`` and ``emin_spectrum`` pin that the solved
-dynamics move with it too (a gamma primary sees a slice-scaled inelastic
-cross section), and because the decoded matrices are the only EM input that
-does NOT move, the section pins all three relationships at once.
+that mapping itself. The cs scale distinguishes the slices through the cs path
+(``em_cs_table(scale)`` multiplies the whole table, pinned directly by
+``gamma_cs``), and since slice ``i`` writes the channel list rotated left by
+``i`` (see :func:`build_rho_stack_em`), the decoded ``channel_block`` yield
+matrices are slice-distinct too: the assembled interaction operator — and with
+it the solve — moves with the yield-slice selection itself, not only with the
+cs path. ``gamma_cs`` therefore pins the cs leg, ``yield_digest`` pins the
+assembled operator leg, and ``grid_sol`` and ``emin_spectrum`` pin the solved
+dynamics against both EM inputs at once.
 
 The extended channel set below is why the slice is visible at all: the
 fixture's minimal EM set has no gamma *parent*, so a gamma primary would
@@ -60,22 +61,27 @@ Tolerances: rel-L2 1e-11 on the three numeric keys; measured run-to-run drift
 over five builds in one process and across three fresh processes is exactly
 zero (identical digests), so there is nothing to loosen — the bound is a
 budget, not an observation, and it leaves room for a backend that legitimately
-reorders a sum. Everything else (``slice_idx``) is bitwise.
+reorders a sum. Everything else (``slice_idx``, ``yield_digest``) is bitwise.
 
 What a mutant has to break to fail this section
     Dropping the EM injection leaves the e- spectrum identically zero, which
     trips the build-time positivity assert before any golden comparison, and a
-    wrong-slice selection moves ``slice_idx``, ``gamma_cs`` and ``grid_sol``
-    together: the flattened solved state digests per slice (measured on this
-    machine, and mirrored in ``extra.slice_digest``) are 8ac7aefb...,
-    3ec50b99... and efdc3a06..., all three distinct. A slice that silently
-    fell back to a flat layout could not hide: there is no flat layout in the
-    file.
+    wrong-slice selection moves ``slice_idx``, ``gamma_cs``, ``int_m`` and
+    ``grid_sol`` together: with the per-slice channel rotation each slice
+    decodes its own yield matrices, so reading the yield pack from the wrong
+    slice changes the assembled operator and the solved state at once. The
+    flattened solved state digests per slice (measured on this machine, and
+    mirrored in ``extra.slice_digest``) are 282c8794..., 935bf70e... and
+    7ebc6800..., and the per-slice ``int_m`` CSR-data digests (mirrored in
+    ``extra.yield_digest``) are 65e92ade..., fe830377... and 172ff289..., all
+    three distinct in each set. A slice that silently fell back to a flat
+    layout could not hide: there is no flat layout in the file.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import pathlib
 import shutil
@@ -108,8 +114,9 @@ EM_CHANNELS = [
 #: g/cm3, written to ``electromagnetic/air/rho_grid``.
 RHO_GRID = [1e-6, 1e-3, 1e-2]
 
-#: cs-table scale factor of each slice; the only quantity that differs
-#: between the slices (see the docstring).
+#: cs-table scale factor of each slice; what differs between the slices
+#: through the cs path (the yield pack differs too, by the per-slice channel
+#: rotation — see :func:`build_rho_stack_em`).
 SLICE_SCALES = [0.5, 2.0, 8.0]
 
 #: ``(em_air_density, expected slice)`` per case; closest in log10.
@@ -154,13 +161,25 @@ def build_rho_stack_em(path, scales, rho_grid):
     is ``electromagnetic/air/rho_{i:02d}`` and carries ``scales[i]`` in its
     ``cs`` table. There is deliberately no flat ``emca_mats``/``cs`` on the
     parent group — see the module docstring for what that pins.
+
+    Slice ``i`` writes the channel list ROTATED LEFT by ``i``
+    (``EM_CHANNELS[i:] + EM_CHANNELS[:i]``), which makes the stored
+    ``emca_mats`` payload distinct per slice by construction: ``channel_block``
+    scales every matrix by the channel's INDEX in the pack, so a rotated
+    order decodes to different yield matrices even though the written channel
+    multiset is unchanged. The species system, the energy dim, and the cs
+    coupling story are therefore identical in every slice — only the decoded
+    matrices move, which is what makes a wrong-slice read on the yield path
+    observable. Slice 0 is written unrotated, so it reproduces the
+    unrotated digests exactly.
     """
     F = _fixture_builder_module()
     path = pathlib.Path(path)
     with h5py.File(path, "w") as db:
         for idx, scale in enumerate(scales):
             group = db.create_group(f"electromagnetic/air/rho_{idx:02d}")
-            F._write_pack(group, "emca_mats", EM_CHANNELS, 1, 2, None)
+            channels = EM_CHANNELS[idx:] + EM_CHANNELS[:idx]
+            F._write_pack(group, "emca_mats", channels, 1, 2, None)
             cs = group.create_dataset("cs", data=F.em_cs_table(scale))
             cs.attrs["projectiles"] = np.array(F.EM_CS_PARENTS, dtype=np.int64)
         db.create_dataset(
@@ -200,6 +219,7 @@ def build():
     workdir = tempfile.mkdtemp(prefix="mceq_golden_emrho_")
     arrays = {}
     slice_digests = {}
+    yield_digests = {}
     try:
         F = _fixture_builder_module()
         had_path = str(
@@ -256,6 +276,15 @@ def build():
                 mceq.set_single_primary_particle(E=30.0, pdg_id=22)
                 mceq.solve(int_grid=INT_GRID, dX_max=DX_MAX)
 
+                # sha256 over the contiguous bytes of the assembled
+                # operator's CSR data buffer: with the per-slice channel
+                # rotation this is the digest of the yield-slice selection
+                # itself, not of a slice-invariant payload.
+                int_m_data = np.ascontiguousarray(mceq.int_m.data)
+                yield_digests[f"slice{idx}"] = hashlib.sha256(
+                    int_m_data.tobytes()
+                ).hexdigest()
+
                 grid = np.asarray(mceq.grid_sol)
                 pman = mceq.pman
                 assert pman.dim == 20, (
@@ -292,11 +321,18 @@ def build():
         assert len({*slice_digests.values()}) == len(CASES), (
             f"solved states coincide across slices: {slice_digests}"
         )
+        assert len({*yield_digests.values()}) == len(CASES), (
+            f"assembled operators coincide across slices, so the yield-slice "
+            f"selection is not observable: {yield_digests}"
+        )
 
         arrays["grid_sol"] = np.vstack(grid_sol_rows)
         arrays["emin_spectrum"] = np.vstack(emin_rows)
         arrays["gamma_cs"] = np.vstack(gamma_cs_rows)
         arrays["slice_idx"] = np.asarray(slice_idx, dtype=np.int64)
+        arrays["yield_digest"] = np.array(
+            [yield_digests[f"slice{expected}"] for _, expected in CASES], dtype="U64"
+        )
 
         provenance = make_provenance(
             SECTION,
@@ -304,18 +340,22 @@ def build():
                 "EM transport on a synthetic rho-stack: hadronic fixture"
                 " (make_hdf5_fixtures.build_database, tuple_width 4) plus a"
                 " 3-slice EM file whose cs tables carry scales 0.5/2.0/8.0 and"
-                " whose matrices are slice-invariant by construction. Densities"
-                " 1.2e-6/9e-4/8e-3 g/cm3 select slices 0/1/2 (closest in log10,"
-                " pinned by slice_idx); gamma primary at 30 GeV, solve on"
-                " int_grid [10, 50] g/cm2 with dX_max 20. gamma_cs pins the"
-                " cs-to-slice coupling directly, grid_sol and emin_spectrum"
-                " pin that the solved dynamics move with it while the decoded"
-                " matrices do not. Numerically strict (rel-L2 1e-11; measured"
+                " whose channel packs are the same multiset rotated left by the"
+                " slice index, so each slice decodes distinct yield matrices."
+                " Densities 1.2e-6/9e-4/8e-3 g/cm3 select slices 0/1/2"
+                " (closest in log10, pinned by slice_idx); gamma primary at"
+                " 30 GeV, solve on int_grid [10, 50] g/cm2 with dX_max 20."
+                " gamma_cs pins the cs-to-slice coupling directly, yield_digest"
+                " pins the assembled operator against the yield-slice selection,"
+                " and grid_sol and emin_spectrum pin that the solved dynamics"
+                " move with both. Numerically strict (rel-L2 1e-11; measured"
                 " run-to-run drift is zero, both within one process and across"
                 " fresh ones) because the whole fixture is analytic — no"
                 " real-physics noise to absorb. Per-slice solved-state digests"
-                " are in extra.slice_digest; the three differ, so a wrong-slice"
-                " mutant cannot pass on unchanged matrices, and a dropped EM"
+                " are in extra.slice_digest and the per-slice int_m CSR-data"
+                " digests in extra.yield_digest; the three differ in each set,"
+                " so a wrong-slice mutant moves int_m, the solved state and"
+                " yield_digest together and cannot pass, and a dropped EM"
                 " injection trips the e- positivity assert at build time."
             ),
             tolerances=TOLERANCES,
@@ -325,6 +365,7 @@ def build():
                 "densities": [density for density, _ in CASES],
                 "expected_slices": [expected for _, expected in CASES],
                 "slice_digest": slice_digests,
+                "yield_digest": yield_digests,
                 "em_channels": [list(ch) for ch in EM_CHANNELS],
                 "e_peak_order": list(E_PEAK_ORDER),
             },
