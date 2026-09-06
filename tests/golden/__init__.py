@@ -24,10 +24,12 @@ SECTIONS = (
     "operators1d",
     "solve2d",
     "operators2d",
+    "emphoton",
+    "emrho",
 )
 
 #: Sections that need a database CI does not carry or cost minutes to build.
-SLOW_SECTIONS = frozenset({"solve2d", "operators2d"})
+SLOW_SECTIONS = frozenset({"solve2d", "operators2d", "emphoton"})
 
 #: Sections pinned bitwise to the numpy/BLAS build of the host that generated
 #: them, and therefore compared on one designated reference job instead of
@@ -46,7 +48,11 @@ SLOW_SECTIONS = frozenset({"solve2d", "operators2d"})
 #: one BLAS-shaped operation in its builder is a 3x3 matvec), but its spline
 #: knots and coefficients are sha256 digests, and a quadratic interpolating
 #: spline through 2000 MSIS densities is no less sensitive to a numpy/scipy
-#: bump than a solve is.
+#: bump than a solve is. `emphoton` joins for the same reason the `operators*`
+#: sections do — three of its keys are sha256 digests — and its solve is host
+#: arithmetic on a real database on top. `emrho` is deliberately absent: its
+#: fixtures are synthetic and analytic-input, and its rel-L2 keys cleared
+#: bitwise across five builds in one process and three fresh processes.
 HOST_SECTIONS = frozenset(
     {
         "paths",
@@ -56,5 +62,6 @@ HOST_SECTIONS = frozenset(
         "operators1d",
         "solve2d",
         "operators2d",
+        "emphoton",
     }
 )
