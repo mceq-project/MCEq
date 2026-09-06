@@ -119,8 +119,11 @@ def _targets(node, package: str, modules: set[str]):
 def import_graph(files: list[Path]) -> dict[tuple[str, str], bool]:
     """Ordered module pairs -> True when at least one of the imports is at import time.
 
-    Self-imports are kept: `particlemanager` imports itself inside a method, and
-    import-linter counts that dependency too.
+    Self-imports are kept because import-linter counts that dependency too.
+    The one self-edge this carried — `particlemanager` importing itself inside
+    `_init_categories` — was retired by §13.2 item 6, when the deferred import
+    became a module-level `manager -> particle` edge; the `cycles` array has
+    been empty since.
     """
     modules = {module_name(path): path for path in files}
     known = set(modules)

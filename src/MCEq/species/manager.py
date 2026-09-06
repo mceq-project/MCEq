@@ -5,7 +5,10 @@ Moved verbatim from the flat ``MCEq.particlemanager`` (§13.2 item 6). The
 (plan section 5: the dead tables go with the move; it has been dead since the
 matrix indices stopped being printed). The deferred
 ``from MCEq.particlemanager import MCEqParticle`` inside ``_init_categories``
-now names the new home directly.
+was deleted, not respelled: ``particle`` imports nothing from ``manager``, so
+the name is bound at module level instead, and the import-time
+``manager -> particle`` edge that replaces the deferred one is exactly what
+C7's widened ancestors now guard.
 """
 
 from math import copysign

@@ -190,6 +190,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.species
     MCEq.operators
     MCEq.operator_assembly
     MCEq.secant

@@ -574,3 +574,24 @@ def test_data_equivalences_attribute_is_the_dict_not_the_submodule():
     assert "equivalences" in DATA_PUBLIC_SURFACE
     assert isinstance(sys.modules["MCEq.data.equivalences"], ModuleType)
     assert sys.modules["MCEq.data.equivalences"].equivalences is MCEq.data.equivalences
+
+
+def test_particlemanager_shim_dunder_all_is_the_recorded_surface():
+    """The species shim's `__all__` equals its SURFACE minus the private name.
+
+    Same contract as `test_data_dunder_all_is_the_recorded_surface` for the
+    data shim, which a review proved load-bearing: drop `MCEqParticle` from
+    the list and the docs page silently loses the class while the full test
+    suite stays green (automodapi renders exactly what `__all__` claims). The
+    `_pdata` entry of SURFACE stays out of `__all__` by the recorded rule for
+    private names; it remains importable by name (checked in
+    `test_ddm_and_particlemanager_share_pdata` via the flat path).
+    """
+    import MCEq.particlemanager
+
+    expected = [n for n in SURFACE["MCEq.particlemanager"] if not n.startswith("_")]
+    assert MCEq.particlemanager.__all__ == sorted(expected)
+    ns: dict[str, object] = {}
+    exec("from MCEq.particlemanager import *", ns)  # noqa: S102
+    del ns["__builtins__"]
+    assert set(ns) == set(expected)

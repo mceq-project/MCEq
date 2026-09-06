@@ -19,13 +19,14 @@ from MCEq.species.manager import ParticleManager  # noqa: F401
 from MCEq.species.particle import MCEqParticle  # noqa: F401
 
 #: automodapi drops names whose ``__module__`` is not the page's module unless
-#: ``__all__`` claims them; the shim must keep rendering the two classes on
-#: ``docs/api-reference/particlemanager.rst`` exactly as before the move.
+#: ``__all__`` claims them; the shim must keep rendering the same members on
+#: ``docs/api-reference/particlemanager.rst`` as before the move. Exactly the
+#: public surface the Phase 4 contract records (privates are re-exported above
+#: for their named importers but stay out of the page, as before); pinned by
+#: ``test_particlemanager_shim_dunder_all_is_the_recorded_surface``.
 __all__ = [
     "ATOMIC_MASS_UNIT_G",
     "MCEqParticle",
     "ParticleManager",
-    "_pdata",
-    "_pname",
     "backward_compatible_namestr",
 ]
