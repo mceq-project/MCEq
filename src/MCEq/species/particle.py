@@ -385,16 +385,10 @@ class MCEqParticle:
         Returns:
           (float): :math:`\\sigma_{\\rm prod}` in mb or cm**2
         """
-        #: unit - :math:`\text{GeV} \cdot \text{fm}`
-        GeVfm = 0.19732696312541853
-        #: unit - :math:`\text{GeV} \cdot \text{cm}`
-        GeVcm = GeVfm * 1e-13
-        #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
-        GeV2mbarn = 10.0 * GeVfm**2
-        #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
-        mbarn2cm2 = GeV2mbarn / GeVcm**2
+        from MCEq.data.cross_sections import InteractionCrossSections
+
         if mbarn:
-            return mbarn2cm2 * self.cs
+            return self.cs / InteractionCrossSections.mbarn2cm2
 
         return self.cs
 

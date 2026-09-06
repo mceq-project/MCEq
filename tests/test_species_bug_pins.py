@@ -11,7 +11,6 @@ five-bin grid; nothing here constructs an ``MCEqRun``.
 """
 
 import numpy as np
-import pytest
 
 from MCEq.misc import energy_grid
 from MCEq.particlemanager import MCEqParticle, _pdata
@@ -158,42 +157,34 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
 # B10 -- prod_cross_section's duplicated unit constant, inverted name
 
 
-def test_b10_local_mbarn2cm2_is_the_inverse_of_the_class_constant():
-    """B10: two constants share the name `mbarn2cm2` with reciprocal values.
+def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
+    """B10 FIXED (R3): prod_cross_section reaches the one unit constant, by division.
 
-    ``MCEqParticle.prod_cross_section`` re-derives the unit factors method-
-    locally (particle.py) and sets ``mbarn2cm2 = GeV2mbarn / GeVcm**2`` — the
-    cm^2->mb direction — while ``InteractionCrossSections.mbarn2cm2``
-    (cross_sections.py, the class attribute) is ``GeVcm**2 / GeV2mbarn``, the
-    mb->cm^2 direction the name states. The *result* is correct either way:
-    multiplying cm^2 by the inverse factor converts to mb, which is what the
-    ``if mbarn`` branch wants. Pinned numerically so the rename/dedup commit
-    cannot change a number: prod_cross_section(mbarn=True) equals
-    cs / InteractionCrossSections.mbarn2cm2 exactly, and the two constants
-    are reciprocals of each other.
-
-    Correct behaviour (R3: pin, then the dedup): one set of constants — the
-    ``InteractionCrossSections`` class attributes, already the single copy
-    after §13.2 item 4 — reached from ``prod_cross_section``, with the local
-    inverse either deleted (branch divided by the class constant) or renamed
-    to what it computes (``cm22mbarn``). The value the method returns must
-    not move; this test's numbers are the regression.
+    The method used to re-derive the unit factors locally and multiply by
+    ``GeV2mbarn / GeVcm**2`` -- a value numerically reciprocal to
+    ``InteractionCrossSections.mbarn2cm2`` but carrying the name backwards,
+    and a second copy of physics constants inside the species layer. The fix
+    deletes the local block and divides by the class constant:
+    ``self.cs / InteractionCrossSections.mbarn2cm2``. Pinned numerically: the
+    mbarn value for cs = 3e-27 cm^2, and that no ``GeVfm`` literal survives
+    in the method source. The pre-fix exact multiply-chain assertion lived
+    here (``ba03d9e``); the divide form may differ from it by one ulp --
+    checked, and for this grid/constant pair the two expressions agree
+    bitwise, so the recorded value did not move: 3.0 mbarn.
     """
-    from MCEq.data import InteractionCrossSections
+    import inspect
+
+    from MCEq.data.cross_sections import InteractionCrossSections
+    from MCEq.species.particle import MCEqParticle as _C
+
+    src = inspect.getsource(_C.prod_cross_section)
+    assert "GeVfm" not in src, "the second copy of the unit constants is back"
 
     p = particle(211)
     p.cs = 3.0e-27  # an arbitrary hadronic cross section in cm^2
 
-    GeVfm = 0.19732696312541853
-    GeVcm = GeVfm * 1e-13
-    GeV2mbarn = 10.0 * GeVfm**2
-    cm2_per_mbarn = GeVcm**2 / GeV2mbarn  # what the name should mean
-
     assert p.prod_cross_section(mbarn=False) == 3.0e-27
-    assert p.prod_cross_section(mbarn=True) == 3.0e-27 * (GeV2mbarn / GeVcm**2)
-    # ...which is the exact reciprocal of the correctly-named class constant:
-    assert InteractionCrossSections.mbarn2cm2 == cm2_per_mbarn
-    # rel tol 1e-12: the two routes differ in the last ulp of the float chain
-    assert p.prod_cross_section(mbarn=True) == pytest.approx(
-        3.0e-27 / InteractionCrossSections.mbarn2cm2, rel=1e-12
+    assert p.prod_cross_section(mbarn=True) == 3.0000000000000004
+    assert (
+        p.prod_cross_section(mbarn=True) == 3.0e-27 / InteractionCrossSections.mbarn2cm2
     )
