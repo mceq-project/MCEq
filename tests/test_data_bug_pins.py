@@ -116,60 +116,26 @@ def test_b1_fixed_neutron_kaon_partner_gets_its_own_key():
         assert key in neutron.mod_pprod
 
 
-# B20 -- eta/omega/phi coupling branch
+# B20 -- deleted by R3: the eta/omega/phi coupling branch in _set_mod_pprod
+# tested bare ints against the (pdg, helicity) keys of ``parents``, so it never
+# fired, and no shipped database carries 221/223/333 in any tuple_idcs. The
+# pins recorded that (ae6830d); the deletion removes them, and what remains is
+# the key-set regression guard below.
 
 
-def test_b20_eta_omega_phi_branch_is_unreachable():
-    """B20: ``p in self.parents`` tests bare ints against (pdg, helicity) keys.
+def test_b20_deleted_no_unflavoured_keys_written():
+    """B20 DELETED (R3): the pion modification writes two keys, never eight.
 
-    ``self.parents`` is a list of two-tuples ever since helicity entered the
-    index, so ``np.any([p in self.parents for p in [221, 223, 333]])`` is False
-    no matter what the database holds -- here with ``(221, 0)``, ``(223, 0)``
-    and ``(333, 0)`` all present as parents, no unflavoured key is written.
-
-    Correct behaviour: the test should be over ``p[0] for p in self.parents``,
-    which would add the six ``(2212|2112, 221|223|333)`` keys below.
-
-    Database survey (2026-09-04, this checkout): of the five resolvable HDF5
-    files symlinked into ``src/MCEq/data/`` -- ``mceq_db_lext_dpm193_v140``,
-    ``mceq_db_v140reduced_compact``, ``mceq_db_URQMD_150GeV_2D``,
-    ``mceq_db_v2_fluka2d_rc3`` and ``_rc7`` -- **none** carries 221, 223 or 333
-    in any ``tuple_idcs`` attribute, so no test in this repo can reach the
-    branch even once it is fixed. The non-compact builds outside the checkout
-    do (``~/MCEq-db/dbfiles_v2_rc1/mceq_db_SIBYLL21.h5`` has all three;
-    ``QGSJETII04`` there has 221 only), which is why the branch exists.
+    With the branch gone, a 2212/211 modification with (221, 0), (223, 0),
+    (333, 0) present as parents writes exactly the isospin pair -- no
+    unflavoured keys, no crash from the removed code path. The pre-deletion
+    pins ``test_b20_eta_omega_phi_branch_is_unreachable`` (wrote nothing) and
+    its bare-int mechanism twin are replaced by this key-set assertion.
     """
     args = ("scale", 0.1)
     obj = interactions([(2212, 0), (2112, 0), (221, 0), (223, 0), (333, 0)])
     assert obj._set_mod_pprod(2212, 211, scale, args) is True
-
     assert set(obj.mod_pprod) == {(2212, 211), (2112, -211)}
-    for unflavoured in (221, 223, 333):
-        assert (2212, unflavoured) not in obj.mod_pprod
-        assert (2112, unflavoured) not in obj.mod_pprod
-
-
-def test_b20_bare_int_parents_do_reach_the_branch():
-    """B20, mechanism check: the guard works, it is just fed the wrong list.
-
-    Not a pin of intended behaviour -- ``parents`` is never a list of bare ints
-    in production. It is here so the B20 pin above cannot pass for the wrong
-    reason: deleting the branch (or hard-wiring the guard to False) leaves that
-    pin green, and only this test goes red.
-
-    Both tests flip when B20 is actually fixed, but differently: the pin above
-    fails on the six extra keys, while this one raises ``TypeError: 'int'
-    object is not subscriptable`` from ``p[0] for p in self.parents``. That
-    TypeError is the expected signal here, not a broken test -- the fix commit
-    should delete this test along with the pin above.
-    """
-    args = ("scale", 0.1)
-    obj = interactions([2212, 2112, 221, 223, 333])
-    assert obj._set_mod_pprod(2212, 211, scale, args) is True
-
-    for unflavoured in (221, 223, 333):
-        assert (2212, unflavoured) in obj.mod_pprod
-        assert (2112, unflavoured) in obj.mod_pprod
 
 
 # B2 leg (iii) -- disabled_particles child filter in Interactions.load
@@ -577,50 +543,31 @@ def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
     assert "[2212, 2112, -2212, -2112]" in after_branch
 
 
-# B3 -- disable_leading_mesons: dead since the helicity-tuple keys landed
+# B3 -- deleted by R3: the veto block, its config key, and the crash evidence
+# all went together in the deletion commit. What stays pinned is the deletion
+# itself -- the key must not come back, and get_matrix must not re-grow a
+# filter read that the physics views no longer provide.
 
 
-def test_b3_leading_meson_veto_raises_before_the_window_is_read():
-    """B3: switching the knob on and requesting a meson matrix raises TypeError.
+def test_b3_deleted_key_and_guard():
+    """B3 DELETED (R3): no `disable_leading_mesons` key exists anywhere.
 
-    ``get_matrix`` gates on ``abs(child) < 2000`` with ``child`` a
-    ``(pdg, helicity)`` tuple ever since the index gained helicity, and
-    ``abs()`` of a tuple is a ``TypeError`` — so the hard-coded ``ie = 50``
-    window below the guard is dead code, and any caller who turns
-    ``disable_leading_mesons`` on gets a crash instead of a veto. This is the
-    evidence that the feature is dead and deletable (R3); the fix commit
-    deletes the block, the ``disable_leading_mesons`` config key, this test,
-    and the pin below.
-    """
-    obj = interactions([(2212, 0)])
-    obj.index_d = {((2212, 0), (211, 0)): np.zeros((GRID.d, GRID.d))}
-    obj.relations = {(2212, 0): [(211, 0)]}
-    obj._physics = SimpleNamespace(
-        use_isospin_sym=True,
-        filters={"disable_leading_mesons": True, "disabled_particles": []},
-    )
-
-    with pytest.raises(TypeError):
-        obj.get_matrix((2212, 0), (211, 0))
-
-
-def test_b3_knob_off_path_and_config_entry():
-    """B3 companion: the key exists, defaults False, and off-path is clean.
-
-    The deletion must remove the key from the ``adv_set`` defaults and from
-    the golden generators' pin blocks along with the code; this test going
-    red on ``KeyError``/missing-attr after the deletion is the expected
-    signal, mirrored in the generators' stale-pin assert.
+    The veto raised TypeError on `abs(child) < 2000` for a (pdg, helicity)
+    tuple before its hard-coded `ie = 50` window was ever evaluated -- dead
+    since the helicity keys landed. The deletion commit removed the block in
+    ``get_matrix``, the ``adv_set`` default, and the ``disable_leading_
+    mesons`` entry from all six golden generators' pin blocks. A re-addition
+    of the key without restoring working code fails the first assert; a
+    restored read of a missing key in get_matrix fails the second leg below.
     """
     from MCEq import config
 
-    assert config.adv_set["disable_leading_mesons"] is False
+    assert "disable_leading_mesons" not in config.adv_set
+    assert not hasattr(config, "disable_leading_mesons")
 
     obj = interactions([(2212, 0)])
     obj.index_d = {((2212, 0), (211, 0)): np.ones((GRID.d, GRID.d))}
     obj.relations = {(2212, 0): [(211, 0)]}
-    obj._physics = SimpleNamespace(
-        use_isospin_sym=True,
-        filters={"disable_leading_mesons": False, "disabled_particles": []},
-    )
+    obj._physics = SimpleNamespace(use_isospin_sym=True, filters={})
+    # get_matrix must survive an EMPTY filters dict -- no veto read left.
     assert obj.get_matrix((2212, 0), (211, 0)).shape == (GRID.d, GRID.d)

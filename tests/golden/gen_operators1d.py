@@ -90,7 +90,6 @@ ADV_SET_PINS = {
     "disable_charm_pprod": False,
     "allowed_projectiles": [],
     "disable_direct_leptons": False,
-    "disable_leading_mesons": False,
     "disable_decays": [],
     "force_resonance": [],
     "forced_int_cs": None,

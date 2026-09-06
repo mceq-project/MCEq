@@ -420,7 +420,6 @@ adv_set = {
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Difficult to explain parameter
-    "disable_leading_mesons": False,
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
     #: Force particles (by absolute PDG id, excluding standard_particles) to

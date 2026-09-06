@@ -211,35 +211,11 @@ class Interactions:
             # Add the same mod to the isospin symmetric particle combination
             mpli[(symm_pdg, -sec_pdg)][("isospin", args)] = kmat
 
-            # Assumption: Unflavored production coupled to the average
-            # of pi+ and pi- production
-
-            if np.any([p in self.parents for p in [221, 223, 333]]):
-                unflv_arg = None
-                if (prim_pdg, -sec_pdg) not in mpli:
-                    # Only pi+ or pi- (not both) have been modified
-                    unflv_arg = (args[0], 0.5 * args[1])
-
-                if (prim_pdg, -sec_pdg) in mpli:
-                    # Compute average of pi+ and pi- modification matrices
-                    # Save the 'average' argument (just for meaningful output)
-                    for arg_name, arg_val in mpli[(prim_pdg, -sec_pdg)]:
-                        if arg_name == args[0]:
-                            unflv_arg = (args[0], 0.5 * (args[1] + arg_val))
-
-                unflmat = self._gen_mod_matrix(x_func, *unflv_arg)
-
-                # modify eta, omega, phi, 221, 223, 333
-                for t in [
-                    (prim_pdg, 221),
-                    (prim_pdg, 223),
-                    (prim_pdg, 333),
-                    (symm_pdg, 221),
-                    (symm_pdg, 223),
-                    (symm_pdg, 333),
-                ]:
-                    mpli[t][("isospin", unflv_arg)] = unflmat
-
+            # R3 (Phase 4) deletes the unflavoured (221/223/333) coupling that
+            # used to sit here: its guard tested bare ints against the
+            # (pdg, helicity) keys of ``self.parents``, so it never fired --
+            # and no shipped database carries those ids anyway, so "fixing"
+            # the comparison would have written six dead keys for no physics.
         # Charged and neutral kaons
         elif abs(sec_pdg) == 321:
             # approx.: p->K+ ~ n-> K+, p->K- ~ n-> K-
@@ -308,32 +284,11 @@ class Interactions:
 
         m = self.index_d[(parent, child)]
 
-        if (
-            self._physics.filters["disable_leading_mesons"]
-            and abs(child) < 2000
-            and (parent, -child) in list(self.index_d)
-        ):
-            m_anti = self.index_d[(parent, -child)]
-            ie = 50
-            info(
-                5,
-                "sum in disable_leading_mesons",
-                (np.sum(m[:, ie - 30 : ie]) - np.sum(m_anti[:, ie - 30 : ie])),
-            )
-
-            if (np.sum(m[:, ie - 30 : ie]) - np.sum(m_anti[:, ie - 30 : ie])) > 0:
-                info(
-                    5,
-                    "inverting meson due to leading particle veto.",
-                    child,
-                    "->",
-                    -child,
-                )
-                m = m_anti
-            else:
-                info(5, "no inversion since child not leading", child)
-        else:
-            info(20, "no meson inversion in leading particle veto.", parent, child)
+        # R3 (Phase 4) deletes the `disable_leading_mesons` veto with its
+        # `ie = 50` window here: since the index gained helicity the guard
+        # `abs(child) < 2000` raises TypeError on the (pdg, hel) tuple before
+        # the window is ever read, so the feature has been dead for as long as
+        # this layout has existed.
         if (parent[0], child[0]) in list(self.mod_pprod):
             info(
                 5,

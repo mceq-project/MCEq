@@ -149,7 +149,6 @@ ADV_SET_PINS = {
     "disable_charm_pprod": False,
     "allowed_projectiles": [],
     "disable_direct_leptons": False,
-    "disable_leading_mesons": False,
     "disable_decays": [],
     "force_resonance": [],
     "forced_int_cs": None,
@@ -434,8 +433,9 @@ def _record_mod_pprod(arrays, mceq):
     arrays["mod_pprod/set_returned"] = returned
     arrays["mod_pprod/n_keys"] = n_keys
     arrays["mod_pprod/applied_factor"] = factors
-    # data.py:1095 verbatim: bare PDG ids against a list of (pdg, helicity)
-    # tuples, so the unflavoured coupling never fires.
+    # Structural property kept after the B20 deletion (R3): the (pdg, helicity)
+    # keys of ``parents`` make bare-PDG membership false, which is why the
+    # deleted unflavoured coupling could never fire. Records zeros forever.
     arrays["mod_pprod/unflavoured_membership"] = np.array(
         [int(pdg in interactions.parents) for pdg in (221, 223, 333)], dtype=np.int64
     )
