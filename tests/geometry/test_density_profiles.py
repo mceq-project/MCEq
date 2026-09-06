@@ -837,6 +837,22 @@ def test_table_spanning_the_prime_meridian_is_rejected(tmp_path):
         dp.load_atmosphere_table(path)
 
 
+def test_gzipped_table_reads_identically(tmp_path):
+    """Global grids at a useful resolution are large; .gz keeps them portable."""
+    import gzip as _gzip
+
+    raw = pathlib.Path(GRID_TABLE_PATH).read_bytes()
+    packed = tmp_path / "grid.csv.gz"
+    packed.write_bytes(_gzip.compress(raw))
+
+    plain = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    zipped = dp.load_atmosphere_table(str(packed))
+    assert np.array_equal(plain.h_cm, zipped.h_cm)
+    assert np.array_equal(plain.rho_gcm3, zipped.rho_gcm3)
+    assert np.array_equal(plain.lat_deg, zipped.lat_deg)
+    assert np.array_equal(plain.lon_deg, zipped.lon_deg)
+
+
 def test_gridded_table_needs_a_coord():
     with pytest.raises(ValueError, match="coord"):
         dp.TabulatedAtmosphere(GRID_TABLE_PATH)

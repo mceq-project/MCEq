@@ -1,3 +1,4 @@
+import gzip
 from abc import ABCMeta, abstractmethod
 
 import numpy as np
@@ -1311,8 +1312,13 @@ class AtmosphereTable:
         def blend(values, logarithmic=False):
             if values is None:
                 return None
-            stack = np.log(values) if logarithmic else values
-            out = sum(weight * stack[jj, ii] for jj, ii, weight in corners)
+            # Take the log of the four corner columns, not of the whole grid:
+            # this runs once per direction, and on a global table the grid is
+            # five orders of magnitude larger than the columns being used.
+            out = sum(
+                weight * (np.log(values[jj, ii]) if logarithmic else values[jj, ii])
+                for jj, ii, weight in corners
+            )
             return np.exp(out) if logarithmic else out
 
         return AtmosphereTable(
@@ -1354,7 +1360,10 @@ def load_atmosphere_table(filename):
     """
     # Strip full-line comments and blanks first: numpy's ``names=True`` always
     # takes the *first* line as the header, comment marker or not.
-    with open(filename) as table_file:
+    # ``.gz`` is read transparently: these tables are highly repetitive text and
+    # a global grid at a useful resolution is large enough for that to matter.
+    opener = gzip.open if str(filename).endswith(".gz") else open
+    with opener(filename, "rt") as table_file:
         rows = [
             line
             for line in table_file
