@@ -76,10 +76,11 @@ def test_b8_stored_window_is_ignored_bitwise(mceq_sib21, ddm_full, window):
 
     This is the no-op pin. For each strict window the model stores it
     (``w.e_min`` / ``w.e_max`` hold ``lo`` / ``hi``) and ``ddm_matrices``
-    still answers with the ``(31, 31)`` full-grid matrix, byte-identical
-    (``tobytes()``, not just ``array_equal``: signed zeros count) to the
-    default-window model's -- on the grid-external window *and* on the
-    strictly in-grid one.
+    still answers with the ``(31, 31)`` full-grid matrix, pinning shape, dtype
+    and bytes -- byte-identical (``tobytes()``, not just ``array_equal``:
+    signed zeros count; shape is checked explicitly because a reshape preserves
+    bytes) to the default-window model's -- on the grid-external window *and*
+    on the strictly in-grid one.
 
     A fix that wires the window must make this test fail on both windows (the
     returned matrix would become the truncated / sub-grid one from test 2); a
@@ -104,6 +105,7 @@ def test_b8_stored_window_is_ignored_bitwise(mceq_sib21, ddm_full, window):
     w_matrices = w.ddm_matrices(mceq_sib21)
     assert set(w_matrices) == {(2212, 211)}
     assert w_matrices[(2212, 211)].dtype == full_matrices[(2212, 211)].dtype
+    assert w_matrices[(2212, 211)].shape == full_matrices[(2212, 211)].shape
     assert w_matrices[(2212, 211)].tobytes() == full_matrices[(2212, 211)].tobytes()
 
 
