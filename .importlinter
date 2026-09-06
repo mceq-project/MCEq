@@ -116,9 +116,11 @@ ignore_imports =
 # `operator_assembly` and `secant` are the Phase 5 re-export shims (D14); they
 # stay listed beside `operators` until Phase 7 deletes them.
 #
-# `MCEq.core` and `MCEq.download` are listed too: C1 puts `environment` in
+# `MCEq.driver` and `MCEq.download` are listed too: C1 puts `environment` in
 # `exhaustive_ignores`, so the layers contract does not constrain it at all and
-# an environment -> driver edge would otherwise pass every gate.
+# an environment -> driver edge would otherwise pass every gate. (Since Phase 6
+# commit 6 the driver code is a package, so the whole `MCEq.driver` subtree is
+# named; the former `MCEq.core` spelling only covered the shim.)
 [importlinter:contract:C2]
 name = C2 environment does not import data/species/operators/solvers/driver
 type = forbidden
@@ -133,6 +135,7 @@ forbidden_modules =
     MCEq.secant
     MCEq.solvers
     MCEq.core
+    MCEq.driver
     MCEq.download
     MCEq.models
     MCEq.species
