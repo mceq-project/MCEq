@@ -101,6 +101,10 @@ SURFACE_PAIRS = [(mod, name) for mod, names in SURFACE.items() for name in names
 #: module (see `test_the_flat_module_still_owns_every_name`).
 DEFINES = {
     ("MCEq.data", "HDF5Backend"): "MCEq.data.hdf5_backend",
+    ("MCEq.data", "ContinuousLosses"): "MCEq.data.continuous_losses",
+    ("MCEq.data", "Decays"): "MCEq.data.decay_tables",
+    ("MCEq.data", "InteractionCrossSections"): "MCEq.data.cross_sections",
+    ("MCEq.data", "Interactions"): "MCEq.data.interaction_tables",
 }
 
 #: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as

@@ -252,10 +252,12 @@ ignore_imports =
 # it needs the defaults to become required, which breaks the golden generators.
 # Deferred to Phase 6 with the other two.
     MCEq.environment.geomagnetic.cutoff -> MCEq.config
-# data.py:8 -- Phase 4. After the class moved to data/hdf5_backend.py it
-# matches only the function-local fallbacks still left in data/__init__.py
-# (Decays/ContinuousLosses/... `__init__`s), which §13.2 item 4 moves out.
-    MCEq.data -> MCEq.config
+# data/__init__.py is a pure re-export surface since §13.2 item 4 (2026-09-06);
+# the three function-local config fallbacks that matched this line moved with
+# their classes into the consumer submodules, which are listed below instead.
+    MCEq.data.continuous_losses -> MCEq.config
+    MCEq.data.decay_tables -> MCEq.config
+    MCEq.data.interaction_tables -> MCEq.config
 # data/hdf5_backend.py:`HDF5Backend.__init__` -- the None fallbacks to the live
 # paths/grid/physics/em views. Phase 6, when the driver injects them.
     MCEq.data.hdf5_backend -> MCEq.config
