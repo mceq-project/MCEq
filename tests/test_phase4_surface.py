@@ -523,6 +523,26 @@ def test_data_public_surface_is_exactly_this_set():
     assert set(SURFACE["MCEq.data"]) <= DATA_PUBLIC_SURFACE
 
 
+def test_data_dunder_all_is_the_recorded_surface():
+    """`__all__` is the star-import/docs contract, pinned against the same set.
+
+    The exact-`vars()` test above ignores `__all__` entirely, and `__all__` is
+    what `automodapi` renders and `from MCEq.data import *` binds: drop
+    `HDF5Backend` from the list and the page loses the class while every other
+    test stays green (astra review of `3e65c76`, reproduced by mutation). Add
+    `np` -- a module, excluded from `DATA_PUBLIC_SURFACE` by the `ModuleType`
+    rule -- and star-import widens. Both are caught here: `__all__` must equal
+    the recorded set exactly, and the actual star-import namespace must too.
+    """
+    import MCEq.data
+
+    assert MCEq.data.__all__ == sorted(DATA_PUBLIC_SURFACE)
+    ns: dict[str, object] = {}
+    exec("from MCEq.data import *", ns)  # noqa: S102
+    del ns["__builtins__"]
+    assert set(ns) == DATA_PUBLIC_SURFACE
+
+
 def test_data_equivalences_attribute_is_the_dict_not_the_submodule():
     """`MCEq.data.equivalences` is the DICT; the submodule of the same name is shadowed.
 
