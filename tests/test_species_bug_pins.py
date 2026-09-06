@@ -168,9 +168,9 @@ def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
     ``self.cs / InteractionCrossSections.mbarn2cm2``. Pinned numerically: the
     mbarn value for cs = 3e-27 cm^2, and that no ``GeVfm`` literal survives
     in the method source. The pre-fix exact multiply-chain assertion lived
-    here (``ba03d9e``); the divide form may differ from it by one ulp --
-    checked, and for this grid/constant pair the two expressions agree
-    bitwise, so the recorded value did not move: 3.0 mbarn.
+    here (``ba03d9e``); the divide form differs from that chain by one ulp
+    at this value: the pinned result moved 3.0 -> 3.0000000000000004 with the
+    fix, and the assert below records the post-fix value.
     """
     import inspect
 

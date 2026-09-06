@@ -74,7 +74,7 @@ The eta/omega/phi coupling (data.py:1095)
     six new modifier keys and move fluxes.
 
 A third defect, not in the plan's ledger: ``DataDrivenModel.e_min`` /
-``e_max`` (ddm.py:712-713) are stored and never read — ``ddm_matrices``
+``e_max`` (ddm.py:723-724) are stored and never read — ``ddm_matrices``
 (ddm.py:739) takes the full grid from ``mceq.e_bins`` — so the conftest
 ``data_driven_model`` fixture's ``e_min=5.0, e_max=500.0`` is a no-op. That
 fixture also cannot be injected at all (``ddm_matrices`` asserts (2212, 321)
@@ -635,7 +635,7 @@ def build():
                 " mod_pprod/unflavoured_membership records that the eta/omega/"
                 " phi branch never fires for shipped databases (B20, deleted"
                 " with the branch by R3). DataDrivenModel.e_min /"
-                " e_max (ddm.py:712-713) are stored and never read — ddm_matrices"
+                " e_max (ddm.py:723-724) are stored and never read — ddm_matrices"
                 " takes the full grid from mceq.e_bins — so no DDM key here"
                 " depends on them. Bitwise everywhere except ddm/zfactors and"
                 " ddm/zfactors_tuned, which come from adaptive quadrature and"

@@ -211,7 +211,7 @@ def test_ddm_and_particlemanager_share_pdata():
     """One `PYTHIAParticleData`, not two.
 
     `ddm.py` does `from .particlemanager import _pdata` and uses it for the
-    `x_min` cut (`ddm.py:137`, `ddm.py:834`); `tests/test_ddm.py:25` asserts
+    `x_min` cut (`ddm.py:136`, `ddm.py:838`); `tests/test_ddm.py:25` asserts
     `ddm_entry.x_min == _pdata.mass(211) / 2` against the *particlemanager*
     object. If the Phase 4 shims each construct their own table those two
     stay equal by luck, so pin the identity while it is still trivially true.
