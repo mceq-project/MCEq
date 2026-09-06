@@ -111,6 +111,8 @@ DEFINES = {
     ("MCEq.ddm", "DataDrivenModel"): "MCEq.models.ddm.ddm",
     ("MCEq.ddm_utils", "fmteb"): "MCEq.models.ddm.ddm_utils",
     ("MCEq.ddm_utils", "gen_matrix_variations"): "MCEq.models.ddm.ddm_utils",
+    ("MCEq.particlemanager", "MCEqParticle"): "MCEq.species.particle",
+    ("MCEq.particlemanager", "ParticleManager"): "MCEq.species.manager",
 }
 
 #: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as

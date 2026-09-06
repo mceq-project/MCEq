@@ -10,7 +10,7 @@ from scipy.integrate import quad
 from MCEq import base_path
 from MCEq.misc import info
 from MCEq.models.ddm.ddm_utils import _eval_spline, _generate_DDM_matrix, fmteb
-from MCEq.particlemanager import _pdata
+from MCEq.species.constants import _pdata
 
 #: Default DDM spline file, in the package data directory. Bound at import, as
 #: the ``config.data_dir`` expression it replaces was: neither honours a write

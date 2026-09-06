@@ -51,7 +51,7 @@ layers =
     core : (driver)
     solvers
     operator_assembly : secant : operators
-    particlemanager : (species)
+    species
     data
     config
     misc : (util)
@@ -74,6 +74,9 @@ exhaustive_ignores =
     ddm
     ddm_utils
     charm_models
+# particlemanager: a compat shim since §13.2 item 6 split the species layer into
+# `species/`. Phase 7 deletes the shim and this line (D14).
+    particlemanager
 # Compiled kernels and their thin wrappers. Phase 7 moves both under
 # `solvers/_kernels`; it is deferred that far because the move changes the
 # CMake install paths and the macOS build of `spacc` cannot be tested on the
@@ -131,6 +134,7 @@ forbidden_modules =
     MCEq.core
     MCEq.download
     MCEq.models
+    MCEq.species
 unmatched_ignore_imports_alerting = error
 ignore_imports =
 # Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
@@ -167,6 +171,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.species
     MCEq.models
     MCEq.operators
     MCEq.operator_assembly
@@ -208,13 +213,15 @@ forbidden_modules =
 # never the reverse. Proven non-vacuous by a planted probe import (adding
 # `from MCEq import ddm` inside `models/ddm/ddm.py` turns C4b BROKEN), as C2b was.
 [importlinter:contract:C4b]
-name = C4b the models shims import the package, never the reverse
+name = C4b the models/species shims import their package, never the reverse
 type = forbidden
 source_modules =
     MCEq.models
+    MCEq.species
 forbidden_modules =
     MCEq.ddm
     MCEq.ddm_utils
+    MCEq.particlemanager
 unmatched_ignore_imports_alerting = error
 
 # -------------------------------------------------------------- C5: config
@@ -229,6 +236,7 @@ type = forbidden
 source_modules =
     MCEq.data
     MCEq.particlemanager
+    MCEq.species
     MCEq.models
     MCEq.operators
     MCEq.operator_assembly
@@ -289,8 +297,11 @@ ignore_imports =
 # data/hdf5_backend.py:`HDF5Backend.__init__` -- the None fallbacks to the live
 # paths/grid/physics/em views. Phase 6, when the driver injects them.
     MCEq.data.hdf5_backend -> MCEq.config
-# particlemanager.py:7 -- Phase 4
-    MCEq.particlemanager -> MCEq.config
+# species/particle.py + species/manager.py -- the function-local `config`
+# fallbacks in the two `__init__`s (§13.2 item 6 moved them with the classes;
+# Phase 6 removes them when the driver injects the physics group).
+    MCEq.species.particle -> MCEq.config
+    MCEq.species.manager -> MCEq.config
 # data/download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level
 # from the module (§13.2 item 5 moved it under `data`); it takes a DataPaths
 # group in Phase 6. The `MCEq.download` shim re-exports it and inherits the debt.
@@ -311,12 +322,19 @@ forbidden_modules =
 # Needs import-linter >= 2.14; 2.5.2 (what uv resolves on Python 3.9) has no
 # acyclic_siblings contract.
 [importlinter:contract:C7]
-name = C7 no cycles among MCEq.environment siblings
+name = C7 no cycles among the split-package siblings
 type = acyclic_siblings
 ancestors =
     MCEq.environment
     MCEq.geometry
-# No ignores. The one cycle this contract carried -- msis21_atmosphere
+    MCEq.species
+    MCEq.models
+# No ignores. Since §13.2 item 6 the ancestors also include `MCEq.species` and
+# `MCEq.models`: today nothing catches a manager<->particle or models<->shim
+# cycle but this contract and the structure golden's cycles array. Probes (a
+# `from MCEq.species import manager` in particle.py, a `from MCEq import
+# particlemanager` in manager.py) flip C7/C4b BROKEN respectively.
+# The one cycle this contract carried -- msis21_atmosphere
 # importing `EarthsAtmosphere` and `_KM3NET_DETECTORS` out of density_profiles
 # while density_profiles re-exported the MSIS21 names back through a PEP-562
 # `__getattr__` -- is gone: both backends now take their base from

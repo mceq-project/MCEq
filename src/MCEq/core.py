@@ -14,7 +14,7 @@ from MCEq.operators.compiled import compile_operator, em_step_scale
 # `MCEqRun.matrix_builder` is a de-facto public attribute, so
 # `from MCEq.core import MatrixBuilder` keeps working.
 from MCEq.operators.matrix_builder import MatrixBuilder
-from MCEq.particlemanager import ParticleManager
+from MCEq.species.manager import ParticleManager
 
 # trapz was finally removed with numpy 2.4
 if hasattr(np, "trapezoid"):

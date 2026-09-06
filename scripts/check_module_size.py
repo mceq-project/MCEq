@@ -46,7 +46,6 @@ LIMIT = 700
 ALLOW = {
     "src/MCEq/core.py": 2808,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
     "src/MCEq/models/ddm/ddm.py": 869,  # split by a later item 7 follow-up
-    "src/MCEq/particlemanager.py": 1175,  # Phase 4 -> species/*
 }
 
 
