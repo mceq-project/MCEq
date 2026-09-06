@@ -103,7 +103,7 @@ class InteractionCrossSections:
             return np.zeros(self.energy_grid.d)
         else:
             info(1, "Strange case for parent, using zero cross section.")
-            cs = 0.0
+            cs = np.zeros(self.energy_grid.d)
 
         if not mbarn:
             return self.mbarn2cm2 * cs

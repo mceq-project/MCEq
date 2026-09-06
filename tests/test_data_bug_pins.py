@@ -269,24 +269,23 @@ def cs_db():
 
 
 @pytest.mark.parametrize("pdg", [5122, 5132, 5232, 5332])
-def test_b6_unknown_family_returns_a_scalar_not_a_vector(cs_db, pdg):
-    """B6: the ``else`` branch sets ``cs = 0.0``, a float, not ``zeros(d)``.
+def test_b6_fixed_unknown_family_returns_a_zero_vector(cs_db, pdg):
+    """B6 FIXED (R3): the fall-through now returns ``zeros(d)`` like the lepton branch.
 
-    Bottom *baryons* are the ids that actually reach it: the elif chain catches
-    ``300 < |pdg| < 1000`` as kaons (so B0/B+ = 511/521 come back as the K+-
-    column, 15.0 mbarn here, not zero) and ``1000 < |pdg| < 5000`` as nucleons,
-    leaving only ``|pdg| >= 5000`` -- 5122/5132/5232/5332 -- to fall through.
-    Measured: shape ``()`` in both unit modes.
-
-    Correct behaviour: ``np.zeros(self.energy_grid.d)``, matching the lepton
-    branch a few lines above, so that every ``get_cs`` return is a vector over
-    the energy grid.
+    Before the fix this branch returned the float ``0.0`` (shape ``()``, both
+    unit modes), so a bottom-baryon projectile that reaches it -- the elif
+    chain leaves only ``|pdg| >= 5000`` -- got a scalar where every other
+    ``get_cs`` return is a length-``d`` vector, and the caller's broadcast
+    changed shape under it. Pin history: ``test_b6_unknown_family_returns_a_
+    scalar_not_a_vector`` in ``ba03d9e``; the fix commit flipped it to this
+    expectation. The 511/521 boundary test below guards that the elif chain's
+    ordering did NOT move with the fix.
     """
     for mbarn in (True, False):
         cs = cs_db.get_cs(pdg, mbarn=mbarn)
-        assert np.ndim(cs) == 0
-        assert not isinstance(cs, np.ndarray)
-        assert cs == 0.0
+        assert isinstance(cs, np.ndarray)
+        assert cs.shape == (GRID.d,)
+        assert np.all(cs == 0.0)
 
 
 def test_b6_the_lepton_branch_already_returns_a_vector(cs_db):

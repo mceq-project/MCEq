@@ -259,9 +259,10 @@ def _get_cs_column(parent):
     """Which family column the real `get_cs` resolves `parent` to.
 
     Returns the base PDG id whose sentinel column came back, or `"zeros"` for
-    the lepton branch, or `"scalar"` for the else branch (B6: it returns a
-    bare float rather than a vector). Built on `object.__new__` with the three
-    attributes `get_cs` reads, the idiom `tests/test_data_bug_pins.py` uses.
+    the lepton branch and — since the B6 fix — for the else branch too, which
+    now returns a zero vector like the lepton one. Before the fix the else
+    branch was `"scalar"`, a bare float; the idiom is `object.__new__` with
+    the three attributes `get_cs` reads, as in `tests/test_data_bug_pins.py`.
     """
     import numpy as np
 
@@ -276,8 +277,7 @@ def _get_cs_column(parent):
     db.mbarn2cm2 = 1.0
 
     result = db.get_cs(parent, mbarn=True)
-    if np.ndim(result) == 0:
-        return "scalar"
+    assert np.ndim(result) == 1, "get_cs must return a vector (B6 fixed)"
     if np.all(result == 0.0):
         return "zeros"
     unique = set(np.asarray(result).tolist())
@@ -349,11 +349,12 @@ def test_the_two_pdg_policies_are_not_unified():
         assert _get_cs_column(apid) == "zeros"
 
     # Disagreement 3 -- everything outside all three hadron windows, which is
-    # the class the predecessor test omitted entirely. B6: a scalar, not a
-    # vector; pinned as today's behaviour in tests/test_data_bug_pins.py.
+    # the class the predecessor test omitted entirely. B6 FIXED: the else
+    # branch now returns the same zero vector as the lepton one, so the
+    # disagreement with `family_fallback` is [] vs zeros(d), not [] vs scalar.
     for apid in (5122, 5332):
         assert family_fallback(apid) == []
-        assert _get_cs_column(apid) == "scalar"
+        assert _get_cs_column(apid) == "zeros"
 
 
 def test_normalize_hadronic_model_name_contract():
