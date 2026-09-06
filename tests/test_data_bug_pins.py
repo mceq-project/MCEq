@@ -9,13 +9,14 @@ behaviour would be, which is the expectation the fix commit inherits.
 The probes build ``Interactions`` / ``InteractionCrossSections`` with
 ``object.__new__`` and inject the handful of attributes the method under test
 reads, the way ``tests/test_low_energy_blending.py`` does for ``HDF5Backend``.
-B2 reads a real database (the reduced DB directly, no ``MCEqRun``) and B4
-reads synthetic fixture files built by ``tests/data/make_hdf5_fixtures.py``,
+B2 and B5 read a real database (the reduced DB directly, no ``MCEqRun``) and
+B4 reads synthetic fixture files built by ``tests/data/make_hdf5_fixtures.py``,
 loaded by file path the way ``tests/test_data_hdf5_decode.py`` does it -- B4
 is the only ledger entry whose probe needs an EM database.
 """
 
 import importlib.util
+import inspect
 import pathlib
 from collections import defaultdict
 from types import SimpleNamespace
@@ -490,3 +491,91 @@ def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(tmp_path):
         assert np.array_equal(cs["index_d"][p], ice_table[ip, :])
     assert not np.array_equal(cs["index_d"][11], water_table[0, :])
     assert cs["parents"][-len(fixtures.EM_CS_PARENTS) :] == fixtures.EM_CS_PARENTS
+
+
+# B5 -- disable_interactions_of_unstable removes the nucleons instead of the
+# unstable hadrons
+
+
+def _load_b5(disable_unstable):
+    """Load SIBYLL21 from the reduced DB with the B5 flag set as given.
+
+    ``conftest``'s autouse fixture restores ``config.adv_set`` and
+    ``config.mceq_db_fname`` afterwards, so mutating them here is safe.
+    """
+    from MCEq import config
+    from MCEq.data import HDF5Backend
+
+    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.adv_set["disable_interactions_of_unstable"] = disable_unstable
+    inter = Interactions(HDF5Backend())
+    inter.load("SIBYLL21")
+    return inter
+
+
+def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
+    """B5: the flag is inverted -- it strips nucleons and keeps the mesons.
+
+    The config doc says ``#: Disable particle production by all hadrons,
+    except nucleons``, i.e. keep the nucleons and strip the unstable hadrons,
+    but the branch in ``Interactions.load`` removes exactly the four nucleon
+    charge states ``[2212, 2112, -2212, -2112]`` and leaves every pi/K parent
+    in place. Measured on the reduced DB (2026-09-06): baseline parents carry
+    both nucleon signs plus the meson families and a 3122 hyperon family;
+    with the flag on the same list survives minus the four nucleon tuples,
+    ``relations`` still matches ``parents`` exactly, and ``particles`` keeps
+    all 20 entries either way -- the filter acts on the parent list only, so
+    nucleons stay as secondaries.
+
+    Correct behaviour: the flag keeps nucleons and strips the unstable
+    parents, which flips the parent-set assertion below; the hyperons' fate
+    (3122 is unstable but not a meson) is decided by whatever the fixed rule
+    is, so the fix owns that part of the expectation too. A fix that rewrote
+    the filter as a *child* filter instead would also change the
+    ``particles`` pin here, which is why it is pinned.
+    """
+    baseline = _load_b5(False)
+    baseline_pdgs = {p[0] for p in baseline.parents}
+    for nucleon in (2212, 2112, -2212, -2112):
+        assert (nucleon, 0) in baseline.parents
+    assert 211 in baseline_pdgs and -211 in baseline_pdgs
+    assert 321 in baseline_pdgs and -321 in baseline_pdgs
+
+    inter = _load_b5(True)
+
+    # The bug: the surviving set is the baseline minus the four nucleons.
+    assert set(inter.parents) == {
+        (-3122, 0),
+        (-321, 0),
+        (-211, 0),
+        (111, 0),
+        (130, 0),
+        (211, 0),
+        (310, 0),
+        (321, 0),
+        (3122, 0),
+    }
+    for nucleon in (2212, 2112, -2212, -2112):
+        assert (nucleon, 0) not in inter.parents
+    assert set(inter.relations) == set(inter.parents)
+    # Parent-list filter only: the proton survives as a secondary.
+    assert (2212, 0) in inter.particles
+    assert len(inter.particles) == len(baseline.particles) == 20
+
+
+def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
+    """B5, mechanism check: the branch is a literal, not a lifetime lookup.
+
+    ``inspect.getsource(Interactions.load)`` normalized to single spaces
+    contains the branch name and, right after it, the four-int list
+    ``[2212, 2112, -2212, -2112]`` -- the exact set the ``adv_set`` comment's
+    ``except nucleons`` intends to *keep*. Like the B20 mechanism test, this
+    pins the mechanism, not the intent: a fix that swaps in a stability lookup
+    (or even keeps the list but inverts the predicate) trips this test first,
+    which is the point.
+    """
+    source = " ".join(inspect.getsource(Interactions.load).split())
+    branch = 'if filters["disable_interactions_of_unstable"]:'
+    assert source.count(branch) == 1
+    after_branch = source.split(branch, 1)[1]
+    assert "[2212, 2112, -2212, -2112]" in after_branch
