@@ -3,14 +3,18 @@
 
 The target layout (refactoring plan, section 1) has no module longer than
 ``LIMIT`` lines. The modules still over budget are listed in ``ALLOW`` with the
-size they had at the Phase-0 commit. That table is a ratchet:
+size measured at the latest re-pin. The rule is recorded == measured for every
+allowlisted module, which makes the table a ratchet:
 
 * a module not in ``ALLOW`` may never exceed ``LIMIT``;
-* a module in ``ALLOW`` may never exceed the size recorded for it;
+* a module in ``ALLOW`` sits exactly at its recorded size: the gate fails with
+  a grown line when it exceeds the entry and with a re-pin line when it sits
+  below it, so shrinking a module tightens the budget automatically;
 * an entry whose module now fits, or whose file is gone, is stale and fails,
 
-so a phase that splits a module has to shrink the table in the same PR, and the
-table reaches ``{}`` at the end of Phase 7. ``--update`` prints the replacement.
+so a phase that splits a module has to shrink the table and a phase that only
+shrinks one has to re-pin the entry in the same PR -- ``--update`` prints the
+replacement -- and the table reaches ``{}`` at the end of Phase 7.
 
 The line count is ``wc -l`` semantics -- newlines, not text lines -- so the
 numbers here match the plan and the shell. The empty
@@ -34,16 +38,15 @@ LIMIT = 700
 #: the 500-700 band read as complete units, not arbitrary shingles; the split
 #: targets, not the limit, carry the design).
 #:
-#: Modules still over budget, with the phase that removes each entry: three
-#: of the original eight, after ``solvers.py`` went at 34b5611,
-#: ``geometry/msis21_atmosphere.py`` at c23ab88 and
-#: ``geometry/density_profiles.py`` with the ``environment/`` split, and
-#: after the 700 limit absorbed ``config/__init__.py`` (659) and the Phase-4
-#: remnant ``data/__init__.py`` (631).
+#: Modules still over budget, with the phase that removes each entry. Each
+#: number is the size measured at the latest re-pin (2026-09-06), not the
+#: Phase-0 size: an extraction commit re-tightens its entry in place with
+#: ``--update``, so recorded == measured and no entry ever grants regrowth
+#: headroom.
 ALLOW = {
-    "src/MCEq/core.py": 3538,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
+    "src/MCEq/core.py": 2808,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
     "src/MCEq/ddm.py": 870,  # Phase 4 -> models/ddm/*
-    "src/MCEq/particlemanager.py": 1176,  # Phase 4 -> species/*
+    "src/MCEq/particlemanager.py": 1175,  # Phase 4 -> species/*
 }
 
 
@@ -64,9 +67,10 @@ def collect() -> dict[str, int]:
 def report(sizes: dict[str, int]) -> list[str]:
     """Lines of a diff-style report; empty when the tree is within budget.
 
-    ``+`` marks a module that has to shrink, ``-`` an allowlist entry to delete.
+    ``+`` marks a module that has to shrink, ``-`` an allowlist entry to delete
+    or to re-pin to a smaller measured size.
     """
-    over_limit, grown, now_fits, gone = [], [], [], []
+    over_limit, grown, shrunk, now_fits, gone = [], [], [], [], []
     for path, lines in sorted(sizes.items()):
         recorded = ALLOW.get(path)
         if recorded is None:
@@ -78,6 +82,8 @@ def report(sizes: dict[str, int]) -> list[str]:
             grown.append(f"  + {path}: {lines} lines (+{grew} over {recorded})")
         elif lines <= LIMIT:
             now_fits.append(f'  - "{path}": {recorded},   # now {lines} lines')
+        elif lines < recorded:
+            shrunk.append(f'  - "{path}": {recorded},   # now {lines} lines; re-pin')
     for path, recorded in sorted(ALLOW.items()):
         if path not in sizes:
             gone.append(f'  - "{path}": {recorded},   # file no longer exists')
@@ -89,6 +95,12 @@ def report(sizes: dict[str, int]) -> list[str]:
     if grown:
         out += ["Allowlisted modules that grew:", *grown]
         out += ["  the allowlist is a ratchet; move the code out instead.", ""]
+    if shrunk:
+        out += ["Allowlisted modules that shrank:", *shrunk]
+        out += [
+            "  recorded == measured: re-pin these ALLOW lines to the measured size.",
+            "",
+        ]
     if now_fits or gone:
         out += ["Stale ALLOW entries:", *now_fits, *gone]
         out += ["  delete these lines from ALLOW.", ""]
