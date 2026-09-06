@@ -580,3 +580,52 @@ def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
     assert source.count(branch) == 1
     after_branch = source.split(branch, 1)[1]
     assert "[2212, 2112, -2212, -2112]" in after_branch
+
+
+# B3 -- disable_leading_mesons: dead since the helicity-tuple keys landed
+
+
+def test_b3_leading_meson_veto_raises_before_the_window_is_read():
+    """B3: switching the knob on and requesting a meson matrix raises TypeError.
+
+    ``get_matrix`` gates on ``abs(child) < 2000`` with ``child`` a
+    ``(pdg, helicity)`` tuple ever since the index gained helicity, and
+    ``abs()`` of a tuple is a ``TypeError`` — so the hard-coded ``ie = 50``
+    window below the guard is dead code, and any caller who turns
+    ``disable_leading_mesons`` on gets a crash instead of a veto. This is the
+    evidence that the feature is dead and deletable (R3); the fix commit
+    deletes the block, the ``disable_leading_mesons`` config key, this test,
+    and the pin below.
+    """
+    obj = interactions([(2212, 0)])
+    obj.index_d = {((2212, 0), (211, 0)): np.zeros((GRID.d, GRID.d))}
+    obj.relations = {(2212, 0): [(211, 0)]}
+    obj._physics = SimpleNamespace(
+        use_isospin_sym=True,
+        filters={"disable_leading_mesons": True, "disabled_particles": []},
+    )
+
+    with pytest.raises(TypeError):
+        obj.get_matrix((2212, 0), (211, 0))
+
+
+def test_b3_knob_off_path_and_config_entry():
+    """B3 companion: the key exists, defaults False, and off-path is clean.
+
+    The deletion must remove the key from the ``adv_set`` defaults and from
+    the golden generators' pin blocks along with the code; this test going
+    red on ``KeyError``/missing-attr after the deletion is the expected
+    signal, mirrored in the generators' stale-pin assert.
+    """
+    from MCEq import config
+
+    assert config.adv_set["disable_leading_mesons"] is False
+
+    obj = interactions([(2212, 0)])
+    obj.index_d = {((2212, 0), (211, 0)): np.ones((GRID.d, GRID.d))}
+    obj.relations = {(2212, 0): [(211, 0)]}
+    obj._physics = SimpleNamespace(
+        use_isospin_sym=True,
+        filters={"disable_leading_mesons": False, "disabled_particles": []},
+    )
+    assert obj.get_matrix((2212, 0), (211, 0)).shape == (GRID.d, GRID.d)

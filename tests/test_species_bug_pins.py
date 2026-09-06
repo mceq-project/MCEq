@@ -11,6 +11,7 @@ five-bin grid; nothing here constructs an ``MCEqRun``.
 """
 
 import numpy as np
+import pytest
 
 from MCEq.misc import energy_grid
 from MCEq.particlemanager import MCEqParticle, _pdata
@@ -142,3 +143,47 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
         nans = numpy_both.inverse_decay_length()
     assert nans.shape == (GRID.d,)
     assert np.all(np.isnan(nans))
+
+
+# B10 -- prod_cross_section's duplicated unit constant, inverted name
+
+
+def test_b10_local_mbarn2cm2_is_the_inverse_of_the_class_constant():
+    """B10: two constants share the name `mbarn2cm2` with reciprocal values.
+
+    ``MCEqParticle.prod_cross_section`` re-derives the unit factors method-
+    locally (particle.py) and sets ``mbarn2cm2 = GeV2mbarn / GeVcm**2`` — the
+    cm^2->mb direction — while ``InteractionCrossSections.mbarn2cm2``
+    (cross_sections.py, the class attribute) is ``GeVcm**2 / GeV2mbarn``, the
+    mb->cm^2 direction the name states. The *result* is correct either way:
+    multiplying cm^2 by the inverse factor converts to mb, which is what the
+    ``if mbarn`` branch wants. Pinned numerically so the rename/dedup commit
+    cannot change a number: prod_cross_section(mbarn=True) equals
+    cs / InteractionCrossSections.mbarn2cm2 exactly, and the two constants
+    are reciprocals of each other.
+
+    Correct behaviour (R3: pin, then the dedup): one set of constants — the
+    ``InteractionCrossSections`` class attributes, already the single copy
+    after §13.2 item 4 — reached from ``prod_cross_section``, with the local
+    inverse either deleted (branch divided by the class constant) or renamed
+    to what it computes (``cm22mbarn``). The value the method returns must
+    not move; this test's numbers are the regression.
+    """
+    from MCEq.data import InteractionCrossSections
+
+    p = particle(211)
+    p.cs = 3.0e-27  # an arbitrary hadronic cross section in cm^2
+
+    GeVfm = 0.19732696312541853
+    GeVcm = GeVfm * 1e-13
+    GeV2mbarn = 10.0 * GeVfm**2
+    cm2_per_mbarn = GeVcm**2 / GeV2mbarn  # what the name should mean
+
+    assert p.prod_cross_section(mbarn=False) == 3.0e-27
+    assert p.prod_cross_section(mbarn=True) == 3.0e-27 * (GeV2mbarn / GeVcm**2)
+    # ...which is the exact reciprocal of the correctly-named class constant:
+    assert InteractionCrossSections.mbarn2cm2 == cm2_per_mbarn
+    # rel tol 1e-12: the two routes differ in the last ulp of the float chain
+    assert p.prod_cross_section(mbarn=True) == pytest.approx(
+        3.0e-27 / InteractionCrossSections.mbarn2cm2, rel=1e-12
+    )
