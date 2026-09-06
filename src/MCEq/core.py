@@ -5,6 +5,7 @@ import numpy as np
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
+from MCEq.driver.initial_state import InitialState
 from MCEq.driver.results import MCEqBatchResult
 from MCEq.driver.system import CascadeSystem
 from MCEq.misc import info
@@ -121,10 +122,9 @@ class MCEqRun:
 
         # Initialize solution vector
         self._solution = np.zeros(1)
-        # Initialize empty state (particle density) vector
-        self._phi0 = np.zeros(1)
-        # Save initial condition (primary flux) to restore after dimensional resizing
-        self._restore_initial_condition = []
+        # Initial condition (phi0 + restore list + pmodel) lives in
+        # driver/initial_state.py since Phase 6 commit 3
+        self._initial_state = InitialState(self._system)
 
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(
@@ -522,6 +522,34 @@ class MCEqRun:
         return self._system.matrix_builder
 
     @property
+    def _phi0(self):
+        return self._initial_state.phi0
+
+    @_phi0.setter
+    def _phi0(self, vec):
+        self._initial_state.phi0 = vec
+
+    @property
+    def pmodel(self):
+        return self._initial_state.pmodel
+
+    @pmodel.setter
+    def pmodel(self, model):
+        self._initial_state.pmodel = model
+
+    @property
+    def _restore_initial_condition(self):
+        return self._initial_state._restore_initial_condition
+
+    @_restore_initial_condition.setter
+    def _restore_initial_condition(self, lst):
+        self._initial_state._restore_initial_condition = lst
+
+    @property
+    def get_nucleon_spectrum(self):
+        return self._initial_state.get_nucleon_spectrum
+
+    @property
     def int_m(self):
         return self._system.int_m
 
@@ -588,337 +616,65 @@ class MCEqRun:
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
         or the interaction models change. The previous state, such as the
-        initial spectrum, are restored."""
+        initial spectrum, are restored.
 
-        # Update dimensions if particle dimensions changed
-        self._phi0 = np.zeros(self.dim_states)
-        self._solution = np.zeros(self.dim_states)
-
-        # Restore initial condition if present.
-        # Entries are tuples of (method_name_str, *args). We store method
-        # *names* — not bound methods — so that this list does not pin
-        # ``self`` via a Python-level reference cycle. See PR #163: bound
-        # methods kept old MCEqRun instances alive, which on the macOS
-        # Accelerate backend overflowed the fixed-size sparse-matrix store
-        # (SIZE_MSTORE=10) after ~5 instances.
-        if len(self._restore_initial_condition) > 0:
-            for con in self._restore_initial_condition:
-                getattr(self, con[0])(*con[1:])
-
-    def set_primary_model(self, model_class_or_object, tag=None):
-        """Sets primary flux model.
-
-        This functions is quick and does not require re-generation of
-        matrices.
-
-        Args:
-          interaction_model (:class:`CRFluxModel.PrimaryFlux`): reference
-          to primary model **class**
-          tag (tuple): positional argument list for model class
+        The ``phi0`` reallocation and the restore replay live on
+        :class:`MCEq.driver.initial_state.InitialState`; this wrapper keeps
+        the original name and order (solution first, then initial state)
+        and supplies the replay, which must resolve against the facade
+        because the stored entries are facade method *names* (PR #163).
         """
-
-        assert not isinstance(model_class_or_object, tuple), (
-            "Primary model can not be supplied as tuples"
+        self._solution = np.zeros(self.dim_states)
+        self._initial_state.resize(
+            self._restore_initial_condition,
+            lambda name, args: getattr(self, name)(*args),
         )
 
-        # Check if classs or object supplied
-        if not isinstance(model_class_or_object, type):
-            assert any(
-                [
-                    "PrimaryFlux" in b.__name__
-                    for b in model_class_or_object.__class__.__bases__
-                ]
-            ), "model_class_or_object is not derived from crflux.models.PrimaryFlux"
-            info(5, "Primary model supplied as object")
-            self.pmodel = model_class_or_object
-        else:
-            # Initialize primary model object
-            info(5, "Primary model supplied as class")
-            self.pmodel = model_class_or_object(tag)
+    def set_primary_model(self, model_class_or_object, tag=None):
+        """Sets primary flux model (delegates to InitialState).
 
-        info(1, f"Primary model set to {self.pmodel.name}")
-
-        # Save primary flux model for restoration after interaction model
-        # changes. Store the method *name*, not a bound method — see the
-        # comment in ``_resize_vectors_and_restore`` (PR #163).
-        self._restore_initial_condition = [("set_primary_model", self.pmodel)]
-        # TODO: Maybe needs to catch the removal of the np.vectorize
-        # self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
-        self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
-
-        try:
-            self.dim_states
-        except AttributeError:
-            self.finalize_pmodel = True
-
-        # Set initial condition
-        minimal_energy = config.minimal_primary_energy
-        if (2212, 0) in self.pman and (2112, 0) in self.pman:
-            e_tot = self._energy_grid.c + 0.5 * (
-                self.pman[(2212, 0)].mass + self.pman[(2112, 0)].mass
-            )
-        else:
-            raise Exception(
-                "No nucleons in eqn system, primary flux model can not be used."
-            )
-
-        min_idx = np.argmin(np.abs(e_tot - minimal_energy))
-        self._phi0 *= 0
-        p_top, n_top = self.get_nucleon_spectrum(e_tot[min_idx:])[1:]
-        if (2212, 0) in self.pman:
-            self._phi0[
-                min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] = 1e-4 * p_top
-        else:
-            info(
-                1,
-                "Protons not in equation system, can not set primary flux.",
-            )
-
-        if (2112, 0) in self.pman and not self.pman[(2112, 0)].is_resonance:
-            self._phi0[
-                min_idx + self.pman[(2112, 0)].lidx : self.pman[(2112, 0)].uidx
-            ] = 1e-4 * n_top
-        elif (2212, 0) in self.pman:
-            info(
-                2,
-                "Neutrons not part of equation system,",
-                "substituting initial flux with protons.",
-            )
-            self._phi0[
-                min_idx + self.pman[(2212, 0)].lidx : self.pman[(2212, 0)].uidx
-            ] += 1e-4 * n_top
+        See :meth:`MCEq.driver.initial_state.InitialState.set_primary_model`
+        for the original docstring; behaviour unchanged.
+        """
+        return self._initial_state.set_primary_model(model_class_or_object, tag)
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
     ):
-        """Set type and kinetic energy of a single primary nucleus to
-        calculation of particle yields.
+        """Set a single primary particle (delegates to InitialState).
 
-        The functions uses the superposition theorem, where the flux of
-        a nucleus with mass A and charge Z is modeled by using Z protons
-        and A-Z neutrons at energy :math:`E_{nucleon}= E_{nucleus} / A`
-        The nucleus type is defined via :math:`\\text{CORSIKA ID} = A*100 + Z`. For
-        example iron has the CORSIKA ID 5226.
-
-        Single leptons or hadrons can be defined by specifiying `pdg_id` instead of
-        `corsika_id`.
-
-        The `append` argument can be used to compose an initial state with
-        multiple particles. If it is `False` the initial condition is reset to zero
-        before adding the particle.
-
-        A continuous input energy range is allowed between
-        :math:`50*A~ \\text{GeV} < E_\\text{nucleus} < 10^{10}*A \\text{GeV}`.
-
-        Args:
-          E (float): kinetic energy of a nucleus in GeV
-          corsika_id (int): ID of a nucleus (see text)
-          pdg_id (int): PDG ID of a particle
-          append (bool): If True, keep previous state and append a new particle.
+        See :meth:`MCEq.driver.initial_state.InitialState.
+        set_single_primary_particle` for the original docstring; behaviour
+        unchanged.
         """
-        import warnings
-
-        from scipy.linalg import solve
-
-        from MCEq.misc import getAZN, getAZN_corsika
-
-        if corsika_id and pdg_id:
-            raise Exception("Provide either corsika or PDG ID")
-
-        info(2, f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV")
-
-        if corsika_id:
-            n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
-        elif pdg_id:
-            n_nucleons, n_protons, n_neutrons = getAZN(pdg_id)
-
-        En = E / float(n_nucleons) if n_nucleons > 0 else E
-
-        if En < np.min(self._energy_grid.c):
-            raise Exception("energy per nucleon too low for primary " + str(corsika_id))
-
-        if append is False:
-            # Store ``False`` explicitly so the replay does not silently
-            # default to overwriting on the first call of an append chain.
-            self._restore_initial_condition = [
-                ("set_single_primary_particle", E, corsika_id, pdg_id, False)
-            ]
-            self._phi0 *= 0.0
-        else:
-            self._restore_initial_condition.append(
-                ("set_single_primary_particle", E, corsika_id, pdg_id, True)
-            )
-        egrid = self._energy_grid.c
-        ebins = self._energy_grid.b
-        ewidths = self._energy_grid.w
-
-        info(
-            3,
-            (
-                f"superposition: n_protons={n_protons}, n_neutrons={n_neutrons}, "
-                + f"energy per nucleon={En:5.3g} GeV"
-            ),
+        return self._initial_state.set_single_primary_particle(
+            E, corsika_id=corsika_id, pdg_id=pdg_id, append=append
         )
-
-        cenbin = np.argwhere(En < ebins)[0][0] - 1
-
-        # Equalize the first three moments for 3 normalizations around the central
-        # bin
-        emat = np.vstack(
-            (
-                ewidths[cenbin - 1 : cenbin + 2],
-                ewidths[cenbin - 1 : cenbin + 2] * egrid[cenbin - 1 : cenbin + 2],
-                ewidths[cenbin - 1 : cenbin + 2] * egrid[cenbin - 1 : cenbin + 2] ** 2,
-            )
-        )
-
-        if n_nucleons == 0:
-            # This case handles other exotic projectiles
-            b_particle = np.array([1.0, En, En**2])
-            lidx = self.pman[pdg_id].lidx
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self._phi0[lidx + cenbin - 1 : lidx + cenbin + 2] += solve(
-                    emat, b_particle
-                )
-            return
-
-        if n_protons > 0:
-            b_protons = np.array([n_protons, En * n_protons, En**2 * n_protons])
-            p_lidx = self.pman[2212].lidx
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self._phi0[p_lidx + cenbin - 1 : p_lidx + cenbin + 2] += solve(
-                    emat, b_protons
-                )
-        if n_neutrons > 0:
-            b_neutrons = np.array([n_neutrons, En * n_neutrons, En**2 * n_neutrons])
-            n_lidx = self.pman[2112].lidx
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self._phi0[n_lidx + cenbin - 1 : n_lidx + cenbin + 2] += solve(
-                    emat, b_neutrons
-                )
 
     def set_initial_spectrum(self, spectrum, pdg_id, append=False):
-        """Set a user-defined spectrum for an arbitrary species as initial condition.
+        """Set a user spectrum (delegates to InitialState).
 
-        This function is an equivalent to :func:`set_single_primary_particle`. It
-        allows to define an arbitrary spectrum for each available particle species
-        as initial condition for the integration. Set the `append`
-        argument to `True` for subsequent species to define initial
-        spectra combined from different particles.
-
-        The (differential) spectrum has to be distributed on the energy
-        grid as dN/dptot, i.e. divided by the bin widths and with the
-        total momentum units in GeV(/c).
-
-        Args:
-          spectrum (np.array): spectrum dN/dptot
-          pdg_id (int): PDG ID in case of a particle
+        See :meth:`MCEq.driver.initial_state.InitialState.
+        set_initial_spectrum` for the original docstring; behaviour
+        unchanged.
         """
-
-        info(2, f"PDG ID {pdg_id}")
-
-        if not append:
-            self._restore_initial_condition = [
-                ("set_initial_spectrum", spectrum, pdg_id, append)
-            ]
-            self._phi0 *= 0
-        else:
-            self._restore_initial_condition.append(
-                ("set_initial_spectrum", spectrum, pdg_id, append)
-            )
-        if len(spectrum) != self.dim:
-            raise Exception("Lengths of spectrum and energy grid do not match.")
-
-        self._phi0[self.pman[pdg_id].lidx : self.pman[pdg_id].uidx] += spectrum
+        return self._initial_state.set_initial_spectrum(spectrum, pdg_id, append=append)
 
     def get_initial_state(self):
         """Return a copy of the current initial-condition vector ``phi0``.
 
-        This is the state vector composed by the most recent
-        :meth:`set_primary_model` / :meth:`set_single_primary_particle` /
-        :meth:`set_initial_spectrum` calls — the same vector
-        :meth:`solve` propagates. Use it to assemble columns for
-        :meth:`solve_batch` without touching private attributes.
-
-        Returns:
-          (np.ndarray[dim_states]): copy of the initial state vector.
+        Delegates to
+        :meth:`MCEq.driver.initial_state.InitialState.get_initial_state`.
         """
-        return self._phi0.copy()
+        return self._initial_state.get_initial_state()
 
     def initial_state(self, components):
-        """Compose and return an initial-state column without mutating
-        the instance.
+        """Compose an initial-state column without mutating the instance.
 
-        Builds a ``(dim_states,)`` vector from one or more components
-        using the same machinery as :meth:`set_single_primary_particle`
-        and :meth:`set_initial_spectrum`, then restores the previous
-        initial condition. The intended use is assembling the columns of
-        a :meth:`solve_batch` initial-state matrix::
-
-            # response matrix: one column per primary energy
-            phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
-                axis=1,
-            )
-            res = mceq.solve_batch(phi0)
-
-        Args:
-          components (dict | list[dict]): one component dict or a list of
-            component dicts (summed). Each component is either
-
-            - a single primary: ``{"E": <GeV>, "corsika_id": <A*100+Z>}``
-              or ``{"E": <GeV>, "pdg_id": <PDG>}`` (forwarded to
-              :meth:`set_single_primary_particle`), or
-            - a user spectrum: ``{"spectrum": <array dN/dptot>,
-              "pdg_id": <PDG>}`` (forwarded to
-              :meth:`set_initial_spectrum`).
-
-        Returns:
-          (np.ndarray[dim_states]): the composed initial-state column.
+        Delegates to :meth:`MCEq.driver.initial_state.InitialState.
+        initial_state`; behaviour unchanged.
         """
-        if isinstance(components, dict):
-            components = [components]
-        if not components:
-            raise ValueError("initial_state: components must not be empty")
-
-        saved_phi0 = self._phi0.copy()
-        saved_restore = list(self._restore_initial_condition)
-        try:
-            for i, comp in enumerate(components):
-                comp = dict(comp)
-                append = i > 0
-                if "spectrum" in comp:
-                    spectrum = comp.pop("spectrum")
-                    pdg_id = comp.pop("pdg_id")
-                    if comp:
-                        raise ValueError(
-                            f"initial_state: unknown keys {sorted(comp)} in "
-                            f"spectrum component"
-                        )
-                    self.set_initial_spectrum(spectrum, pdg_id, append=append)
-                elif "E" in comp:
-                    E = comp.pop("E")
-                    unknown = set(comp) - {"corsika_id", "pdg_id"}
-                    if unknown:
-                        raise ValueError(
-                            f"initial_state: unknown keys {sorted(unknown)} in "
-                            f"single-primary component"
-                        )
-                    self.set_single_primary_particle(E, append=append, **comp)
-                else:
-                    raise ValueError(
-                        "initial_state: each component needs either 'E' "
-                        "(single primary) or 'spectrum' + 'pdg_id' "
-                        f"(user spectrum); got keys {sorted(comp)}"
-                    )
-            return self._phi0.copy()
-        finally:
-            self._phi0 = saved_phi0
-            self._restore_initial_condition = saved_restore
+        return self._initial_state.initial_state(components)
 
     def set_density_model(self, density_model_or_config):
         """Sets model of the atmosphere.
