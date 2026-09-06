@@ -27,28 +27,25 @@ def particle(pdg_id, helicity=0):
 # B9 -- inverse_decay_length ZeroDivisionError branch
 
 
-def test_b9_ctau_zero_returns_a_zero_d_scalar_not_a_vector():
-    """B9: the ``except ZeroDivisionError`` branch returns a 0-d value.
+def test_b9_fixed_ctau_zero_returns_a_length_d_vector_of_inf():
+    """B9 FIXED (R3): the ``except ZeroDivisionError`` branch returns ``(d,)`` inf.
 
-    ``np.ones_like(self._energy_grid.d)`` is passed the bin *count* -- a plain
-    int -- not the grid array, so ``ones_like`` yields the 0-d ``array(1)`` and
-    ``* np.inf`` collapses it to ``np.float64(inf)``. Measured: ``shape ()``,
-    ``ndim 0``, ``dtype float64``, and not an ``ndarray`` instance at all.
-    Every other return path from this method is a length-``d`` vector.
-
-    Correct behaviour: ``np.ones_like(self._energy_grid.c) * np.inf`` (or
-    ``np.full(self._energy_grid.d, np.inf)``) -- shape ``(d,)``, so callers
-    that index or broadcast the result keep working.
+    Before the fix the branch passed the bin *count* to ``np.ones_like``
+    (``ones_like(int)`` is the 0-d ``array(1)``, ``* np.inf`` a
+    ``np.float64``), so a zero-ctau particle got a scalar where every other
+    path returns a length-``d`` vector. The fix passes the centre-node array
+    (``ones_like(self._energy_grid.c)``), matching the docstring. Pin
+    history: ``test_b9_ctau_zero_returns_a_zero_d_scalar_not_a_vector`` in
+    ``ba03d9e``; flipped here.
     """
     p = particle(211)
     p.ctau = 0.0
     result = p.inverse_decay_length()
 
-    assert np.ndim(result) == 0
-    assert np.shape(result) == ()
-    assert not isinstance(result, np.ndarray)
-    assert isinstance(result, np.float64)
-    assert result == np.inf
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (GRID.d,)
+    assert np.all(np.isinf(result))
+    assert np.all(result > 0)
 
 
 def test_b9_the_healthy_paths_all_return_length_d_vectors():
@@ -66,19 +63,25 @@ def test_b9_the_healthy_paths_all_return_length_d_vectors():
     assert np.array_equal(stable, np.zeros(GRID.d))
 
 
-def test_b9_the_stable_case_returns_zero_while_the_docstring_says_infinity():
-    """B9, second leg: ``ctau = inf`` never reaches the ``inf`` branch.
+def test_b9_stable_returns_zero_and_the_docstring_now_says_so():
+    """B9 second leg FIXED (R3): ``ctau = inf`` returns zeros, and the doc matches.
 
-    The method's own docstring promises "infinity (np.inf), if particle is
-    stable", but ``mass / inf / p_lab`` is 0.0 in IEEE arithmetic and raises
-    nothing, so a stable particle gets a vector of *zeros* -- the opposite
-    end of the scale. That is the physically right value for an inverse decay
-    length, so this pin is on the docstring, not the number: measured 0.0 for
-    p, e-, gamma.
-
-    Correct behaviour: the docstring's "or infinity" clause goes, or is
-    rewritten to say the ``inf`` return is the ``ctau == 0`` case.
+    The pre-fix docstring promised "infinity (np.inf), if particle is
+    stable" while IEEE gives ``mass / inf / p = 0.0`` -- the physically
+    right value for an inverse decay length but the opposite of what was
+    documented. The fix rewrote the docstring to state the zeros return and
+    to reserve ``inf`` for the ``ctau == 0`` path; this test pins the numbers
+    (0.0 for p, e-, gamma) and greps the docstring so a future rewrite that
+    re-promises infinity for stability fails here.
     """
+    import inspect
+
+    from MCEq.species.particle import MCEqParticle as _C
+
+    doc = inspect.getdoc(_C.inverse_decay_length)
+    assert "infinity" not in doc.lower() or "zeros" in doc.lower()
+    assert "``inf`` is what the ``ctau == 0``" in doc
+
     for pdg_id in (2212, 11, 22):
         p = particle(pdg_id)
         assert p.ctau == np.inf
@@ -104,8 +107,9 @@ def test_b9_the_branch_is_reachable_from_the_particle_table_via_k0():
     k0 = particle(311)
     assert k0.name == "K0"
     assert k0.ctau == 0.0
-    assert np.ndim(k0.inverse_decay_length()) == 0
-    assert k0.inverse_decay_length() == np.inf
+    result = k0.inverse_decay_length()
+    assert result.shape == (GRID.d,)
+    assert np.all(np.isinf(result))
 
 
 def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
@@ -114,12 +118,17 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
     ``self.mass`` and ``self.ctau`` come off the particletools table as Python
     floats (measured: ``type(...) is float``), so ``mass / ctau / p_lab`` is
     Python's division and ``ctau = 0.0`` raises ZeroDivisionError before numpy
-    is reached. With ``ctau = np.float64(0.0)`` nothing raises at all: the
-    healthy path returns ``array([inf] * d)`` -- the shape B9's fix is supposed
-    to produce -- and with ``mass`` numpy-zero too it returns ``array([nan] *
-    d)``. Recorded because a fix that reaches for ``np.errstate`` or coerces
-    the scalars, rather than repairing the ``ones_like`` argument, changes
-    which of these three answers a caller gets without touching the pin above.
+    is reached -- that raise is what lands on the except branch. With
+    ``ctau = np.float64(0.0)`` nothing raises at all: the healthy path returns
+    ``array([inf] * d)``, and with ``mass`` numpy-zero too it returns
+    ``array([nan] * d)``.
+
+    B9 FIXED (R3): the three shapes now agree where they should. The Python-
+    float ``ctau == 0`` case reaches the except branch, which now returns a
+    length-``d`` vector of ``inf`` -- byte-equal to the numpy-``ctau`` path
+    that never raised. Before the fix the except branch dropped to a 0-d
+    ``np.float64(inf)`` and the two paths disagreed in shape; pin history
+    ``test_b9_ctau_zero_returns_a_zero_d_scalar_not_a_vector`` in ``ba03d9e``.
     """
     p = particle(211)
     assert type(p.mass) is float
@@ -127,8 +136,9 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
 
     p.ctau = 0.0
     p.mass = 0.0
-    assert p.inverse_decay_length() == np.inf
-    assert np.ndim(p.inverse_decay_length()) == 0
+    py_zero = p.inverse_decay_length()
+    assert py_zero.shape == (GRID.d,)
+    assert np.all(np.isinf(py_zero))
 
     numpy_ctau = particle(211)
     numpy_ctau.ctau = np.float64(0.0)

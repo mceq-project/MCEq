@@ -351,9 +351,8 @@ class MCEqParticle:
         return (self.mceqidx + 1) * self._energy_grid.d
 
     def inverse_decay_length(self):
-        r"""Returns inverse decay length (or infinity (np.inf), if
-        particle is stable), where the air density :math:`\rho` is
-        factorized out.
+        r"""Returns inverse decay length, where the air density
+        :math:`\rho` is factorized out.
 
         The physical decay rate per unit path length is
         :math:`1/\lambda_{dec} = m/(c\tau\,p)`, with :math:`p` the lab
@@ -362,15 +361,21 @@ class MCEqParticle:
         :math:`1/\beta` and understates decay of slow (:math:`\beta<1`)
         particles; the momentum form is exact at all energies.
 
+        A stable particle (``ctau = inf``) returns zeros -- the physical
+        inverse length -- not the ``inf`` the pre-fix docstring promised;
+        ``inf`` is what the ``ctau == 0`` path returns, now as a length-``d``
+        vector (B9, R3).
+
         Returns:
-          (float): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm
+          (numpy.array): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm,
+          shape ``(d,)`` on every path
         """
         try:
             e_tot = self._energy_grid.c + self.mass
             p_lab = np.sqrt(e_tot**2 - self.mass**2)
             return self.mass / self.ctau / p_lab
         except ZeroDivisionError:
-            return np.ones_like(self._energy_grid.d) * np.inf
+            return np.ones_like(self._energy_grid.c) * np.inf
 
     def prod_cross_section(self, mbarn=False):
         """Returns production cross section.
