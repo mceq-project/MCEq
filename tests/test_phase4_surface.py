@@ -105,6 +105,8 @@ DEFINES = {
     ("MCEq.data", "Decays"): "MCEq.data.decay_tables",
     ("MCEq.data", "InteractionCrossSections"): "MCEq.data.cross_sections",
     ("MCEq.data", "Interactions"): "MCEq.data.interaction_tables",
+    ("MCEq.download", "FileIntegrityCheck"): "MCEq.data.download",
+    ("MCEq.download", "ensure_db_available"): "MCEq.data.download",
 }
 
 #: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as

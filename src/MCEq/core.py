@@ -4,8 +4,8 @@ import numpy as np
 
 import MCEq.data
 from MCEq import config
+from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.download import ensure_db_available
 from MCEq.misc import info
 from MCEq.operators.compiled import compile_operator, em_step_scale
 

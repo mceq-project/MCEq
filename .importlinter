@@ -53,7 +53,6 @@ layers =
     operator_assembly : secant : operators
     particlemanager : (species)
     data
-    download
     config
     misc : (util)
 exhaustive = True
@@ -63,6 +62,10 @@ exhaustive_ignores =
 # is still there for user code; Phase 7 deletes the shims and this line.
     environment
     geometry
+# download: a compat shim since §13.2 item 5 moved the code under `data`. It
+# re-exports from `MCEq.data.download` and C5/C2 constrain its one edge; Phase 7
+# deletes the shim (decision D6).
+    download
 # models, imported by the driver only (C4). Phase 4 moves ddm and ddm_utils
 # under `models`; Phase 7 deletes charm_models (plan decision D6).
     ddm
@@ -263,9 +266,10 @@ ignore_imports =
     MCEq.data.hdf5_backend -> MCEq.config
 # particlemanager.py:7 -- Phase 4
     MCEq.particlemanager -> MCEq.config
-# download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level from
-# the module. Phase 4 moves it under `data` and it takes a DataPaths group then.
-    MCEq.download -> MCEq.config
+# data/download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level
+# from the module (§13.2 item 5 moved it under `data`); it takes a DataPaths
+# group in Phase 6. The `MCEq.download` shim re-exports it and inherits the debt.
+    MCEq.data.download -> MCEq.config
 
 # ------------------------------------------------------- C6: legacy shim
 # `mceq_config` replaces itself in sys.modules with MCEq.config. It exists for
