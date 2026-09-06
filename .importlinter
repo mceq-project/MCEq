@@ -48,7 +48,7 @@ type = layers
 containers =
     MCEq
 layers =
-    core : (driver)
+    core : driver
     solvers
     operator_assembly : secant : operators
     species
@@ -83,9 +83,10 @@ exhaustive_ignores =
 # Linux worker that carries the rest of the suite.
     etd2_kernels
     spacc
-# Leaves with no MCEq imports: the 2D Hankel transform helpers and the version
-# string. `hankel` is angular readout rather than operator assembly, so its
-# content moves into `driver/results.py` in Phase 6 (plan section 1).
+# Leaves with no MCEq imports: the version string, and `hankel` since Phase 6
+# moved its content to `driver/results.py` — the shim re-exports from the
+# driver, and the layers contract does not constrain ignored modules. Phase 7
+# deletes the shim and this line (decision D6).
     hankel
     version
 unmatched_ignore_imports_alerting = error
