@@ -18,36 +18,13 @@ from MCEq.operators.compiled import compile_operator, em_step_scale
 # keeps working (imported by tests/test_operators_pin.py). The class is no
 # longer constructed here -- CascadeSystem owns the builder.
 from MCEq.operators.matrix_builder import MatrixBuilder  # noqa: F401
+from MCEq.solvers import path
 
 # trapz was finally removed with numpy 2.4
 if hasattr(np, "trapezoid"):
     trapz = np.trapezoid
 else:
     trapz = np.trapz
-
-
-# Module-level worker state for the optional process-pool path build
-# inside :meth:`MCEqRun._build_condition_paths`. Workers fork from the parent
-# and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
-# instance itself never has to be picklable. Each worker process gets
-# its own CoW copy of the density model, so per-worker
-# ``set_zenith_azimuth`` mutations stay process-local. Only used when
-# ``solve_fullsky(path_workers=N>0)`` is requested *and* the atmosphere
-# is not azimuth-symmetric (MSIS location-centered case). Every atmosphere
-# is fork-reproducible; the paths a worker returns are bitwise equal to the
-# serial ones.
-_PATH_WORKER_MCEQ = None
-
-
-def _path_worker_one(args):
-    """Build one (zenith, azimuth) integration path inside a forked worker."""
-    flat_idx, zen, az, kwargs = args
-    if az is None:
-        _PATH_WORKER_MCEQ.set_zenith_azimuth(zen)
-    else:
-        _PATH_WORKER_MCEQ.set_zenith_azimuth(zen, az)
-    _PATH_WORKER_MCEQ._calculate_integration_path(None, "X", **kwargs)
-    return flat_idx, _PATH_WORKER_MCEQ.integration_path
 
 
 class MCEqRun:
@@ -1204,174 +1181,20 @@ class MCEqRun:
     ):
         """Build one ETD2 integration path per batch condition.
 
-        Each condition is a dict with optional keys ``zenith_deg``,
-        ``azimuth_deg`` and ``density_model`` (config tuple or density-
-        model instance); missing keys fall back to the instance's current
-        setting. Conditions that resolve to the same physical path — the
-        same density model and zenith, and the same azimuth when the
-        model's ``depends_on_azimuth`` is True — share one path tuple, so
-        duplicates (e.g. azimuth pixels of an azimuth-independent
-        atmosphere) cost nothing. Restores the active density model and
-        angles before returning.
-
-        Args:
-          conditions (list[dict]): one dict per batch member.
-          X_start, eps, dX_max, dX_min, fd_span: ETD2 path knobs, see
-            :meth:`solve`.
-          path_workers (int): fork-pool size for a parallel path build.
-            Only allowed without ``density_model`` overrides. A worker's
-            paths are bitwise equal to the serial ones on every
-            atmosphere, MSIS00 included. Ignored where fork is
-            unavailable (Windows), which builds serially.
-
-        Returns:
-          list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
-          condition (duplicate conditions share the same tuple object —
-          callers can detect a fully shared batch with ``is``).
+        Moved verbatim to :func:`MCEq.solvers.path.build_condition_paths`
+        (Phase 6 commit 5, D26); the contract (dedup, restore, fork pool)
+        is documented there.
         """
-        allowed_keys = {"zenith_deg", "azimuth_deg", "density_model"}
-        norm = []
-        for i, c in enumerate(conditions):
-            if c is None:
-                c = {}
-            if not isinstance(c, dict):
-                raise TypeError(
-                    f"_build_condition_paths: condition {i} must be a dict "
-                    f"with keys in {sorted(allowed_keys)}, got "
-                    f"{type(c).__name__}"
-                )
-            unknown = set(c) - allowed_keys
-            if unknown:
-                raise ValueError(
-                    f"_build_condition_paths: condition {i} has unknown "
-                    f"keys {sorted(unknown)}; allowed: {sorted(allowed_keys)}"
-                )
-            norm.append(dict(c))
-
-        has_dm_override = any(c.get("density_model") is not None for c in norm)
-        n_workers = int(path_workers) if path_workers else 0
-        if n_workers > 1:
-            if has_dm_override:
-                raise ValueError(
-                    "path_workers > 1 supports only zenith/azimuth batches "
-                    "on the active atmosphere; build density_model "
-                    "overrides serially (path_workers=0)."
-                )
-            import multiprocessing as _mp
-
-            # Windows and any spawn-only platform: the pool needs fork to
-            # share the atmosphere, so build serially instead. Same paths.
-            if "fork" not in _mp.get_all_start_methods():
-                n_workers = 0
-
-        def dm_key_of(c):
-            dm_spec = c.get("density_model")
-            if dm_spec is None:
-                return ("current",)
-            if isinstance(dm_spec, (tuple, list)):
-                return ("cfg", repr(tuple(dm_spec)))
-            return ("obj", id(dm_spec))
-
-        # Save the *current* direction from the density model, which is the
-        # only place the azimuth lives. ``MCEqRun.theta_deg`` does track the
-        # zenith since B13 was fixed, but it carries no azimuth, so restoring
-        # from the atmosphere keeps both halves of the direction together.
-        saved_dm = self.density_model
-        saved_zen = getattr(saved_dm, "theta_deg", None)
-        saved_az = getattr(saved_dm, "_current_azimuth_deg", None)
-
-        kwargs = dict(
-            X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
+        return path.build_condition_paths(
+            self,
+            conditions,
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+            path_workers=path_workers,
         )
-        try:
-            # Pass 1: resolve unique density models (instantiate config
-            # tuples exactly once).
-            dm_instances = {}
-            for c in norm:
-                key = dm_key_of(c)
-                if key in dm_instances:
-                    continue
-                dm_spec = c.get("density_model")
-                if dm_spec is None:
-                    dm_instances[key] = saved_dm
-                elif isinstance(dm_spec, (tuple, list)):
-                    self.set_density_model(tuple(dm_spec))
-                    dm_instances[key] = self.density_model
-                else:
-                    dm_instances[key] = dm_spec
-
-            # Pass 2: dedup conditions into unique path-build jobs. The
-            # azimuth only enters the key when the density model actually
-            # depends on it, so azimuth pixels of symmetric atmospheres
-            # collapse onto one job per zenith.
-            job_of_key = {}
-            cond_keys = []
-            for c in norm:
-                dm_key = dm_key_of(c)
-                dm = dm_instances[dm_key]
-                zen = c.get("zenith_deg")
-                if zen is None:
-                    zen = saved_zen
-                if zen is None:
-                    raise ValueError(
-                        "_build_condition_paths: condition without "
-                        "'zenith_deg' and no zenith set on the instance"
-                    )
-                zen = float(zen)
-                az = c.get("azimuth_deg")
-                az_dep = getattr(dm, "depends_on_azimuth", False)
-                az_eff = float(az) if (az is not None and az_dep) else None
-                pkey = (dm_key, zen, az_eff)
-                cond_keys.append(pkey)
-                if pkey not in job_of_key:
-                    job_of_key[pkey] = (dm_key, zen, az_eff)
-
-            # Group jobs by density model so per-model state (splines,
-            # caches) is not rebuilt more often than necessary.
-            jobs = sorted(job_of_key.items(), key=lambda item: repr(item[0]))
-            unique_paths = {}
-            if n_workers > 1 and len(jobs) > 1:
-                # Fork-based worker pool. Pickling MCEqRun would be
-                # fragile; instead set a module-level global and rely on
-                # fork() to share via CoW. Only zenith/azimuth vary here
-                # (density_model overrides were rejected above).
-                import multiprocessing as _mp
-
-                global _PATH_WORKER_MCEQ
-                _PATH_WORKER_MCEQ = self  # inherited by forked children
-                try:
-                    ctx = _mp.get_context("fork")
-                    worker_args = [
-                        (idx, job[1], job[2], kwargs)
-                        for idx, (_, job) in enumerate(jobs)
-                    ]
-                    chunksize = max(1, len(jobs) // (n_workers * 8))
-                    with ctx.Pool(n_workers) as pool:
-                        for flat_idx, path in pool.imap_unordered(
-                            _path_worker_one, worker_args, chunksize=chunksize
-                        ):
-                            unique_paths[jobs[flat_idx][0]] = path
-                finally:
-                    _PATH_WORKER_MCEQ = None
-            else:
-                for pkey, (dm_key, zen, az_eff) in jobs:
-                    dm = dm_instances[dm_key]
-                    if self.density_model is not dm:
-                        self.set_density_model(dm)
-                    if az_eff is None:
-                        self.set_zenith_azimuth(zen)
-                    else:
-                        self.set_zenith_azimuth(zen, az_eff)
-                    self._calculate_integration_path(None, "X", **kwargs)
-                    unique_paths[pkey] = self.integration_path
-
-            return [unique_paths[k] for k in cond_keys]
-        finally:
-            if self.density_model is not saved_dm:
-                self.set_density_model(saved_dm)
-            if saved_zen is not None:
-                self.set_zenith_azimuth(saved_zen, saved_az)
-            self.integration_path = None
 
     def _is_geomag_eligible_atmosphere(self):
         """True if the active atmosphere has a meaningful geographic location.
@@ -1640,21 +1463,11 @@ class MCEqRun:
     def _em_cascade_dx_cap(self):
         """Cure-B effective dX cap from the EM-cascade stiffness, or np.inf.
 
-        ``np.inf`` (no cap) when ``config.em_adaptive_step`` is off or the EM
-        cascade is inactive, so the legacy schedule is reproduced exactly.
+        Moved verbatim to :func:`MCEq.solvers.path.em_cascade_dx_cap`
+        (Phase 6 commit 5, D26); the memoised stiffness it consumes stays
+        on this class (:meth:`_em_cascade_step_scale`).
         """
-        if not config.em_adaptive_step:
-            return np.inf
-        r_em = self._em_cascade_step_scale()
-        if not (r_em > 0.0):
-            return np.inf
-        cap = config.em_step_safety / r_em
-        info(
-            2,
-            "EM-adaptive step (cure B): r_EM={:.4g} 1/(g/cm^2) "
-            "-> dX_max <= {:.4g} g/cm^2".format(r_em, cap),
-        )
-        return cap
+        return path.em_cascade_dx_cap(self)
 
     def _calculate_integration_path(
         self,
@@ -1668,58 +1481,22 @@ class MCEqRun:
         dX_min=None,
         fd_span=None,
     ):
-        # ETD2 is the only path builder. Step sizes follow the
-        # atmosphere-aware non-uniform schedule keyed off the local
-        # |d ln rho_inv / dX|; see ``MCEq.solvers.etd2_nonuniform_path``.
-        # Cure B: additionally cap dX_max by the explicit-stepping stiffness
-        # of the EM block of int_m (no-op when config.em_adaptive_step is
-        # off). int_m is X-constant, so this is a single global cap that the
-        # density-gradient schedule never relaxes above.
-        em_cap = self._em_cascade_dx_cap()
-        if np.isfinite(em_cap):
-            base_dX_max = dX_max if dX_max is not None else config.etd2_path["dX_max"]
-            dX_max = min(base_dX_max, em_cap)
-        etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
-        cached_etd2_params = getattr(self, "_cached_etd2_path_params", None)
+        """Build (or reuse the cache of) the ETD2 integration path.
 
-        if (
-            self.integration_path
-            and np.all(int_grid == self.int_grid)
-            and np.all(self.grid_var == grid_var)
-            and cached_etd2_params == etd2_params
-            and not force
-        ):
-            info(5, "skipping calculation.")
-            return
-
-        self._cached_etd2_path_params = etd2_params
-        self.int_grid, self.grid_var = int_grid, grid_var
-        if grid_var != "X":
-            raise NotImplementedError(
-                "Grid variables other than the depth X not supported."
-            )
-
-        from MCEq.solvers import etd2_nonuniform_path
-
-        info(
-            2,
-            "ETD2 non-uniform path (eps={}, dX_max={}, dX_min={}, "
-            "fd_span={}, X_start={})".format(
-                eps if eps is not None else config.etd2_path["eps"],
-                dX_max if dX_max is not None else config.etd2_path["dX_max"],
-                dX_min if dX_min is not None else config.etd2_path["dX_min"],
-                fd_span if fd_span is not None else config.etd2_path["fd_span"],
-                X_start if X_start is not None else config.X_start,
-            ),
-        )
-        self.integration_path = etd2_nonuniform_path(
-            self.density_model,
+        Moved verbatim to :func:`MCEq.solvers.path.calculate_integration_path`
+        (Phase 6 commit 5, D26); the cache and ``force`` live on this
+        instance, which the function reads and writes as before.
+        """
+        return path.calculate_integration_path(
+            self,
+            int_grid,
+            grid_var,
+            force,
             X_start=X_start,
             eps=eps,
             dX_max=dX_max,
             dX_min=dX_min,
             fd_span=fd_span,
-            int_grid=int_grid,
         )
 
     def n_particles(self, label, grid_idx=None, min_energy_cutoff=1e-1):

@@ -269,8 +269,10 @@ ignore_imports =
 # runtime extraction (dlopen moves into this module, detection into
 # config/detect.py) removes it.
     MCEq.solvers.backends.mkl -> MCEq.config
-# solvers/path.py:82 `config.solver` for the step-size defaults -- removed when
-# the path takes its settings group as an argument.
+# solvers/path.py `config.solver` for the step-size defaults, and (since
+# Phase 6 commit 5) the EM dX cap / path cache / condition-path builder that
+# moved in -- all removed when the path takes its settings group as an
+# argument (plan §5 StepControl injection).
     MCEq.solvers.path -> MCEq.config
 # `EarthsAtmosphere.__init__`'s `environment=` fallback. Phase 6, not Phase 3:
 # the kwarg is unreachable today (no concrete subclass forwards it), so
