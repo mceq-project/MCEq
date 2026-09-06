@@ -73,6 +73,26 @@ def test_shrunk_allowlisted_module_demands_a_re_pin(gate_table):
     assert not any("delete these lines" in line for line in problems)
 
 
+def test_a_one_line_shrink_still_demands_a_re_pin(gate_table):
+    """Recorded one line above measured: the off-by-one guard case.
+
+    The shrink cases above drop by hundreds of lines, so an off-by-one guard in
+    the shrink branch (e.g. ``lines < recorded - 1``) passes them all and hides
+    a one-line headroom. This is the real stage-B re-pin pair -- particlemanager
+    recorded 1176, measured 1175 -- so the gate must still demand a re-pin.
+    """
+    gate_table.ALLOW = {"src/MCEq/particlemanager.py": 1176}
+
+    problems = gate_table.report({"src/MCEq/particlemanager.py": 1175})
+
+    assert problems
+    assert any(
+        '  - "src/MCEq/particlemanager.py": 1176,   # now 1175 lines; re-pin' == line
+        for line in problems
+    )
+    assert any("recorded == measured" in line for line in problems)
+
+
 def test_allowlisted_module_now_under_limit_is_a_stale_entry(gate_table):
     """Measured at or below LIMIT: the entry is stale and must be deleted.
 
