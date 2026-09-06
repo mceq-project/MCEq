@@ -570,9 +570,10 @@ def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
     contains the branch name and, right after it, the four-int list
     ``[2212, 2112, -2212, -2112]`` -- the exact set the ``adv_set`` comment's
     ``except nucleons`` intends to *keep*. Like the B20 mechanism test, this
-    pins the mechanism, not the intent: a fix that swaps in a stability lookup
-    (or even keeps the list but inverts the predicate) trips this test first,
-    which is the point.
+    pins the mechanism, not the intent: it goes red when the branch is deleted
+    or the literal set changes. A fix that keeps the header and the list but
+    inverts the predicate survives here -- the behavioural test above is what
+    catches that.
     """
     source = " ".join(inspect.getsource(Interactions.load).split())
     branch = 'if filters["disable_interactions_of_unstable"]:'

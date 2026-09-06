@@ -76,8 +76,9 @@ def test_b8_stored_window_is_ignored_bitwise(mceq_sib21, ddm_full, window):
 
     This is the no-op pin. For each strict window the model stores it
     (``w.e_min`` / ``w.e_max`` hold ``lo`` / ``hi``) and ``ddm_matrices``
-    still answers with the ``(31, 31)`` full-grid matrix, byte-identical to
-    the default-window model's -- on the grid-external window *and* on the
+    still answers with the ``(31, 31)`` full-grid matrix, byte-identical
+    (``tobytes()``, not just ``array_equal``: signed zeros count) to the
+    default-window model's -- on the grid-external window *and* on the
     strictly in-grid one.
 
     A fix that wires the window must make this test fail on both windows (the
@@ -102,7 +103,8 @@ def test_b8_stored_window_is_ignored_bitwise(mceq_sib21, ddm_full, window):
 
     w_matrices = w.ddm_matrices(mceq_sib21)
     assert set(w_matrices) == {(2212, 211)}
-    assert np.array_equal(w_matrices[(2212, 211)], full_matrices[(2212, 211)])
+    assert w_matrices[(2212, 211)].dtype == full_matrices[(2212, 211)].dtype
+    assert w_matrices[(2212, 211)].tobytes() == full_matrices[(2212, 211)].tobytes()
 
 
 def test_b8_direct_generator_does_honour_the_windows(mceq_sib21, ddm_full):
