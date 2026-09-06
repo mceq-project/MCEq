@@ -65,18 +65,19 @@ def scale(xmat, egrid, _name, value):
 # B1 -- _set_mod_pprod isospin partner
 
 
-def test_b1_neutron_primary_lands_on_the_proton_partner_keys():
-    """B1: the neutron primary's isospin partner key is wrong.
+def test_b1_fixed_neutron_primary_gets_the_proton_as_partner():
+    """B1 FIXED (R3): the dispatch reads the caller's primary, not a rebound local.
 
-    ``prim_pdg, symm_pdg = 2212, 2112`` overwrites the argument before
-    ``if prim_pdg == 2112:`` tests it, so the swap never fires and a 2112
-    primary is treated as a proton from that line on. Pinned: a 2112/211
-    modification writes ``(2112, -211)``, i.e. the *proton's* partner key, and
-    nothing at all under 2212.
-
-    Correct behaviour: a 2112 primary should get ``symm_pdg = 2212``, so the
-    isospin copy lands on ``(2212, -211)`` and the key set is
-    ``{(2112, 211), (2212, -211)}``.
+    The pre-fix code bound ``prim_pdg, symm_pdg = 2212, 2112`` and then tested
+    the overwritten name, so the swap could never fire and a 2112 primary was
+    treated as a proton: its isospin copy landed on ``(2112, -211)`` -- the
+    proton's partner key -- instead of ``(2212, -211)``. The fix dispatches on
+    the argument before binding (interaction_tables.py). Pinned here: a
+    2112/211 modification writes ``{(2112, 211), (2212, -211)}``, the
+    mirror image of the proton case, and the partner keys of the two runs
+    differ (they were byte-identical before). Pin history
+    ``test_b1_neutron_primary_lands_on_the_proton_partner_keys`` in
+    ``ae6830d``/`ba03d9e` era, flipped here.
     """
     args = ("scale", 0.1)
 
@@ -86,35 +87,30 @@ def test_b1_neutron_primary_lands_on_the_proton_partner_keys():
 
     neutron = interactions([(2212, 0), (2112, 0)])
     assert neutron._set_mod_pprod(2112, 211, scale, args) is True
-    # The bug: the same partner key as the proton case, not (2212, -211).
-    assert set(neutron.mod_pprod) == {(2112, 211), (2112, -211)}
-    assert (2212, -211) not in neutron.mod_pprod
+    assert set(neutron.mod_pprod) == {(2112, 211), (2212, -211)}
 
-    # The two runs differ only in which key holds the primary's own matrix;
-    # the partner key is byte-identical, which is what makes the bug invisible.
-    assert set(neutron.mod_pprod) & set(proton.mod_pprod) == {(2112, -211)}
+    # Same partner key held by neither case before (2112,-211 by both); now
+    # each primary owns its own mirror partner.
+    assert set(neutron.mod_pprod) & set(proton.mod_pprod) == set()
 
 
-def test_b1_neutron_kaon_partner_collides_with_the_primary_key():
-    """B1, kaon leg: ``mpli[(symm_pdg, sec_pdg)]`` is the primary's own key.
+def test_b1_fixed_neutron_kaon_partner_gets_its_own_key():
+    """B1 FIXED (R3), kaon leg: the isospin copy lands on (2212, 321).
 
-    With ``symm_pdg`` stuck at 2112 a 2112/321 modification writes its isospin
-    copy back onto ``(2112, 321)`` -- the entry it just made -- so the channel
-    gets both a ``("scale", args)`` and an ``("isospin", args)`` label for the
-    same matrix, and the true partner ``(2212, 321)`` is never written.
-
-    Correct behaviour: ``(2212, 321)`` carries the ``("isospin", args)`` copy
-    and ``(2112, 321)`` holds only the ``("scale", args)`` original.
+    Before the fix the copy was written back onto ``(2112, 321)`` -- the
+    primary's own entry -- so that channel carried both a ``("scale", args)``
+    and an ``("isospin", args)`` label for the same matrix and the true
+    partner ``(2212, 321)`` never appeared. Now the entry holds only the
+    scale and the partner key holds the isospin copy; the K0L/K0S loop names
+    both nucleons explicitly and is unchanged. Pin history
+    ``test_b1_neutron_kaon_partner_collides_with_the_primary_key``.
     """
     args = ("scale", 0.1)
     neutron = interactions([(2212, 0), (2112, 0)])
     assert neutron._set_mod_pprod(2112, 321, scale, args) is True
 
-    assert (2212, 321) not in neutron.mod_pprod
-    assert sorted(neutron.mod_pprod[(2112, 321)]) == [
-        ("isospin", args),
-        ("scale", args),
-    ]
+    assert sorted(neutron.mod_pprod[(2112, 321)]) == [("scale", args)]
+    assert sorted(neutron.mod_pprod[(2212, 321)]) == [("isospin", args)]
     # K0L/K0S do get both nucleons, because that loop names both explicitly.
     for key in [(2112, 130), (2112, 310), (2212, 130), (2212, 310)]:
         assert key in neutron.mod_pprod

@@ -195,10 +195,16 @@ class Interactions:
         if not self._physics.use_isospin_sym:
             return True
 
-        prim_pdg, symm_pdg = 2212, 2112
+        # Dispatch on the caller's primary BEFORE binding the locals (B1 fix,
+        # R3): the pre-fix code bound ``prim_pdg, symm_pdg = 2212, 2112`` first
+        # and then tested the overwritten name, so the swap could never fire
+        # and a 2112 primary was treated as a proton -- its isospin copies
+        # landed on the proton's partner keys (or, in the kaon leg, on the
+        # primary's own entry). A 2112 primary now gets symm 2212.
         if prim_pdg == 2112:
-            prim_pdg = 2112
-            symm_pdg = 2212
+            prim_pdg, symm_pdg = 2112, 2212
+        else:
+            prim_pdg, symm_pdg = 2212, 2112
 
         # p->pi+ = n-> pi-, p->pi- = n-> pi+
         if abs(sec_pdg) == 211:
