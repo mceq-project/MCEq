@@ -2,20 +2,20 @@ from time import time
 
 import numpy as np
 
-import MCEq.data
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
 from MCEq.driver.results import MCEqBatchResult
+from MCEq.driver.system import CascadeSystem
 from MCEq.misc import info
 from MCEq.operators.compiled import compile_operator, em_step_scale
 
-# Imported for use below and re-exported for compatibility: `MatrixBuilder`
-# lived in this module until it moved to `MCEq.operators.matrix_builder`, and
-# `MCEqRun.matrix_builder` is a de-facto public attribute, so
-# `from MCEq.core import MatrixBuilder` keeps working.
-from MCEq.operators.matrix_builder import MatrixBuilder
-from MCEq.species.manager import ParticleManager
+# Re-exported for compatibility only: `MatrixBuilder` lived in this module
+# until it moved to `MCEq.operators.matrix_builder`, and `MCEqRun`'s builder
+# is a de-facto public attribute, so `from MCEq.core import MatrixBuilder`
+# keeps working (imported by tests/test_operators_pin.py). The class is no
+# longer constructed here -- CascadeSystem owns the builder.
+from MCEq.operators.matrix_builder import MatrixBuilder  # noqa: F401
 
 # trapz was finally removed with numpy 2.4
 if hasattr(np, "trapezoid"):
@@ -102,60 +102,27 @@ class MCEqRun:
             "he_le_transition", le_config.get("he_le_transition", 80.0)
         )
         he_le_trwidth = kwargs.pop("he_le_trwidth", le_config.get("he_le_trwidth", 0.3))
-        # Group views, not snapshots: a config write after construction is seen.
-        self._mceq_db = MCEq.data.HDF5Backend(
-            medium=self.medium,
-            low_energy_model=low_energy_model,
-            he_le_transition=he_le_transition,
-            he_le_trwidth=he_le_trwidth,
-            paths=config.paths,
-            grid=config.grid,
-            physics=config.physics,
-            em=config.em,
-        )
-
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         # Save atmospheric parameters
         self.density_model = kwargs.pop("density_model", config.density_model)
         self.theta_deg = theta_deg
 
-        #: Interface to interaction tables of the HDF5 database
-        self._interactions = MCEq.data.Interactions(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
+        # The physics system (database, tables, pman, builder, matrices)
+        # lives in driver/system.py since Phase 6; the keep-list names are
+        # properties below delegating into it.
+        self._system = CascadeSystem(
+            interaction_model,
+            medium=self.medium,
+            low_energy_model=low_energy_model,
+            he_le_transition=he_le_transition,
+            he_le_trwidth=he_le_trwidth,
         )
-
-        #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._int_cs = MCEq.data.InteractionCrossSections(
-            mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
-        )
-
-        #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self._cont_losses = MCEq.data.ContinuousLosses(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
-        )
-
-        #: Interface to decay tables of the HDF5 database
-        self._decays = MCEq.data.Decays(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
-        )
-
-        #: Particle manager (initialized/updated in set_interaction_model)
-        self.pman = None
-
-        # Particle list to keep track of previously initialized particles
-        self._particle_list = None
-
-        # General Matrix dimensions and shortcuts, controlled by
-        # grid of yield matrices
-        self._energy_grid = self._mceq_db.energy_grid
 
         # Initialize solution vector
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
-        # Initialize matrix builder (initialized in set_interaction_model)
-        self.matrix_builder = None
         # Save initial condition (primary flux) to restore after dimensional resizing
         self._restore_initial_condition = []
 
@@ -512,6 +479,64 @@ class MCEqRun:
             'the options are "kinetic energy", "total energy", "total momentum"',
         )
 
+    # --- Phase 6 delegation into CascadeSystem (driver/system.py) ---------
+    # The §8.7 keep-list names the physics system owns are properties here,
+    # so every attribute access written against the single-class original
+    # still resolves. ``int_m``/``dec_m`` are read-write: the batch sweep
+    # harness in tests/golden/_operator_sweep.py swaps matrices directly.
+
+    @property
+    def _mceq_db(self):
+        return self._system._mceq_db
+
+    @property
+    def _interactions(self):
+        return self._system._interactions
+
+    @property
+    def _int_cs(self):
+        return self._system._int_cs
+
+    @property
+    def _decays(self):
+        return self._system._decays
+
+    @property
+    def _cont_losses(self):
+        return self._system._cont_losses
+
+    @property
+    def pman(self):
+        return self._system.pman
+
+    @property
+    def _particle_list(self):
+        return self._system._particle_list
+
+    @property
+    def _energy_grid(self):
+        return self._system._energy_grid
+
+    @property
+    def matrix_builder(self):
+        return self._system.matrix_builder
+
+    @property
+    def int_m(self):
+        return self._system.int_m
+
+    @int_m.setter
+    def int_m(self, mat):
+        self._system.int_m = mat
+
+    @property
+    def dec_m(self):
+        return self._system.dec_m
+
+    @dec_m.setter
+    def dec_m(self, mat):
+        self._system.dec_m = mat
+
     def set_interaction_model(
         self,
         interaction_model,
@@ -524,6 +549,13 @@ class MCEqRun:
 
         Decay and interaction matrix will be regenerated automatically
         after performing this call.
+
+        The load itself is the system's branch ladder
+        (:meth:`CascadeSystem.reload_for_model`); the facade keeps the
+        original skip short-circuit before it and the resize/rebuild after
+        it — the resize replays the facade's initial-condition methods by
+        name (PR #163), so only the facade can drive the load -> resize ->
+        build order.
 
         Args:
           interaction_model (str): name of interaction model
@@ -542,73 +574,16 @@ class MCEqRun:
             info(2, "Skip, since current model identical to", interaction_model + ".")
             return
 
-        self._int_cs.load(interaction_model)
-
-        # TODO: simplify this, stuff not needed anymore
-        if not update_particle_list and self._particle_list is not None:
-            info(10, "Re-using particle list.")
-            self._interactions.load(interaction_model, parent_list=self._particle_list)
-            self.pman.set_interaction_model(self._int_cs, self._interactions)
-            self.pman.set_decay_channels(self._decays)
-            self.pman.set_continuous_losses(self._cont_losses)
-
-        elif self._particle_list is None:
-            info(10, "New initialization of particle list.")
-            # First initialization
-            if particle_list is None:
-                self._interactions.load(interaction_model)
-            else:
-                self._interactions.load(interaction_model, parent_list=particle_list)
-
-            self._decays.load(parent_list=self._interactions.particles)
-            self._particle_list = self._interactions.particles + self._decays.particles
-            # Create particle database
-            self.pman = ParticleManager(
-                self._particle_list,
-                self._energy_grid,
-                self._int_cs,
-                self.medium,
-                physics=config.physics,
-            )
-            self.pman.set_interaction_model(self._int_cs, self._interactions)
-            self.pman.set_decay_channels(self._decays)
-            self.pman.set_continuous_losses(self._cont_losses)
-            self.matrix_builder = MatrixBuilder(
-                self.pman,
-                self._mceq_db,
-                grid=config.grid,
-                losses=config.losses,
-                physics=config.physics,
-            )
-
-        elif update_particle_list and particle_list != self._particle_list:
-            info(10, "Updating particle list.")
-            # Updated particle list received
-            if particle_list is None:
-                self._interactions.load(interaction_model)
-            else:
-                self._interactions.load(interaction_model, parent_list=particle_list)
-            self._decays.load(parent_list=self._interactions.particles)
-            self._particle_list = self._interactions.particles + self._decays.particles
-            self.pman.set_interaction_model(
-                self._int_cs,
-                self._interactions,
-                updated_parent_list=self._particle_list,
-            )
-            self.pman.set_decay_channels(self._decays)
-            self.pman.set_continuous_losses(self._cont_losses)
-
-        else:
-            raise Exception("Should not happen in practice.")
+        self._system.reload_for_model(
+            interaction_model, particle_list, update_particle_list
+        )
 
         self._resize_vectors_and_restore()
 
         # initialize matrices
         if not build_matrices:
             return
-        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-            skip_decay_matrix=False
-        )
+        self._system.build_matrices()
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -1133,9 +1108,7 @@ class MCEqRun:
                 s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
             print(s)
 
-        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-            skip_decay_matrix=False
-        )
+        self._system.build_matrices()
 
     def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args, delay_init=False):
         """Sets combination of projectile/secondary for error propagation.
@@ -1183,11 +1156,9 @@ class MCEqRun:
         # This can be optmized by refreshing only the particles that change or through
         # lazy evaluation, i.e. hadronic channels dict. calls data.int..get_matrix
         # on demand
-        self.pman.set_interaction_model(self._int_cs, self._interactions, force=True)
+        self._system.regenerate(skip_decay_matrix=skip_decay_matrix)
         self._resize_vectors_and_restore()
-        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-            skip_decay_matrix=skip_decay_matrix
-        )
+        self._system.build_matrices(skip_decay_matrix=skip_decay_matrix)
 
     def solve(
         self,

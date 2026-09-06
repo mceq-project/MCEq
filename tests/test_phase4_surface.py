@@ -115,15 +115,14 @@ DEFINES = {
     ("MCEq.particlemanager", "ParticleManager"): "MCEq.species.manager",
 }
 
-#: The dotted paths `src/MCEq/core.py` *constructs*, exactly. Written as
-#: literals rather than read back through `MCEq.data.<name>`: an assertion of
-#: the shape `MCEq.data.HDF5Backend is MCEq.data.HDF5Backend` compares a value
-#: with itself through the same dotted path and holds however wrong the
-#: re-export is. Parsing core.py records *where core reaches*, which is the
-#: property Phase 4 can break -- core.py:5 is a bare `import MCEq.data`, so
-#: these five call sites resolve through the shim's module namespace at call
-#: time, not through a name bound at import time.
-CORE_CONSTRUCTS = {
+#: The dotted paths `src/MCEq/driver/system.py` *constructs*, exactly. The
+#: five table constructions moved from core.py to CascadeSystem in Phase 6
+#: commit 2. Everything else about this pin is unchanged: still written as
+#: literals, still parsed from source, still records *where the driver
+#: reaches*. system.py keeps the `import MCEq.data` module binding the
+#: constructor block was written against, so the five call sites still
+#: resolve through the shim's module namespace at call time.
+SYSTEM_CONSTRUCTS = {
     "MCEq.data.ContinuousLosses",
     "MCEq.data.Decays",
     "MCEq.data.HDF5Backend",
@@ -296,14 +295,13 @@ def test_repeat_load_on_one_instance_replaces_instead_of_appending():
     assert DDMSplineDB._ddm_splines == {}
 
 
-def test_core_reaches_the_data_tables_by_these_dotted_paths():
-    """`src/MCEq/core.py` constructs exactly CORE_CONSTRUCTS -- no more, no less.
+def test_system_reaches_the_data_tables_by_these_dotted_paths():
+    """`src/MCEq/driver/system.py` constructs exactly SYSTEM_CONSTRUCTS.
 
     Parsed from source rather than probed at runtime, so the pin records the
-    call sites (core.py:355, 373, 378, 383, 388) and not just that a name
-    happens to resolve.
+    call sites and not just that a name happens to resolve.
     """
-    origin = importlib.util.find_spec("MCEq.core").origin
+    origin = importlib.util.find_spec("MCEq.driver.system").origin
     tree = ast.parse(pathlib.Path(origin).read_text())
 
     constructed = {
@@ -313,21 +311,21 @@ def test_core_reaches_the_data_tables_by_these_dotted_paths():
         for dotted in [_dotted(node.func)]
         if dotted is not None and dotted.split(".")[0] == "MCEq"
     }
-    assert constructed == CORE_CONSTRUCTS
+    assert constructed == SYSTEM_CONSTRUCTS
 
 
-def test_core_imports_the_data_module_not_its_names():
-    """The dotted paths above only work because core.py binds the *module*.
+def test_system_imports_the_data_module_not_its_names():
+    """The dotted paths above only work because system.py binds the *module*.
 
-    `import MCEq.data` (core.py:5) makes every `MCEq.data.X` a namespace
-    lookup at call time; a Phase 4 shim that is a module keeps working. If
-    core.py ever switches to `from MCEq.data import HDF5Backend` the five
-    call sites stop going through the shim namespace and
-    `test_core_reaches_the_data_tables_by_these_dotted_paths` empties out
+    `import MCEq.data` (system.py:22, copied with the constructor block)
+    makes every `MCEq.data.X` a namespace lookup at call time. If system.py
+    ever switches to `from MCEq.data import HDF5Backend` the five call sites
+    stop going through the shim namespace and
+    `test_system_reaches_the_data_tables_by_these_dotted_paths` empties out
     without anything else noticing.
 
-    The from-import half resolves `level` before it compares: core.py sits in
-    the `MCEq` package, so the form a refactor inside the package actually
+    The from-import half resolves `level` before it compares: system.py sits
+    in a subpackage of `MCEq`, so the form a refactor inside the package uses
     reaches for is the *relative* `from .data import Interactions`, which an
     `ImportFrom.module == "MCEq.data"` test never sees (measured: that node
     carries `module="data"`, `level=1`). `from . import data` is deliberately
@@ -339,7 +337,7 @@ def test_core_imports_the_data_module_not_its_names():
     than a false alarm, since the dotted-path pin above is written against the
     `MCEq.data.X` spelling those rewrites abandon.
     """
-    origin = importlib.util.find_spec("MCEq.core").origin
+    origin = importlib.util.find_spec("MCEq.driver.system").origin
     tree = ast.parse(pathlib.Path(origin).read_text())
 
     plain_imports = {
