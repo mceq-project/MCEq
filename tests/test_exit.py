@@ -114,6 +114,47 @@ except Exception as e:
 """
 
 
+# Phase-6 §11 accept line "close() releases every handle": solve with a
+# real backend, close() explicitly, drop the reference, and let the
+# interpreter run its shutdown. If close() leaked a backend handle, the
+# teardown order at exit is exactly where it bites (the GH-149 class of
+# failure); exit code 0 with the cache gone proves the release happened
+# while the interpreter was still ordered.
+_SCRIPT_CLOSE_RELEASES = """
+import MCEq.config as config
+config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+
+import gc
+
+import crflux.models as pm
+from MCEq.core import MCEqRun
+
+mceq = MCEqRun(
+    interaction_model="SIBYLL21",
+    theta_deg=0.0,
+    primary_model=(pm.HillasGaisser2012, "H3a"),
+)
+mceq.solve()
+assert "_operator_cache" in mceq.__dict__ or "_backend_cache" in mceq.__dict__, (
+    "fixture did not build a cache; the test would pass vacuously"
+)
+mceq.close()
+assert "_operator_cache" not in mceq.__dict__, "close() left the operator cache"
+assert "_backend_cache" not in mceq.__dict__, "close() left the backend cache"
+mceq.close()  # idempotent after release
+del mceq
+gc.collect()
+# solve() again with a fresh object: released handles must be recreable
+m2 = MCEqRun(
+    interaction_model="QGSJET-II-04",
+    theta_deg=0.0,
+    primary_model=(pm.HillasGaisser2012, "H3a"),
+)
+m2.solve()
+m2.close()
+"""
+
+
 def _run(script):
     """Run *script* in a fresh interpreter and return the CompletedProcess."""
     return subprocess.run(
@@ -158,3 +199,8 @@ def test_spacc_matrix_explicit_del_exit():
 def test_spacc_matrix_store_full():
     """Overflowing SIZE_MSTORE (10) must raise; subprocess ensures a clean store."""
     _assert_clean(_run(_SCRIPT_SPACC_STORE_FULL))
+
+
+def test_close_releases_handles_clean_exit():
+    """``close()`` + exit must be clean on any backend (Phase 6 §11)."""
+    _assert_clean(_run(_SCRIPT_CLOSE_RELEASES))
