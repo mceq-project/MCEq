@@ -69,7 +69,6 @@ exhaustive_ignores =
 # models, imported by the driver only (C4). §13.2 item 7 landed the move: the
 # code is `MCEq.models.ddm`, and `ddm`/`ddm_utils` remain as flat re-export
 # shims (D14) constrained against a back-edge by C4b. Phase 7 deletes the shims.
-# charm_models was deleted here at M8 (decision D6).
     models
     ddm
     ddm_utils

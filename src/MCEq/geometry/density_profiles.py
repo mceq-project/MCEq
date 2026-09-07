@@ -1,8 +1,7 @@
 """Compatibility shim: the atmospheres now live in :mod:`MCEq.environment`.
 
-Phase 3 of the layered-architecture refactor split this module into
-``environment/{base,corsika,isothermal,msis00,tabulated,target}.py``. This shim
-keeps ``from MCEq.geometry.density_profiles import ...`` working, including the
+The atmospheres now live in ``environment/{base,corsika,isothermal,
+msis00,tabulated,target}.py``. This shim keeps ``from MCEq.geometry.density_profiles import ...`` working, including the
 ``import *`` form that ``docs/examples/Plot_density_depth_relations.ipynb``
 relies on.
 

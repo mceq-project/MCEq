@@ -3,7 +3,7 @@ from os.path import (  # noqa: F401  (recorded surface; used by hdf5_backend now
     join,
 )
 
-# Since Phase 4 the backend class lives in `MCEq.data.hdf5_backend` and the
+# The backend class lives in `MCEq.data.hdf5_backend` and the
 # blending/energy-grid helpers are reached by their consumers' own imports.
 # The bindings below stay because they are the package's recorded public
 # surface (tests/test_phase4_surface.py, both bounds); `HDF5Backend` is the

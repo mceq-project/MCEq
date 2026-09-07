@@ -75,7 +75,7 @@ class MCEqRun:
         self._cfg = snapshot if snapshot is not None else config
         ensure_db_available(self._cfg)
         # The enable_em/helicity incompatibility is a validator on the physics
-        # group (config.run_physics, plan §9): CascadeSystem holds the forced
+        # group (config.run_physics, §9 validator): CascadeSystem holds the forced
         # copy, the flat default is untouched. (The old ctor force-wrote the
         # flat flag globally here, which leaked into every later non-EM run
         # in the same process.)
@@ -95,8 +95,8 @@ class MCEqRun:
         self.theta_deg = theta_deg
 
         # The physics system (database, tables, pman, builder, matrices)
-        # lives in driver/system.py since Phase 6; the keep-list names are
-        # properties below delegating into it.
+        # lives in driver/system.py; the keep-list names are properties
+        # below delegating into it.
         self._system = CascadeSystem(
             interaction_model,
             medium=self.medium,
@@ -109,7 +109,7 @@ class MCEqRun:
         # Initialize solution vector
         self._solution = np.zeros(1)
         # Initial condition (phi0 + restore list + pmodel) lives in
-        # driver/initial_state.py since Phase 6 commit 3
+        # driver/initial_state.py
         self._initial_state = InitialState(self._system)
 
         # Set interaction model and compute grids and matrices
@@ -465,7 +465,7 @@ class MCEqRun:
             'the options are "kinetic energy", "total energy", "total momentum"',
         )
 
-    # --- Phase 6 delegation into CascadeSystem (driver/system.py) ---------
+    # --- Delegation into CascadeSystem (driver/system.py) -----------------
     # The §8.7 keep-list names the physics system owns are properties here,
     # so every attribute access written against the single-class original
     # still resolves. ``int_m``/``dec_m`` are read-write: the batch sweep
@@ -1363,9 +1363,8 @@ class MCEqRun:
     def _em_cascade_dx_cap(self):
         """Cure-B effective dX cap from the EM-cascade stiffness, or np.inf.
 
-        Moved verbatim to :func:`MCEq.solvers.path.em_cascade_dx_cap`
-        (Phase 6 commit 5, D26), then to :func:`MCEq.driver.paths.em_cascade_dx_cap`
-        at M6 (D-4); the memoised stiffness it consumes stays on this class
+        Thin delegator to :func:`MCEq.driver.paths.em_cascade_dx_cap`;
+        the memoised stiffness it consumes stays on this class
         (:meth:`_em_cascade_step_scale`).
         """
         return paths.em_cascade_dx_cap(self, self._em_cascade_step_scale())
@@ -1384,9 +1383,8 @@ class MCEqRun:
     ):
         """Build (or reuse the cache of) the ETD2 integration path.
 
-        Moved verbatim to :func:`MCEq.driver.paths.calculate_integration_path`
-        (Phase 6 commit 5, D26; M6 / D-4 moved the home from solvers to
-        driver); the cache and ``force`` live on this instance, which the
+        Thin delegator to :func:`MCEq.driver.paths.calculate_integration_path`;
+        the cache and ``force`` live on this instance, which the
         function reads and writes as before.
         """
         return paths.calculate_integration_path(

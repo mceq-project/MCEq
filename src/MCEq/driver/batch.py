@@ -1,17 +1,15 @@
 """Batch orchestration: K independent solves, sky grids, multi-RHS.
 
-Moved verbatim from ``MCEq/core.py`` in Phase 6 commit 4 (plan §16). The
-functions take the :class:`MCEqRun` facade as their first argument
+The functions take the :class:`MCEqRun` facade as their first argument
 (``run``) and use it as the orchestrator used to: resolve the secant
 operator set, build paths (``run._calculate_integration_path`` /
-``run._build_condition_paths`` -- the fork pool and the path builder
-followed the planner to ``driver/paths.py`` at M6), run the ETD2
-routes, and wrap results in :class:`MCEq.driver.results.MCEqBatchResult`.
+``run._build_condition_paths`` -- the fork pool and the path builder live
+in ``driver/paths.py``), run the ETD2 routes, and wrap results in
+:class:`MCEq.driver.results.MCEqBatchResult`.
 
-One delta against the pre-split code: the moved bodies call
-``run.solve_batch`` etc. through the facade (monkey-patching the facade
-method still reaches this code). ``solve_fullsky``'s 2-D-phi0 cutoff
-warning uses ``stacklevel=2``: since M7 the facade method is the module
+They call ``run.solve_batch`` etc. through the facade (monkey-patching
+the facade method still reaches this code). ``solve_fullsky``'s 2-D-phi0
+cutoff warning uses ``stacklevel=2``: the facade method is the module
 function itself (a direct binding, no delegator frame between the caller
 and here).
 """

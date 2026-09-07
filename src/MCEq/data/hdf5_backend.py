@@ -32,8 +32,8 @@ class HDF5Backend:
     and it will change infrequently.
 
     ``paths``, ``grid``, ``physics`` and ``em`` are the settings groups this
-    backend reads from; all four are required, injected by the driver (Phase 6
-    commit 7 killed the ``None`` fallbacks to live config). The medium
+    backend reads from; all four are required, injected by the driver --
+    there is no fallback to live config. The medium
     fallback (``medium=None`` -> ``physics.interaction_medium``) resolves
     against the injected group, not against config.
     """

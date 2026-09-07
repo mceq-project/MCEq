@@ -6,10 +6,8 @@ table interfaces, the cross-section set, the particle manager, the matrix
 builder, and the two assembled matrices ``int_m`` / ``dec_m``. Everything
 physics-side lives here; the solution vectors, the initial condition and its
 restore-replay, geometry and solve orchestration stay on the facade. The
-bodies here are the originals from ``MCEq/core.py``, moved verbatim in
-Phase 6 commit 2 (plan §16); the two splits (skip-check and resize/rebuild
-tail of the model-loading ladder) are documented on
-:meth:`reload_for_model`.
+the two splits of the original model-loading ladder (skip-check and
+resize/rebuild tail) are documented on :meth:`reload_for_model`.
 
 No reference from here back to the facade, on purpose: the
 restore-replay list stores facade method *names*, not bound methods (PR

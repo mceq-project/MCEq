@@ -53,7 +53,7 @@ class Interactions:
         self.channel_overrides = {}
 
     def set_channel_override(self, parent, child, matrix):
-        """Override the yield matrix of one channel (plan §6.1, R2-B).
+        """Override the yield matrix of one channel (R2-B).
 
         ``get_matrix`` returns *matrix* for this channel from now on,
         across ``load``/``set_interaction_model`` reloads, so
@@ -256,8 +256,8 @@ class Interactions:
             # Add the same mod to the isospin symmetric particle combination
             mpli[(symm_pdg, -sec_pdg)][("isospin", args)] = kmat
 
-            # R3 (Phase 4) deletes the unflavoured (221/223/333) coupling that
-            # used to sit here: its guard tested bare ints against the
+            # R3 deletes the unflavoured (221/223/333) coupling that used to
+            # sit here: its guard tested bare ints against the
             # (pdg, helicity) keys of ``self.parents``, so it never fired --
             # and no shipped database carries those ids anyway, so "fixing"
             # the comparison would have written six dead keys for no physics.
@@ -335,7 +335,7 @@ class Interactions:
         else:
             m = self.index_d[(parent, child)]
 
-        # R3 (Phase 4) deletes the `disable_leading_mesons` veto with its
+        # R3 deletes the `disable_leading_mesons` veto with its
         # `ie = 50` window here: since the index gained helicity the guard
         # `abs(child) < 2000` raises TypeError on the (pdg, hel) tuple before
         # the window is ever read, so the feature has been dead for as long as

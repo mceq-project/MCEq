@@ -1,6 +1,6 @@
 """Compat shim: the Hankel transform moved to ``MCEq.driver.results``.
 
-Kept as the permanent-ish re-export per plan §8.6; ``MCEq.hankel`` stays
+Kept as the permanent-ish re-export (§8.6); ``MCEq.hankel`` stays
 importable for user code until Phase 7 deletes the flat shims (D6).
 """
 

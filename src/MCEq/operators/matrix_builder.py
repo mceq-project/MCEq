@@ -27,7 +27,7 @@ into the two constant sparse matrices ``int_m`` and ``dec_m`` that
 
 ``int_m`` is also available split in two, as
 :attr:`MatrixBuilder.int_m_hadr` + :attr:`MatrixBuilder.dEdx_band`, which the
-block-ETD research item (plan §7 R3) needs. Both halves are assembled lazily
+block-ETD research item (R3) needs. Both halves are assembled lazily
 from what the accumulation stashed as it ran -- ``int_m`` is never recomputed
 from them, so it stays bitwise what it was, and the hot path pays one dense
 block copy per species carrying losses.
@@ -61,7 +61,7 @@ class MatrixBuilder:
 
     ``grid``, ``losses`` and ``physics`` are the settings groups this builder
     reads (see the module docstring); they are required, injected by the
-    driver (Phase 6 commit 7 killed the ``None`` fallbacks to live config).
+    driver -- there is no fallback to live config.
     """
 
     def __init__(self, pman, layout, *, grid, losses, physics):

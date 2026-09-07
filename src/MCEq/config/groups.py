@@ -86,8 +86,8 @@ class GroupView:
         Overridden fields return the pinned value; every other field stays
         a live read of the flat namespace, exactly as on the base view.
         The copy refuses writes, so a corrected copy can never leak back
-        into the flat config. This is the mechanism behind the plan §9
-        validator (``enable_em`` forces an unpolarized copy for one run
+        into the flat config. This is the mechanism behind the
+        ``run_physics`` validator (``enable_em`` forces an unpolarized copy for one run
         without touching the defaults).
         """
         fields = object.__getattribute__(self, "_fields")

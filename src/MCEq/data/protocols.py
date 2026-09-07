@@ -1,4 +1,4 @@
-"""Structural types shared by the channel-table classes (plan §6.1, R2).
+"""Structural types shared by the channel-table classes (R2).
 
 A *channel table* is any object the species layer can wire itself from:
 it exposes the parent list, the parent→children relations, and a matrix

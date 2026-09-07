@@ -4,12 +4,11 @@
 from — the machinery behind ``MCEqRun.set_primary_model`` /
 ``set_single_primary_particle`` / ``set_initial_spectrum`` /
 ``initial_state()`` — and owns the restore list whose *method names* the
-facade replays after every species-dimension change (PR #163: names,
-never bound methods). Bodies moved verbatim from ``MCEq/core.py`` in
-Phase 6 commit 3 (plan §16); deltas: the pman/energy-grid reads route
-through the system, ``_phi0`` is ``phi0`` here, and the resize of the
-composition vector is :meth:`resize` (driven by the facade, which zeroes
-its own ``_solution`` and replays the list).
+facade replays after every species-dimension change (names, never bound
+methods). The pman/energy-grid reads route through the system, ``_phi0``
+is ``phi0`` here, and the resize of the composition vector is
+:meth:`resize` (driven by the facade, which zeroes its own ``_solution``
+and replays the list).
 
 Reads the physics system (pman, energy grid) but never the facade.
 """

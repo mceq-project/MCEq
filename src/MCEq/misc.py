@@ -27,7 +27,7 @@ def _views():
 
 #: Names that moved into the :mod:`MCEq.data` package and stay reachable here,
 #: each mapped to the submodule that owns it now.
-#: A D14 compat shim (plan section 8.6): `misc` is C1's bottom layer, so a
+#: A D14 compat shim: `misc` is C1's bottom layer, so a
 #: top-of-file re-export would invert `util -> data`; the names are fetched on
 #: demand instead, and C1's ledger carries the edges that creates. Phase 7
 #: deletes all of it.

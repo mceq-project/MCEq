@@ -181,8 +181,8 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
     ``particles`` are the cascade species, read for ``is_em`` and for the
     ``lidx``/``uidx`` of those that are. Those offsets index one ``dim_states``
     block, so on the ``(n_k * dim_states)`` operator the 2D assembly stitches
-    this reads Hankel mode 0 alone — pinned in ``tests/test_operators_pin.py``,
-    and made ``n_k``-aware in Phase 6.
+    this reads Hankel mode 0 alone — pinned in ``tests/test_operators_pin.py``
+    for the ``n_k``-extended operator too.
     """
     col_ranges = [
         np.arange(p.lidx, p.uidx) for p in particles if getattr(p, "is_em", False)

@@ -1,8 +1,7 @@
 """The energy grid: the grid tuple, the cut evaluation and the x_lab matrix.
 
-Moved verbatim out of :mod:`MCEq.misc`, which is C1's bottom layer and therefore
-the wrong home for a data-layer table (plan section 1, ``data/energy_grid.py``).
-:mod:`MCEq.misc` keeps a read/write forwarding shim for the three names so user
+:mod:`MCEq.misc` (C1's bottom layer, the wrong home for a data-layer
+table) keeps a read/write forwarding shim for the three names so user
 code and the bug pins keep resolving them there.
 
 Two deliberate non-changes, both of which the plan asks for eventually and

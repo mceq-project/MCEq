@@ -1,7 +1,7 @@
 """``MCEqParticle``: one particle's properties, channels, and rates.
 
-Moved verbatim from the flat ``MCEq.particlemanager`` (§13.2 item 6). The class
-reads the shared table through :mod:`MCEq.species.constants` and its settings
+One particle's bookkeeping, the species layer's counterpart to the manager.
+Reads the shared table through :mod:`MCEq.species.constants` and its settings
 from the injected physics group; the function-local ``config`` fallback in
 ``__init__`` is unchanged and carries the C5 ledger line.
 """
@@ -186,7 +186,7 @@ class MCEqParticle:
         self._apply_force_resonance()
 
     def _set_channels(self, channel_table, pmanager, child_keys, keep_tracking=False):
-        """One wiring routine for every channel table (plan §6.1, R2-A).
+        """One wiring routine for every channel table.
 
         ``channel_table`` is a ``MCEq.data.protocols.ChannelTable``:
         the child keys of this particle are remapped to particle-manager

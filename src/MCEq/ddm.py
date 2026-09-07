@@ -1,6 +1,6 @@
 """Compat shim: the DDM moved to :mod:`MCEq.models.ddm.ddm`.
 
-Phase 4 (§13.2 item 7) moved it under ``models``. ``MCEq.ddm`` stays as the
+``MCEq.ddm`` stays as the
 entry point the surface test pins and ``MCEq.core`` reaches through, and it is
 also how existing user code imports the model. Phase 7 deletes the shim (D14).
 
