@@ -1124,105 +1124,6 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
-    def solve_batch(
-        self,
-        phi0=None,
-        conditions=None,
-        int_grid=None,
-        grid_var="X",
-        *,
-        dtype=np.float64,
-        carousel_K=None,
-        path_workers=0,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-    ):
-        """Solve K independent cascade problems in one batched call.
-
-        Moved verbatim to :func:`MCEq.driver.batch.solve_batch` (Phase 6
-        commit 4); signature, semantics and the returned
-        :class:`MCEqBatchResult` are unchanged — see the function docstring
-        there for the full contract (conditions/paths/carousel/dtype).
-        """
-        return batch.solve_batch(
-            self,
-            phi0,
-            conditions,
-            int_grid,
-            grid_var,
-            dtype=dtype,
-            carousel_K=carousel_K,
-            path_workers=path_workers,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-        )
-
-    def solve_multirhs(
-        self,
-        phi0_matrix,
-        int_grid=None,
-        grid_var="X",
-        *,
-        dtype=np.float64,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-    ):
-        """Deprecated thin wrapper over :meth:`solve_batch`.
-
-        Moved verbatim to :func:`MCEq.driver.batch.solve_multirhs` (Phase 6
-        commit 4); deprecated in favour of :meth:`solve_batch` there.
-        """
-        return batch.solve_multirhs(
-            self,
-            phi0_matrix,
-            int_grid,
-            grid_var,
-            dtype=dtype,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-        )
-
-    def _build_condition_paths(
-        self,
-        conditions,
-        *,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-        path_workers=0,
-    ):
-        """Build one ETD2 integration path per batch condition.
-
-        Moved verbatim to :func:`MCEq.driver.paths.build_condition_paths`
-        (Phase 6 commit 5, D26; M6 / D-4 moved the home from solvers to
-        driver); the contract (dedup, restore, fork pool) is documented
-        there.
-        """
-        return paths.build_condition_paths(
-            self,
-            conditions,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-            path_workers=path_workers,
-        )
-
     def _is_geomag_eligible_atmosphere(self):
         """True if the active atmosphere has a meaningful geographic location.
 
@@ -1249,48 +1150,17 @@ class MCEqRun:
         loc = getattr(dm, "location", None)
         return isinstance(loc, str) and loc in LOCATIONS
 
-    def solve_fullsky(
-        self,
-        zenith_grid,
-        azimuth_grid=None,
-        phi0=None,
-        *,
-        carousel_K=None,
-        dtype=np.float64,
-        X_start=None,
-        eps=None,
-        dX_max=None,
-        dX_min=None,
-        fd_span=None,
-        return_pixel_index=False,
-        path_workers=0,
-        geomagnetic_cutoff=None,
-        cutoff_kwargs=None,
-    ):
-        """Propagate phi0 through every (zenith, azimuth) pixel of a sky grid.
-
-        Moved verbatim to :func:`MCEq.driver.batch.solve_fullsky` (Phase 6
-        commit 4); semantics unchanged (contract there). The 2-D-phi0
-        cutoff warning raises with ``stacklevel=3`` so the warning location
-        still points at user code through this delegator.
-        """
-        return batch.solve_fullsky(
-            self,
-            zenith_grid,
-            azimuth_grid,
-            phi0,
-            carousel_K=carousel_K,
-            dtype=dtype,
-            X_start=X_start,
-            eps=eps,
-            dX_max=dX_max,
-            dX_min=dX_min,
-            fd_span=fd_span,
-            return_pixel_index=return_pixel_index,
-            path_workers=path_workers,
-            geomagnetic_cutoff=geomagnetic_cutoff,
-            cutoff_kwargs=cutoff_kwargs,
-        )
+    # Batch surface: direct bindings of the module functions (M7). The
+    # Phase-6 delegators are gone -- a plain ``solve_batch = batch.solve_batch``
+    # keeps the public method surface identical (docs automodapi, monkeypatch
+    # via the class, subclass calls all unchanged) while dropping ~120 lines
+    # of pass-through prose; the full contract lives in the module docstrings.
+    # The first parameter of each function is named ``run`` precisely so that
+    # this binding reads as the method.
+    solve_batch = batch.solve_batch
+    solve_multirhs = batch.solve_multirhs
+    solve_fullsky = batch.solve_fullsky
+    _build_condition_paths = paths.build_condition_paths
 
     def _resolve_secant(self):
         """The sec(theta) operator set for a solve, or ``None`` for the

@@ -568,8 +568,9 @@ def test_solve_multirhs_dtype_float32():
         K = 4
         phi0_multi = np.stack([s * phi0 for s in rng.uniform(0.5, 1.5, K)], axis=1)
 
-        sol_f64, _ = mceq.solve_multirhs(phi0_multi)
-        sol_f32, _ = mceq.solve_multirhs(phi0_multi, dtype=np.float32)
+        with pytest.warns(DeprecationWarning, match="solve_batch"):
+            sol_f64, _ = mceq.solve_multirhs(phi0_multi)
+            sol_f32, _ = mceq.solve_multirhs(phi0_multi, dtype=np.float32)
         assert sol_f64.dtype == np.float64
         assert sol_f32.dtype == np.float32
 
@@ -1806,9 +1807,9 @@ def test_solve_fullsky_2d_phi0_tiled_matches_1d(mceq_sib21):
         K = zenith_grid.size
         phi0_1d = mceq_sib21._phi0.copy()
 
-        sol_1d, _ = mceq_sib21.solve_fullsky(zenith_grid)
+        sol_1d = mceq_sib21.solve_fullsky(zenith_grid).sol
         phi0_2d = np.broadcast_to(phi0_1d[:, None], (mceq_sib21.dim_states, K)).copy()
-        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
+        sol_2d = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d).sol
 
         assert sol_2d.shape == sol_1d.shape
         np.testing.assert_allclose(sol_2d, sol_1d, rtol=0, atol=0)
@@ -1839,12 +1840,12 @@ def test_solve_fullsky_2d_phi0_per_pixel_matches_serial(mceq_sib21):
             mask[:cut] = 0.0
             phi0_2d[:, k] = scale * mask * phi0_base
 
-        sol_2d, _ = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d)
+        sol_2d = mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d).sol
 
         for k in range(K):
-            sol_k, _ = mceq_sib21.solve_fullsky(
+            sol_k = mceq_sib21.solve_fullsky(
                 zenith_grid[k : k + 1], phi0=phi0_2d[:, k].copy()
-            )
+            ).sol
             np.testing.assert_allclose(sol_2d[:, k], sol_k[:, 0], rtol=1e-12, atol=0)
     finally:
         config.kernel_config = saved_kernel
@@ -1867,12 +1868,12 @@ def test_solve_fullsky_2d_phi0_carousel_K_invariant(mceq_sib21):
             * rng.uniform(0.5, 2.0, size=K).astype(np.float64)[None, :]
         )
 
-        sol_single, _ = mceq_sib21.solve_fullsky(
+        sol_single = mceq_sib21.solve_fullsky(
             zenith_grid, phi0=phi0_2d, carousel_K=1
-        )
-        sol_pipelined, _ = mceq_sib21.solve_fullsky(
+        ).sol
+        sol_pipelined = mceq_sib21.solve_fullsky(
             zenith_grid, phi0=phi0_2d, carousel_K=3
-        )
+        ).sol
         np.testing.assert_allclose(sol_pipelined, sol_single, rtol=1e-12, atol=0)
     finally:
         config.kernel_config = saved_kernel
@@ -2093,10 +2094,9 @@ def test_solve_batch_shared_matches_solve(mceq_sib21):
 
         res = mceq_sib21.solve_batch(phi0_multi, int_grid=int_grid)
 
-        # Legacy tuple unpacking
-        sol, grid_sol = res
-        assert sol is res.sol
-        assert grid_sol is res.grid_sol
+        # M7: no legacy tuple unpacking; attributes and shared_path flag
+        sol, grid_sol = res.sol, res.grid_sol
+        assert res.shared_path
         assert sol.shape == (mceq_sib21.dim_states, 3)
         assert grid_sol.shape == (len(int_grid), mceq_sib21.dim_states, 3)
         assert np.all(res.nsteps_per_col == res.nsteps_per_col[0])
@@ -2129,9 +2129,9 @@ def test_solve_batch_conditions_matches_fullsky(mceq_sib21):
         conditions = [{"zenith_deg": float(z)} for z in zenith_grid]
 
         res_batch = mceq_sib21.solve_batch(conditions=conditions)
-        res_sky, _ = mceq_sib21.solve_fullsky(zenith_grid)
+        res_sky = mceq_sib21.solve_fullsky(zenith_grid)
 
-        np.testing.assert_allclose(res_batch.sol, res_sky, rtol=0, atol=0)
+        np.testing.assert_allclose(res_batch.sol, res_sky.sol, rtol=0, atol=0)
         np.testing.assert_array_equal(
             res_batch.nsteps_per_col, res_batch.nsteps_per_col
         )
@@ -2158,9 +2158,10 @@ def test_solve_batch_duplicate_conditions_use_shared_route(mceq_sib21):
             conditions=[{"zenith_deg": 45.0}, {"zenith_deg": 45.0}],
         )
         assert np.array_equal(res_none.sol, res_dup.sol)
-        # Shared route is detectable through the legacy tuple layout:
-        # (sol, grid_sol) instead of (sol, nsteps_per_col).
-        assert res_dup._legacy[1] is res_dup.grid_sol
+        # The shared route is detectable through the flag: conditions
+        # deduplicated to one direction == one shared path tuple.
+        assert res_dup.shared_path
+        assert res_none.shared_path
     finally:
         config.kernel_config = saved_kernel
         mceq_sib21.set_zenith_azimuth(0.0)
@@ -2389,13 +2390,15 @@ def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
         phi0_base = mceq_sib21.get_initial_state()
         phi0_multi = np.stack([phi0_base, 0.5 * phi0_base], axis=1)
 
-        sol_a, grid_a = mceq_sib21.solve_multirhs(phi0_multi)
+        with pytest.warns(DeprecationWarning, match="solve_batch"):
+            sol_a, grid_a = mceq_sib21.solve_multirhs(phi0_multi)
         res = mceq_sib21.solve_batch(phi0_multi)
         assert isinstance(sol_a, np.ndarray)
         assert np.array_equal(sol_a, res.sol)
 
-        with pytest.raises(ValueError, match="must be 2-D"):
-            mceq_sib21.solve_multirhs(phi0_base)
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(ValueError, match="must be 2-D"):
+                mceq_sib21.solve_multirhs(phi0_base)
     finally:
         config.kernel_config = saved_kernel
 

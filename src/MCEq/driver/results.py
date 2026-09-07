@@ -23,12 +23,6 @@ class MCEqBatchResult:
     with exactly the same particle-name semantics as
     :meth:`MCEqRun.get_solution`.
 
-    For backwards compatibility the object also unpacks like the legacy
-    return tuple of the method that produced it, e.g.::
-
-        sol, nsteps_per_col = mceq.solve_fullsky(zen_grid, az_grid)
-        sol, grid_sol = mceq.solve_batch(phi0_matrix)
-
     Attributes:
       sol (np.ndarray[dim_states, K]): final state, one column per batch
         member.
@@ -36,6 +30,10 @@ class MCEqBatchResult:
         snapshots when ``int_grid`` was requested (shared-path batches
         only), else ``None``.
       nsteps_per_col (np.ndarray[K] | None): integration steps per column.
+      shared_path (bool): True when every column solved through one path
+        tuple — the multi-RHS route, the condition list deduplicated to a
+        single direction. ``grid_sol`` is only ever non-``None`` on such
+        results.
       conditions (list | None): the per-column conditions passed to
         :meth:`MCEqRun.solve_batch`, if any.
       pixel_index (np.ndarray[K, 2] | None): ``(i_zen, i_az)`` per column
@@ -62,7 +60,7 @@ class MCEqBatchResult:
         pixel_index=None,
         zenith_grid=None,
         azimuth_grid=None,
-        legacy_tuple=None,
+        shared_path=None,
     ):
         self._mceq = mceq
         self.sol = sol
@@ -73,12 +71,17 @@ class MCEqBatchResult:
         self.pixel_index = pixel_index
         self.zenith_grid = zenith_grid
         self.azimuth_grid = azimuth_grid
-        self._legacy = tuple(legacy_tuple) if legacy_tuple is not None else (sol,)
+        self._shared_path = None if shared_path is None else bool(shared_path)
 
     @property
     def K(self):
         """Number of batch members (columns)."""
         return self.sol.shape[1]
+
+    @property
+    def shared_path(self):
+        """True if all columns solved through one shared path tuple."""
+        return self._shared_path
 
     @property
     def n_azimuth(self):
@@ -244,16 +247,6 @@ class MCEqBatchResult:
             i_zen, i_az = divmod(k, self.n_azimuth)
             flux[i_zen, i_az] = (1.0 - w) * f[i_lo] + w * f[i_hi]
         return flux
-
-    # Legacy tuple compatibility -------------------------------------
-    def __iter__(self):
-        return iter(self._legacy)
-
-    def __len__(self):
-        return len(self._legacy)
-
-    def __getitem__(self, item):
-        return self._legacy[item]
 
     def __repr__(self):
         parts = [f"K={self.sol.shape[1]}"]

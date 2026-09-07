@@ -5,14 +5,15 @@ functions take the :class:`MCEqRun` facade as their first argument
 (``run``) and use it as the orchestrator used to: resolve the secant
 operator set, build paths (``run._calculate_integration_path`` /
 ``run._build_condition_paths`` -- the fork pool and the path builder
-follow the planner to ``solvers/path.py`` in commit 5), run the ETD2
+followed the planner to ``driver/paths.py`` at M6), run the ETD2
 routes, and wrap results in :class:`MCEq.driver.results.MCEqBatchResult`.
 
-Two deltas against the pre-split code, both recorded on the delegators in
-``core.py``: the moved bodies call ``run.solve_batch`` etc. through the
-facade (monkey-patching the facade method still reaches this code), and
-``solve_fullsky``'s 2-D-phi0 cutoff warning raises ``stacklevel=3`` so it
-still points at the user's call through the delegator.
+One delta against the pre-split code: the moved bodies call
+``run.solve_batch`` etc. through the facade (monkey-patching the facade
+method still reaches this code). ``solve_fullsky``'s 2-D-phi0 cutoff
+warning uses ``stacklevel=2``: since M7 the facade method is the module
+function itself (a direct binding, no delegator frame between the caller
+and here).
 """
 
 from time import time
@@ -122,8 +123,9 @@ def solve_batch(
 
     Returns:
       :class:`MCEqBatchResult`: final states plus per-column
-      named-spectrum extraction. Also unpacks as the legacy
-      ``(sol, grid_sol)`` pair.
+      named-spectrum extraction. The result no longer unpacks as the
+      old ``(sol, grid_sol)`` tuple (M7); read ``res.sol`` /
+      ``res.grid_sol``.
     """
     dtype = np.dtype(dtype)
     if dtype not in (np.float32, np.float64):
@@ -232,7 +234,6 @@ def solve_batch(
             dtype=dtype,
             sec_ops=sec_ops,
         )
-        legacy = (sol, grid_sol)
     else:
         from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
@@ -260,7 +261,6 @@ def solve_batch(
             sec_ops=sec_ops,
         )
         grid_sol = None
-        legacy = (sol, nsteps_per_col)
 
     info(2, f"solve_batch: total wall {time() - start:.2f}s")
 
@@ -271,7 +271,7 @@ def solve_batch(
         int_grid=int_grid,
         nsteps_per_col=nsteps_per_col,
         conditions=conditions,
-        legacy_tuple=legacy,
+        shared_path=shared,
     )
 
 
@@ -308,6 +308,14 @@ def solve_multirhs(
       (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
       final state matrix and stacked snapshots.
     """
+    import warnings
+
+    warnings.warn(
+        "solve_multirhs is deprecated; use solve_batch (same shared-path "
+        "route when conditions=None) and read res.sol / res.grid_sol.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     phi0_matrix = np.asarray(phi0_matrix)
     if phi0_matrix.ndim != 2:
         raise ValueError(
@@ -385,8 +393,9 @@ def solve_fullsky(
         :class:`MCEqBatchResult` — final state per pixel
         ``(dim_states, K)`` plus the sky grid, with per-pixel
         named-spectrum extraction (:meth:`MCEqBatchResult.get_solution`,
-        :meth:`MCEqBatchResult.skymap`). Also unpacks as the legacy
-        ``(sol, nsteps_per_col[, pixel_index])`` tuple.
+        :meth:`MCEqBatchResult.skymap`). The result no longer unpacks as
+        the old ``(sol, nsteps_per_col[, pixel_index])`` tuple (M7);
+        read the attributes.
     """
     info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
     start = time()
@@ -456,7 +465,7 @@ def solve_fullsky(
             "primary spectrum). Bake the cutoff into phi0 with "
             "MCEq.geometry.gtracr_cutoff.build_phi0_with_cutoff, or "
             "pass geomagnetic_cutoff=False to silence this warning.",
-            stacklevel=3,
+            stacklevel=2,
         )
     if cutoff_flag and not phi0_is_2d:
         from MCEq.environment.geomagnetic.cutoff import (
@@ -525,15 +534,10 @@ def solve_fullsky(
         fd_span=fd_span,
     )
 
-    # Decorate the batch result with the sky-grid metadata and the
-    # legacy solve_fullsky return tuple.
+    # Decorate the batch result with the sky-grid metadata.
     res.pixel_index = pixel_index
     res.zenith_grid = zenith_grid
     res.azimuth_grid = azimuth_grid
-    if return_pixel_index:
-        res._legacy = (res.sol, res.nsteps_per_col, pixel_index)
-    else:
-        res._legacy = (res.sol, res.nsteps_per_col)
 
     info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
     return res
