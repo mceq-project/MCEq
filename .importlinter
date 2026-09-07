@@ -54,7 +54,7 @@ layers =
     species
     data
     config
-    misc : (util)
+    misc : mkl_runtime : (util)
 exhaustive = True
 exhaustive_ignores =
 # environment; sits beside the stack, constrained by C2 and C3 instead.
@@ -255,10 +255,9 @@ forbidden_modules =
     MCEq.config
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# solvers/backends/mkl.py:18 `config._load_mkl()` / `config.mkl` -- the MKL
-# runtime extraction (dlopen moves into this module, detection into
-# config/detect.py) removes it.
-    MCEq.solvers.backends.mkl -> MCEq.config
+# C5 ledger empty as of M4 (mkl dlopen moved to MCEq.mkl_runtime, a bottom
+# layer importable by both config and the MKL backend). Keep the key with an
+# empty value: unmatched_ignore_imports_alerting stays armed for re-adds.
 # (line removed, Phase 6 commit 12: ensure_db_available now takes its config
 # as a required argument -- the driver passes the run config, direct callers
 # pass the module. data/download.py imports no config at all, and the

@@ -15,7 +15,7 @@ from ctypes import POINTER, Structure, c_double, c_float, c_int
 import numpy as np
 import scipy.sparse as sp
 
-from MCEq import config
+from MCEq import mkl_runtime
 from MCEq.solvers.backends.base import _state_dtype
 from MCEq.solvers.backends.host import HostBackend
 
@@ -138,7 +138,7 @@ class MklSparseMatrix:
     def __init__(self, csr, expected_calls=200, dtype=np.float64):
         from ctypes import byref, c_int, c_void_p
 
-        config._load_mkl()
+        mkl_runtime.load()
         if not sp.isspmatrix_csr(csr):
             raise TypeError(
                 f"MklSparseMatrix expects a CSR matrix, got {type(csr).__name__}"
@@ -156,7 +156,7 @@ class MklSparseMatrix:
         n_orig = csr.shape[0]
         self.n_cols = csr.shape[1]
 
-        mkl = config.mkl
+        mkl = mkl_runtime.lib()
         self._mkl = mkl
         _set_mkl_argtypes(mkl)
         self._mv = getattr(mkl, f"mkl_sparse_{prec}_mv")

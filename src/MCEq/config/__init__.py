@@ -5,6 +5,7 @@ import sys
 import warnings
 
 from MCEq import base_path
+from MCEq import mkl_runtime as _mkl_runtime
 
 from . import detect
 
@@ -454,8 +455,12 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: real module attribute, so the cost is paid once and later reads are ordinary
 #: attribute lookups.
 
-#: ``libmkl_rt`` handle, populated by :func:`_load_mkl`.
-mkl = None
+#: ``libmkl_rt`` handle. Since M4 the memo lives in
+#: :mod:`MCEq.mkl_runtime` (one owner below config, shared by the MKL
+#: backend and :func:`set_mkl_threads`); ``config.mkl`` is a read-only view
+#: of it, served by the module ``__getattr__`` below, and there is
+#: deliberately no module global to shadow that view.
+_mkl_runtime.set_resolver(lambda: detect.has_mkl(), detect.mkl_library_path)
 
 _LAZY = {
     "has_mkl": lambda: detect.has_mkl(),
@@ -469,6 +474,10 @@ _LAZY = {
 
 
 def __getattr__(name):
+    if name == "mkl":
+        # read-only view of the runtime memo: never loads (the golden
+        # harness pins that describing a process must not change it)
+        return _mkl_runtime.lib()
     probe = _LAZY.get(name)
     if probe is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -482,26 +491,16 @@ def __dir__():
 
 
 def _load_mkl():
-    """Lazily load ``libmkl_rt`` exactly once and cache it on ``mkl``.
+    """Lazily load ``libmkl_rt`` exactly once (compat entry point, M4).
 
-    Splitting the load from :func:`set_mkl_threads` is important:
-    ``MklSparseMatrix`` instances pin their own reference to the cdll
-    handle, so re-loading the library on every thread-count change
-    (the previous behaviour) would leave already-built wrappers tied
-    to a stale ``cdll`` while the global ``mkl`` pointed at a fresh
-    one — a subtle source of cross-handle bugs. By keeping the global
-    pinned to a single cdll for the lifetime of the process we ensure
-    every wrapper sees the same symbol table.
+    The memo lives in :mod:`MCEq.mkl_runtime`; the single-handle rule that
+    motivated splitting the load from :func:`set_mkl_threads` — every
+    ``MklSparseMatrix`` wrapper must see one symbol table for the process
+    lifetime — moved with it. Kept as the name user code (and
+    ``tests/test_config.py``) already reaches; the load-path pin test
+    retargeted to the new owner.
     """
-    global mkl
-    if mkl is not None or not detect.has_mkl():
-        return
-    from ctypes import cdll
-
-    # ``os.fspath`` is not optional: ``CDLL.__init__`` only calls it itself
-    # from CPython 3.12, and its Windows branch does ``'/' in name`` first,
-    # which raises TypeError on a Path under 3.10/3.11.
-    mkl = cdll.LoadLibrary(os.fspath(detect.mkl_library_path()))
+    return _mkl_runtime.load()
 
 
 #: Environment variables every BLAS MCEq can reach reads when it loads.
@@ -547,10 +546,11 @@ def set_mkl_threads(nthreads):
     global mkl_threads
     from ctypes import byref, c_int
 
-    _load_mkl()
+    _mkl_runtime.load()
     mkl_threads = nthreads
-    if mkl is not None:
-        mkl.mkl_set_num_threads(byref(c_int(nthreads)))
+    lib = _mkl_runtime.lib()
+    if lib is not None:
+        lib.mkl_set_num_threads(byref(c_int(nthreads)))
     global _blas_limiter
     _publish_thread_env(nthreads)
 

@@ -176,6 +176,7 @@ GROUPS = {
         "cuda_gpu_id": "cuda_gpu_id",
         "cuda_fp_precision": "cuda_fp_precision",
         "mkl_threads": "mkl_threads",
+        "mkl_path": "mkl_path",
     },
     "output": {
         "return_as": "return_as",
