@@ -96,7 +96,7 @@ only `MCEq.core` as the import façade stays permanently).
 | `MCEq.ddm` | `MCEq.models.ddm.ddm` | removed at 2.0 |
 | `MCEq.ddm_utils` | `MCEq.models.ddm.ddm_utils` | removed at 2.0 |
 | `MCEq.download` | `MCEq.data.download` | removed at 2.0 |
-| `MCEq.etd2_kernels` | `MCEq.solvers._kernels (M11)` | removed at 2.0 |
+| `MCEq.etd2_kernels` | `MCEq.solvers._kernels.etd2` | old name gone (private module) |
 | `MCEq.geometry.EarthsAtmosphere` | `MCEq.environment.base.EarthsAtmosphere` | removed at 2.0 |
 | `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | removed at 2.0 |
 | `MCEq.geometry.column` | `MCEq.environment.column` | removed at 2.0 |

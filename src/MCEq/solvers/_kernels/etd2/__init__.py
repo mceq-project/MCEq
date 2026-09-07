@@ -32,7 +32,7 @@ for _fn in os.listdir(_base):
         break
 if _lib is None:
     raise ImportError(
-        "MCEq.etd2_kernels: failed to find compiled libetd2_kernels"
+        "MCEq.solvers._kernels.etd2: failed to find compiled libetd2_kernels"
         f"{_suffix} in {_base}. The build step did not produce the "
         "shared library; re-run ``pip install -e .`` or check the "
         "etd2_kernels CMake target."

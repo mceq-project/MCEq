@@ -19,7 +19,7 @@ This module is the single source of those formulas, lowered three ways:
 * numpy, here -- :func:`phi_factors`, :func:`diagonal_factors` -- serving
   :class:`MCEq.solvers.backends.host.HostBackend` and through it MKL and
   Accelerate;
-* C, ``MCEq/etd2_kernels/etd2_kernels.c``, which carries
+* C, ``MCEq/solvers/_kernels/etd2/etd2_kernels.c``, which carries
   :data:`PREDICTOR_EXPR` and :data:`CORRECTOR_EXPR` verbatim as its
   ``ETD2_PREDICT`` / ``ETD2_CORRECT`` macros;
 * cupy, :func:`MCEq.solvers.backends.cuda._build_cuda_etd2_kernels`, whose

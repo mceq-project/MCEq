@@ -7,7 +7,7 @@ off-diagonal SpMM to an ``apply_off`` binding -- scipy in
 :mod:`MCEq.solvers.backends.mkl`, Apple Accelerate in
 :mod:`MCEq.solvers.backends.accelerate`. The factor stages are the numpy
 lowering of :mod:`MCEq.solvers.numerics`; the predictor and the corrector are
-its C lowering, :mod:`MCEq.etd2_kernels`, at both precisions and every
+its C lowering, :mod:`MCEq.solvers._kernels.etd2`, at both precisions and every
 problem size.
 
 Stage code shared by all three host bindings belongs here; a binding's own
@@ -33,7 +33,7 @@ _C_POINTER = {np.float64: POINTER(c_double), np.float32: POINTER(c_float)}
 
 
 def _fused_stages(dtype):
-    """The C predictor / corrector of :mod:`MCEq.etd2_kernels` at ``dtype``,
+    """The C predictor / corrector of :mod:`MCEq.solvers._kernels.etd2` at ``dtype``,
     or ``None`` when the extension is not built.
 
     Imported on demand rather than at module level: importing
@@ -44,7 +44,7 @@ def _fused_stages(dtype):
     ``test_c_stages_match_numpy_lowering`` pins.
     """
     try:
-        from MCEq.etd2_kernels import (
+        from MCEq.solvers._kernels.etd2 import (
             etd2_corrector_f32,
             etd2_corrector_f64,
             etd2_predictor_f32,

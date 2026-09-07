@@ -60,7 +60,7 @@ IMPORT_TABLE = [
     ("MCEq.hankel", "MCEq.driver.results.inverse_hankel_legacy", "shim"),
     ("MCEq.download", "MCEq.data.download", "shim"),
     ("MCEq.spacc", "MCEq.solvers.backends.accelerate", "shim"),
-    ("MCEq.etd2_kernels", "MCEq.solvers._kernels (M11)", "shim"),
+    ("MCEq.etd2_kernels", "MCEq.solvers._kernels.etd2", "moved"),
     ("MCEq.secant", "MCEq.operators.secant", "shim"),
     ("MCEq.operator_assembly", "MCEq.operators.matrix_builder", "shim"),
     ("mceq_config", "MCEq.config", "shim"),
@@ -70,6 +70,7 @@ IMPORT_TABLE = [
 STATUS_NOTE = {
     "facade": "permanent",
     "shim": "removed at 2.0",
+    "moved": "old name gone (private module)",
 }
 
 

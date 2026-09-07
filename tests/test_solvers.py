@@ -124,7 +124,9 @@ def test_step_formula_has_one_source():
     import MCEq
     from MCEq.solvers.numerics import CORRECTOR_EXPR, PREDICTOR_EXPR
 
-    source = Path(MCEq.__file__).parent / "etd2_kernels" / "etd2_kernels.c"
+    source = (
+        Path(MCEq.__file__).parent / "solvers" / "_kernels" / "etd2" / "etd2_kernels.c"
+    )
     if not source.exists():  # installed as a wheel: only the .so is shipped
         pytest.skip(f"{source} is not in this installation")
     text = source.read_text()
@@ -333,7 +335,7 @@ def test_c_stages_match_numpy_lowering(dim, K, per_lane, dtype):
 
     stages = _fused_stages(dtype)
     if stages is None:
-        pytest.skip("MCEq.etd2_kernels is not built")
+        pytest.skip("MCEq.solvers._kernels.etd2 is not built")
     ptr = _C_POINTER[dtype]
     rng = np.random.default_rng(7)
     shape, fshape = (dim, K), ((dim, K) if per_lane else (dim, 1))
@@ -380,7 +382,7 @@ def test_c_stages_match_numpy_lowering(dim, K, per_lane, dtype):
 def test_host_solves_without_the_c_extension(toy_solver_problem, K):
     """An unbuilt source tree falls back to numpy and gets the same answer.
 
-    ``MCEq.etd2_kernels`` is a compiled extension; before the step stages
+    ``MCEq.solvers._kernels.etd2`` is a compiled extension; before the step stages
     moved into it the host backend was pure numpy, and a tree that has not
     been built must not lose the solver entirely. Runs the same solve twice
     in subprocesses, once with the extension blocked at import, and requires
@@ -395,7 +397,7 @@ import sys, numpy as np, scipy.sparse as sp
 if {block!r}:
     class Block:
         def find_spec(self, name, path=None, target=None):
-            if name == "MCEq.etd2_kernels":
+            if name == "MCEq.solvers._kernels.etd2":
                 raise ImportError("extension not built")
             return None
     sys.meta_path.insert(0, Block())

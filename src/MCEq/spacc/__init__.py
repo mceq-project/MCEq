@@ -81,7 +81,7 @@ daxpy = spacc.daxpy
 # (dim, K) (multipath). See spacc.c.
 #
 # These eight bindings have no Python caller: MCEq.solvers.HostBackend runs
-# the row-major fused kernels of MCEq.etd2_kernels on every host backend,
+# the row-major fused kernels of MCEq.solvers._kernels.etd2 on every host backend,
 # Accelerate included. They stay declared here so the Python surface matches
 # the C the shipped libspacc exports; removing both halves is a macOS-side
 # job, since spacc.c can only be rebuilt and benchmarked there.

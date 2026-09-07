@@ -33,7 +33,7 @@ install(TARGETS _libcorsikaatm
 # Platform-neutral fused ETD2 step stages — no sparse-backend deps, builds on
 # every platform. The host backend runs them on every route and precision.
 python_add_library(_libetd2_kernels MODULE
-                   src/MCEq/etd2_kernels/etd2_kernels.c WITH_SOABI)
+                   src/MCEq/solvers/_kernels/etd2/etd2_kernels.c WITH_SOABI)
 # These must produce the same bits as the numpy lowering of the same formula
 # table (MCEq.solvers.numerics), which tests/test_solvers.py pins. Contracting
 # a * b + c into an FMA is a different rounding of the same association, so it
@@ -43,7 +43,7 @@ python_add_library(_libetd2_kernels MODULE
 target_compile_options(
   _libetd2_kernels PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang,IntelLLVM>:-ffp-contract=off>)
-install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/etd2_kernels)
+install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/solvers/_kernels/etd2)
 
 if(APPLE)
   # –– declare and name the extension with the correct SOABI suffix
