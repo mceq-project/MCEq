@@ -8,7 +8,7 @@ keeps the documented tier-2 D3 semantics — live read-through, where a
 post-construction ``config.x = ...`` is seen at the next ``solve()`` —
 which is exactly what every existing caller relies on.
 
-The snapshot holds copies, not views: every settings group is deep-frozen
+The snapshot holds copies, not views: every settings group is deep-copied
 from the resolved values (dict-valued settings deep-copied, so mutating
 ``cfg.physics.filters`` cannot reach the global ``adv_set``), and the
 lazily detected runtime facts are resolved once at snapshot time. The
@@ -38,11 +38,33 @@ def _is_copyable(value):
 class FrozenGroup(SimpleNamespace):
     """A resolved settings group, detached from the live config.
 
+    Detached means deep-copied at snapshot time and **write-refusing**:
+    attribute writes raise, mirroring :class:`RunConfig`, so a frozen
+    group can never silently diverge from its own snapshot. Payloads
+    inside dict-valued fields (``filters``, ``etd2_path``) stay ordinary
+    mutable copies — a snapshot promises no immutability of contents,
+    only of which value a name points at (M5, ruling D-2: detached
+    copies, documented, not immutable payloads).
+
     Carries the one method the driver's §9 validator needs from a group —
     :meth:`with_overrides` — returning another frozen copy, so the
     validator works identically on a live ``GroupView`` and on a snapshot
     group without either type importing the other.
     """
+
+    def __init__(self, **fields):
+        # bypass the write guard below; construction is the only writer
+        self.__dict__.update(fields)
+
+    def __setattr__(self, attr, value):
+        raise AttributeError(
+            f"{attr!r} is read-only: a FrozenGroup is a detached snapshot "
+            "(build a new RunConfig or change the global config before "
+            "construction instead)"
+        )
+
+    def __delattr__(self, attr):
+        raise AttributeError(f"{attr!r} cannot be deleted from a snapshot")
 
     def with_overrides(self, **values):
         unknown = set(values) - set(self.__dict__)

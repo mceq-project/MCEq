@@ -129,6 +129,7 @@ GROUPS = {
         "assume_nucleon_interactions_for_exotics": "assume_nucleon_interactions_for_exotics",
         "fallback_to_air_cs": "fallback_to_air_cs",
         "interaction_medium": "interaction_medium",
+        "A_target": "A_target",
         "filters": "adv_set",
         "low_energy": "low_energy_extension",
     },

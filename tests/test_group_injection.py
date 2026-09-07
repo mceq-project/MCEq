@@ -323,3 +323,93 @@ def test_geometry_follows_the_snapshot_not_later_writes():
         assert m.density_model.geom.h_obs == pytest.approx(1e5)
     finally:
         config.h_obs = 0.0
+
+
+# --- M5: FrozenGroup truthfulness and snapshot coverage ----------------------
+
+
+def test_frozen_group_refuses_attribute_writes():
+    """A snapshot group is as write-refusing as the RunConfig around it.
+
+    M5 (ruling D-2): detached means deep-copied and name-frozen, not
+    payload-immutable — dict fields stay ordinary mutable copies.
+    """
+    snap = RunConfig.snapshot()
+    with pytest.raises(AttributeError, match="read-only"):
+        snap.grid.e_min = 1.0
+    with pytest.raises(AttributeError, match="read-only"):
+        snap.physics.A_target = "water"
+    with pytest.raises(AttributeError):
+        del snap.physics.A_target
+    # with_overrides (the §9 validator's path) still returns a new frozen copy
+    merged = snap.physics.with_overrides(muon_helicity_dependence=False)
+    assert merged.muon_helicity_dependence is False
+    assert snap.physics.muon_helicity_dependence is True
+
+
+#: Public non-callable config names deliberately outside the group system.
+#: Each is a detection fact (already mirrored onto ``RunConfig`` itself),
+#: an import-time constant, or the legacy dict-style compat surface — none
+#: is a runtime setting a snapshot should carry.
+CONFIG_COVERAGE_EXCLUDED = {
+    "GROUP_OF",  # the mapping itself
+    "base_path",  # install-time constant
+    "prefix",  # install-time constant
+    "pf",  # platform string, import-time constant
+    "config",  # legacy dict-style MCEqConfigCompatibility surface
+    "has_mkl",  # detection facts, exposed on RunConfig directly
+    "has_cuda",
+    "has_accelerate",
+    "mkl",  # read-only __getattr__ view of mkl_runtime's memo
+}
+
+
+def test_every_public_config_name_is_in_a_group_or_excluded():
+    """The group system covers the whole public config surface (M5 pin).
+
+    If a new setting is added to ``MCEq.config`` and not to ``GROUPS``,
+    snapshots silently miss it — this test fails instead.
+    """
+    import types
+
+    from MCEq.config.groups import FLAT_TO_GROUP, GroupView
+
+    public = set()
+    for name in dir(config):
+        if name.startswith("_"):
+            continue
+        obj = getattr(config, name)
+        if isinstance(obj, types.ModuleType) or callable(obj):
+            continue
+        if isinstance(obj, GroupView) or name in FLAT_TO_GROUP:
+            continue
+        public.add(name)
+    assert public - CONFIG_COVERAGE_EXCLUDED == set(), (
+        f"config names missing from GROUPS: {sorted(public - CONFIG_COVERAGE_EXCLUDED)}"
+    )
+    # every excluded name really exists (dir() misses __getattr__ views)
+    for name in CONFIG_COVERAGE_EXCLUDED:
+        assert hasattr(config, name)
+
+
+def test_A_target_is_snapshot_borne():
+    """``average_A_target(physics=snap.physics)`` reads the snapshot.
+
+    The global was "auto" everywhere before M5; after the snapshot, a
+    global write must not move a run built from it (D3), while a fresh
+    snapshot still follows the global (live-read semantics for new runs).
+    """
+    from MCEq.misc import average_A_target
+
+    saved = config.A_target
+    try:
+        config.A_target = "water"
+        snap = RunConfig.snapshot()
+        assert snap.physics.A_target == "water"
+        assert average_A_target(physics=snap.physics) == 6.0
+        config.A_target = "iron"
+        assert average_A_target(physics=snap.physics) == 6.0  # snap unmoved
+        assert average_A_target(physics=config.physics) == 55.845  # live reads new
+        assert average_A_target() == 55.845  # default path = live physics
+    finally:
+        config.A_target = saved

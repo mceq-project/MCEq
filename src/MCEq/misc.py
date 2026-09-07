@@ -167,7 +167,7 @@ _target_masses = {
 }
 
 
-def average_A_target(mat="auto"):
+def average_A_target(mat="auto", physics=None):
     """Average target mass number.
 
     For air <A> = 14.5431: the atom-number-weighted mean mass of dry
@@ -179,6 +179,10 @@ def average_A_target(mat="auto"):
     Args:
         mat: str or float, optional
             Interaction medium or custom target mass number. Default is "auto".
+        physics: physics settings group, optional
+            Where ``mat="auto"`` reads ``A_target`` from. Pass a
+            ``RunConfig().physics`` snapshot for isolation; the default
+            reads the live process setting (M5, D3).
 
     Returns:
         float
@@ -190,7 +194,11 @@ def average_A_target(mat="auto"):
 
     """
     if isinstance(mat, str) and mat.lower() == "auto":
-        return _target_masses[_views()[1].interaction_medium.lower()]
+        if physics is None:
+            physics = _views()[1]
+        mat = physics.A_target
+        if isinstance(mat, str) and mat.lower() == "auto":
+            mat = physics.interaction_medium
     if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
     if isinstance(mat, float) or isinstance(mat, int):
