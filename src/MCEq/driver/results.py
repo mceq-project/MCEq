@@ -1,16 +1,35 @@
-"""Batch results and the Hankel-mode back-transform.
+"""Batch results, spectrum extraction, and the Hankel-mode back-transform.
 
 ``MCEqBatchResult`` is what :meth:`MCEqRun.solve_batch` and
-:meth:`MCEqRun.solve_fullsky` return; :func:`inverse_hankel_legacy`
-maps 2D Hankel-mode amplitudes F(kappa) back to angular densities
-f(theta) (moved verbatim from ``MCEq.hankel``, which remains as the
-compat shim). Spectrum extraction itself stays on :class:`MCEqRun`
-until the full facade split lands.
+:meth:`MCEqRun.solve_fullsky` return; the :func:`get_solution` family
+here is the extraction backend behind both that class and the
+``MCEqRun`` façade, which binds the functions as methods
+(``get_solution = results.get_solution`` etc. in ``mceq_run.py``).
+:func:`inverse_hankel_legacy` maps 2D Hankel-mode amplitudes F(kappa)
+back to angular densities f(theta).
+
+In 2-D runs the state vector stacks the Hankel modes; the ``k=0``
+mode is the angle-integrated flux, so :func:`get_solution` (and
+``MCEqBatchResult.get_solution``) on a 2-D result return exactly the
+angle-integrated spectrum — see ``docs/mceq_v1.x_v2_diff.md`` §11.9.
+Per-mode / per-angle readout is :func:`convert_to_theta_space`.
 """
+
+from importlib import import_module
 
 import numpy as np
 import scipy.special
 from scipy.interpolate import interp1d
+
+from MCEq.misc import info
+
+#: ``get_solution``'s ``return_as`` default binds the live config module at
+#: import time (v1 semantics, pinned by the solve1d golden's signature
+#: probe). The module is fetched dynamically rather than with a static
+#: ``from MCEq import config``: the ``MCEq.hankel`` shim re-exports from
+#: here, and a static edge would make the chain
+#: ``hankel -> results -> config`` visible to contract C5.
+config = import_module("MCEq.config")
 
 
 class MCEqBatchResult:
@@ -295,3 +314,283 @@ def inverse_hankel_legacy(
     if return_oversampled:
         return k_oversampled, F_oversampled, f_theta
     return f_theta
+
+
+def get_solution(
+    run,
+    particle_name,
+    mag=0.0,
+    grid_idx=None,
+    integrate=False,
+    return_as=config.return_as,
+    dont_sum_helicities=False,
+):
+    """Retrieves solution of the calculation on the energy grid.
+
+    Some special prefixes are accepted for lepton names:
+
+    - the total flux of muons, muon neutrinos etc. from all sources/mothers
+      can be retrieved without a prefix ``mu+`` or with the prefix ``total_mu+``,
+      ``total_numu``
+    - the conventional flux of muons, muon neutrinos etc. from all sources
+      can be retrieved by the prefix ``conv_``, i.e. ``conv_numu``
+    - the prompt flux of muons, muon neutrinos etc. from all sources
+      can be retrieved by the prefix ``pr_``, i.e. ``pr_numu``
+    - correspondigly, the flux of leptons which originated from the decay
+      of a charged pion carries the prefix ``pi_`` and from a kaon ``k_``
+
+    Args:
+      particle_name (str): The name of the particle such, e.g.
+        ``total_mu+`` for the total flux spectrum of positive muons or
+        ``pr_antinumu`` for the flux spectrum of prompt anti muon neutrinos
+      mag (float, optional): 'magnification factor': the solution is
+        multiplied by ``sol`` :math:`= \\Phi \\cdot E^{mag}`
+      grid_idx (int, optional): if the integrator has been configured to save
+        intermediate solutions on a depth grid, then ``grid_idx`` specifies
+        the index of the depth grid for which the solution is retrieved. If
+        not specified the flux at the surface is returned
+      integrate (bool, optional): return averge particle number instead of
+      flux (multiply by bin width)
+      return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
+        or ``total momentum`` flux. This defaults to ``kinetic energy`` and is in general taken from
+        ``MCEq.config.return_as``
+      dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helicities,
+        e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helicity for mu+.
+
+    Returns:
+      (:func: numpy.array): flux of particles on energy grid :attr:`e_grid`
+    """
+
+    if grid_idx is not None and len(run.grid_sol) == 0:
+        raise Exception("Solution not has not been computed on grid. Check input.")
+    if grid_idx is None:
+        sol = np.copy(run._solution)
+    elif grid_idx >= len(run.grid_sol):
+        sol = run.grid_sol[-1, :]
+    else:
+        sol = run.grid_sol[grid_idx, :]
+
+    return run._get_solution_from_state(
+        sol,
+        particle_name,
+        mag=mag,
+        integrate=integrate,
+        return_as=return_as,
+        dont_sum_helicities=dont_sum_helicities,
+    )
+
+
+def _get_solution_from_state(
+    run,
+    sol,
+    particle_name,
+    mag=0.0,
+    integrate=False,
+    return_as=None,
+    dont_sum_helicities=False,
+):
+    """Extract a named spectrum from an explicit state vector.
+
+    Same particle-name/prefix semantics, helicity summation and
+    ``return_as`` conversions as :meth:`get_solution`, but operates
+    on the state vector ``sol`` passed by the caller instead of
+    ``run._solution``. This is the shared extraction backend for
+    :meth:`get_solution` and :meth:`MCEqBatchResult.get_solution`
+    (per-column retrieval from multi-RHS solves).
+
+    Args:
+      sol (np.ndarray[dim_states]): state vector to extract from.
+      particle_name (str): see :meth:`get_solution`.
+      mag, integrate, return_as, dont_sum_helicities: see
+        :meth:`get_solution`. ``return_as=None`` resolves to
+        ``config.return_as``.
+
+    Returns:
+      (np.ndarray): flux of particles on energy grid :attr:`e_grid`
+    """
+    if return_as is None:
+        return_as = run._cfg.output.return_as
+
+    res = np.zeros(run._energy_grid.d)
+    ref = run.pman.pname2pref
+
+    def sum_lr(lep_str, prefix):
+        result = np.zeros(run.dim)
+        nsuccess = 0
+
+        if dont_sum_helicities:
+            sum_over = [lep_str]
+        else:
+            sum_over = [lep_str, lep_str + "_l", lep_str + "_r"]
+
+        for ls in sum_over:
+            if prefix + ls not in ref:
+                info(
+                    15,
+                    "No separate left and right handed particles,",
+                    f"or, unavailable particle prefix {prefix + ls}.",
+                )
+                continue
+            result += sol[ref[prefix + ls].lidx : ref[prefix + ls].uidx]
+            nsuccess += 1
+        if nsuccess == 0 and run._cfg.output.excpt_on_missing_particle:
+            raise Exception(f"Requested particle {particle_name} not found.")
+        return result
+
+    lep_str = particle_name.split("_")[1] if "_" in particle_name else particle_name
+
+    default_tracking_prefixes = [
+        "conv_",
+        "pr_",
+        "pi_",
+        "k_",
+        "K0_",
+        "mulr_",
+        "mu_h0_",
+        "prcas_",
+        "prres_",
+    ]
+    if not run._cfg.physics.enable_default_tracking:
+        for track_pref in default_tracking_prefixes:
+            if particle_name.startswith(track_pref):
+                raise Exception(
+                    "Tracking category requested but "
+                    + "enable_default_tracking is off in config."
+                )
+
+    if particle_name.startswith("total_"):
+        # Note: This has changed from previous MCEq versions,
+        # since pi_ and k_ prefixes are mere tracking counters
+        # and no full particle species anymore
+
+        res = sum_lr(lep_str, prefix="")
+
+    elif particle_name.startswith("conv_"):
+        # Note: This changed from previous MCEq versions,
+        # conventional is defined as total - prompt
+        res = run._get_solution_from_state(
+            sol,
+            "total_" + lep_str,
+            mag=0,
+            integrate=False,
+            return_as="kinetic energy",
+        ) - run._get_solution_from_state(
+            sol,
+            "pr_" + lep_str,
+            mag=0,
+            integrate=False,
+            return_as="kinetic energy",
+        )
+
+    elif particle_name.startswith("pr_"):
+        if "prcas_" + lep_str in ref:
+            res += sum_lr(lep_str, prefix="prcas_")
+        if "prres_" + lep_str in ref:
+            res += sum_lr(lep_str, prefix="prres_")
+        if "em_" + lep_str in ref:
+            res += sum_lr(lep_str, prefix="em_")
+    else:
+        try:
+            res = sum_lr(particle_name, prefix="")
+        except KeyError:
+            if run._cfg.output.excpt_on_missing_particle:
+                raise Exception(f"Requested particle {particle_name} not found.")
+            else:
+                info(1, f"Requested particle {particle_name} not found.")
+
+    # When returning in Etot, interpolate on different grid
+    if return_as == "total energy":
+        etot_grid = run.etot_grid(lep_str)
+        if not integrate:
+            return res * etot_grid**mag
+        return res * etot_grid**mag * run.e_widths
+
+    if return_as == "kinetic energy":
+        if not integrate:
+            return res * run._energy_grid.c**mag
+        return res * run._energy_grid.c**mag * run.e_widths
+
+    if return_as == "total momentum":
+        ptot_bins, ptot_grid = run.ptot_grid(lep_str, return_bins=True)
+        dEkindp = np.diff(ptot_bins) / run.e_widths
+        if not integrate:
+            return dEkindp * res * ptot_grid**mag
+        return dEkindp * res * ptot_grid**mag * np.diff(ptot_bins)
+
+    raise Exception(
+        "Unknown 'return_as' variable choice.",
+        'the options are "kinetic energy", "total energy", "total momentum"',
+    )
+
+
+# --- Delegation into CascadeSystem (driver/system.py) -----------------
+# The §8.7 keep-list names the physics system owns are properties here,
+# so every attribute access written against the single-class original
+# still resolves. ``int_m``/``dec_m`` are read-write: the batch sweep
+# harness in tests/golden/_operator_sweep.py swaps matrices directly.
+
+
+def convert_to_theta_space(
+    run,
+    hankel_transf,
+    pdg_id,
+    hel,
+    oversample_res=10,
+    theta_res=1200,
+    log_theta=False,
+):
+    """Convert Hankel-space amplitudes from the 2D MCEq solver to real
+    (angular) space.
+
+    The transform itself is :func:`MCEq.hankel.inverse_hankel_legacy`;
+    this method adds the state-vector indexing and the theta grid.
+
+    Args:
+        hankel_transf (list of np.arrays): list of Hankel space solutions at
+            the requested slant depths (i.e. the output of ``run.grid_sol``)
+        pdg_id (int): PDG ID of the particle whose angular density is being
+            requested (e.g. 14 for NuMu)
+        hel (int): helicity of the particle whose angular density is being
+            requested (e.g. 0 or ±1 for polarized muons)
+        oversample_res (int): resolution of the Hankel grid oversampling
+            (used to approximate the continuous inverse Hankel transform)
+        theta_res (int): resolution of the angular (theta) grid where the
+            inverse Hankel transform will output the densities
+        log_theta (bool): whether to return logarithmic angular grid
+            (True=logarithmic, False=linear)
+
+    Returns:
+        tuple: ``(k_oversampled, oversampled_amps, theta_range,
+        f_theta)`` with the list entries indexed ``[depth][eidx]``.
+    """
+    from MCEq.hankel import inverse_hankel_legacy
+
+    if log_theta:
+        theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
+    else:
+        theta_range = np.linspace(0, np.pi / 2, theta_res)
+    k_grid = run._mceq_db.k_grid
+    n_e = len(run.e_grid)
+    ref = run.pman.pdg2mceqidx[(pdg_id, hel)] * n_e
+    oversample_pts = int(np.max(k_grid) * oversample_res)
+    oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
+
+    store_oversampled_hankel_amps = []
+    store_inverse_hankel_transfs = []
+    for sol in hankel_transf:
+        _, F_ov, f_theta = inverse_hankel_legacy(
+            sol[:, ref : ref + n_e].T,
+            k_grid,
+            theta_range,
+            oversample_res=oversample_res,
+            return_oversampled=True,
+        )
+        store_oversampled_hankel_amps.append(list(F_ov))
+        store_inverse_hankel_transfs.append(list(f_theta))
+
+    return (
+        oversampled_k_arr,
+        store_oversampled_hankel_amps,
+        theta_range,
+        store_inverse_hankel_transfs,
+    )

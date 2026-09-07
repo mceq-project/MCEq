@@ -40,8 +40,8 @@ into the provenance rather than into a compared key.
 
 The section is hermetic apart from one binding it cannot control:
 ``get_solution``'s ``return_as`` default is evaluated when ``MCEq.core`` is
-imported (core.py:560), so a process that sets ``config.return_as`` before that
-import shifts 17 of the weighted keys. :func:`build` asserts the resolved
+imported (the binding lives in ``driver/results.py`` now), so a process that
+sets ``config.return_as`` before that import shifts 17 of the weighted keys. :func:`build` asserts the resolved
 default rather than trusting the pin.
 """
 
@@ -313,7 +313,7 @@ def build():
 
         from MCEq.core import MCEqRun
 
-        # get_solution binds return_as when core.py is imported while
+        # get_solution binds return_as when driver/results.py is imported while
         # _get_solution_from_state resolves it per call, so unifying the two is
         # a behaviour change that no array value can reveal: at mag=0 the
         # kinetic- and total-energy branches return the same numbers.

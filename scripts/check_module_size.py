@@ -44,7 +44,7 @@ LIMIT = 700
 #: ``--update``, so recorded == measured and no entry ever grants regrowth
 #: headroom.
 ALLOW = {
-    "src/MCEq/driver/mceq_run.py": 1553,  # re-pinned after the batch surface was bound directly; facade build-up
+    "src/MCEq/driver/mceq_run.py": 1128,  # M9 re-pin (extraction+observables bound, -423); remaining: env binding ~160, model load ~70
     "src/MCEq/models/ddm/ddm.py": 874,  # re-pinned after the B7 fix; split by a later follow-up
 }
 
