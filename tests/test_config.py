@@ -23,7 +23,7 @@ def test_no_download_when_default_db_checksum_ok(tmp_path, monkeypatch):
         patch("MCEq.data.download.FileIntegrityCheck") as mock_fic,
     ):
         mock_fic.return_value.succeeded.return_value = True
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     mock_dl.assert_not_called()
     mock_fic.assert_called_once_with(tmp_path / DEFAULT_DB, download.file_checksum)
@@ -39,7 +39,7 @@ def test_downloads_when_default_db_checksum_fails(tmp_path, monkeypatch):
         patch("MCEq.data.download.FileIntegrityCheck") as mock_fic,
     ):
         mock_fic.return_value.succeeded.return_value = False
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     mock_dl.assert_called_once_with(
         download.base_url + download.release_tag + DEFAULT_DB,
@@ -52,7 +52,7 @@ def test_downloads_when_default_db_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "mceq_db_fname", DEFAULT_DB)
 
     with patch("MCEq.data.download._download_file") as mock_dl:
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     mock_dl.assert_called_once_with(
         download.base_url + download.release_tag + DEFAULT_DB,
@@ -70,7 +70,7 @@ def test_no_download_for_existing_custom_db(tmp_path, monkeypatch):
         patch("MCEq.data.download._download_file") as mock_dl,
         patch("MCEq.data.download.FileIntegrityCheck") as mock_fic,
     ):
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     mock_dl.assert_not_called()
     mock_fic.assert_not_called()
@@ -81,7 +81,7 @@ def test_downloads_missing_custom_db(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "mceq_db_fname", CUSTOM_DB)
 
     with patch("MCEq.data.download._download_file") as mock_dl:
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     mock_dl.assert_called_once_with(
         download.base_url + download.release_tag + CUSTOM_DB,
@@ -97,7 +97,7 @@ def test_removes_old_db(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "mceq_db_fname", CUSTOM_DB)
 
     with patch("MCEq.data.download._download_file"):
-        download.ensure_db_available()
+        download.ensure_db_available(cfg)
 
     assert not old.exists()
 
@@ -108,7 +108,7 @@ def test_no_error_when_old_db_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "mceq_db_fname", CUSTOM_DB)
 
     with patch("MCEq.data.download._download_file"):
-        download.ensure_db_available()  # must not raise
+        download.ensure_db_available(cfg)  # must not raise
 
 
 # ---------------------------------------------------------------------------

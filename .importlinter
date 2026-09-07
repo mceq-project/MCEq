@@ -282,10 +282,10 @@ ignore_imports =
 # it needs the defaults to become required, which breaks the golden generators.
 # Deferred to Phase 6 with the other two.
     MCEq.environment.geomagnetic.cutoff -> MCEq.config
-# data/download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level
-# from the module (§13.2 item 5 moved it under `data`); it takes a DataPaths
-# group in Phase 6. The `MCEq.download` shim re-exports it and inherits the debt.
-    MCEq.data.download -> MCEq.config
+# (line removed, Phase 6 commit 12: ensure_db_available now takes its config
+# as a required argument -- the driver passes the run config, direct callers
+# pass the module. data/download.py imports no config at all, and the
+# MCEq.download shim is a pure re-export, so neither has the edge any more.)
 
 # ------------------------------------------------------- C6: legacy shim
 # `mceq_config` replaces itself in sys.modules with MCEq.config. It exists for

@@ -90,20 +90,24 @@ def _download_file(url, outfile):
         raise Exception("ERROR, something went wrong")
 
 
-def ensure_db_available(cfg=None):
+def ensure_db_available(cfg):
     """Download the MCEq database if not already present.
 
-    Called by MCEqRun.__init__ so that the download is deferred until the
-    database is actually needed.  This allows tests (and other callers) to
-    override ``config.mceq_db_fname`` before a download is attempted.
+    Called by MCEqRun.__init__ with the run's config (the live module, or
+    its D3 snapshot) so that the download is deferred until the database
+    is actually needed, and so this module imports no config itself
+    (C5): ``cfg`` supplies ``data_dir``, ``mceq_db_fname`` and
+    ``debug_level``, flat or group-shaped, and the caller owns the
+    source. Direct callers pass ``MCEq.config`` (or the module they
+    override):
+
+        from MCEq import config
+        config.mceq_db_fname = "my_db.h5"
+        ensure_db_available(config)
 
     The integrity check only applies to the default database; non-default
     files are accepted as-is if they exist.
     """
-    if cfg is None:
-        from MCEq import config
-
-        cfg = config
     data_dir = cfg.data_dir
     mceq_db_fname = cfg.mceq_db_fname
     debug_level = cfg.debug_level
