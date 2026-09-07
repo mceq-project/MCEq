@@ -27,7 +27,7 @@ from MCEq.operators.matrix_builder import MatrixBuilder
 from MCEq.species.manager import ParticleManager
 
 
-def run_physics_view():
+def run_physics_view(cfg=None):
     """The ``physics`` group a *run* should use, with the §9 validator applied.
 
     ``enable_em`` and muon-helicity rows are incompatible: the L/R semi-
@@ -41,7 +41,7 @@ def run_physics_view():
     set it. Lives in the driver rather than in ``config`` because the
     warning needs ``misc.info`` and util sits below config (C1).
     """
-    physics = config.physics
+    physics = config.physics if cfg is None else cfg.physics
     if physics.enable_em and physics.muon_helicity_dependence:
         info(
             1,
@@ -77,22 +77,24 @@ class CascadeSystem:
         low_energy_model,
         he_le_transition,
         he_le_trwidth,
+        cfg=None,
     ):
+        self._cfg = config if cfg is None else cfg
         self.medium = medium
         # Group views, not snapshots: a config write after construction is
         # seen. The physics view goes through the §9 validator: for an EM run
         # it is a read-only copy with muon_helicity_dependence forced False,
         # and this one instance is what every table and the pman read.
-        self._physics = run_physics_view()
+        self._physics = run_physics_view(cfg)
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=medium,
             low_energy_model=low_energy_model,
             he_le_transition=he_le_transition,
             he_le_trwidth=he_le_trwidth,
-            paths=config.paths,
-            grid=config.grid,
+            paths=self._cfg.paths,
+            grid=self._cfg.grid,
             physics=self._physics,
-            em=config.em,
+            em=self._cfg.em,
         )
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
@@ -181,8 +183,8 @@ class CascadeSystem:
             self.matrix_builder = MatrixBuilder(
                 self.pman,
                 self._mceq_db,
-                grid=config.grid,
-                losses=config.losses,
+                grid=self._cfg.grid,
+                losses=self._cfg.losses,
                 physics=self._physics,
             )
 

@@ -20,6 +20,7 @@ import pytest
 
 import MCEq.config as config
 from MCEq.config.groups import GroupView
+from MCEq.config.run import RunConfig
 from MCEq.driver.system import run_physics_view
 
 
@@ -182,19 +183,24 @@ def test_system_injects_one_physics_view_everywhere():
     one every table sees.
     """
     src = _source("MCEq.driver.system")
-    assert src.count("self._physics = run_physics_view()") == 1
+    assert src.count("self._physics = run_physics_view(cfg)") == 1
     for cls in ("HDF5Backend", "Interactions", "ContinuousLosses", "Decays"):
         assert "physics=self._physics" in src, cls
-    # the only config.physics read left in code is the validator's own line
+    # since D3 every group read goes through the run's cfg; the only direct
+    # config.* read left in system.py is the validator's live-default branch
     reads = [
         ast.unparse(node)
         for node in ast.walk(ast.parse(src))
         if isinstance(node, ast.Attribute) and ast.unparse(node).startswith("config.")
     ]
-    assert reads.count("config.physics") == 1
-    assert "config.paths" in reads and "config.grid" in reads
-    # the other groups stay direct config reads (the driver may import config)
-    assert "paths=config.paths" in src and "grid=config.grid" in src
+    assert reads == ["config.physics"]
+    cfg_reads = [
+        ast.unparse(node)
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Attribute)
+        and ast.unparse(node).startswith("self._cfg.")
+    ]
+    assert "self._cfg.paths" in cfg_reads and "self._cfg.grid" in cfg_reads
 
 
 def test_helicity_write_is_gone_from_the_driver():
@@ -207,3 +213,64 @@ def test_helicity_write_is_gone_from_the_driver():
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Attribute)
     }
     assert "muon_helicity_dependence" not in written
+
+
+# --- D3: the detached snapshot ------------------------------------------------------------
+
+
+def _run_kwargs(primary):
+    return dict(
+        interaction_model="SIBYLL21",
+        primary_model=primary,
+        theta_deg=20.0,
+    )
+
+
+def test_default_run_reads_live_config():
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    m = MCEqRun(**_run_kwargs((pm.HillasGaisser2012, "H3a")))
+    assert m.config is config
+
+
+def test_snapshot_run_is_detached_from_later_writes():
+    import crflux.models as pm
+
+    from MCEq.config.run import RunConfig
+    from MCEq.core import MCEqRun
+
+    snap = RunConfig.snapshot()
+    saved = config.e_min
+    try:
+        config.e_min = 7e0
+        m = MCEqRun(config=snap, **_run_kwargs((pm.HillasGaisser2012, "H3a")))
+        # the frozen grid (e_min 0.1 at snapshot time) reached the energy grid
+        assert m.e_bins[0] < 1.0, m.e_bins[0]
+    finally:
+        config.e_min = saved
+
+
+def test_snapshot_refuses_writes_and_bad_types():
+    from MCEq.config.run import RunConfig
+    from MCEq.core import MCEqRun
+
+    snap = RunConfig.snapshot()
+    with pytest.raises(AttributeError, match="read-only"):
+        snap.e_min = 1.0
+    with pytest.raises(AttributeError, match="no setting"):
+        snap.nope
+    with pytest.raises(TypeError, match="RunConfig"):
+        MCEqRun("SIBYLL21", {}, 20.0, config={"e_min": 1})
+
+
+def test_snapshot_copies_dicts_not_aliases():
+    snap = RunConfig.snapshot()
+    adv = config.adv_set
+    key = "disabled_particles"
+    adv[key].append(2212)
+    try:
+        assert 2212 not in snap.physics.filters[key]
+    finally:
+        adv[key].remove(2212)

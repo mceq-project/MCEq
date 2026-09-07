@@ -19,7 +19,6 @@ from time import time
 
 import numpy as np
 
-from MCEq import config
 from MCEq.driver.results import MCEqBatchResult
 from MCEq.misc import info
 
@@ -217,7 +216,7 @@ def solve_batch(
         info(
             2,
             f"solve_batch: shared-path multi-RHS route, K={K}, "
-            f"kernel={config.kernel_config}, nsteps={nsteps}",
+            f"kernel={run.config.backend.kernel_config}, nsteps={nsteps}",
         )
         # ``dtype`` controls the state-buffer precision; the diagonals
         # ``d_int`` / ``d_dec`` remain fp64 in the diag-factor pipeline
@@ -389,7 +388,7 @@ def solve_fullsky(
         :meth:`MCEqBatchResult.skymap`). Also unpacks as the legacy
         ``(sol, nsteps_per_col[, pixel_index])`` tuple.
     """
-    info(2, f"solve_fullsky: kernel={config.kernel_config}")
+    info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
     start = time()
 
     # Resolve geomagnetic-cutoff toggle. Per-call argument has

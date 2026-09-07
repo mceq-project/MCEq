@@ -90,7 +90,7 @@ def _download_file(url, outfile):
         raise Exception("ERROR, something went wrong")
 
 
-def ensure_db_available():
+def ensure_db_available(cfg=None):
     """Download the MCEq database if not already present.
 
     Called by MCEqRun.__init__ so that the download is deferred until the
@@ -100,11 +100,13 @@ def ensure_db_available():
     The integrity check only applies to the default database; non-default
     files are accepted as-is if they exist.
     """
-    from MCEq import config
+    if cfg is None:
+        from MCEq import config
 
-    data_dir = config.data_dir
-    mceq_db_fname = config.mceq_db_fname
-    debug_level = config.debug_level
+        cfg = config
+    data_dir = cfg.data_dir
+    mceq_db_fname = cfg.mceq_db_fname
+    debug_level = cfg.debug_level
 
     _url = base_url + release_tag + mceq_db_fname
     filepath = data_dir / mceq_db_fname

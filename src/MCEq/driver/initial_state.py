@@ -16,7 +16,6 @@ Reads the physics system (pman, energy grid) but never the facade.
 
 import numpy as np
 
-from MCEq import config
 from MCEq.misc import info
 
 
@@ -82,7 +81,7 @@ class InitialState:
             self.finalize_pmodel = True
 
         # Set initial condition
-        minimal_energy = config.minimal_primary_energy
+        minimal_energy = self._system._cfg.physics.minimal_primary_energy
         if (2212, 0) in self._system.pman and (2112, 0) in self._system.pman:
             e_tot = self._system._energy_grid.c + 0.5 * (
                 self._system.pman[(2212, 0)].mass + self._system.pman[(2112, 0)].mass

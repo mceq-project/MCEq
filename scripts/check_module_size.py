@@ -44,7 +44,7 @@ LIMIT = 700
 #: ``--update``, so recorded == measured and no entry ever grants regrowth
 #: headroom.
 ALLOW = {
-    "src/MCEq/driver/mceq_run.py": 1640,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
+    "src/MCEq/driver/mceq_run.py": 1671,  # Phase 5 (MatrixBuilder) + Phase 6 (driver/*)
     "src/MCEq/models/ddm/ddm.py": 874,  # B7 fix re-pin 2026-09-06; split by a later item 7 follow-up
 }
 
