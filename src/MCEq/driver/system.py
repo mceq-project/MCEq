@@ -27,6 +27,31 @@ from MCEq.operators.matrix_builder import MatrixBuilder
 from MCEq.species.manager import ParticleManager
 
 
+def run_physics_view():
+    """The ``physics`` group a *run* should use, with the §9 validator applied.
+
+    ``enable_em`` and muon-helicity rows are incompatible: the L/R semi-
+    Lagrangian muon rows have no diagonal damping and destabilize the EM
+    cascade (EM-blowup caveat, ``MCEq.solvers.path``). The rule is enforced
+    here — at the single point where the driver hands a physics group to a
+    run — as a validator: warn, and return a corrected read-only copy of
+    the view. The flat ``muon_helicity_dependence`` default is never
+    written, so a later EM-off run in the same process is unaffected; every
+    other reader of ``config.physics`` sees the setting exactly as the user
+    set it. Lives in the driver rather than in ``config`` because the
+    warning needs ``misc.info`` and util sits below config (C1).
+    """
+    physics = config.physics
+    if physics.enable_em and physics.muon_helicity_dependence:
+        info(
+            1,
+            "enable_em: forcing muon_helicity_dependence=False "
+            "(helicity rows destabilize the EM cascade).",
+        )
+        return physics.with_overrides(muon_helicity_dependence=False)
+    return physics
+
+
 class CascadeSystem:
     """Database handle, loaded tables, particle manager, matrix builder.
 
@@ -54,7 +79,11 @@ class CascadeSystem:
         he_le_trwidth,
     ):
         self.medium = medium
-        # Group views, not snapshots: a config write after construction is seen.
+        # Group views, not snapshots: a config write after construction is
+        # seen. The physics view goes through the §9 validator: for an EM run
+        # it is a read-only copy with muon_helicity_dependence forced False,
+        # and this one instance is what every table and the pman read.
+        self._physics = run_physics_view()
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=medium,
             low_energy_model=low_energy_model,
@@ -62,7 +91,7 @@ class CascadeSystem:
             he_le_trwidth=he_le_trwidth,
             paths=config.paths,
             grid=config.grid,
-            physics=config.physics,
+            physics=self._physics,
             em=config.em,
         )
 
@@ -70,7 +99,7 @@ class CascadeSystem:
 
         #: Interface to interaction tables of the HDF5 database
         self._interactions = MCEq.data.Interactions(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
+            mceq_hdf_db=self._mceq_db, physics=self._physics
         )
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
@@ -80,12 +109,12 @@ class CascadeSystem:
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self._cont_losses = MCEq.data.ContinuousLosses(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
+            mceq_hdf_db=self._mceq_db, physics=self._physics
         )
 
         #: Interface to decay tables of the HDF5 database
         self._decays = MCEq.data.Decays(
-            mceq_hdf_db=self._mceq_db, physics=config.physics
+            mceq_hdf_db=self._mceq_db, physics=self._physics
         )
 
         #: Particle manager (initialized/updated in reload_for_model)
@@ -144,7 +173,7 @@ class CascadeSystem:
                 self._energy_grid,
                 self._int_cs,
                 self.medium,
-                physics=config.physics,
+                physics=self._physics,
             )
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
@@ -154,7 +183,7 @@ class CascadeSystem:
                 self._mceq_db,
                 grid=config.grid,
                 losses=config.losses,
-                physics=config.physics,
+                physics=self._physics,
             )
 
         elif update_particle_list and particle_list != self._particle_list:

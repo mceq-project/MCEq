@@ -152,7 +152,15 @@ def _load_interactions(disabled):
 
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     config.adv_set["disabled_particles"] = list(disabled)
-    inter = Interactions(HDF5Backend())
+    inter = Interactions(
+        HDF5Backend(
+            paths=config.paths,
+            grid=config.grid,
+            physics=config.physics,
+            em=config.em,
+        ),
+        physics=config.physics,
+    )
     inter.load("SIBYLL21")
     return inter
 
@@ -469,7 +477,15 @@ def _load_b5(disable_unstable):
 
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     config.adv_set["disable_interactions_of_unstable"] = disable_unstable
-    inter = Interactions(HDF5Backend())
+    inter = Interactions(
+        HDF5Backend(
+            paths=config.paths,
+            grid=config.grid,
+            physics=config.physics,
+            em=config.em,
+        ),
+        physics=config.physics,
+    )
     inter.load("SIBYLL21")
     return inter
 

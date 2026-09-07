@@ -20,12 +20,10 @@ class Interactions:
     mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, physics=None):
+    def __init__(self, mceq_hdf_db, *, physics):
         from collections import defaultdict
 
-        from MCEq import config
-
-        self._physics = config.physics if physics is None else physics
+        self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid

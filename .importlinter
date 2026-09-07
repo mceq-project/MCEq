@@ -91,11 +91,6 @@ exhaustive_ignores =
     version
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# misc.py:5 `from MCEq import config` inverts util -> config: `info()` reads the
-# debug settings and `_target_mass` reads `interaction_medium`. Phase 6 removes
-# it, when both take their group views (plan decision D11 revised: `misc.info`
-# stays, there is no `util/logging.py`).
-    MCEq.misc -> MCEq.config
 # misc.py's `_moved_to_data()` inverts util -> data: the D14 compat shim that
 # keeps `energy_grid`/`EnergyGrid`/`_eval_energy_cuts`/`gen_xmat`/`_xmat`
 # reachable on `MCEq.misc` after they moved to `MCEq.data.energy_grid`. Deferred
@@ -260,14 +255,6 @@ forbidden_modules =
     MCEq.config
 unmatched_ignore_imports_alerting = error
 ignore_imports =
-# misc.py:5 -- Phase 6, when `info()` takes the `debug` group view and
-# `_target_mass` the `physics` one (see C1 above; D11 revised)
-    MCEq.misc -> MCEq.config
-# operators/matrix_builder.py:`MatrixBuilder.__init__` -- the function-local
-# `None` fallback to the live `grid`/`losses`/`physics` views, the Phase 1
-# convention (dadd911). Phase 6 removes it, when the driver injects the three
-# groups unconditionally.
-    MCEq.operators.matrix_builder -> MCEq.config
 # solvers/backends/mkl.py:18 `config._load_mkl()` / `config.mkl` -- the MKL
 # runtime extraction (dlopen moves into this module, detection into
 # config/detect.py) removes it.
@@ -295,20 +282,6 @@ ignore_imports =
 # it needs the defaults to become required, which breaks the golden generators.
 # Deferred to Phase 6 with the other two.
     MCEq.environment.geomagnetic.cutoff -> MCEq.config
-# data/__init__.py is a pure re-export surface since §13.2 item 4 (2026-09-06);
-# the three function-local config fallbacks that matched this line moved with
-# their classes into the consumer submodules, which are listed below instead.
-    MCEq.data.continuous_losses -> MCEq.config
-    MCEq.data.decay_tables -> MCEq.config
-    MCEq.data.interaction_tables -> MCEq.config
-# data/hdf5_backend.py:`HDF5Backend.__init__` -- the None fallbacks to the live
-# paths/grid/physics/em views. Phase 6, when the driver injects them.
-    MCEq.data.hdf5_backend -> MCEq.config
-# species/particle.py + species/manager.py -- the function-local `config`
-# fallbacks in the two `__init__`s (§13.2 item 6 moved them with the classes;
-# Phase 6 removes them when the driver injects the physics group).
-    MCEq.species.particle -> MCEq.config
-    MCEq.species.manager -> MCEq.config
 # data/download.py:ensure_db_available reads data_dir/mceq_db_fname/debug_level
 # from the module (§13.2 item 5 moved it under `data`); it takes a DataPaths
 # group in Phase 6. The `MCEq.download` shim re-exports it and inherits the debt.

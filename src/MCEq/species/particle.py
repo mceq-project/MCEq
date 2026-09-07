@@ -34,16 +34,12 @@ class MCEqParticle:
         init_pdata_defaults=True,
         A_target=None,
         *,
-        physics=None,
+        physics,
     ):
-        if physics is None:
-            from MCEq import config
-
-            physics = config.physics
         #: settings group this particle reads its filters from
         self._physics = physics
         if A_target is None:
-            A_target = average_A_target(physics.interaction_medium)
+            A_target = average_A_target(self._physics.interaction_medium)
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)

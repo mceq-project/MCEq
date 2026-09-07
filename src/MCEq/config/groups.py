@@ -34,13 +34,17 @@ class GroupView:
     ``floatlen``, ``filters`` for ``adv_set``).
     """
 
-    __slots__ = ("_fields", "_name")
+    __slots__ = ("_fields", "_name", "_over")
 
-    def __init__(self, name, fields):
+    def __init__(self, name, fields, over=None):
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_fields", fields)
+        object.__setattr__(self, "_over", dict(over) if over else {})
 
     def __getattr__(self, attr):
+        over = object.__getattribute__(self, "_over")
+        if attr in over:
+            return over[attr]
         fields = object.__getattribute__(self, "_fields")
         try:
             flat = fields[attr]
@@ -56,6 +60,11 @@ class GroupView:
             raise AttributeError(
                 f"{object.__getattribute__(self, '_name')} has no setting {attr!r}"
             )
+        if object.__getattribute__(self, "_over"):
+            raise AttributeError(
+                f"{object.__getattribute__(self, '_name')} copy is read-only; "
+                f"cannot set {attr!r}"
+            )
         setattr(sys.modules["MCEq.config"], fields[attr], value)
 
     def __dir__(self):
@@ -70,6 +79,25 @@ class GroupView:
         """The group's settings as a plain dict, resolved now."""
         fields = object.__getattribute__(self, "_fields")
         return {attr: getattr(self, attr) for attr in sorted(fields)}
+
+    def with_overrides(self, **values):
+        """A read-only copy of this view with ``values`` pinned.
+
+        Overridden fields return the pinned value; every other field stays
+        a live read of the flat namespace, exactly as on the base view.
+        The copy refuses writes, so a corrected copy can never leak back
+        into the flat config. This is the mechanism behind the plan §9
+        validator (``enable_em`` forces an unpolarized copy for one run
+        without touching the defaults).
+        """
+        fields = object.__getattribute__(self, "_fields")
+        unknown = sorted(set(values) - set(fields))
+        if unknown:
+            raise AttributeError(
+                f"{object.__getattribute__(self, '_name')} has no setting "
+                f"{unknown[0]!r}"
+            )
+        return GroupView(object.__getattribute__(self, "_name"), fields, over=values)
 
 
 #: group name -> {attribute: flat config name}

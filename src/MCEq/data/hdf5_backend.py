@@ -32,8 +32,10 @@ class HDF5Backend:
     and it will change infrequently.
 
     ``paths``, ``grid``, ``physics`` and ``em`` are the settings groups this
-    backend reads from; a group left as ``None`` falls back to the live view
-    MCEq.config publishes, which reads the same flat names as before.
+    backend reads from; all four are required, injected by the driver (Phase 6
+    commit 7 killed the ``None`` fallbacks to live config). The medium
+    fallback (``medium=None`` -> ``physics.interaction_medium``) resolves
+    against the injected group, not against config.
     """
 
     def __init__(
@@ -42,19 +44,15 @@ class HDF5Backend:
         low_energy_model=None,
         he_le_transition=80.0,
         he_le_trwidth=0.3,
-        paths=None,
-        grid=None,
-        physics=None,
-        em=None,
+        *,
+        paths,
+        grid,
+        physics,
+        em,
     ):
-        from MCEq import config
-
-        # A group left as None resolves to the live view on MCEq.config, so an
-        # un-injected backend reads exactly what it read before, per read.
-        paths = config.paths if paths is None else paths
-        grid = self._grid = config.grid if grid is None else grid
-        physics = self._physics = config.physics if physics is None else physics
-        self._em = config.em if em is None else em
+        self._grid = grid
+        self._physics = physics
+        self._em = em
         # Resolved here rather than as a signature default: a default would bind
         # when this module is first imported, which happens lazily from
         # MCEqRun.__init__, so whether a caller's `config.interaction_medium`

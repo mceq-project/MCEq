@@ -16,10 +16,8 @@ class ContinuousLosses:
       material (str): name of the material (not fully implemented)
     """
 
-    def __init__(self, mceq_hdf_db, physics=None):
-        from MCEq import config
-
-        self._physics = config.physics if physics is None else physics
+    def __init__(self, mceq_hdf_db, *, physics):
+        self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid

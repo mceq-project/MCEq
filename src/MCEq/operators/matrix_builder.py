@@ -60,19 +60,14 @@ class MatrixBuilder:
     per-channel block is ``(dim, dim)`` or one slab per Hankel mode.
 
     ``grid``, ``losses`` and ``physics`` are the settings groups this builder
-    reads (see the module docstring); a group left as ``None`` falls back to
-    the live view MCEq.config publishes, which reads the same flat names as
-    before.
+    reads (see the module docstring); they are required, injected by the
+    driver (Phase 6 commit 7 killed the ``None`` fallbacks to live config).
     """
 
-    def __init__(self, pman, layout, grid=None, losses=None, physics=None):
-        from MCEq import config
-
-        # A group left as None resolves to the live view on MCEq.config, so an
-        # un-injected builder reads exactly what it read before, per read.
-        self._grid = config.grid if grid is None else grid
-        self._losses = config.losses if losses is None else losses
-        self._physics = config.physics if physics is None else physics
+    def __init__(self, pman, layout, *, grid, losses, physics):
+        self._grid = grid
+        self._losses = losses
+        self._physics = physics
         self._pman = pman
         self._layout = layout
         self.is_2d = layout.is_2d

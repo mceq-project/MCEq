@@ -16,10 +16,8 @@ class Decays:
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, override_decay_db_name=None, physics=None):
-        from MCEq import config
-
-        physics = config.physics if physics is None else physics
+    def __init__(self, mceq_hdf_db, override_decay_db_name=None, *, physics):
+        self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: (list) List of particles in the decay matrices
@@ -27,7 +25,7 @@ class Decays:
         self._default_decay_dset = override_decay_db_name
 
         if self._default_decay_dset is None:
-            if physics.muon_helicity_dependence:
+            if self._physics.muon_helicity_dependence:
                 self._default_decay_dset = "polarized"
             else:
                 self._default_decay_dset = "unpolarized"

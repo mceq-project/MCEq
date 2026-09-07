@@ -3,7 +3,27 @@ from types import ModuleType
 
 import numpy as np
 
-from MCEq import config
+#: Settings views, installed by :mod:`MCEq.config` when it finishes loading
+#: (see the tail of its ``__init__``), and lazily on first use otherwise.
+#: ``info``/``print_in_rows``/``caller_name`` read the ``debug`` group,
+#: ``average_A_target`` the ``physics`` one. ``misc`` never imports
+#: ``MCEq.config`` statically -- util sits below config in the layering, and
+#: the C5 ledger line for this module dies with this mechanism. The lazy
+#: path goes through :func:`importlib.import_module`, mirroring the
+#: ``sys.modules`` indirection ``config/groups.py`` already uses.
+_DEBUG = None
+_PHYSICS = None
+
+
+def _views():
+    global _DEBUG, _PHYSICS
+    if _DEBUG is None:
+        from importlib import import_module
+
+        cfg = import_module("MCEq.config")
+        _DEBUG, _PHYSICS = cfg.debug, cfg.physics
+    return _DEBUG, _PHYSICS
+
 
 #: Names that moved into the :mod:`MCEq.data` package and stay reachable here,
 #: each mapped to the submodule that owns it now.
@@ -170,7 +190,7 @@ def average_A_target(mat="auto"):
 
     """
     if isinstance(mat, str) and mat.lower() == "auto":
-        return _target_masses[config.interaction_medium.lower()]
+        return _target_masses[_views()[1].interaction_medium.lower()]
     if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
     if isinstance(mat, float) or isinstance(mat, int):
@@ -190,7 +210,7 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     """Prints contents of a list in rows `n_cols`
     entries per row.
     """
-    if min_dbg_level > config.debug_level:
+    if min_dbg_level > _views()[0].level:
         return
 
     ls = len(str_list)
@@ -325,7 +345,7 @@ def caller_name(skip=2):
 
     name = []
 
-    if config.print_module:
+    if _views()[0].print_module:
         modname = frame.f_globals.get("__name__")
         if modname:
             name.append(modname + ".")
@@ -365,12 +385,13 @@ def info(min_dbg_level, *message, **kwargs):
     condition = kwargs.pop("condition", True)
     blank_caller = kwargs.pop("blank_caller", False)
     no_caller = kwargs.pop("no_caller", False)
-    if config.override_debug_fcn and min_dbg_level < config.override_max_level:
+    dbg = _views()[0]
+    if dbg.override_fcn and min_dbg_level < dbg.override_max_level:
         fcn_name = caller_name(skip=2).split("::")[-1].split("():")[0]
-        if fcn_name in config.override_debug_fcn:
+        if fcn_name in dbg.override_fcn:
             min_dbg_level = 0
 
-    if condition and min_dbg_level <= config.debug_level:
+    if condition and min_dbg_level <= _views()[0].level:
         message = [str(m) for m in message]
         cname = caller_name() if not no_caller else ""
         if blank_caller:

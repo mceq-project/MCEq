@@ -38,10 +38,13 @@ moves the solved state by max |Δ| 4.3e+29 — which is why its sha256 is part o
 the provenance identity, not incidental.
 
 ``muon_helicity_dependence`` is pinned True like every other generator's
-table, but ``MCEqRun.__init__`` forces it False under ``enable_em`` (helicity
-rows destabilise the EM cascade; core prints "forcing
-muon_helicity_dependence=False"). The forcing is a behaviour no array value
-can reveal, so ``meta/helicity_forced_off`` pins that it happened.
+table, but an ``enable_em`` run gets a physics view with it forced False
+(helicity rows destabilise the EM cascade; the driver validator prints
+"forcing muon_helicity_dependence=False"). The forcing is a behaviour no
+array value can reveal, so ``meta/helicity_forced_off`` pins that it
+happened. Since Phase 6 commit 7 the forcing is a read-only view copy
+(plan §9), never a write to the flat config, so the key reads the run's
+physics view, not ``config.muon_helicity_dependence``.
 
 The drop EM database carries no ``rho_grid``, so ``em_air_density`` stays
 ``None`` and this section always reads the medium's air tables; the rho-stack
@@ -152,7 +155,7 @@ CONFIG_PINS = {
     "loss_stencil_low_upwind_rows": 8,
     "loss_stencil_alpha0": 3.0,
     "use_isospin_sym": True,
-    "muon_helicity_dependence": True,  # forced False by MCEqRun; see docstring
+    "muon_helicity_dependence": True,  # forced False in the run view; see docstring
     "muon_multiple_scattering": True,
     "assume_nucleon_interactions_for_exotics": True,
     "prompt_ctau": 2.6842,
@@ -298,12 +301,12 @@ def build():
         )
         seconds["construct"] = time.perf_counter() - started
         try:
-            # The constructor pins the forcing away from the pin table: a
-            # config refactor that stopped forcing would move nothing else
+            # The run's physics view pins the forcing away from the pin
+            # table: a refactor that stopped forcing would move nothing else
             # here, because with [13, -13] disabled the helicity lanes do not
             # exist in this system at all.
             arrays["meta/helicity_forced_off"] = np.asarray(
-                int(config.muon_helicity_dependence is False)
+                int(mceq._system._physics.muon_helicity_dependence is False)
             )
             assert mceq.dim == 150, (
                 f"standalone EM grid is d={mceq.dim}, expected 150 — "

@@ -38,11 +38,8 @@ class ParticleManager:
         cs_db,
         medium=None,
         *,
-        physics=None,
+        physics,
     ):
-        from MCEq import config
-
-        physics = config.physics if physics is None else physics
         # Resolved here rather than as a signature default: a default binds when
         # this module is first imported, which happens lazily from MCEqRun, so
         # whether a caller's `config.interaction_medium` was seen depended on

@@ -12,6 +12,7 @@ five-bin grid; nothing here constructs an ``MCEqRun``.
 
 import numpy as np
 
+import MCEq.config as config
 from MCEq.misc import energy_grid
 from MCEq.particlemanager import MCEqParticle, _pdata
 
@@ -20,7 +21,7 @@ GRID = energy_grid(c=np.logspace(0.0, 3.0, 5), b=None, w=None, d=5)
 
 
 def particle(pdg_id, helicity=0):
-    return MCEqParticle(pdg_id, helicity, energy_grid=GRID)
+    return MCEqParticle(pdg_id, helicity, energy_grid=GRID, physics=config.physics)
 
 
 # B9 -- inverse_decay_length ZeroDivisionError branch

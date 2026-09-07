@@ -56,16 +56,11 @@ class MCEqRun:
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
         ensure_db_available()
-        if config.enable_em and config.muon_helicity_dependence:
-            # Helicity L/R muon variants add semi-Lagrangian rows without
-            # diagonal damping that destabilize the EM system
-            # (_EM_BLOWUP_CAVEAT). Forced off for enable_em runs.
-            info(
-                1,
-                "enable_em: forcing muon_helicity_dependence=False "
-                "(helicity rows destabilize the EM cascade).",
-            )
-            config.muon_helicity_dependence = False
+        # The enable_em/helicity incompatibility is a validator on the physics
+        # group (config.run_physics, plan §9): CascadeSystem holds the forced
+        # copy, the flat default is untouched. (The old ctor force-wrote the
+        # flat flag globally here, which leaked into every later non-EM run
+        # in the same process.)
         self.medium = kwargs.pop("medium", config.interaction_medium)
         le_config = config.low_energy_extension
         low_energy_model = kwargs.pop("low_energy_model", le_config.get("model"))

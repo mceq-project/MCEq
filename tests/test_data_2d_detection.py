@@ -35,7 +35,13 @@ def _restore_2d_config():
 def backend_1d():
     """Reduced 1D test database (already used by other tests)."""
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
-    return HDF5Backend(medium="air")
+    return HDF5Backend(
+        medium="air",
+        paths=config.paths,
+        grid=config.grid,
+        physics=config.physics,
+        em=config.em,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +51,13 @@ def backend_2d():
     if not os.path.exists(os.path.join(config.data_dir, fn)):
         pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
     config.mceq_db_fname = fn
-    return HDF5Backend(medium="air")
+    return HDF5Backend(
+        medium="air",
+        paths=config.paths,
+        grid=config.grid,
+        physics=config.physics,
+        em=config.em,
+    )
 
 
 def test_1d_database_not_2d(backend_1d):
