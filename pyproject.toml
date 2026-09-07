@@ -66,6 +66,7 @@ docs = [
     # Core
     "sphinx>=8",
     # Third-party extensions
+    "myst-parser>=4",   # docs/*.md (migration guide, v1.x/v2 diff)
     "sphinx-automodapi>=0.2",
     "sphinx-copybutton>=0.5",
     "sphinx-design>=0.6",

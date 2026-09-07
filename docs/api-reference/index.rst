@@ -15,10 +15,12 @@ Submodules
   config
   core
   data
-  geometry/index
+  driver
+  environment
   misc
-  particlemanager
+  models
   solvers
+  species
 
 
 Reference/API

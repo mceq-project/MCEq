@@ -43,7 +43,7 @@ The spectrum of each particle species at the surface can be retrieved as numpy a
 
     mceq.get_solution('mu+')
 
-List available particle species managed by :mod:`MCEq.particlemanager`::
+List available particle species managed by :mod:`MCEq.species`::
 
     mceq.pman.print_particle_tables(0)
 
@@ -102,7 +102,7 @@ Changing geometrical and atmospheric parameters
 
 To change the zenith angle ::
 
-    mceq.set_theta_deg(<zenith_angle_in_degrees>)
+    mceq.set_zenith_azimuth(<zenith_angle_in_degrees>)
 
 Most geometries support angles between 0 (vertical) and 90 degrees.
 
@@ -120,7 +120,7 @@ Available models are:
   (Fortran-via-C), offering the same sites as the MSIS21 family. Kept for
   back-compat. Also fork-safe.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
-  (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
+  (see :class:`MCEq.environment.corsika.CorsikaAtmosphere`).
 - 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
