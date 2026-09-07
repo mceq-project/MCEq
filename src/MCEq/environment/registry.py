@@ -53,12 +53,17 @@ def density_model_class(name: str) -> type:
     return getattr(import_module(module_name), qualname)
 
 
-def build(name: str, model_config):
+def build(name: str, model_config, environment=None):
     """Instantiate the atmosphere *name* with *model_config*.
 
     ``model_config`` is splatted into the constructor, except for the models in
     :data:`_NO_CONFIG`, which are constructed with no arguments -- the
     behaviour of the ``elif`` ladder this replaces.
+
+    ``environment`` is the caller's ``environment`` settings group, forwarded
+    as a keyword to every model: a driver-built atmosphere then reads the
+    run's settings (snapshot-aware, D3/C5), not the process globals. ``None``
+    keeps the live-read fallback for user-built models.
 
     Raises:
         KeyError: if *name* is not a registered model. The caller owns the
@@ -66,5 +71,5 @@ def build(name: str, model_config):
     """
     cls = density_model_class(name)
     if name in _NO_CONFIG:
-        return cls()
-    return cls(*model_config)
+        return cls(environment=environment)
+    return cls(*model_config, environment=environment)
