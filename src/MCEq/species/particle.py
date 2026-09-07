@@ -185,6 +185,31 @@ class MCEqParticle:
         self._critical_energy()
         self._apply_force_resonance()
 
+    def _set_channels(self, channel_table, pmanager, child_keys, keep_tracking=False):
+        """One wiring routine for every channel table (plan §6.1, R2-A).
+
+        ``channel_table`` is a ``MCEq.data.protocols.ChannelTable``:
+        the child keys of this particle are remapped to particle-manager
+        references and the matrices are fetched through the table's
+        ``get_matrix``. Domain guards stay in the callers: the
+        hadronic/decay wiring differs in how a missing parent is treated
+        (soft skip vs hard error) and only hadronic carries tracking
+        particles, so collapsing the guards would change behaviour —
+        the shared part is this remap-and-fetch body.
+
+        Returns ``(refs, yields)`` so the callers rebind their own
+        secondaries/children list and yield dict (rebinding, not
+        clearing: tracking-particle copies share these dict objects
+        until the first re-wire).
+        """
+        refs = [pmanager[key] for key in child_keys]
+        if keep_tracking:
+            refs += [ref for ref in self.hadr_secondaries if ref.is_tracking]
+        yields = {}
+        for ref in refs:
+            yields[ref] = channel_table.get_matrix(self.pdg_id, ref.pdg_id)
+        return refs, yields
+
     def set_hadronic_channels(self, hadronic_db, pmanager):
         """Changes the hadronic interaction model.
 
@@ -193,20 +218,14 @@ class MCEqParticle:
         """
 
         self.current_hadronic_model = hadronic_db.iam
-        # Collect MCEqParticle references to children
-        # instead of PDG ID as index
-        # Also copy over tracking relations if they exist
-        tracking_relations = [
-            tr_ref for tr_ref in self.hadr_secondaries if tr_ref.is_tracking
-        ]
         if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
-            self.hadr_secondaries = [
-                pmanager.pdg2pref[pid] for pid in hadronic_db.relations[self.pdg_id]
-            ] + tracking_relations
-            self.hadr_yields = {}
-            for s in self.hadr_secondaries:
-                self.hadr_yields[s] = hadronic_db.get_matrix(self.pdg_id, s.pdg_id)
+            self.hadr_secondaries, self.hadr_yields = self._set_channels(
+                hadronic_db,
+                pmanager,
+                hadronic_db.relations[self.pdg_id],
+                keep_tracking=True,
+            )
         else:
             self.is_projectile = False
             self.hadr_secondaries = []
@@ -272,11 +291,9 @@ class MCEqParticle:
                 "Unstable particle without decay distribution:", self.pdg_id, self.name
             )
 
-        self.children = []
-        self.children = [pmanager[d] for d in decay_db.children(self.pdg_id)]
-        self.decay_dists = {}
-        for c in self.children:
-            self.decay_dists[c] = decay_db.get_matrix(self.pdg_id, c.pdg_id)
+        self.children, self.decay_dists = self._set_channels(
+            decay_db, pmanager, decay_db.children(self.pdg_id)
+        )
 
     def track_decays(self, tracking_particle):
         children_d = {}
