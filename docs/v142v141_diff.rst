@@ -1,0 +1,212 @@
+.. _v142v141_diff:
+
+MCEq v1.4.2
+###########
+
+MCEq v1.4.2 is a **database bugfix release**.
+
+| The **Sibyll** hadronic interaction matrices have been **regenerated** with a fixed version of chromo_.
+| In v1.4.0 and v1.4.1 neutron projectiles were simulated as protons in the Sibyll models.
+| Nothing has to be changed in your code: the corrected database is downloaded automatically the first
+  time you import MCEq after the update.
+
+.. note::
+
+   v1.4.1 was a code-only release and ships the **same database file** as v1.4.0. Every ratio shown on
+   this page therefore applies to both versions, even where the figures are labelled ``v1.4.2/v1.4.0``.
+
+
+What has changed?
+=================
+
+For a more detailed list please refer to the latest Changelog_.
+
+1. Sibyll interaction matrices
+
+   | The hadronic interaction yields of **Sibyll-2.1**, **Sibyll-2.3d** and **Sibyll-2.3e** have been
+   | regenerated with a fixed version of chromo_ (see `chromo PR #275 <https://github.com/impy-project/chromo/pull/275>`_).
+   | Neutron projectiles are now treated as neutrons and no longer as protons.
+
+2. Decay yields, cross sections and low energy extension
+
+   | Unchanged in their physics input. The low energy extension below 80 GeV is DPMJetIII-19.3 as before,
+   | and the DPMJetIII-19.3 fluxes are identical to v1.4.0 over the whole energy range.
+
+
+.. _Changelog: https://github.com/mceq-project/MCEq/blob/main/CHANGELOG.md
+.. _chromo: https://github.com/impy-project/chromo
+
+
+The neutron projectile bug
+==========================
+
+The interaction matrices of the v1.4 database are generated with chromo_, which provides a common
+interface to the event generators. In chromo's Sibyll interface the projectile was dispatched on
+``kin.p1.is_nucleus``. Because the PDG ID scheme describes a single nucleon as a nucleus with mass
+number A = 1, this branch was also taken for protons and neutrons. Both were therefore passed to
+Sibyll's *nuclear* projectile entry point ``sibnuc(A=1)``, which only carries the mass number and not
+the identity of the nucleon. The Sibyll beam codes that distinguish a proton (13) from a neutron (14),
+and with them the ``sibyll()`` code path, were never reached. As a result **every nucleon projectile was
+effectively simulated as a proton**.
+
+The consequence is a lost isospin asymmetry between proton- and neutron-induced interactions. A proton
+projectile produces more π+ than π- (π+/π- ≈ 1.08), while a neutron projectile has to produce the
+mirrored yield (π+/π- ≈ 0.97). With the bug both gave ≈ 1.08. Since the nucleon cascade in the
+atmosphere carries roughly equal amounts of protons and neutrons, this positive charge excess was
+counted for the whole nucleon flux instead of only half of it, which inflated the inclusive muon charge
+ratio from ≈ 1.27 to ≈ 1.47.
+
+The fix routes only *real* nuclei (A > 1) to ``sibnuc``, while nucleons go through ``sibyll()`` with
+their correct beam code. Proton-induced yields are unaffected by the fix; only the neutron projectiles
+change.
+
+
+Database Comparison
+-------------------
+
+The following figures compare the v1.4.2 database against the database of v1.4.1/v1.4.0. Every model is
+compared against *itself*, computed with the H3a primary model of crflux_ for a vertical zenith angle
+and ``config.enable_em = False``, everything else at the MCEq defaults.
+
+**Sibyll-2.3d and Sibyll-2.3e**: The muon charge ratio drops by **13 %** and the νμ/ν̄μ ratio by
+**10 %** between the low energy extension and 1e6 GeV. This is the restored isospin asymmetry of the
+nucleon cascade and the main effect of the fix. Their charge summed fluxes stay within 3 %.
+
+**Sibyll-2.1**: The charge and flavor ratios shift by 6 % in the conventional region, but the model
+changes drastically in the **prompt region**: at 1e8 GeV the νe flux rises by a factor **4.3** (νμ by
+1.44) and the corresponding flavor ratios drop to **0.14** (νe/ν̄e) and **0.46** (νμ/ν̄μ). Note that
+Sibyll-2.1 carries no charm, so its prompt νe flux is 50 times below Sibyll-2.3d and 160 times below
+DPMJetIII-19.3 in this region. See :ref:`the comparison with v1.3 <v142_vs_v13>` below.
+
+**Other models**: The charge and flavor ratios of QGSjetII04, QGSjetIII, Epos-LHC, Epos-LHC-R and
+DPMJetIII-19.3 are unchanged at the sub-percent level. Their charge summed νμ and νe fluxes shift by up
+to **+7 %** above 100 GeV, and the muon flux by up to 2 %. DPMJetIII-19.3 is identical to v1.4.0.
+
+**Low E Extension**: Below 80 GeV (dashed line) all models are extended with DPMJetIII-19.3, which is
+not affected by the bug. All ratios approach unity there.
+
+**Ultra High Energies**: Towards 1e9 GeV and above the ratios are dominated by statistical fluctuations
+from the Monte Carlo generation of the hadronic interaction matrices at high projectile energy.
+
+.. _crflux: https://github.com/afedynitch/crflux
+
+Lepton Fluxes
+^^^^^^^^^^^^^
+
+.. figure:: _static/graphics/comparison142/muon_flux_ratio.png
+    :width: 1024 px
+    :alt: Muon flux ratio v1.4.2 over v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/muon_neutrino_flux_ratio.png
+    :width: 1024 px
+    :alt: Muon neutrino flux ratio v1.4.2 over v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/electron_neutrino_flux_ratio.png
+    :width: 1024 px
+    :alt: Electron neutrino flux ratio v1.4.2 over v1.4.0
+    :align: left
+
+Lepton Charge and Flavor
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Here the effect of the fix is most visible.
+
+.. figure:: _static/graphics/comparison142/muon_charge_ratio.png
+    :width: 1024 px
+    :alt: Muon charge ratio v1.4.2 over v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/muon_neutrino_flavor_ratio.png
+    :width: 1024 px
+    :alt: Muon neutrino flavor ratio v1.4.2 over v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/electron_neutrino_flavor_ratio.png
+    :width: 1024 px
+    :alt: Electron neutrino flavor ratio v1.4.2 over v1.4.0
+    :align: left
+
+Absolute Fluxes
+^^^^^^^^^^^^^^^
+
+The absolute lepton fluxes of all models, v1.4.2 (thin lines) over v1.4.0 (thick, faded lines).
+
+.. figure:: _static/graphics/comparison142/muon_flux.png
+    :width: 1024 px
+    :alt: Muon flux of all models in v1.4.2 and v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/muon_neutrino_flux.png
+    :width: 1024 px
+    :alt: Muon neutrino flux of all models in v1.4.2 and v1.4.0
+    :align: left
+
+.. figure:: _static/graphics/comparison142/electron_neutrino_flux.png
+    :width: 1024 px
+    :alt: Electron neutrino flux of all models in v1.4.2 and v1.4.0
+    :align: left
+
+
+.. _v142_vs_v13:
+
+Relation to the v1.4 vs. v1.3 comparison
+----------------------------------------
+
+The Sibyll panels of the :ref:`v14v13_diff` comparison were produced with the v1.4.0 database and are
+affected by this bug. The large excursion of Sibyll-2.1 above is a **correction back to v1.3
+behaviour**, not a new deviation: in the prompt region v1.4.0 had lost roughly a factor 4 of the
+Sibyll-2.1 electron neutrino flux with respect to v1.3.1, which v1.4.2 restores to within 5 %.
+
+.. list-table:: Sibyll-2.1 νe + ν̄e flux, vertical, H3a
+   :header-rows: 1
+   :widths: 20 27 27 26
+
+   * - E
+     - v1.4.0 / v1.3.1
+     - v1.4.2 / v1.3.1
+     - v1.4.2 / v1.4.0
+   * - 1e6 GeV
+     - 0.68
+     - 0.99
+     - 1.46
+   * - 1e7 GeV
+     - 0.39
+     - 0.99
+     - 2.54
+   * - 1e8 GeV
+     - 0.23
+     - 0.97
+     - 4.32
+   * - 1e9 GeV
+     - 0.42
+     - 0.95
+     - 2.24
+
+What remains with respect to v1.3 are the differences that were intended for v1.4: the updated decay
+yields, the production cross sections and the DPMJetIII-19.3 low energy extension. The QGSjetII04 and
+Epos-LHC panels of that comparison are not affected.
+
+
+What does this mean for my results?
+===================================
+
+* **Recomputation is recommended** if your results were obtained with Sibyll-2.1, Sibyll-2.3d or
+  Sibyll-2.3e from the v1.4.0/v1.4.1 database. Charge and flavor ratios are affected the most, since
+  the bug acts on the charge asymmetry of the mesons and not on their total number.
+* **Muon fluxes** (charge summed) change by less than 3 % for every model in the database.
+* **Prompt fluxes of Sibyll-2.1** change by a large factor and should be recomputed, keeping in mind
+  that this charmless model predicts a negligible prompt flux in the first place.
+* **DPMJetIII-19.3** results are unchanged.
+
+
+Contact
+=======
+
+We track various changes in much more detail.
+If you encounter any problems, please contact Stefan_.
+
+
+
+.. _Stefan: mailto:stefanfroese@as.edu.tw

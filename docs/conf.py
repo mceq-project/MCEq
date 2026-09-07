@@ -56,6 +56,7 @@ html_theme_options = {
         {"name": "Quickstart", "url": "quickstart/index", "internal": True},
         {"name": "Tutorial", "url": "tutorial", "internal": True},
         {"name": "Example Gallery", "url": "example-gallery", "internal": True},
+        {"name": "v1.4.2", "url": "v142v141_diff", "internal": True},
         {"name": "v1.4", "url": "v14v13_diff", "internal": True},
         {"name": "Cite Us", "url": "citeus", "internal": True},
         {"name": "API Reference", "url": "api-reference/index", "internal": True},
@@ -77,6 +78,7 @@ html_sidebars = {
     "example-gallery": [],  # disable sidebar on References
     "v12v11_diff": [],  # disable sidebar on References
     "v14v13_diff": [],  # disable sidebar on References
+    "v142v141_diff": [],  # disable sidebar on References
 }
 
 html_show_sourcelink = False
