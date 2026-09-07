@@ -68,7 +68,8 @@ html_theme_options = {
             "icon": "fa-brands fa-github",
         },
     ],
-    "announcement": "MCEq v1.4 is now available!",
+    # The announcement banner is defined in _templates/sections/announcement.html,
+    # so that its link to the comparison page can be resolved with pathto().
 }
 
 html_sidebars = {
