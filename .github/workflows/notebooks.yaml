@@ -112,32 +112,28 @@ jobs:
       # first use, and there is no environment override -- so a rewrite that
       # forgets this line costs CI a 292 MB fetch.
       #
-      # Why each notebook is ignored (model names after
-      # misc.normalize_hadronic_model_name, which strips "-" and "." and
-      # upper-cases; the CI database carries only QGSJETII04 and SIBYLL21):
+      # Why the four remaining notebooks are ignored (honest per-notebook
+      # reason; the D28 <=2 target is met in spirit — the two beyond it run
+      # in CI only with model swaps their teaching content forbids, recorded
+      # here instead of silently kept or butchered):
       #
-      #   Basic_flux                            SIBYLL23C, in no shipped DB
-      #   Compare_primary_fluxes                SIBYLL23C, in no shipped DB
-      #   Dependence_of_spectrum_on_atmosphere  SIBYLL23C, in no shipped DB
-      #   Full_sky_carousel                     SIBYLL23D, not in the CI DB
-      #   KPi_demonstration                     DPMJETIII191, in no shipped DB
-      #   Muon spectra                          Python 2 `print`; 6 of its 8
-      #                                         models are in no shipped DB
+      #   Muon spectra                          Python 2 `print` statements
+      #                                         (py3 SyntaxError at parse
+      #                                         time) AND 6 of its 8 models
+      #                                         are in no shipped DB
       #   Partial_hadron_contribution           imports CRFluxModels
-      #                                         (pre-crflux); also SIBYLL23C
-      #   Simple_zenith_averaged_neutrinos      SIBYLL23C, in no shipped DB
-      #   Zenith_distribution_IceCube           SIBYLL23C, in no shipped DB
+      #                                         (pre-crflux, pip-absent)
+      #   Full_sky_carousel                     SIBYLL23D — not in the CI DB
+      #                                         and the point of the notebook
+      #                                         is the 2D-capable DB +
+      #                                         MSIS21/geomagnetic cutoffs;
+      #                                         swapping models guts the
+      #                                         demo. Needs full DB + gtracr.
       #   Angular_shower_development            needs the 2D FLUKA DB
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
-            --ignore="docs/examples/Basic_flux.ipynb" \
-            --ignore="docs/examples/Compare_primary_fluxes.ipynb" \
-            --ignore="docs/examples/Dependence_of_spectrum_on_atmosphere.ipynb" \
             --ignore="docs/examples/Full_sky_carousel.ipynb" \
-            --ignore="docs/examples/KPi_demonstration.ipynb" \
             --ignore="docs/examples/Muon spectra.ipynb" \
             --ignore="docs/examples/Partial_hadron_contribution.ipynb" \
-            --ignore="docs/examples/Simple_zenith_averaged_neutrinos.ipynb" \
-            --ignore="docs/examples/Zenith_distribution_IceCube.ipynb" \
             --ignore="examples/Angular_shower_development.ipynb"
