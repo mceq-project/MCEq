@@ -474,6 +474,7 @@ def solve_fullsky(
             )
         else:
             ck = dict(cutoff_kwargs or {})
+            ck.setdefault("paths", run._cfg.paths)
             rc_grid = get_cutoff_map(
                 run.density_model,
                 zenith_grid,
@@ -487,7 +488,9 @@ def solve_fullsky(
                     f"solve_fullsky: cutoff map size {rc_flat.size} "
                     f"does not match K={K}"
                 )
-            phi0_arr = build_phi0_with_cutoff(run, primary, rc_flat)
+            phi0_arr = build_phi0_with_cutoff(
+                run, primary, rc_flat, physics=run.config.physics
+            )
             phi0_is_2d = True
             info(
                 2,

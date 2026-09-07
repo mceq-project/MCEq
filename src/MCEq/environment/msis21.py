@@ -62,7 +62,9 @@ class MSIS21Atmosphere(EarthsAtmosphere):
             separate class trees but expose the same interface.
     """
 
-    def __init__(self, location, season=None, doy=None, use_loc_altitudes=False):
+    def __init__(
+        self, location, season=None, doy=None, use_loc_altitudes=False, environment=None
+    ):
         try:
             from nrlmsis import NRLMSIS21
         except ImportError as e:
@@ -75,7 +77,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         self._model = NRLMSIS21()
         # Base class first: it creates self.geom, which init_parameters needs
         # when ``use_loc_altitudes`` moves the observation level.
-        EarthsAtmosphere.__init__(self)
+        EarthsAtmosphere.__init__(self, environment=environment)
         self.init_parameters(location, season, doy, use_loc_altitudes)
 
     # ------------------------------------------------------------------
@@ -317,6 +319,7 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
         n_azimuth=36,
         max_theta=90.0,
         surface_elevation_m=0.0,
+        environment=None,
     ):
         try:
             from nrlmsis import NRLMSIS21
@@ -346,7 +349,7 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
         self._f107 = float(DEFAULT_F107)
         self._ap = np.full(7, float(DEFAULT_AP))
 
-        EarthsAtmosphere.__init__(self)
+        EarthsAtmosphere.__init__(self, environment=environment)
         self._init_detector_geometry(
             longitude,
             latitude,
@@ -462,7 +465,7 @@ class MSIS21IceCubeCentered(MSIS21LocationCentered):
     :class:`MCEq.environment.msis00.MSIS00IceCubeCentered`.
     """
 
-    def __init__(self, location, season):
+    def __init__(self, location, season, environment=None):
         if location != "SouthPole":
             info(2, "location forced to the South Pole")
         super().__init__(
@@ -471,6 +474,7 @@ class MSIS21IceCubeCentered(MSIS21LocationCentered):
             season=season,
             max_theta=180.0,
             surface_elevation_m=2835.0,
+            environment=environment,
         )
 
     def _latitude(self, det_zenith_deg):
@@ -485,7 +489,7 @@ class MSIS21KM3NeTCentered(MSIS21LocationCentered):
     :class:`MCEq.environment.msis00.MSIS00KM3NeTCentered`.
     """
 
-    def __init__(self, detector, season=None, doy=None, n_azimuth=36):
+    def __init__(self, detector, season=None, doy=None, n_azimuth=36, environment=None):
         if detector not in KM3NET_DETECTORS:
             raise ValueError(
                 f"Unknown KM3NeT detector '{detector}'. "
@@ -499,5 +503,6 @@ class MSIS21KM3NeTCentered(MSIS21LocationCentered):
             doy=doy,
             n_azimuth=n_azimuth,
             max_theta=180.0,
+            environment=environment,
         )
         self._detector_name = detector

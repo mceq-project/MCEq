@@ -274,3 +274,52 @@ def test_snapshot_copies_dicts_not_aliases():
         assert 2212 not in snap.physics.filters[key]
     finally:
         adv[key].remove(2212)
+
+
+# --- M3: path and geometry come from the snapshot, not from later writes -------
+
+
+def _path_depth(m):
+    m._calculate_integration_path(None, "X", force=True)
+    return float(m.integration_path[1].sum())
+
+
+def test_two_snapshots_do_not_share_paths_or_geometry():
+    """Astra's Stage-F probe as a pin: two snapshots taken with different
+    ``X_start`` / ``h_obs``, then a third poison write to the globals — the
+    path length follows each snapshot and ignores the globals."""
+    from MCEq.config.run import RunConfig
+    from MCEq.core import MCEqRun
+
+    config.X_start = 0.0
+    snap_a = RunConfig.snapshot()
+    config.X_start = 10.0
+    snap_b = RunConfig.snapshot()
+    config.X_start = 7.0  # matches neither snapshot; must be ignored
+    try:
+        ma = MCEqRun("SIBYLL21", None, 60.0, config=snap_a)
+        mb = MCEqRun("SIBYLL21", None, 60.0, config=snap_b)
+        da, db = _path_depth(ma), _path_depth(mb)
+        assert da - db == pytest.approx(10.0, abs=1e-9), (da, db)
+        # a default (live) run DOES see the poison write: X_start=7.0, so
+        # its depth is 3 g/cm2 deeper than snapshot B's shorter path
+        ml = MCEqRun("SIBYLL21", None, 60.0)
+        assert _path_depth(ml) - db == pytest.approx(3.0, abs=1e-9)
+    finally:
+        config.X_start = 0.0
+
+
+def test_geometry_follows_the_snapshot_not_later_writes():
+    """``h_obs`` reaches the atmosphere through the snapshot's environment
+    group; a post-snapshot global write must not move an already-built run."""
+    from MCEq.config.run import RunConfig
+    from MCEq.core import MCEqRun
+
+    config.h_obs = 1000.0  # m -> 1e5 cm in EarthGeometry
+    try:
+        snap = RunConfig.snapshot()
+        config.h_obs = 0.0
+        m = MCEqRun("SIBYLL21", None, 60.0, config=snap)
+        assert m.density_model.geom.h_obs == pytest.approx(1e5)
+    finally:
+        config.h_obs = 0.0

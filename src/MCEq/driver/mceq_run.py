@@ -688,11 +688,9 @@ class MCEqRun:
         :mod:`MCEq.geometry.density_profiles`.Calling this method will
         issue a recalculation of the interpolation and the integration path.
 
-        From version 1.2 and above, the `density_model_or_config`
-        parameter can be a reference to an instance of a density class
-        directly. The class has to be derived either from
-        :class:`MCEq.geometry.density_profiles.EarthsAtmosphere` or
-        :class:`MCEq.geometry.density_profiles.GeneralizedTarget`.
+        From v1.2, `density_model_or_config` may also be an instance of
+        :class:`~MCEq.environment.base.EarthsAtmosphere` or
+        :class:`~MCEq.environment.target.GeneralizedTarget`.
 
         Args:
           density_model_or_config (obj or tuple of strings):
@@ -719,17 +717,15 @@ class MCEqRun:
 
             info(1, "Setting density profile to", base_model, model_config)
 
-            self.density_model = registry.build(base_model, model_config)
+            self.density_model = registry.build(
+                base_model, model_config, environment=self._cfg.environment
+            )
         else:
             self.density_model = density_model_or_config
 
         if self.theta_deg is not None and isinstance(
             self.density_model, EarthsAtmosphere
         ):
-            # The ``if self.theta_deg is None`` branch that sat here, logging
-            # "Using default zenith angle theta=0." and calling
-            # set_zenith_azimuth(0), was unreachable: the enclosing condition
-            # already requires the attribute to be non-None.
             self.set_zenith_azimuth(self.theta_deg)
         elif isinstance(self.density_model, GeneralizedTarget):
             self.integration_path = None

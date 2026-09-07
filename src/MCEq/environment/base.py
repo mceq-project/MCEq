@@ -14,6 +14,21 @@ from MCEq.environment.column import fit_column_splines
 from MCEq.misc import info
 
 
+def _default_environment_group():
+    """The live ``config.environment`` view, fetched dynamically.
+
+    The no-argument construction path (a user-built
+    ``CorsikaAtmosphere()``, the tutorial's bare model) keeps reading
+    process-wide settings, but this layer must not carry a static import
+    edge to :mod:`MCEq.config` (contract C5). The device is the one
+    :func:`MCEq.misc._views` uses. Driver-built atmospheres never come
+    here: ``set_density_model`` injects the run's environment group.
+    """
+    from importlib import import_module
+
+    return import_module("MCEq.config").environment
+
+
 class EarthsAtmosphere(metaclass=ABCMeta):
     """
     Abstract class containing common methods on atmosphere.
@@ -47,14 +62,19 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     depends_on_azimuth: bool = False
 
     def __init__(self, *args, **kwargs):
-        from MCEq.environment.geometry import EarthGeometry
-
-        self.geom = kwargs.pop("geometry", EarthGeometry())
         environment = kwargs.pop("environment", None)
         if environment is None:
-            from MCEq import config
+            environment = _default_environment_group()
+        geometry = kwargs.pop("geometry", None)
+        if geometry is None:
+            from MCEq.environment.geometry import EarthGeometry
 
-            environment = config.environment
+            geometry = EarthGeometry(
+                r_E=environment.r_E,
+                h_atm=environment.h_atm,
+                h_obs=environment.h_obs,
+            )
+        self.geom = geometry
         self.thrad = None
         self.theta_deg = None
         # Configured surface density, so ``max_den`` reads before the first

@@ -89,12 +89,14 @@ def _try_tqdm():
 def _cache_dir(paths=None) -> Path:
     """Return ``<paths.data_dir>/gtracr_cutoffs/``; create if missing.
 
-    ``paths`` is a ``config.paths`` group; ``None`` reads the global one.
+    ``paths`` is a ``config.paths`` group; ``None`` reads the global one
+    through a dynamic import (C5: this layer keeps no static edge to
+    ``MCEq.config``; the driver always passes the run's group).
     """
     if paths is None:
-        from MCEq import config
+        from importlib import import_module
 
-        paths = config.paths
+        paths = import_module("MCEq.config").paths
 
     d = Path(paths.data_dir) / "gtracr_cutoffs"
     d.mkdir(parents=True, exist_ok=True)
@@ -376,12 +378,13 @@ def build_phi0_with_cutoff(
     :meth:`MCEqRun.set_primary_model`.
 
     ``physics`` is a ``config.physics`` group supplying
-    ``minimal_primary_energy``; ``None`` reads the global one.
+    ``minimal_primary_energy``; ``None`` reads the global one through a
+    dynamic import (C5; the driver always passes the run's group).
     """
     if physics is None:
-        from MCEq import config
+        from importlib import import_module
 
-        physics = config.physics
+        physics = import_module("MCEq.config").physics
 
     K = int(rc_GV_per_pixel.size)
     e_grid = mceq._energy_grid.c

@@ -106,9 +106,9 @@ class EarthGeometry:
 
     def __init__(self, r_E=None, h_atm=None, h_obs=None):
         if r_E is None or h_atm is None or h_obs is None:
-            from MCEq import config
+            from importlib import import_module
 
-            env = config.environment
+            env = import_module("MCEq.config").environment
             r_E = env.r_E if r_E is None else r_E
             h_atm = env.h_atm if h_atm is None else h_atm
             h_obs = env.h_obs if h_obs is None else h_obs

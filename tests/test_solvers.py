@@ -1937,6 +1937,10 @@ class _StubMCEq:
         m = -1.0 * np.eye(5)  # benign diagonal (removed by the off-split)
         m[0, 1] = m[1, 0] = r_known  # EM-EM off-diagonal block
         self.int_m = sp.csr_matrix(m)
+        # M3: the path helpers now read settings through ``run.config``
+        # (snapshot or live view); the stub hands them the live module,
+        # which is exactly what a default-constructed MCEqRun does.
+        self.config = config
         self.pman = _StubPMan(
             [
                 _StubParticle(True, 0, 1),  # e- (EM)

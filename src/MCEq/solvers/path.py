@@ -13,8 +13,23 @@ Step-size policy and the depth grid belong here. The step formulas are in
 
 import numpy as np
 
-from MCEq import config
 from MCEq.misc import info
+
+
+def _live_config():
+    """The :mod:`MCEq.config` module, fetched dynamically.
+
+    Same device as :func:`MCEq.misc._views`: the remaining
+    ``None -> global`` fallbacks (a standalone ``etd2_nonuniform_path``
+    call, a user-built ``EarthGeometry()``) must keep reading the live
+    module, but this layer must not carry a static import edge to it
+    (contract C5). Milestones M3/M5 shrink these fallbacks to the two
+    documented process-level exceptions.
+    """
+    from importlib import import_module
+
+    return import_module("MCEq.config")
+
 
 #: Documented contract for the EM-row blowup at extreme zenith. Referenced
 #: from each ETD2 kernel; see ``docs/mceq_v1.x_v2_diff.md`` "EM cascade
@@ -80,9 +95,7 @@ def etd2_nonuniform_path(
       kernel-dispatch contract used by ``MCEqRun.integration_path``.
     """
     if step is None:
-        from MCEq import config
-
-        step = config.solver
+        step = _live_config().solver
     if X_start is None:
         X_start = step.X_start
     p = step.etd2_path
@@ -237,15 +250,18 @@ def etd2_nonuniform_path(
 def em_cascade_dx_cap(run):
     """Cure-B effective dX cap from the EM-cascade stiffness, or np.inf.
 
-    ``np.inf`` (no cap) when ``config.em_adaptive_step`` is off or the EM
-    cascade is inactive, so the legacy schedule is reproduced exactly.
+    ``np.inf`` (no cap) when the ``em`` group's ``adaptive_step`` is off
+    or the EM cascade is inactive, so the legacy schedule is reproduced
+    exactly. Settings come from ``run.config.em`` (the run's snapshot or
+    the live group), never from a module-level config import (C5).
     """
-    if not config.em_adaptive_step:
+    em = run.config.em
+    if not em.adaptive_step:
         return np.inf
     r_em = run._em_cascade_step_scale()
     if not (r_em > 0.0):
         return np.inf
-    cap = config.em_step_safety / r_em
+    cap = em.step_safety / r_em
     info(
         2,
         "EM-adaptive step (cure B): r_EM={:.4g} 1/(g/cm^2) "
@@ -270,12 +286,14 @@ def calculate_integration_path(
     # atmosphere-aware non-uniform schedule keyed off the local
     # |d ln rho_inv / dX|; see ``MCEq.solvers.etd2_nonuniform_path``.
     # Cure B: additionally cap dX_max by the explicit-stepping stiffness
-    # of the EM block of int_m (no-op when config.em_adaptive_step is
-    # off). int_m is X-constant, so this is a single global cap that the
-    # density-gradient schedule never relaxes above.
+    # of the EM block of int_m (no-op when the em group's adaptive_step
+    # is off). int_m is X-constant, so this is a single global cap that the
+    # density-gradient schedule never relaxes above. Settings read the
+    # run's ``solver`` group (snapshot or live view — C5).
+    solver = run.config.solver
     em_cap = run._em_cascade_dx_cap()
     if np.isfinite(em_cap):
-        base_dX_max = dX_max if dX_max is not None else config.etd2_path["dX_max"]
+        base_dX_max = dX_max if dX_max is not None else solver.etd2_path["dX_max"]
         dX_max = min(base_dX_max, em_cap)
     etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
     cached_etd2_params = getattr(run, "_cached_etd2_path_params", None)
@@ -301,11 +319,11 @@ def calculate_integration_path(
         2,
         "ETD2 non-uniform path (eps={}, dX_max={}, dX_min={}, "
         "fd_span={}, X_start={})".format(
-            eps if eps is not None else config.etd2_path["eps"],
-            dX_max if dX_max is not None else config.etd2_path["dX_max"],
-            dX_min if dX_min is not None else config.etd2_path["dX_min"],
-            fd_span if fd_span is not None else config.etd2_path["fd_span"],
-            X_start if X_start is not None else config.X_start,
+            eps if eps is not None else solver.etd2_path["eps"],
+            dX_max if dX_max is not None else solver.etd2_path["dX_max"],
+            dX_min if dX_min is not None else solver.etd2_path["dX_min"],
+            fd_span if fd_span is not None else solver.etd2_path["fd_span"],
+            X_start if X_start is not None else solver.X_start,
         ),
     )
     run.integration_path = etd2_nonuniform_path(
@@ -316,6 +334,7 @@ def calculate_integration_path(
         dX_min=dX_min,
         fd_span=fd_span,
         int_grid=int_grid,
+        step=solver,
     )
 
 

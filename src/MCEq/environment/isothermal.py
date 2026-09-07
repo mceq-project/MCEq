@@ -24,13 +24,13 @@ class IsothermalAtmosphere(EarthsAtmosphere):
       X0 (float): Ground level overburden
     """
 
-    def __init__(self, location, season, hiso_km=6.3, X0=1300.0):
+    def __init__(self, location, season, hiso_km=6.3, X0=1300.0, environment=None):
         self.hiso_cm = hiso_km * 1e5
         self.X0 = X0
         self.location = location
         self.season = season
 
-        EarthsAtmosphere.__init__(self)
+        EarthsAtmosphere.__init__(self, environment=environment)
 
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.

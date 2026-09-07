@@ -29,7 +29,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    def __init__(self, location, season=None):
+    def __init__(self, location, season=None, environment=None):
         # Check if the atmosphere is available
         # Use the renamed list_available_atmospheres function
         available_atmospheres = list_available_corsika_atmospheres()
@@ -44,7 +44,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
 
         # Assuming corsika_acc is defined elsewhere or needs to be imported
         self.corsika_acc = corsika_acc
-        EarthsAtmosphere.__init__(self)
+        EarthsAtmosphere.__init__(self, environment=environment)
 
     def init_parameters(self, location, season):
         """Initializes :attr:`_atm_param` by fetching them from the

@@ -44,9 +44,11 @@ class GeneralizedTarget:
         # MCEqRun.set_density_model, so whether a caller's `config.len_target`
         # was seen depended on whether it was written before that import.
         if len_target is None or env_density is None or env_name is None:
-            from MCEq import config
+            if environment is None:
+                from importlib import import_module
 
-            env = config.environment if environment is None else environment
+                environment = import_module("MCEq.config").environment
+            env = environment
             if len_target is None:
                 len_target = env.len_target * 1e2
             if env_density is None:

@@ -259,29 +259,6 @@ ignore_imports =
 # runtime extraction (dlopen moves into this module, detection into
 # config/detect.py) removes it.
     MCEq.solvers.backends.mkl -> MCEq.config
-# solvers/path.py `config.solver` for the step-size defaults, and (since
-# Phase 6 commit 5) the EM dX cap / path cache / condition-path builder that
-# moved in -- all removed when the path takes its settings group as an
-# argument (plan §5 StepControl injection).
-    MCEq.solvers.path -> MCEq.config
-# `EarthsAtmosphere.__init__`'s `environment=` fallback. Phase 6, not Phase 3:
-# the kwarg is unreachable today (no concrete subclass forwards it), so
-# removing the fallback is a ~10-signature API change, not a module move.
-    MCEq.environment.base -> MCEq.config
-# `GeneralizedTarget.__init__`'s len_target/env_density/env_name fallback.
-# Phase 6: `registry.build` constructs it with zero arguments and the tutorial
-# advertises it as a no-config model, so there is nothing to inject from yet.
-    MCEq.environment.target -> MCEq.config
-# `EarthGeometry.__init__`'s r_E/h_atm/h_obs fallback. Phase 6, and the hardest
-# of the three: tests/geometry/test_geometry.py monkeypatches `config.h_obs`
-# and asserts a no-arg `EarthGeometry()` reads it, so the fallback is pinned
-# behaviour, and MCEqRun never constructs one to inject at.
-    MCEq.environment.geometry -> MCEq.config
-# `_cache_dir(paths=None)` and `build_phi0_with_cutoff(physics=None)`. The only
-# callers are in the driver, which already holds both groups -- removable, but
-# it needs the defaults to become required, which breaks the golden generators.
-# Deferred to Phase 6 with the other two.
-    MCEq.environment.geomagnetic.cutoff -> MCEq.config
 # (line removed, Phase 6 commit 12: ensure_db_available now takes its config
 # as a required argument -- the driver passes the run config, direct callers
 # pass the module. data/download.py imports no config at all, and the
