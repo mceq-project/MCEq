@@ -5,12 +5,11 @@ import numpy as np
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.driver import batch
+from MCEq.driver import batch, paths
 from MCEq.driver.initial_state import InitialState
 from MCEq.driver.system import CascadeSystem
 from MCEq.misc import info
 from MCEq.operators.compiled import compile_operator, em_step_scale
-from MCEq.solvers import path
 
 # trapz was finally removed with numpy 2.4
 if hasattr(np, "trapezoid"):
@@ -1208,11 +1207,12 @@ class MCEqRun:
     ):
         """Build one ETD2 integration path per batch condition.
 
-        Moved verbatim to :func:`MCEq.solvers.path.build_condition_paths`
-        (Phase 6 commit 5, D26); the contract (dedup, restore, fork pool)
-        is documented there.
+        Moved verbatim to :func:`MCEq.driver.paths.build_condition_paths`
+        (Phase 6 commit 5, D26; M6 / D-4 moved the home from solvers to
+        driver); the contract (dedup, restore, fork pool) is documented
+        there.
         """
-        return path.build_condition_paths(
+        return paths.build_condition_paths(
             self,
             conditions,
             X_start=X_start,
@@ -1494,10 +1494,11 @@ class MCEqRun:
         """Cure-B effective dX cap from the EM-cascade stiffness, or np.inf.
 
         Moved verbatim to :func:`MCEq.solvers.path.em_cascade_dx_cap`
-        (Phase 6 commit 5, D26); the memoised stiffness it consumes stays
-        on this class (:meth:`_em_cascade_step_scale`).
+        (Phase 6 commit 5, D26), then to :func:`MCEq.driver.paths.em_cascade_dx_cap`
+        at M6 (D-4); the memoised stiffness it consumes stays on this class
+        (:meth:`_em_cascade_step_scale`).
         """
-        return path.em_cascade_dx_cap(self)
+        return paths.em_cascade_dx_cap(self, self._em_cascade_step_scale())
 
     def _calculate_integration_path(
         self,
@@ -1513,11 +1514,12 @@ class MCEqRun:
     ):
         """Build (or reuse the cache of) the ETD2 integration path.
 
-        Moved verbatim to :func:`MCEq.solvers.path.calculate_integration_path`
-        (Phase 6 commit 5, D26); the cache and ``force`` live on this
-        instance, which the function reads and writes as before.
+        Moved verbatim to :func:`MCEq.driver.paths.calculate_integration_path`
+        (Phase 6 commit 5, D26; M6 / D-4 moved the home from solvers to
+        driver); the cache and ``force`` live on this instance, which the
+        function reads and writes as before.
         """
-        return path.calculate_integration_path(
+        return paths.calculate_integration_path(
             self,
             int_grid,
             grid_var,
