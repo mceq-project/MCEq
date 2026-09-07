@@ -1,3 +1,4 @@
+import importlib.util
 import inspect
 import pathlib
 
@@ -548,7 +549,7 @@ def test_tabulated_reference_values():
 def test_tabulated_observation_level_follows_the_table():
     """h_obs defaults to the lowest tabulated height."""
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
-    table = dp.load_atmosphere_table(TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     assert np.isclose(atm.geom.h_obs, table.h_cm[0])
 
     # An explicit level higher up sees a thinner column, lower down a thicker
@@ -563,7 +564,7 @@ def test_tabulated_observation_level_follows_the_table():
 
 def test_tabulated_negative_table_heights_clip_at_sea_level():
     """Reanalyses extrapolate below ground; h_obs must not go negative."""
-    table = dp.load_atmosphere_table(TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     sunk = dp.AtmosphereTable(
         h_cm=table.h_cm - 4.0e5,  # push the bottom below sea level
         rho_gcm3=table.rho_gcm3,
@@ -574,19 +575,19 @@ def test_tabulated_negative_table_heights_clip_at_sea_level():
 
 
 def test_tabulated_reproduces_the_table_rows():
-    table = dp.load_atmosphere_table(TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     atm = dp.TabulatedAtmosphere(table)
     assert np.allclose(atm.get_density(table.h_cm), table.rho_gcm3, rtol=1e-12)
     assert np.allclose(atm.get_temperature(table.h_cm), table.T_K, rtol=1e-12)
     # Building an atmosphere must not modify the caller's table.
-    fresh = dp.load_atmosphere_table(TABLE_PATH)
+    fresh = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     assert np.array_equal(table.h_cm, fresh.h_cm)
     assert np.array_equal(table.rho_gcm3, fresh.rho_gcm3)
 
 
 def test_tabulated_density_column_matches_ideal_gas(tmp_path):
     """rho_gcm3 and (T_K, p_hPa) are two spellings of the same table."""
-    table = dp.load_atmosphere_table(TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     path = _write_table(
         tmp_path,
         ["h_cm,rho_gcm3"]
@@ -615,7 +616,7 @@ def test_tabulated_missing_values_and_row_order(tmp_path):
             "nan,1.0e6,225.0",
         ],
     )
-    table = dp.load_atmosphere_table(path)
+    table = dp.AtmosphereTable.load_from_csv(path)
     assert np.array_equal(table.h_cm, [3.0e5, 5.0e5, 9.0e5])
     assert np.all(np.diff(table.rho_gcm3) < 0.0)
 
@@ -629,7 +630,7 @@ def test_tabulated_unknown_columns_are_ignored(tmp_path):
             "9.0e5,230.0,300.0,0.0001,2e-6",
         ],
     )
-    table = dp.load_atmosphere_table(path)
+    table = dp.AtmosphereTable.load_from_csv(path)
     assert table.h_cm.size == 2
     assert table.T_K is not None
     assert not table.is_gridded
@@ -648,12 +649,12 @@ def test_tabulated_unknown_columns_are_ignored(tmp_path):
 )
 def test_tabulated_table_errors(tmp_path, lines, match):
     with pytest.raises(ValueError, match=match):
-        dp.load_atmosphere_table(_write_table(tmp_path, lines))
+        dp.AtmosphereTable.load_from_csv(_write_table(tmp_path, lines))
 
 
 def test_tabulated_isothermal_tail():
     """The default tail is exactly exponential and joins without a step."""
-    table = dp.load_atmosphere_table(TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
     h_top, rho_top = table.h_cm[-1], table.rho_gcm3[-1]
     scale_h = (h_top - table.h_cm[-2]) / np.log(table.rho_gcm3[-2] / rho_top)
@@ -690,6 +691,52 @@ def test_tabulated_msis00_extension():
     assert not np.isclose(tab.get_density(8.0e6), iso.get_density(8.0e6), rtol=0.2)
 
 
+def test_msis_extension_needs_to_know_where_the_column_is():
+    """MSIS is parametrised per site, so blending into it needs a position."""
+    with pytest.raises(ValueError, match="needs to know where the column is"):
+        dp.TabulatedAtmosphere(TABLE_PATH, top_extension="msis00")
+
+
+def test_msis_extension_takes_the_table_coordinate():
+    """A coord is enough: the seed site is moved to it before blending."""
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(
+        grid, coord=(20.0, 30.0), top_extension="msis00", season="January"
+    )
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("nrlmsis") is not None,
+    reason="nrlmsis is installed, so the fallback path is not taken",
+)
+def test_top_extension_msis_falls_back_when_nrlmsis_is_absent():
+    """'msis' takes NRLMSIS 2.1 when it is there and MSISE-00 when it is not."""
+    auto = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis", location="SouthPole", season="January"
+    )
+    pinned = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", season="January"
+    )
+    assert np.isclose(auto.max_X, pinned.max_X, rtol=1e-12)
+
+    with pytest.raises(ValueError, match="nrlmsis"):
+        dp.TabulatedAtmosphere(
+            TABLE_PATH, top_extension="msis21", location="SouthPole", season="January"
+        )
+
+
+def test_column_rejects_a_longitude_beyond_one_turn():
+    """Either branch cut is fine; more than a full turn is a mistake."""
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    west = grid.column(-16.1, 36.267)
+    east = grid.column(343.9, 36.267)
+    assert np.array_equal(west.rho_gcm3, east.rho_gcm3)
+
+    with pytest.raises(ValueError, match=r"outside \[-360, 360\]"):
+        grid.column(400.0, 36.267)
+
+
 def test_tabulated_is_direction_independent():
     """One column for every direction: no azimuth, no upgoing angles."""
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
@@ -701,11 +748,8 @@ def test_tabulated_is_direction_independent():
         atm.set_theta(95.0)
 
 
-def test_tabulated_spline_matches_base_implementation():
-    """The vectorised override must reproduce the base-class spline exactly."""
-    atm = dp.TabulatedAtmosphere(TABLE_PATH)
-    atm.set_theta(45.0)
-    probe = (
+def _spline_probe(atm):
+    return (
         atm.max_X,
         atm._min_X,
         atm._max_den,
@@ -714,16 +758,42 @@ def test_tabulated_spline_matches_base_implementation():
         atm.X2h(500.0),
     )
 
-    dp.EarthsAtmosphere.calculate_density_spline(atm)
-    reference = (
-        atm.max_X,
-        atm._min_X,
-        atm._max_den,
-        atm.r_X2rho(200.0),
-        atm.h2X(1.0e6),
-        atm.X2h(500.0),
+
+def test_tabulated_sampler_matches_the_scalar_base_sampler(monkeypatch):
+    """The array sampler must reproduce the base-class scalar one exactly.
+
+    Both go through the same shared ``calculate_density_spline``, so this
+    compares the sampling hook and nothing else.  Swapping the override out
+    for the base implementation is the only way to get a reference -- calling
+    ``EarthsAtmosphere.calculate_density_spline`` unbound would dispatch right
+    back into the override.
+    """
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    atm.set_theta(45.0)
+    probe = _spline_probe(atm)
+
+    monkeypatch.setattr(
+        dp.TabulatedAtmosphere,
+        "_sample_densities",
+        dp.EarthsAtmosphere._sample_densities,
     )
-    assert np.allclose(probe, reference, rtol=1e-12)
+    atm.calculate_density_spline()
+    assert np.allclose(probe, _spline_probe(atm), rtol=1e-12)
+
+
+@pytest.mark.parametrize("theta_deg", [10.0, 60.0, 70.0, 80.0])
+def test_tabulated_profile_covers_the_integration_endpoint(theta_deg):
+    """The profile must reach h_obs even after floating-point rounding.
+
+    ``geom.h(path_len, thrad)`` should equal ``h_obs`` exactly but comes out
+    of a sin/cos/sqrt chain, so it can land a fraction of a micron below it.
+    ``get_density`` returns nan below the table, so without the padding in
+    ``_set_profile`` the spline build raises at these angles -- which is what
+    ``_TABLE_PAD_CM`` exists to prevent.
+    """
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    atm.set_theta(theta_deg)
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +819,7 @@ def _grid_atm(**kwargs):
 
 
 def test_gridded_table_loads_as_a_grid():
-    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
     assert table.is_gridded
     assert table.h_cm.shape == (7, 8, 15)
     assert np.array_equal(table.lat_deg, [-90, -60, -30, 0, 30, 60, 90])
@@ -760,7 +830,7 @@ def test_gridded_table_loads_as_a_grid():
 
 
 def test_gridded_column_at_a_node_is_exact():
-    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
     for j, lat in enumerate(table.lat_deg):
         for i, lon in enumerate(table.lon_deg):
             column = table.column(lon, lat)
@@ -770,7 +840,7 @@ def test_gridded_column_at_a_node_is_exact():
 
 
 def test_gridded_column_interpolates_between_nodes():
-    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
     south, north = table.column(0.0, -30.0), table.column(0.0, 0.0)
     middle = table.column(0.0, -15.0)
     assert np.all(south.T_K < middle.T_K)
@@ -779,7 +849,7 @@ def test_gridded_column_interpolates_between_nodes():
 
 
 def test_gridded_column_wraps_in_longitude():
-    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    table = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
     assert np.allclose(table.column(-45.0, 0.0).T_K, table.column(315.0, 0.0).T_K)
     # 337.5 deg falls in the cell that wraps across the 360/0 seam
     seam = table.column(337.5, 0.0)
@@ -802,20 +872,20 @@ def _regional_table(tmp_path, keep, name="regional.csv"):
 
 
 def test_global_longitude_axis_is_detected_as_periodic():
-    assert dp.load_atmosphere_table(GRID_TABLE_PATH).is_global_in_lon
+    assert dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH).is_global_in_lon
 
 
 def test_regional_table_is_not_periodic_in_longitude(tmp_path):
     """A crop must not wrap: the gap is the part of the world it lacks."""
     path = _regional_table(tmp_path, lambda lat, lon: lon <= 135.0)
-    table = dp.load_atmosphere_table(path)
+    table = dp.AtmosphereTable.load_from_csv(path)
     assert not table.is_global_in_lon
 
 
 def test_regional_table_raises_outside_its_latitudes(tmp_path):
     """Clamping would answer with the wrong column and say nothing."""
     path = _regional_table(tmp_path, lambda lat, lon: lat <= -30.0)
-    table = dp.load_atmosphere_table(path)
+    table = dp.AtmosphereTable.load_from_csv(path)
     with pytest.raises(ValueError, match="latitude .* outside the table"):
         table.column(0.0, 36.267)
     # The covered part of the domain still works.
@@ -824,7 +894,7 @@ def test_regional_table_raises_outside_its_latitudes(tmp_path):
 
 def test_regional_table_raises_outside_its_longitudes(tmp_path):
     path = _regional_table(tmp_path, lambda lat, lon: lon <= 135.0)
-    table = dp.load_atmosphere_table(path)
+    table = dp.AtmosphereTable.load_from_csv(path)
     with pytest.raises(ValueError, match="longitude .* outside the table"):
         table.column(270.0, 0.0)
     assert table.column(90.0, 0.0).h_cm.size == table.h_cm.shape[-1]
@@ -834,7 +904,7 @@ def test_table_spanning_the_prime_meridian_is_rejected(tmp_path):
     """Sorted into [0, 360) such a crop has a hole in the middle."""
     path = _regional_table(tmp_path, lambda lat, lon: lon in (0.0, 45.0, 315.0))
     with pytest.raises(ValueError, match="unevenly spaced longitude axis"):
-        dp.load_atmosphere_table(path)
+        dp.AtmosphereTable.load_from_csv(path)
 
 
 def test_gzipped_table_reads_identically(tmp_path):
@@ -845,8 +915,8 @@ def test_gzipped_table_reads_identically(tmp_path):
     packed = tmp_path / "grid.csv.gz"
     packed.write_bytes(_gzip.compress(raw))
 
-    plain = dp.load_atmosphere_table(GRID_TABLE_PATH)
-    zipped = dp.load_atmosphere_table(str(packed))
+    plain = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    zipped = dp.AtmosphereTable.load_from_csv(str(packed))
     assert np.array_equal(plain.h_cm, zipped.h_cm)
     assert np.array_equal(plain.rho_gcm3, zipped.rho_gcm3)
     assert np.array_equal(plain.lat_deg, zipped.lat_deg)
@@ -867,7 +937,7 @@ def test_gridded_table_rejects_ragged_columns(tmp_path):
     del lines[3]  # drop one level from the first column
     path = _write_table(tmp_path, lines)
     with pytest.raises(ValueError, match="levels"):
-        dp.load_atmosphere_table(path)
+        dp.AtmosphereTable.load_from_csv(path)
 
 
 def test_tabulated_lc_needs_a_gridded_table():
@@ -881,7 +951,7 @@ def test_tabulated_lc_vertical_uses_the_detector_column():
     assert np.isclose(atm.current_impact_latitude, DET_LAT, atol=1e-6)
     assert np.isclose(atm.current_impact_longitude % 360.0, DET_LON, atol=1e-6)
 
-    column = dp.load_atmosphere_table(GRID_TABLE_PATH).column(DET_LON, DET_LAT)
+    column = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH).column(DET_LON, DET_LAT)
     assert np.allclose(atm.get_density(column.h_cm), column.rho_gcm3, rtol=1e-12)
 
 
@@ -1013,13 +1083,23 @@ def test_msis21_public_interface_matches_msis00(name00, name21):
             f"{params21[name].default!r}, but {name00} uses {p00.default!r}"
         )
 
+
 MSIS21_PAIRS = [
-    ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
-     lambda: dp.MSIS21IceCubeCentered("SouthPole", "January")),
-    ("ARCA", lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January")),
-    ("ORCA", lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January")),
+    (
+        "IceCube",
+        lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
+        lambda: dp.MSIS21IceCubeCentered("SouthPole", "January"),
+    ),
+    (
+        "ARCA",
+        lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January"),
+    ),
+    (
+        "ORCA",
+        lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January"),
+    ),
 ]
 
 

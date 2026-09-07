@@ -1,5 +1,6 @@
 import gzip
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 
 import numpy as np
 from six import with_metaclass
@@ -101,8 +102,29 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
             "not cover the whole integration path."
         )
 
+    def _sample_densities(self, h_vec_cm):
+        """Densities in g/cm**3 at the sampled heights along the path.
+
+        The sampling hook of :func:`calculate_density_spline`.  The default
+        walks :func:`get_density` one height at a time, which is all a scalar
+        backend can do.  Backends that evaluate a whole array in one call --
+        a tabulated profile, a batched MSIS call, an azimuth-major loop --
+        override this and inherit the spline bookkeeping unchanged.
+
+        Args:
+          h_vec_cm (numpy.ndarray): heights above sea level in cm
+
+        Returns:
+          numpy.ndarray: densities of the same shape
+        """
+        return np.vectorize(self.get_density)(h_vec_cm)
+
     def calculate_density_spline(self, n_steps=2000):
         """Calculates and stores a spline of :math:`\\rho(X)`.
+
+        The densities come from :func:`_sample_densities`; everything else
+        here -- the path, the depth integral, the spline node contract -- is
+        shared by every atmosphere.
 
         Args:
           n_steps (int, optional): number of :math:`X` values
@@ -124,27 +146,21 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         )
 
         thrad = self.thrad
-        path_length = self.geom.path_len(thrad)
-        vec_rho_l = np.vectorize(
-            lambda delta_l: self.get_density(self.geom.h(delta_l, thrad))
-        )
-        dl_vec = np.linspace(0, path_length, n_steps)
+        dl_vec = np.linspace(0, self.geom.path_len(thrad), n_steps)
+        # geom.h is elementwise numpy, so one call covers the whole path.
+        h_vec_cm = self.geom.h(dl_vec, thrad)
 
         now = time()
-
-        # Compute density at every step once to avoid calling vec_rho_l twice
-        rho_vec = vec_rho_l(dl_vec)
-        self._assert_finite_density(rho_vec, self.geom.h(dl_vec, thrad))
+        rho_vec = self._sample_densities(h_vec_cm)
+        self._assert_finite_density(rho_vec, h_vec_cm)
+        info(5, f".. took {time() - now:1.2f}s")
 
         # Calculate integral for each depth point
         X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec = dl_vec[1:]
-
-        info(5, f".. took {time() - now:1.2f}s")
 
         # Save depth value at h_obs
         self._max_X = X_int[-1]
-        self._max_den = self.get_density(self.geom.h(0, thrad))
+        self._max_den = float(rho_vec[0])
 
         # Store minimum valid slant depth for the integration path.  The
         # spline below is only fitted for X >= X_int[0]; starting the
@@ -154,9 +170,11 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         # infinite loop in _calculate_integration_path.
         self._min_X = X_int[0]
 
-        # Interpolate with bi-splines without smoothing
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
+        # Interpolate with bi-splines without smoothing.  X_int[i] pairs with
+        # dl_vec[i+1], and the splines are fitted on the reversed
+        # (descending-height) arrays.
+        h_intp = h_vec_cm[2:][::-1]
+        X_intp = X_int[1:][::-1]
         # This is an incomplete workaround for non-monothonic elevations for
         # upgoing trajectories.
         self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
@@ -300,12 +318,7 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         """Returns the refractive index - 1 in air (density parametrization
         as in CORSIKA).
 
-        Normalised to the density at the observation level.  Models whose
-        profile does not reach sea level (an elevated site, or a tabulated
-        atmosphere that starts at the surface) have no density at h=0, so
-        anchoring this on the observation level is what keeps the value finite.
-        For the default h_obs=0 this is the sea-level normalisation it has
-        always been.
+        Normalised to the density at the observation level.
         """
 
         return 0.000283 * self.get_density(h_cm) / self.get_density(self.geom.h_obs)
@@ -895,67 +908,32 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
         return self._msis.get_density(h_cm)
 
     # ------------------------------------------------------------------
-    # Density spline (azimuth-averaging optimisation)
+    # Density sampling
     # ------------------------------------------------------------------
 
-    def calculate_density_spline(self, n_steps=2000):
-        """Calculate and store a spline of :math:`\\rho(X)`.
+    def _sample_densities(self, h_vec_cm):
+        """Densities along the path, averaged over azimuth when asked.
 
-        In single-azimuth mode delegates to the base-class implementation.
-
-        In azimuth-averaging mode uses an azimuth-major loop for efficiency:
-        for each of the :attr:`_n_azimuth` pre-computed impact points the
-        MSIS location is set **once** and the full height profile is sampled
-        in a single vectorised call, so the C library benefits from staying
-        at the same latitude/longitude across all height steps.  The 36
-        per-azimuth profiles are averaged before spline fitting.
+        In single-azimuth mode the base-class sampler is all that is needed.
+        When averaging, the loop runs azimuth-major: the MSIS location is set
+        **once** per direction and the whole height profile sampled at that
+        location, so the C library stays at the same latitude/longitude
+        across all height steps instead of being moved at every one.
         """
         if not self._azimuth_averaging:
-            super().calculate_density_spline(n_steps)
-            return
-
-        from time import time
-
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
-        thrad = self.thrad
-        path_length = self.geom.path_len(thrad)
-        dl_vec = np.linspace(0, path_length, n_steps)
-        h_vec = np.array([self.geom.h(dl, thrad) for dl in dl_vec])
+            return super()._sample_densities(h_vec_cm)
 
         info(
             5,
-            f"Calculating azimuth-averaged spline for zenith {self.theta_deg:4.1f}\u00b0"
-            f" ({len(self._azimuth_avg_coords)} directions).",
+            f"Averaging {len(self._azimuth_avg_coords)} azimuths for zenith "
+            f"{self.theta_deg:4.1f}\u00b0.",
         )
-        now = time()
-
-        # Azimuth-major loop: set MSIS location once per direction, then
-        # vectorise over all heights.  This is far more efficient than the
-        # height-major order because the C library stays at the same
-        # lat/lon across all altitude queries.
-        rho_sum = np.zeros(n_steps)
+        rho_sum = np.zeros_like(h_vec_cm)
         msis_vec = np.vectorize(self._msis.get_density)
         for lat, lon in self._azimuth_avg_coords:
             self._msis.set_location_coord(lon, lat)
-            rho_sum += msis_vec(h_vec)
-        rho_vec = rho_sum / len(self._azimuth_avg_coords)
-
-        info(5, f".. took {time() - now:1.2f}s")
-
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-        dl_vec = dl_vec[1:]
-
-        self._max_X = X_int[-1]
-        self._min_X = X_int[0]
-        self._max_den = float(rho_vec[0])
-
-        h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[1:])]
-        X_intp = [X for X in reversed(X_int[1:])]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+            rho_sum += msis_vec(h_vec_cm)
+        return rho_sum / len(self._azimuth_avg_coords)
 
     # ------------------------------------------------------------------
     # Angle setting
@@ -1174,20 +1152,35 @@ class MSIS00KM3NeTCentered(MSIS00LocationCentered):
 _M_AIR = 28.964
 #: Ideal gas constant in hPa cm**3 / (K mol).
 _R_GAS = 8.314e4
-#: Padding added to both ends of a tabulated profile in cm.  Purely to absorb
-#: floating-point error at the exact integration limits (``h_obs`` and
-#: ``h_atm``); 1 m is physically negligible.
+#: Sites NRLMSISE-00 is parametrised for; the tabulated classes seed an MSIS
+#: top extension with one of these and then move it to their own coordinate.
+_MSIS_SITES = (
+    "SouthPole",
+    "Karlsruhe",
+    "Geneva",
+    "Tokyo",
+    "GranSasso",
+    "TelAviv",
+    "KSC",
+    "SoudanMine",
+    "Tsukuba",
+    "LynnLake",
+    "PeaceRiver",
+    "FtSumner",
+)
+#: Padding added to both ends of a tabulated profile in cm.  ``geom.h`` comes
+#: out of a sin/cos/sqrt chain, so the path endpoints land a fraction of a
+#: micron outside ``[h_obs, h_atm]`` instead of exactly on them, and a profile
+#: that stops at the limit reads ``nan`` there.  1 m of margin is physically
+#: negligible against an 8 km scale height and covers any rounding.
 _TABLE_PAD_CM = 100.0
-#: Number of table bins blended into MSIS00 by ``top_extension="msis00"``.
-_MSIS_BLEND_BINS = 5
-#: Grid points used for the shared height grid when averaging columns.
-_AVERAGING_STEPS = 500
 
 
+@dataclass(repr=False, eq=False)
 class AtmosphereTable:
     """A tabulated atmosphere: one vertical column, or a grid of them.
 
-    Built by :func:`load_atmosphere_table` and consumed by
+    Built by :func:`load_from_csv` and consumed by
     :class:`TabulatedAtmosphere` and :class:`TabulatedLocationCentered`.  A
     gridded table stores one column per (longitude, latitude) node of a regular
     grid; :meth:`column` interpolates it to an arbitrary position.
@@ -1203,15 +1196,12 @@ class AtmosphereTable:
         normalised to [0, 360).
     """
 
-    def __init__(
-        self, h_cm, rho_gcm3, T_K=None, p_hPa=None, lat_deg=None, lon_deg=None
-    ):
-        self.h_cm = h_cm
-        self.rho_gcm3 = rho_gcm3
-        self.T_K = T_K
-        self.p_hPa = p_hPa
-        self.lat_deg = lat_deg
-        self.lon_deg = lon_deg
+    h_cm: np.ndarray
+    rho_gcm3: np.ndarray
+    T_K: np.ndarray = None
+    p_hPa: np.ndarray = None
+    lat_deg: np.ndarray = None
+    lon_deg: np.ndarray = None
 
     @property
     def is_gridded(self):
@@ -1248,7 +1238,167 @@ class AtmosphereTable:
             )
         return f"AtmosphereTable(single column, {self.h_cm.size} levels)"
 
-    def _assert_covers(self, lon, lat, periodic):
+    @classmethod
+    def load_from_csv(cls, filename):
+        """Reads a tabulated atmosphere from a CSV file.
+
+        The format is deliberately minimal so that any data source -- ERA5, AIRS,
+        GDAS, radiosondes -- can be converted to it with a few lines of code.  See
+        :class:`TabulatedAtmosphere` for the full specification and
+        ``docs/examples/ERA5_density_spline.ipynb`` for a worked converter.
+
+        Args:
+          filename (str): path to the CSV file
+
+        Returns:
+          AtmosphereTable: a single column, or a longitude/latitude grid of columns
+          when the file carries ``lat_deg`` and ``lon_deg``.
+        """
+        # Strip full-line comments and blanks first: numpy's ``names=True`` always
+        # takes the *first* line as the header, comment marker or not.
+        # ``.gz`` is read transparently: these tables are highly repetitive text and
+        # a global grid at a useful resolution is large enough for that to matter.
+        opener = gzip.open if str(filename).endswith(".gz") else open
+        with opener(filename, "rt") as table_file:
+            rows = [
+                line
+                for line in table_file
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+        if len(rows) < 2:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} holds {max(len(rows) - 1, 0)} "
+                "data row(s). A header line naming the columns plus at least two "
+                "data rows are required."
+            )
+
+        raw = np.atleast_1d(np.genfromtxt(rows, delimiter=",", names=True, dtype=float))
+        if raw.dtype.names is None:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} has no column header row. "
+                "The first non-comment line must name the columns."
+            )
+        columns = {
+            name.lower(): raw[name].astype(np.float64) for name in raw.dtype.names
+        }
+
+        if "h_cm" not in columns:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} is missing the required "
+                f"'h_cm' column. Found: {sorted(columns)}."
+            )
+        h_cm = columns["h_cm"]
+
+        if "rho_gcm3" in columns:
+            dens = columns["rho_gcm3"]
+        elif "t_k" in columns and "p_hpa" in columns:
+            # Dry-air ideal gas law.  ERA5 provides specific humidity on the
+            # model-level path; ignoring it overestimates the near-surface density
+            # by at most ~1%.
+            dens = columns["p_hpa"] / columns["t_k"] * _M_AIR / _R_GAS
+        else:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} must provide either a "
+                f"'rho_gcm3' column or both 'T_K' and 'p_hPa'. Found: {sorted(columns)}."
+            )
+
+        valid = np.isfinite(h_cm) & np.isfinite(dens) & (dens > 0.0)
+        if np.count_nonzero(valid) < 2:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} has "
+                f"{np.count_nonzero(valid)} usable row(s); at least 2 rows with a "
+                "finite height and a positive density are required."
+            )
+
+        optional = {
+            key: columns[low][valid]
+            for key, low in (("T_K", "t_k"), ("p_hPa", "p_hpa"))
+            if low in columns
+        }
+        h_cm, dens = h_cm[valid], dens[valid]
+
+        gridded = "lat_deg" in columns and "lon_deg" in columns
+        if not gridded:
+            order = np.argsort(h_cm)
+            table = AtmosphereTable(
+                h_cm=h_cm[order],
+                rho_gcm3=dens[order],
+                **{key: value[order] for key, value in optional.items()},
+            )
+            info(2, f"loaded {filename}: {table!r}")
+            return table
+
+        table = cls._grid_from_rows(
+            filename,
+            columns["lat_deg"][valid],
+            columns["lon_deg"][valid] % 360.0,
+            h_cm,
+            dens,
+            optional,
+        )
+        info(2, f"loaded {filename}: {table!r}")
+        return table
+
+    @classmethod
+    def _grid_from_rows(cls, filename, lat, lon, h_cm, dens, optional):
+        """Reshapes long-format rows into a regular (lat, lon, level) grid."""
+        lat_axis = np.unique(lat)
+        lon_axis = np.unique(lon)
+        n_lat, n_lon = lat_axis.size, lon_axis.size
+        n_rows = h_cm.size
+
+        if n_rows % (n_lat * n_lon) != 0:
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} has {n_rows} usable rows, "
+                f"which is not a whole number of columns for the {n_lat} latitudes "
+                f"x {n_lon} longitudes it names. Gridded tables must be a regular "
+                "grid with the same number of levels in every column."
+            )
+        n_lev = n_rows // (n_lat * n_lon)
+
+        j = np.searchsorted(lat_axis, lat)
+        i = np.searchsorted(lon_axis, lon)
+        # Sort by (lat, lon, height) so every column lands contiguously, ascending.
+        order = np.lexsort((h_cm, i, j))
+        j, i = j[order], i[order]
+
+        counts = np.bincount(j * n_lon + i, minlength=n_lat * n_lon)
+        if not np.all(counts == n_lev):
+            bad = int(np.argmin(counts))
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
+                f"columns do not all have {n_lev} levels -- the column at "
+                f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
+                f"has {counts[bad]}. Keep every level in every column (mark gaps "
+                "with nan in a data column rather than dropping the row)."
+            )
+
+        steps = np.diff(lon_axis)
+        if n_lon > 2 and steps.max() > steps.min() * 1.5:
+            seam = lon_axis[0] + 360.0 - lon_axis[-1]
+            if not np.isclose(seam, steps.max(), rtol=1e-3, atol=1e-6):
+                raise ValueError(
+                    f"AtmosphereTable.load_from_csv(): {filename} has an unevenly spaced "
+                    f"longitude axis ({steps.min():.3f} to {steps.max():.3f} deg "
+                    "between neighbours). Longitudes are stored in [0, 360), so a "
+                    "region spanning the prime meridian sorts into two blocks with "
+                    "a gap between them and cannot be interpolated. Shift such a "
+                    "region onto a continuous longitude range, or supply a global "
+                    "grid."
+                )
+
+        def reshape(values):
+            return values[order].reshape(n_lat, n_lon, n_lev)
+
+        return AtmosphereTable(
+            h_cm=reshape(h_cm),
+            rho_gcm3=reshape(dens),
+            lat_deg=lat_axis,
+            lon_deg=lon_axis,
+            **{key: reshape(value) for key, value in optional.items()},
+        )
+
+    def _raise_if_outside_region(self, lon, lat, periodic):
         """Raises if (*lon*, *lat*) falls outside a regional table's domain.
 
         Clamping to the nearest edge instead would answer every query, but it
@@ -1257,7 +1407,7 @@ class AtmosphereTable:
         """
         if not (self.lat_deg[0] <= lat <= self.lat_deg[-1]):
             raise ValueError(
-                f"AtmosphereTable::column(): latitude {lat:.3f} deg is outside "
+                f"AtmosphereTable.column(): latitude {lat:.3f} deg is outside "
                 f"the table, which covers {self.lat_deg[0]:.3f}.."
                 f"{self.lat_deg[-1]:.3f} deg. Use a table that covers the "
                 "requested position."
@@ -1269,7 +1419,7 @@ class AtmosphereTable:
         lo, hi = float(self.lon_deg[0]), float(self.lon_deg[-1])
         if not (lo <= lon <= hi):
             raise ValueError(
-                f"AtmosphereTable::column(): longitude {lon:.3f} deg is outside "
+                f"AtmosphereTable.column(): longitude {lon:.3f} deg is outside "
                 f"the table, which covers {lo:.3f}..{hi:.3f} deg. Use a table "
                 "that covers the requested position."
             )
@@ -1294,8 +1444,19 @@ class AtmosphereTable:
 
         periodic = self.is_global_in_lon
         lat = float(latitude)
-        lon = float(longitude) % 360.0
-        self._assert_covers(lon, lat, periodic)
+        lon = float(longitude)
+        # Any branch cut is fine -- [-180, 180) and [0, 360) both occur in the
+        # wild -- but a value outside one full turn is a mistake, not a
+        # convention, and wrapping it silently would answer with the wrong
+        # column.
+        if not -360.0 <= lon <= 360.0:
+            raise ValueError(
+                f"AtmosphereTable.column(): longitude {lon:.3f} deg is outside "
+                "[-360, 360]. Pass degrees on either the [-180, 180) or the "
+                "[0, 360) branch."
+            )
+        lon %= 360.0
+        self._raise_if_outside_region(lon, lat, periodic)
 
         j, wj = _bracket(self.lat_deg, lat, periodic=False)
         i, wi = _bracket(self.lon_deg, lon, periodic=periodic)
@@ -1343,164 +1504,6 @@ def _bracket(axis, value, periodic):
     return idx, float(np.clip(weight, 0.0, 1.0))
 
 
-def load_atmosphere_table(filename):
-    """Reads a tabulated atmosphere from a CSV file.
-
-    The format is deliberately minimal so that any data source -- ERA5, AIRS,
-    GDAS, radiosondes -- can be converted to it with a few lines of code.  See
-    :class:`TabulatedAtmosphere` for the full specification and
-    ``docs/examples/ERA5_density_spline.ipynb`` for a worked converter.
-
-    Args:
-      filename (str): path to the CSV file
-
-    Returns:
-      AtmosphereTable: a single column, or a longitude/latitude grid of columns
-      when the file carries ``lat_deg`` and ``lon_deg``.
-    """
-    # Strip full-line comments and blanks first: numpy's ``names=True`` always
-    # takes the *first* line as the header, comment marker or not.
-    # ``.gz`` is read transparently: these tables are highly repetitive text and
-    # a global grid at a useful resolution is large enough for that to matter.
-    opener = gzip.open if str(filename).endswith(".gz") else open
-    with opener(filename, "rt") as table_file:
-        rows = [
-            line
-            for line in table_file
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-    if len(rows) < 2:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} holds {max(len(rows) - 1, 0)} "
-            "data row(s). A header line naming the columns plus at least two "
-            "data rows are required."
-        )
-
-    raw = np.atleast_1d(np.genfromtxt(rows, delimiter=",", names=True, dtype=float))
-    if raw.dtype.names is None:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} has no column header row. "
-            "The first non-comment line must name the columns."
-        )
-    columns = {name.lower(): raw[name].astype(np.float64) for name in raw.dtype.names}
-
-    if "h_cm" not in columns:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} is missing the required "
-            f"'h_cm' column. Found: {sorted(columns)}."
-        )
-    h_cm = columns["h_cm"]
-
-    if "rho_gcm3" in columns:
-        dens = columns["rho_gcm3"]
-    elif "t_k" in columns and "p_hpa" in columns:
-        # Dry-air ideal gas law.  ERA5 provides specific humidity on the
-        # model-level path; ignoring it overestimates the near-surface density
-        # by at most ~1%.
-        dens = columns["p_hpa"] / columns["t_k"] * _M_AIR / _R_GAS
-    else:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} must provide either a "
-            f"'rho_gcm3' column or both 'T_K' and 'p_hPa'. Found: {sorted(columns)}."
-        )
-
-    valid = np.isfinite(h_cm) & np.isfinite(dens) & (dens > 0.0)
-    if np.count_nonzero(valid) < 2:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} has "
-            f"{np.count_nonzero(valid)} usable row(s); at least 2 rows with a "
-            "finite height and a positive density are required."
-        )
-
-    optional = {
-        key: columns[low][valid]
-        for key, low in (("T_K", "t_k"), ("p_hPa", "p_hpa"))
-        if low in columns
-    }
-    h_cm, dens = h_cm[valid], dens[valid]
-
-    gridded = "lat_deg" in columns and "lon_deg" in columns
-    if not gridded:
-        order = np.argsort(h_cm)
-        table = AtmosphereTable(
-            h_cm=h_cm[order],
-            rho_gcm3=dens[order],
-            **{key: value[order] for key, value in optional.items()},
-        )
-        info(2, f"loaded {filename}: {table!r}")
-        return table
-
-    table = _grid_from_rows(
-        filename,
-        columns["lat_deg"][valid],
-        columns["lon_deg"][valid] % 360.0,
-        h_cm,
-        dens,
-        optional,
-    )
-    info(2, f"loaded {filename}: {table!r}")
-    return table
-
-
-def _grid_from_rows(filename, lat, lon, h_cm, dens, optional):
-    """Reshapes long-format rows into a regular (lat, lon, level) grid."""
-    lat_axis = np.unique(lat)
-    lon_axis = np.unique(lon)
-    n_lat, n_lon = lat_axis.size, lon_axis.size
-    n_rows = h_cm.size
-
-    if n_rows % (n_lat * n_lon) != 0:
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} has {n_rows} usable rows, "
-            f"which is not a whole number of columns for the {n_lat} latitudes "
-            f"x {n_lon} longitudes it names. Gridded tables must be a regular "
-            "grid with the same number of levels in every column."
-        )
-    n_lev = n_rows // (n_lat * n_lon)
-
-    j = np.searchsorted(lat_axis, lat)
-    i = np.searchsorted(lon_axis, lon)
-    # Sort by (lat, lon, height) so every column lands contiguously, ascending.
-    order = np.lexsort((h_cm, i, j))
-    j, i = j[order], i[order]
-
-    counts = np.bincount(j * n_lon + i, minlength=n_lat * n_lon)
-    if not np.all(counts == n_lev):
-        bad = int(np.argmin(counts))
-        raise ValueError(
-            f"load_atmosphere_table(): {filename} is a gridded table whose "
-            f"columns do not all have {n_lev} levels -- the column at "
-            f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
-            f"has {counts[bad]}. Keep every level in every column (mark gaps "
-            "with nan in a data column rather than dropping the row)."
-        )
-
-    steps = np.diff(lon_axis)
-    if n_lon > 2 and steps.max() > steps.min() * 1.5:
-        seam = lon_axis[0] + 360.0 - lon_axis[-1]
-        if not np.isclose(seam, steps.max(), rtol=1e-3, atol=1e-6):
-            raise ValueError(
-                f"load_atmosphere_table(): {filename} has an unevenly spaced "
-                f"longitude axis ({steps.min():.3f} to {steps.max():.3f} deg "
-                "between neighbours). Longitudes are stored in [0, 360), so a "
-                "region spanning the prime meridian sorts into two blocks with "
-                "a gap between them and cannot be interpolated. Shift such a "
-                "region onto a continuous longitude range, or supply a global "
-                "grid."
-            )
-
-    def reshape(values):
-        return values[order].reshape(n_lat, n_lon, n_lev)
-
-    return AtmosphereTable(
-        h_cm=reshape(h_cm),
-        rho_gcm3=reshape(dens),
-        lat_deg=lat_axis,
-        lon_deg=lon_axis,
-        **{key: reshape(value) for key, value in optional.items()},
-    )
-
-
 class TabulatedAtmosphere(EarthsAtmosphere):
     """Atmosphere interpolated from a tabulated density profile.
 
@@ -1510,7 +1513,9 @@ class TabulatedAtmosphere(EarthsAtmosphere):
     reanalysed atmospheric data; ``docs/examples/ERA5_density_spline.ipynb``
     shows how to turn an ERA5 download into such a table.
 
-    **Table format (v1)**::
+    **Table format (v1)**
+
+    .. code-block:: text
 
         # MCEq tabulated atmosphere v1
         # South Pole, ERA5 pressure levels, 2026-07-01 daily mean
@@ -1518,6 +1523,19 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         283400.0,247.1,681.2
         510000.0,231.4,500.0
         900000.0,,300.0
+
+    and with ``lat_deg``/``lon_deg`` it is a **grid** of them, one row per
+    (grid node, level):
+
+    .. code-block:: text
+
+        # MCEq tabulated atmosphere v1
+        # ERA5 daily mean, 2026-07-01, 181x360 grid
+        lat_deg,lon_deg,h_cm,T_K,p_hPa
+        -90.0,0.0,110.9,242.8,1000
+        -90.0,0.0,1352.0,241.6,975
+        -89.0,0.0,118.4,243.1,1000
+        -89.0,0.0,1361.5,242.9,975
 
     * ``h_cm`` (required) -- height above sea level in cm.
     * Density, either directly as ``rho_gcm3`` in g/cm**3, or derived from
@@ -1551,13 +1569,13 @@ class TabulatedAtmosphere(EarthsAtmosphere):
 
     Args:
       table (str or AtmosphereTable): path to a CSV file, or a table already
-        parsed by :func:`load_atmosphere_table`.
+        parsed by :meth:`AtmosphereTable.load_from_csv`.
       coord (tuple, optional): ``(longitude, latitude)`` in degrees, selecting a
         column from a gridded table.  Required for gridded tables, ignored for
         single-column ones.
       surface_elevation_m (float, optional): observation level in metres above
         sea level.  ``None`` (default) uses the lowest height in the column,
-        clipped at sea level -- reanalysis products commonly extrapolate below
+        clipped at sea level -- ERA5 pressure levels commonly extrapolate below
         ground and report negative heights.
       top_extension (str): how to continue the profile above the topmost
         tabulated point up to the top of the atmosphere.  ``"isothermal"``
@@ -1583,13 +1601,15 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         coord=None,
         surface_elevation_m=None,
         top_extension="isothermal",
+        msis_blend_bins=5,
         location=None,
         season=None,
     ):
-        if top_extension not in ("isothermal", "msis00", "none"):
+        if top_extension not in ("msis", "msis21", "msis00", "isothermal", "none"):
             raise ValueError(
                 f"{self.__class__.__name__}(): unknown top_extension "
-                f"'{top_extension}'. Choose 'isothermal', 'msis00' or 'none'."
+                f"'{top_extension}'. Choose 'msis', 'msis21', 'msis00', "
+                "'isothermal' or 'none'."
             )
 
         # Base class first: it creates self.geom, which the height bookkeeping
@@ -1599,12 +1619,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         self.table = (
             table
             if isinstance(table, AtmosphereTable)
-            else (load_atmosphere_table(table))
+            else (AtmosphereTable.load_from_csv(table))
         )
         self.location = location
         self.season = season
         self.top_extension = top_extension
+        self.msis_blend_bins = msis_blend_bins
 
+        self._coord = coord
         column = self._select_column(coord)
         if surface_elevation_m is None:
             h_obs_cm = max(float(np.min(column.h_cm)), 0.0)
@@ -1680,6 +1702,62 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         if self.pressure is not None:
             self.pressure = np.hstack([self.pressure[0], self.pressure])
 
+    def _msis_extension_model(self):
+        """The MSIS atmosphere the profile is blended into at the top.
+
+        ``"msis21"`` and ``"msis00"`` name a model outright.  ``"msis"``, the
+        default, takes NRLMSIS 2.1 when it is importable and MSISE-00
+        otherwise, because ``nrlmsis`` is an optional dependency and a default
+        that needs it would make the class unusable on a bare install.
+        """
+        # MSIS is parametrised by one of a dozen named sites, which a table at
+        # an arbitrary position cannot supply.  Seed it with any of them and
+        # move it to the table's own coordinate, which is the position the
+        # profile being extended actually belongs to.
+        coord = self._msis_extension_coord()
+        seed = self.location if self.location in _MSIS_SITES else "SouthPole"
+        if coord is None and seed != self.location:
+            raise ValueError(
+                f"{self.__class__.__name__}(): top_extension="
+                f"'{self.top_extension}' needs to know where the column is, "
+                "to place the MSIS atmosphere it blends into. Pass coord=(lon, "
+                f"lat), or a location from {_MSIS_SITES}, or use "
+                "top_extension='isothermal'."
+            )
+
+        model = None
+        if self.top_extension in ("msis", "msis21"):
+            try:
+                from MCEq.geometry.msis21_atmosphere import MSIS21Atmosphere
+
+                model = MSIS21Atmosphere(seed, self.season)
+            except ImportError:
+                if self.top_extension == "msis21":
+                    raise ValueError(
+                        f"{self.__class__.__name__}(): top_extension='msis21' "
+                        "needs the optional 'nrlmsis' package (pip install "
+                        "'git+https://github.com/afedynitch/nrlmsis2.1'). Use "
+                        "top_extension='msis' to take NRLMSIS 2.1 when it is "
+                        "there and MSISE-00 when it is not, or 'msis00' to ask "
+                        "for MSISE-00 directly."
+                    ) from None
+                info(
+                    2,
+                    "top_extension='msis': 'nrlmsis' is not installed, "
+                    "extending with MSISE-00 instead of NRLMSIS 2.1.",
+                )
+        if model is None:
+            model = MSIS00Atmosphere(seed, self.season)
+        if coord is not None:
+            model.set_location_coord(*coord)
+        return model
+
+    def _msis_extension_coord(self):
+        """(longitude, latitude) to place the MSIS extension at, or None."""
+        if self._coord is not None:
+            return (float(self._coord[0]), float(self._coord[1]))
+        return None
+
     def _extend_above(self, h_top):
         """Extends the profile up to *h_top* according to *top_extension*."""
         if self.top_extension == "none" or self.h[-1] >= h_top:
@@ -1691,7 +1769,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                 raise ValueError(
                     f"{self.__class__.__name__}(): the two topmost table rows "
                     "do not decrease in density, so no isothermal scale height "
-                    "can be fitted. Use top_extension='msis00' or 'none'."
+                    "can be fitted. Use top_extension='msis' or 'none'."
                 )
             rho_top = self._log_linear_point(h_top, -1, -2)
             self.h = np.hstack([self.h, h_top])
@@ -1702,15 +1780,15 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                 self.pressure = np.hstack([self.pressure, self.pressure[-1]])
             return
 
-        # top_extension == "msis00": blend the top of the table into MSIS00 so
-        # that the seam does not show up as a density step in the 40-80 km
-        # region, where inclined showers develop.
-        msis = MSIS00Atmosphere(self.location, self.season)
+        # An MSIS extension: blend the top of the table into MSIS so that the
+        # seam does not show up as a density step in the 40-80 km region,
+        # where inclined showers develop.
+        msis = self._msis_extension_model()
         h_extra = np.linspace(self.h[-1], h_top, 100)
         msis_dens = np.array([msis.get_density(h) for h in h_extra])
         msis_temp = np.array([msis.get_temperature(h) for h in h_extra])
 
-        n_blend = min(_MSIS_BLEND_BINS, len(self.h) - 1)
+        n_blend = min(self.msis_blend_bins, len(self.h) - 1)
         for i in range(n_blend):
             w_tab = 1.0 - np.exp(-n_blend + i + 1)
             w_msis = 1.0 - np.exp(-i)
@@ -1795,42 +1873,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
     # Density spline (vectorised)
     # ------------------------------------------------------------------
 
-    def calculate_density_spline(self, n_steps=2000):
-        """Calculates and stores a spline of :math:`\\rho(X)`.
+    def _sample_densities(self, h_vec_cm):
+        """Densities along the path, in one interpolation.
 
-        Overrides the base implementation to evaluate the whole altitude grid in
-        one interpolation instead of looping :func:`get_density` through
-        ``np.vectorize``.  The spline node bookkeeping is identical.
-
-        Args:
-          n_steps (int, optional): number of :math:`X` values to use for
-            interpolation
+        :func:`get_density` reads the profile with :func:`numpy.interp`, which
+        takes the whole height array at once, so the base class's height-by-
+        height walk buys nothing here.
         """
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
-        if self.theta_deg is None:
-            raise Exception("zenith angle not set")
-
-        thrad = self.thrad
-        dl_vec = np.linspace(0.0, self.geom.path_len(thrad), n_steps)
-        h_vec_cm = self.geom.h(dl_vec, thrad)
-        rho_vec = self.get_density(h_vec_cm)
-        self._assert_finite_density(rho_vec, h_vec_cm)
-
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)
-
-        self._max_X = X_int[-1]
-        self._min_X = X_int[0]
-        self._max_den = float(rho_vec[0])
-
-        # Same node contract as the base class: X_int[i] pairs with dl_vec[i+1],
-        # and the splines are fitted on the reversed (descending-height) arrays.
-        h_intp = h_vec_cm[2:][::-1]
-        X_intp = X_int[1:][::-1]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        return self.get_density(h_vec_cm)
 
 
 class TabulatedLocationCentered(TabulatedAtmosphere):
@@ -1885,6 +1935,8 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         max_theta=90.0,
         surface_elevation_m=0.0,
         top_extension="isothermal",
+        msis_blend_bins=5,
+        n_averaging_steps=500,
         location=None,
         season=None,
     ):
@@ -1894,6 +1946,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         self._detector_depth_m = depth_m
         self._surface_elevation_m = surface_elevation_m
         self._n_azimuth = n_azimuth
+        self._n_averaging_steps = n_averaging_steps
         self._azimuth_averaging = False
         self._effective_theta_deg = 0.0
         self._current_azimuth_deg = None
@@ -1906,6 +1959,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             coord=(longitude, latitude),
             surface_elevation_m=surface_elevation_m,
             top_extension=top_extension,
+            msis_blend_bins=msis_blend_bins,
             location=location or f"({longitude:.3f}°E, {latitude:.3f}°N)",
             season=season,
         )
@@ -2007,7 +2061,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             self._azimuth_averaging = True
             self._current_impact_latitude = None
             self._current_impact_longitude = None
-            self._set_profile(self._averaged_column(h_obs_cm), h_obs_cm)
+            self._set_profile(self._averaged_column(h_obs_cm, theta_deg), h_obs_cm)
 
         self._effective_theta_deg = effective_theta
         self._current_azimuth_deg = azimuth_deg
@@ -2015,15 +2069,23 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         self.theta_deg = theta_deg  # keep original; may be > 90 for upgoing
         self.calculate_density_spline()
 
-    def _averaged_column(self, h_obs_cm):
+    def _averaged_column(self, h_obs_cm, theta_deg):
         """Mean of the impact-point columns over the cached azimuth grid.
 
-        The columns sit at different geographic positions and therefore on
-        different height grids, so they are resampled onto a shared one before
-        ``log(rho)``, the temperature and ``log(p)`` are averaged.  The shared
-        grid stops at the lowest of the column tops: extrapolating there would
-        flatten the profile, and completing it above is
-        :meth:`_extend_above`'s job.
+        An MSIS atmosphere is a function of position, so the location-centred
+        MSIS classes average their azimuths straight onto the integration
+        path.  A table is only defined on its own levels, and bilinear
+        sampling carries the heights with it, so columns 100 km apart sit on
+        different height grids and there is nothing to average until they
+        share one.  ``n_averaging_steps`` sets the resolution of that shared
+        resampling grid; it stops at the lowest of the column tops, because
+        extrapolating there would flatten the profile and completing it above
+        is :meth:`_extend_above`'s job.
+
+        Density and pressure are interpolated in the log along each column,
+        which is exact for an exponential profile, but averaged **across**
+        azimuths arithmetically -- mass is additive, and it is what
+        :class:`MSIS00LocationCentered` does, so the two stay comparable.
         """
         columns = [self.table.column(lon, lat) for lat, lon in self._azimuth_avg_coords]
         h_lo = max([h_obs_cm, *(np.min(c.h_cm) for c in columns)])
@@ -2031,32 +2093,34 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         if not h_lo < h_hi:
             raise ValueError(
                 f"{self.__class__.__name__}: the impact-point columns for "
-                f"zenith {self.theta_deg} do not overlap in height "
+                f"zenith {theta_deg} do not overlap in height "
                 f"({h_lo:.4e} >= {h_hi:.4e} cm); cannot average them."
             )
-        h_grid = np.linspace(h_lo, h_hi, _AVERAGING_STEPS)
+        h_grid = np.linspace(h_lo, h_hi, self._n_averaging_steps)
 
-        log_dens = np.zeros_like(h_grid)
+        dens = np.zeros_like(h_grid)
         temp = np.zeros_like(h_grid)
-        log_pressure = np.zeros_like(h_grid)
+        pressure = np.zeros_like(h_grid)
         has_temp = all(c.T_K is not None for c in columns)
         has_pressure = all(c.p_hPa is not None for c in columns)
 
         for column in columns:
             order = np.argsort(column.h_cm)
             h_col = column.h_cm[order]
-            log_dens += np.interp(h_grid, h_col, np.log(column.rho_gcm3[order]))
+            dens += np.exp(np.interp(h_grid, h_col, np.log(column.rho_gcm3[order])))
             if has_temp:
                 temp += np.interp(h_grid, h_col, column.T_K[order])
             if has_pressure:
-                log_pressure += np.interp(h_grid, h_col, np.log(column.p_hPa[order]))
+                pressure += np.exp(
+                    np.interp(h_grid, h_col, np.log(column.p_hPa[order]))
+                )
 
         n = len(columns)
         return AtmosphereTable(
             h_cm=h_grid,
-            rho_gcm3=np.exp(log_dens / n),
+            rho_gcm3=dens / n,
             T_K=temp / n if has_temp else None,
-            p_hPa=np.exp(log_pressure / n) if has_pressure else None,
+            p_hPa=pressure / n if has_pressure else None,
         )
 
     # ------------------------------------------------------------------

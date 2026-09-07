@@ -191,9 +191,14 @@ class MSIS21Atmosphere(EarthsAtmosphere):
     def _calc_one(self, h_cm):
         z_km = max(float(h_cm) / 1e5, 0.0)
         return self._model.calc(
-            day=self._doy, utsec=self._sec, z=z_km,
-            lat=self._lat, lon=self._lon,
-            sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+            day=self._doy,
+            utsec=self._sec,
+            z=z_km,
+            lat=self._lat,
+            lon=self._lon,
+            sfluxavg=self._f107a,
+            sflux=self._f107,
+            ap=self._ap,
         )
 
     def get_density(self, h_cm):
@@ -212,60 +217,32 @@ class MSIS21Atmosphere(EarthsAtmosphere):
     # Vectorised spline build — the speed win
     # ------------------------------------------------------------------
 
-    def calculate_density_spline(self, n_steps=2000):
-        """Build the rho(X) spline using one batched nrlmsis call.
+    def _sample_densities(self, h_vec_cm):
+        """Densities along the path from one batched nrlmsis call.
 
-        Overrides the base-class height-major Python loop.  Replaces
-        N_steps scalar ``get_density`` calls (~25 µs each in MSISE-00 C,
-        ~80 µs each in scalar nrlmsis2.1 Python) with a single vectorised
-        ``calc_altitude_array`` (~4 ms total for n_steps=2000).
+        Replaces the base class's n_steps scalar ``get_density`` calls (~80 us
+        each in scalar nrlmsis2.1 Python) with a single vectorised
+        ``calc_altitude_array`` (~4 ms for n_steps=2000).
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
-
-        if self.theta_deg is None:
-            raise Exception("zenith angle not set")
-
-        info(
-            5,
-            f"MSIS21: rho(X) spline for zenith {self.theta_deg:4.1f}°",
-        )
-
-        thrad = self.thrad
-        path_length = self.geom.path_len(thrad)
-        dl_vec = np.linspace(0.0, path_length, n_steps)
-        # geom.h is pure-numpy and accepts an array dl — call once.
-        h_vec_cm = self.geom.h(dl_vec, thrad)
         # nrlmsis is valid 0..2000 km; clamp negatives (can occur for
         # detector-depth geometries on the way to obs level)
         z_km_vec = np.maximum(h_vec_cm / 1.0e5, 0.0)
 
         now = time()
         result = self._model.calc_altitude_array(
-            day=self._doy, utsec=self._sec, z=z_km_vec,
-            lat=self._lat, lon=self._lon,
-            sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+            day=self._doy,
+            utsec=self._sec,
+            z=z_km_vec,
+            lat=self._lat,
+            lon=self._lon,
+            sfluxavg=self._f107a,
+            sflux=self._f107,
+            ap=self._ap,
         )
-        rho_vec = result.densities[0] * 1.0e-3   # kg/m³ → g/cm³
-
         info(5, f".. nrlmsis2.1 vectorised call took {time() - now:1.3f}s")
-
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
-
-        self._max_X = X_int[-1]
-        self._min_X = X_int[0]
-        self._max_den = float(rho_vec[0])
-
-        # Base-class spline fit: h_intp = reversed(geom.h(dl_vec[2:], thrad)),
-        # X_intp = reversed(X_int[1:]). h_vec_cm[i] = geom.h(dl_vec[i], thrad),
-        # so dl_vec[2:] → h_vec_cm[2:].
-        h_intp = h_vec_cm[2:][::-1]
-        X_intp = X_int[1:][::-1]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+        return result.densities[0] * 1.0e-3  # kg/m**3 -> g/cm**3
 
     # ------------------------------------------------------------------
     # set_theta (base-class behavior; no azimuth concept here)
@@ -418,77 +395,40 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
     # Vectorised spline build (single or azimuth-averaged)
     # ------------------------------------------------------------------
 
-    def calculate_density_spline(self, n_steps=2000):
-        """Batched rho(X) spline using calc_altitude_array.
+    def _sample_densities(self, h_vec_cm):
+        """Densities along the path, averaged over azimuth when asked.
 
-        Single-azimuth: one vectorised call.
-        Azimuth-averaging: n_azimuth vectorised calls (one per direction),
-        averaged before the spline fit — far better than the height-major
-        loop in the legacy MSIS00 path.
+        One batched ``calc_altitude_array`` per direction, averaged before the
+        spline fit -- far better than the height-major loop in the legacy
+        MSIS00 path.  Single-azimuth mode is the parent's single call.
         """
         from time import time
 
-        from scipy.integrate import cumulative_trapezoid
-        from scipy.interpolate import UnivariateSpline
+        if not self._azimuth_averaging:
+            return super()._sample_densities(h_vec_cm)
 
-        if self.theta_deg is None:
-            raise Exception("zenith angle not set")
-
-        thrad = self.thrad
-        path_length = self.geom.path_len(thrad)
-        dl_vec = np.linspace(0.0, path_length, n_steps)
-        # geom.h is pure-numpy, broadcast-friendly — single call replaces
-        # the n_steps Python loop.
-        h_vec_cm = self.geom.h(dl_vec, thrad)
+        info(
+            5,
+            f"MSIS21: averaging {len(self._azimuth_avg_coords)} azimuths for "
+            f"zenith {self.theta_deg:4.1f}deg",
+        )
         z_km_vec = np.maximum(h_vec_cm / 1.0e5, 0.0)
-
         now = time()
-        if self._azimuth_averaging:
-            info(
-                5,
-                f"MSIS21: azimuth-averaged spline for zenith "
-                f"{self.theta_deg:4.1f}° "
-                f"({len(self._azimuth_avg_coords)} directions)",
-            )
-            rho_sum = np.zeros(n_steps)
-            for lat, lon in self._azimuth_avg_coords:
-                res = self._model.calc_altitude_array(
-                    day=self._doy, utsec=self._sec, z=z_km_vec,
-                    lat=float(lat), lon=float(lon),
-                    sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
-                )
-                rho_sum += res.densities[0]
-            rho_vec = rho_sum / len(self._azimuth_avg_coords) * 1.0e-3
-        else:
-            info(
-                5,
-                f"MSIS21: rho(X) spline for zenith "
-                f"{self.theta_deg:4.1f}° at "
-                f"(lat={self._lat:.2f}, lon={self._lon:.2f})",
-            )
+        rho_sum = np.zeros_like(z_km_vec)
+        for lat, lon in self._azimuth_avg_coords:
             res = self._model.calc_altitude_array(
-                day=self._doy, utsec=self._sec, z=z_km_vec,
-                lat=self._lat, lon=self._lon,
-                sfluxavg=self._f107a, sflux=self._f107, ap=self._ap,
+                day=self._doy,
+                utsec=self._sec,
+                z=z_km_vec,
+                lat=float(lat),
+                lon=float(lon),
+                sfluxavg=self._f107a,
+                sflux=self._f107,
+                ap=self._ap,
             )
-            rho_vec = res.densities[0] * 1.0e-3
-
-        info(5, f".. spline build took {time() - now:1.3f}s")
-
-        X_int = cumulative_trapezoid(rho_vec, dl_vec)   # (n_steps-1,)
-
-        self._max_X = X_int[-1]
-        self._min_X = X_int[0]
-        self._max_den = float(rho_vec[0])
-
-        # Same indexing as the MSIS00 base-class spline contract:
-        # h_intp = reversed(geom.h(dl_vec[2:], thrad))
-        # X_intp = reversed(X_int[1:])
-        h_intp = h_vec_cm[2:][::-1]
-        X_intp = X_int[1:][::-1]
-        self._s_h2X = UnivariateSpline(h_intp, np.log(X_intp), k=2, s=0.0)
-        self._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)
-        self._s_lX2h = UnivariateSpline(np.log(X_intp)[::-1], h_intp[::-1], k=2, s=0.0)
+            rho_sum += res.densities[0]
+        info(5, f".. {len(self._azimuth_avg_coords)} calls took {time() - now:1.3f}s")
+        return rho_sum / len(self._azimuth_avg_coords) * 1.0e-3
 
     # ------------------------------------------------------------------
     # set_theta — location-centered version with azimuth support
@@ -502,9 +442,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         grazing window and far-side conventions.
         """
         if theta_deg < 0.0 or theta_deg > self.max_theta:
-            raise ValueError(
-                f"Zenith angle {theta_deg} not in [0, {self.max_theta}]."
-            )
+            raise ValueError(f"Zenith angle {theta_deg} not in [0, {self.max_theta}].")
 
         # Below-horizon dip of the local surface seen from the detector:
         # rays with theta <= 90 + dip still exit through the near-side
