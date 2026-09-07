@@ -3,10 +3,10 @@ name: Notebooks
 # Executes the example notebooks under docs/examples/ and examples/ with
 # `pytest --nbmake`, so a notebook cannot silently rot against the library API.
 #
-# Only Plot_density_depth_relations.ipynb runs today; the other ten are
-# `--ignore`d, one line each, for the reasons tabulated above the pytest step.
-# The list shrinks as the notebooks are rewritten -- deleting an `--ignore`
-# line is the whole change.
+# Seven of the eleven notebooks execute; four are `--ignore`d, one line each,
+# for the honest per-notebook reasons tabulated above the pytest step (the
+# rewrites landed in Phase 6 commit 9 -- deleting an `--ignore` line is the
+# whole change).
 #
 # A separate workflow rather than a job in test.yaml: the trigger differs. A
 # notebook edit must not start the 40-job test matrix, and test.yaml's path
@@ -56,7 +56,8 @@ jobs:
 
       # Editable so the notebooks import the checkout, and a real build because
       # density_profiles pulls in the compiled corsikaatm and nrlmsise00
-      # extensions. No mkl: the executing notebook runs no solver.
+      # extensions. No mkl: the executing notebooks solve with the default
+      # explicit (euler) route, which needs no sparse backend.
       - name: Install requirements
         run: uv pip install -e . --group notebooks
 
@@ -77,7 +78,7 @@ jobs:
 
       # `--ignore` prunes a path before collection, so nbmake never opens the
       # ignored notebooks and a corrupted one would pass unnoticed. This step
-      # covers all eleven -- it is the only thing the ten ignored ones get.
+      # covers all eleven -- it is the only thing the four ignored ones get.
       - name: Validate notebook JSON
         shell: bash
         run: |

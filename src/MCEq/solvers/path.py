@@ -297,8 +297,6 @@ def calculate_integration_path(
             "Grid variables other than the depth X not supported."
         )
 
-    from MCEq.solvers import etd2_nonuniform_path
-
     info(
         2,
         "ETD2 non-uniform path (eps={}, dX_max={}, dX_min={}, "

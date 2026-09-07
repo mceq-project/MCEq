@@ -456,7 +456,7 @@ def solve_fullsky(
             "primary spectrum). Bake the cutoff into phi0 with "
             "MCEq.geometry.gtracr_cutoff.build_phi0_with_cutoff, or "
             "pass geomagnetic_cutoff=False to silence this warning.",
-            stacklevel=2,
+            stacklevel=3,
         )
     if cutoff_flag and not phi0_is_2d:
         from MCEq.environment.geomagnetic.cutoff import (
