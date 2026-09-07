@@ -41,10 +41,57 @@ class Interactions:
 
         #: (str) Interaction Model name
         self.iam = None
-        # #: (tuple) selection of a band of coeffictients (in xf)
+        #         #: (tuple) selection of a band of coeffictients (in xf)
         # self.band = None
         #: (tuple) modified particle combination for error prop.
         self.mod_pprod = defaultdict(dict)
+        #: (dict) absolute channel overrides, keyed by the table's own
+        #: ``(parent, child)`` key shape, applied in ``get_matrix`` (R2-B).
+        #: Survives ``load`` (the channel is a policy on the table, not a
+        #: slice of the file) and is the only write path for external
+        #: matrices (``MCEqRun.inject_ddm``); see ``set_channel_override``.
+        self.channel_overrides = {}
+
+    def set_channel_override(self, parent, child, matrix):
+        """Override the yield matrix of one channel (plan §6.1, R2-B).
+
+        ``get_matrix`` returns *matrix* for this channel from now on,
+        across ``load``/``set_interaction_model`` reloads, so
+        ``get_matrix``, the particle wiring built from it
+        (``set_hadronic_channels``), ``dN_dxlab``, and the assembled
+        ``int_m`` all agree with the injected matrix, and the injection
+        is no longer a ``hadr_yields`` dict write that the next reload
+        silently wipes (data §5, risk 18). Bare PDG ints are accepted
+        and normalised to helicity-0 keys.
+
+        The override is returned as stored, like the raw ``index_d``
+        matrices are; treat it as read-only. ``mod_pprod`` factors
+        still multiply on top afterwards, so a Barr-style modification
+        composes with an injected matrix instead of replacing it.
+
+        No membership validation: a channel absent from the loaded
+        model simply never gets wired (``set_hadronic_channels`` only
+        iterates the relations), exactly as for a DB channel the
+        particle filters dropped.
+        """
+        import numpy as np
+
+        parent = (parent, 0) if isinstance(parent, int) else tuple(parent)
+        child = (child, 0) if isinstance(child, int) else tuple(child)
+        self.channel_overrides[(parent, child)] = np.asarray(matrix)
+        info(5, f"channel override set for {parent} -> {child}")
+        return True
+
+    def clear_channel_overrides(self):
+        """Drop every ``set_channel_override`` injection.
+
+        The table reverts to the file until the caller re-wires (driver:
+        ``MCEqRun.regenerate_matrices``).
+        """
+        n = len(self.channel_overrides)
+        self.channel_overrides = {}
+        info(1, f"{n} channel overrides cleared.")
+        return n
 
     def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
@@ -280,7 +327,13 @@ class Interactions:
         if child not in self.relations[parent]:
             raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
-        m = self.index_d[(parent, child)]
+        # R2-B: absolute overrides replace the file matrix; mod_pprod
+        # factors still multiply on top below, so the two mechanisms
+        # compose rather than fight (data §5, risk 18).
+        if (parent, child) in self.channel_overrides:
+            m = self.channel_overrides[(parent, child)]
+        else:
+            m = self.index_d[(parent, child)]
 
         # R3 (Phase 4) deletes the `disable_leading_mesons` veto with its
         # `ie = 50` window here: since the index gained helicity the guard

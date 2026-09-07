@@ -595,6 +595,13 @@ class MCEqRun:
             info(2, "Skip, since current model identical to", interaction_model + ".")
             return
 
+        # R2-B: a genuine model change drops the injected channels (the
+        # docstring above: "Calling `set_interaction_model` overwrites DDM
+        # with a different model"); a same-model reload keeps them, since
+        # surviving the reload is the whole point of the override hook.
+        if self._interactions.iam != interaction_model:
+            self._interactions.clear_channel_overrides()
+
         self._system.reload_for_model(
             interaction_model, particle_list, update_particle_list
         )
@@ -833,6 +840,15 @@ class MCEqRun:
 
         The argument requires a DDM model object. Calling `set_interaction_model`
         overwrites DDM with a different model.
+
+        R2-B: the matrices are registered as channel overrides on the
+        interaction table (``Interactions.set_channel_override``) and
+        reach ``hadr_yields``/``int_m`` through the ordinary
+        ``get_matrix`` wiring, so the injection now survives a model
+        reload and ``regenerate_matrices`` (which previously wiped it
+        silently — the matrix only lived in a particle dict).
+        ``set_interaction_model`` to a different hadronic model clears
+        the overrides first, matching the docstring above.
         """
 
         from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
@@ -842,11 +858,11 @@ class MCEqRun:
             info(5, f"Injecting DDM {prim} --> {sec}")
             iso_part = isospin_partners[prim]
 
-            self.pman[prim].hadr_yields[self.pman[sec]] = np.asarray(mati)
+            self._interactions.set_channel_override(prim, sec, mati)
             info(5, "Injecting isopart", iso_part, isospin_symmetries[iso_part][sec])
-            self.pman[iso_part].hadr_yields[
-                self.pman[isospin_symmetries[iso_part][sec]]
-            ] = np.asarray(mati)
+            self._interactions.set_channel_override(
+                iso_part, isospin_symmetries[iso_part][sec], mati
+            )
             injected.append(
                 ((prim, sec), (iso_part, isospin_symmetries[iso_part][sec]))
             )
@@ -857,7 +873,7 @@ class MCEqRun:
                 s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
             print(s)
 
-        self._system.build_matrices()
+        self.regenerate_matrices()
 
     def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args, delay_init=False):
         """Sets combination of projectile/secondary for error propagation.

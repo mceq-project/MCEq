@@ -45,6 +45,7 @@ def interactions(parents):
     obj = object.__new__(Interactions)
     obj.energy_grid = GRID
     obj.mod_pprod = defaultdict(dict)
+    obj.channel_overrides = {}
     obj.parents = list(parents)
     obj._physics = SimpleNamespace(use_isospin_sym=True)
     return obj
