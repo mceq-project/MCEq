@@ -59,7 +59,7 @@ def cross_sections(index_d):
 
 
 def scale(xmat, egrid, _name, value):
-    """A stand-in for the ``MCEq.charm_models``-style x-modification funcs."""
+    """A stand-in for the old charm x-modification funcs (x-matrix rescalers)."""
     return np.full_like(xmat, value)
 
 

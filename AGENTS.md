@@ -105,7 +105,7 @@ ruff check . && ruff format --check .
 ```
 
 Tests: `tests/test_core.py` (integration), `tests/test_solvers.py` (toy-problem
-solver correctness), `tests/test_ddm.py`, `tests/test_charm_models.py`,
+solver correctness), `tests/test_ddm.py`,
 `tests/geometry/`. Session-scoped fixtures in `tests/conftest.py`.
 
 ## Contributing

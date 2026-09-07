@@ -12,7 +12,6 @@ Submodules
   :maxdepth: 1
   :glob:
 
-  charm_models
   config
   core
   data
