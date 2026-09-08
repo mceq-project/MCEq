@@ -79,6 +79,11 @@ docs = [
 ]
 
 
+# IPython 9 in the docs group requires Python 3.11 or newer. Keep the
+# runtime and test groups available on Python 3.10 during uv resolution.
+[tool.uv.dependency-groups]
+docs = { requires-python = ">=3.11" }
+
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["mceq_config", "src/MCEq"]
