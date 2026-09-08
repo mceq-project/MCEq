@@ -1,10 +1,12 @@
 from unittest.mock import patch
 
+import pytest
+
 import MCEq.config as cfg
 
-DEFAULT_DB = "mceq_db_lext_dpm193_v140.h5"
+DEFAULT_DB = "mceq_db_lext_dpm193_v142.h5"
 CUSTOM_DB = "mceq_db_v140reduced_compact.h5"
-OLD_DB = "mceq_db_lext_dpm191.h5"
+OLD_DBS = ("mceq_db_lext_dpm193_v140.h5", "mceq_db_lext_dpm191.h5")
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +90,10 @@ def test_downloads_missing_custom_db(tmp_path, monkeypatch):
     )
 
 
-def test_removes_old_db(tmp_path, monkeypatch):
+@pytest.mark.parametrize("old_name", OLD_DBS)
+def test_removes_old_db(tmp_path, monkeypatch, old_name):
     (tmp_path / CUSTOM_DB).write_bytes(b"fake")
-    old = tmp_path / OLD_DB
+    old = tmp_path / old_name
     old.write_bytes(b"old")
     monkeypatch.setattr(cfg, "data_dir", tmp_path)
     monkeypatch.setattr(cfg, "mceq_db_fname", CUSTOM_DB)
