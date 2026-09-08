@@ -1458,8 +1458,8 @@ class AtmosphereTable:
         lon %= 360.0
         self._raise_if_outside_region(lon, lat, periodic)
 
-        j, wj = _bracket(self.lat_deg, lat, periodic=False)
-        i, wi = _bracket(self.lon_deg, lon, periodic=periodic)
+        j, wj = self._bracket(self.lat_deg, lat, periodic=False)
+        i, wi = self._bracket(self.lon_deg, lon, periodic=periodic)
         i_next = (i + 1) % len(self.lon_deg) if periodic else i + 1
 
         # Bilinear weights of the four surrounding nodes.
@@ -1489,19 +1489,18 @@ class AtmosphereTable:
             p_hPa=blend(self.p_hPa),
         )
 
-
-def _bracket(axis, value, periodic):
-    """Index of the node below *value* and the fractional weight above it."""
-    if periodic:
-        # The axis wraps, so the last cell spans axis[-1] -> axis[0] + 360.
-        extended = np.concatenate([axis, [axis[0] + 360.0]])
-        idx = int(np.clip(np.searchsorted(extended, value) - 1, 0, len(axis) - 1))
-        span = extended[idx + 1] - extended[idx]
-    else:
-        idx = int(np.clip(np.searchsorted(axis, value) - 1, 0, len(axis) - 2))
-        span = axis[idx + 1] - axis[idx]
-    weight = 0.0 if span == 0 else (value - axis[idx]) / span
-    return idx, float(np.clip(weight, 0.0, 1.0))
+    def _bracket(axis, value, periodic):
+        """Index of the node below *value* and the fractional weight above it."""
+        if periodic:
+            # The axis wraps, so the last cell spans axis[-1] -> axis[0] + 360.
+            extended = np.concatenate([axis, [axis[0] + 360.0]])
+            idx = int(np.clip(np.searchsorted(extended, value) - 1, 0, len(axis) - 1))
+            span = extended[idx + 1] - extended[idx]
+        else:
+            idx = int(np.clip(np.searchsorted(axis, value) - 1, 0, len(axis) - 2))
+            span = axis[idx + 1] - axis[idx]
+        weight = 0.0 if span == 0 else (value - axis[idx]) / span
+        return idx, float(np.clip(weight, 0.0, 1.0))
 
 
 class TabulatedAtmosphere(EarthsAtmosphere):
