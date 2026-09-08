@@ -66,6 +66,11 @@ def _check_database_identity(section, golden_prov, produced_prov):
     checkouts; without this a swapped database surfaces as a few hundred
     unexplained rel-L2 lines instead of one sentence.
     """
+    # Generated fixtures have no external database to accidentally swap.
+    # HDF5 container bytes vary across library builds even for identical
+    # datasets. Keep their numerical golden checks, not a file-byte gate.
+    if getattr(load_generator(section), "SYNTHETIC_DATABASES", False):
+        return
     stored = {
         k: v.get("sha256") for k, v in (golden_prov.get("databases") or {}).items()
     }

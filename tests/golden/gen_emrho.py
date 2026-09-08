@@ -5,9 +5,10 @@ directory by :func:`build` in well under a second (the hadronic one is the
 ``tests/data/make_hdf5_fixtures.py`` fixture via ``build_database(path,
 tuple_width=4)`` — the by-file-path import idiom of ``tests/conftest.py``,
 since ``tests/data`` is not an importable package; the EM one is the rho-stack
-of :func:`build_rho_stack_em` below). The DB digest of the hadronic fixture is
-reproducible across processes on this machine, but no digest is hardcoded
-here: ``make_provenance``'s ``db_stanza`` records both files as built.
+of :func:`build_rho_stack_em` below). Physical HDF5 file digests depend on
+the HDF5 build and container metadata, so they are provenance only for
+these generated fixtures. The decoded inputs, assembled operators and
+solved states below provide the portable regression checks.
 
 What executes is the full chain — HDF5 -> ``MCEq.data.em_tables`` rho-slice
 selection -> species setup -> operator assembly -> ETD2 solve — with the slice
@@ -38,7 +39,7 @@ that mapping itself. The cs scale distinguishes the slices through the cs path
 ``i`` (see :func:`build_rho_stack_em`), the decoded ``channel_block`` yield
 matrices are slice-distinct too: the assembled interaction operator — and with
 it the solve — moves with the yield-slice selection itself, not only with the
-cs path. ``gamma_cs`` therefore pins the cs leg, ``yield_digest`` pins the
+cs path. ``gamma_cs`` therefore pins the cs leg, ``yield_operator`` pins the
 assembled operator leg, and ``grid_sol`` and ``emin_spectrum`` pin the solved
 dynamics against both EM inputs at once.
 
@@ -57,11 +58,12 @@ Sigma- on the unstable list with no decay pack and ``MCEqRun.__init__``
 raises 'Unstable particle without decay distribution' unless 3112 is
 disabled.
 
-Tolerances: rel-L2 1e-11 on the three numeric keys; measured run-to-run drift
-over five builds in one process and across three fresh processes is exactly
-zero (identical digests), so there is nothing to loosen — the bound is a
-budget, not an observation, and it leaves room for a backend that legitimately
-reorders a sum. Everything else (``slice_idx``, ``yield_digest``) is bitwise.
+Tolerances: rel-L2 1e-11 on the three solved numeric keys and 1e-11 on
+``yield_operator``. The latter compares the assembled matrix numerically:
+its expfit loss stencil solves a small linear system whose rounding differs
+across BLAS/LAPACK builds, so a SHA256
+cannot serve as a portable comparison. Per-slice digests remain diagnostic
+provenance. Slice indices and operator sparsity remain bitwise.
 
 What a mutant has to break to fail this section
     Dropping the EM injection leaves the e- spectrum identically zero, which
@@ -93,6 +95,10 @@ import numpy as np
 from ._harness import array_digest, make_provenance
 
 SECTION = "emrho"
+
+# Built from the fixture recipe on every run; raw HDF5 bytes are not a
+# portable identity. Numerical and operator-digest comparisons still apply.
+SYNTHETIC_DATABASES = True
 
 #: EM channels of the rho-stack file: the fixture's minimal set plus the
 #: gamma-parent channels. Without a gamma parent a gamma primary produces no
@@ -134,6 +140,7 @@ TOLERANCES = {
     key: {"mode": "rel_l2", "rtol": 1e-11}
     for key in ("grid_sol", "emin_spectrum", "gamma_cs")
 }
+TOLERANCES["yield_operator"] = {"mode": "rel_l2", "rtol": 1e-11}
 
 
 def _fixture_builder_module():
@@ -220,6 +227,7 @@ def build():
     arrays = {}
     slice_digests = {}
     yield_digests = {}
+    yield_operators = []
     try:
         F = _fixture_builder_module()
         had_path = str(
@@ -280,6 +288,7 @@ def build():
                 # operator's CSR data buffer: with the per-slice channel
                 # rotation this is the digest of the yield-slice selection
                 # itself, not of a slice-invariant payload.
+                yield_operators.append(mceq.int_m.toarray())
                 int_m_data = np.ascontiguousarray(mceq.int_m.data)
                 yield_digests[f"slice{idx}"] = hashlib.sha256(
                     int_m_data.tobytes()
@@ -330,9 +339,8 @@ def build():
         arrays["emin_spectrum"] = np.vstack(emin_rows)
         arrays["gamma_cs"] = np.vstack(gamma_cs_rows)
         arrays["slice_idx"] = np.asarray(slice_idx, dtype=np.int64)
-        arrays["yield_digest"] = np.array(
-            [yield_digests[f"slice{expected}"] for _, expected in CASES], dtype="U64"
-        )
+        arrays["yield_operator"] = np.stack(yield_operators)
+        arrays["yield_nonzero"] = arrays["yield_operator"] != 0
 
         provenance = make_provenance(
             SECTION,
@@ -345,7 +353,7 @@ def build():
                 " Densities 1.2e-6/9e-4/8e-3 g/cm3 select slices 0/1/2"
                 " (closest in log10, pinned by slice_idx); gamma primary at"
                 " 30 GeV, solve on int_grid [10, 50] g/cm2 with dX_max 20."
-                " gamma_cs pins the cs-to-slice coupling directly, yield_digest"
+                " gamma_cs pins the cs-to-slice coupling directly, yield_operator"
                 " pins the assembled operator against the yield-slice selection,"
                 " and grid_sol and emin_spectrum pin that the solved dynamics"
                 " move with both. Numerically strict (rel-L2 1e-11; measured"
@@ -355,7 +363,7 @@ def build():
                 " are in extra.slice_digest and the per-slice int_m CSR-data"
                 " digests in extra.yield_digest; the three differ in each set,"
                 " so a wrong-slice mutant moves int_m, the solved state and"
-                " yield_digest together and cannot pass, and a dropped EM"
+                " yield_operator together and cannot pass, and a dropped EM"
                 " injection trips the e- positivity assert at build time."
             ),
             tolerances=TOLERANCES,
