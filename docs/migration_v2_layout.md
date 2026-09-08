@@ -97,12 +97,12 @@ only `MCEq.core` as the import façade stays permanently).
 | `MCEq.ddm_utils` | `MCEq.models.ddm.ddm_utils` | removed at 2.0 |
 | `MCEq.download` | `MCEq.data.download` | removed at 2.0 |
 | `MCEq.etd2_kernels` | `MCEq.solvers._kernels.etd2` | old name gone (private module) |
-| `MCEq.geometry.EarthsAtmosphere` | `MCEq.environment.base.EarthsAtmosphere` | removed at 2.0 |
+| `MCEq.geometry.EarthsAtmosphere` | `MCEq.environment.base.EarthsAtmosphere` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | removed at 2.0 |
 | `MCEq.geometry.column` | `MCEq.environment.column` | removed at 2.0 |
 | `MCEq.geometry.corsikaatm` | `MCEq.environment._ext.corsikaatm` | removed at 2.0 |
-| `MCEq.geometry.density_profiles` | `MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)` | removed at 2.0 |
-| `MCEq.geometry.geometry` | `MCEq.environment.geometry` | removed at 2.0 |
+| `MCEq.geometry.density_profiles` | `MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)` | kept at 2.0 (public-usage census) |
+| `MCEq.geometry.geometry` | `MCEq.environment.geometry` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.gtracr_cutoff` | `MCEq.environment.geomagnetic.cutoff` | removed at 2.0 |
 | `MCEq.geometry.location_centered` | `MCEq.environment.location_centered` | removed at 2.0 |
 | `MCEq.geometry.msis21_atmosphere` | `MCEq.environment.msis21` | removed at 2.0 |
@@ -112,10 +112,15 @@ only `MCEq.core` as the import façade stays permanently).
 | `MCEq.misc.EnergyGrid / energy_grid / gen_xmat` | `MCEq.data.energy_grid` | removed at 2.0 |
 | `MCEq.operator_assembly` | `MCEq.operators.matrix_builder` | removed at 2.0 |
 | `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | removed at 2.0 |
-| `MCEq.particlemanager.ParticleManager` | `MCEq.species.manager.ParticleManager` | removed at 2.0 |
+| `MCEq.particlemanager.ParticleManager` | `MCEq.species.manager.ParticleManager` | kept at 2.0 (public-usage census) |
 | `MCEq.secant` | `MCEq.operators.secant` | removed at 2.0 |
 | `MCEq.spacc` | `MCEq.solvers.backends.accelerate` | removed at 2.0 |
-| `mceq_config` | `MCEq.config` | removed at 2.0 |
+| `mceq_config` | `MCEq.config` | permanent |
+
+"Kept at 2.0" reflects the public-usage census (2026-09-06) and the
+M13 keep-list ruling; the census is re-run at the release cut and can
+move an entry.
+
 
 ## Deprecated names that warn
 

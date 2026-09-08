@@ -33,15 +33,15 @@ IMPORT_TABLE = [
     (
         "MCEq.particlemanager.ParticleManager",
         "MCEq.species.manager.ParticleManager",
-        "shim",
+        "keep",
     ),
     ("MCEq.particlemanager.MCEqParticle", "MCEq.species.particle.MCEqParticle", "shim"),
     (
         "MCEq.geometry.density_profiles",
         "MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)",
-        "shim",
+        "keep",
     ),
-    ("MCEq.geometry.geometry", "MCEq.environment.geometry", "shim"),
+    ("MCEq.geometry.geometry", "MCEq.environment.geometry", "keep"),
     ("MCEq.geometry.atmosphere_parameters", "MCEq.environment.parameters", "shim"),
     ("MCEq.geometry.nrlmsise00", "MCEq.environment._ext.nrlmsise00", "shim"),
     ("MCEq.geometry.nrlmsise00_mceq", "MCEq.environment.msis00_backend", "shim"),
@@ -53,7 +53,7 @@ IMPORT_TABLE = [
     (
         "MCEq.geometry.EarthsAtmosphere",
         "MCEq.environment.base.EarthsAtmosphere",
-        "shim",
+        "keep",
     ),
     ("MCEq.ddm", "MCEq.models.ddm.ddm", "shim"),
     ("MCEq.ddm_utils", "MCEq.models.ddm.ddm_utils", "shim"),
@@ -63,7 +63,7 @@ IMPORT_TABLE = [
     ("MCEq.etd2_kernels", "MCEq.solvers._kernels.etd2", "moved"),
     ("MCEq.secant", "MCEq.operators.secant", "shim"),
     ("MCEq.operator_assembly", "MCEq.operators.matrix_builder", "shim"),
-    ("mceq_config", "MCEq.config", "shim"),
+    ("mceq_config", "MCEq.config", "facade"),
     ("MCEq.misc.EnergyGrid / energy_grid / gen_xmat", "MCEq.data.energy_grid", "shim"),
 ]
 
@@ -71,6 +71,7 @@ STATUS_NOTE = {
     "facade": "permanent",
     "shim": "removed at 2.0",
     "moved": "old name gone (private module)",
+    "keep": "kept at 2.0 (public-usage census)",
 }
 
 
@@ -123,6 +124,11 @@ working in v2.x; the 2.0 column marks what is deleted (decision D6 —
 only `MCEq.core` as the import façade stays permanently).
 
 {import_table()}
+
+"Kept at 2.0" reflects the public-usage census (2026-09-06) and the
+M13 keep-list ruling; the census is re-run at the release cut and can
+move an entry.
+
 
 ## Deprecated names that warn
 
