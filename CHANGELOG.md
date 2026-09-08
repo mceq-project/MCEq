@@ -2,6 +2,27 @@
 
 <!-- towncrier release notes start -->
 
+# MCEq 1.4.2 (2026-09-07)
+
+## Bug Fixes
+
+- Fixes the Sibyll hadronic interaction matrices of the MCEq database and DPMJetIII-19.3 anti-particle cross sections.
+
+  In the databases of v1.4.0 and v1.4.1 neutron projectiles were simulated as protons: chromo
+  dispatched the projectile on `kin.p1.is_nucleus`, which is also true for a single nucleon (A = 1),
+  so both protons and neutrons were passed to Sibyll's nuclear entry point `sibnuc(A=1)` and the beam
+  codes distinguishing a proton (13) from a neutron (14) were never reached
+  ([chromo#275](https://github.com/impy-project/chromo/pull/275)).
+
+  The new database also fixes the cross sections of DPMJetIII-19.3, which now correctly uses the
+  anti-particle cross sections instead of only the non-conjugate particle cross sections. ([#183](https://github.com/mceq-project/MCEq/pull/183))
+
+## Documentation Updates
+
+- Adds the documentation page *MCEq v1.4.2*, which compares the corrected database against the one
+  shipped with v1.4.1 and v1.4.0, in the style of the existing v1.4-vs-v1.3 comparison. ([#183](https://github.com/mceq-project/MCEq/pull/183))
+
+
 # MCEq 1.4.1 (2026-03-16)
 
 ## Bug Fixes
