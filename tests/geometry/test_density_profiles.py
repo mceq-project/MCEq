@@ -783,13 +783,13 @@ def test_tabulated_sampler_matches_the_scalar_base_sampler(monkeypatch):
 
 @pytest.mark.parametrize("theta_deg", [10.0, 60.0, 70.0, 80.0])
 def test_tabulated_profile_covers_the_integration_endpoint(theta_deg):
-    """The profile must reach h_obs even after floating-point rounding.
+    """Rounding at the path endpoints must not read off the profile.
 
     ``geom.h(path_len, thrad)`` should equal ``h_obs`` exactly but comes out
-    of a sin/cos/sqrt chain, so it can land a fraction of a micron below it.
-    ``get_density`` returns nan below the table, so without the padding in
-    ``_set_profile`` the spline build raises at these angles -- which is what
-    ``_TABLE_PAD_CM`` exists to prevent.
+    of a sin/cos/sqrt chain, so it lands about a nanometre below it at these
+    angles.  The profile stops exactly at ``h_obs`` and ``get_density``
+    returns nan below it, so the spline build raises unless the sampled
+    heights are clipped to the integration limits.
     """
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
     atm.set_theta(theta_deg)

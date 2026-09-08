@@ -1168,12 +1168,6 @@ _MSIS_SITES = (
     "PeaceRiver",
     "FtSumner",
 )
-#: Padding added to both ends of a tabulated profile in cm.  ``geom.h`` comes
-#: out of a sin/cos/sqrt chain, so the path endpoints land a fraction of a
-#: micron outside ``[h_obs, h_atm]`` instead of exactly on them, and a profile
-#: that stops at the limit reads ``nan`` there.  1 m of margin is physically
-#: negligible against an 8 km scale height and covers any rounding.
-_TABLE_PAD_CM = 100.0
 
 
 @dataclass(repr=False, eq=False)
@@ -1674,8 +1668,8 @@ class TabulatedAtmosphere(EarthsAtmosphere):
             else None
         )
 
-        self._extend_below(h_obs_cm - _TABLE_PAD_CM)
-        self._extend_above(self.geom.h_atm + _TABLE_PAD_CM)
+        self._extend_below(h_obs_cm)
+        self._extend_above(self.geom.h_atm)
         self._log_dens = np.log(self.dens)
 
     def _log_linear_point(self, h_target, i_near, i_far):
@@ -1879,8 +1873,17 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         :func:`get_density` reads the profile with :func:`numpy.interp`, which
         takes the whole height array at once, so the base class's height-by-
         height walk buys nothing here.
+
+        The path is defined to run from ``h_obs`` to ``h_atm``, and the profile
+        covers exactly that, but ``geom.h`` computes the endpoints through a
+        sin/cos/sqrt chain and lands about a nanometre outside the interval
+        instead of on it.  Clipping to the limits keeps that rounding from
+        reading off the end of the profile, where ``get_density`` returns
+        ``nan``.  It is a bound on the path, not on the profile: a genuine gap
+        -- ``top_extension="none"``, say -- still reads ``nan`` and still
+        raises.
         """
-        return self.get_density(h_vec_cm)
+        return self.get_density(np.clip(h_vec_cm, self.geom.h_obs, self.geom.h_atm))
 
 
 class TabulatedLocationCentered(TabulatedAtmosphere):
