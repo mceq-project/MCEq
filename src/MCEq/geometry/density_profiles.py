@@ -1489,6 +1489,7 @@ class AtmosphereTable:
             p_hPa=blend(self.p_hPa),
         )
 
+    @staticmethod
     def _bracket(axis, value, periodic):
         """Index of the node below *value* and the fractional weight above it."""
         if periodic:
