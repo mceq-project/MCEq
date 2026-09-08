@@ -25,7 +25,7 @@ def test_spacc_matrix_creation(toy_solver_problem, dtype):
     assert sm.dim_cols == int_m.shape[1]
     assert sm.nnz == int_m.nnz
     assert sm.dtype == np.dtype(dtype)
-    assert sm.data.dtype == np.dtype(dtype)
+    assert sm.dtype == np.dtype(dtype)
     sm.close()
 
 

@@ -64,7 +64,7 @@ def base_config():
     )
 
 
-def _solve(kernel, base):
+def _solve(kernel, base, secant=False):
     """Build an MCEqRun on the 2D DB, set ``kernel`` and solve over a fixed
     grid using a deterministic non-trivial initial state."""
     fn = base["mceq_db_fname"]
@@ -78,9 +78,7 @@ def _solve(kernel, base):
     config.muon_helicity_dependence = base["muon_helicity_dependence"]
     config.muon_multiple_scattering = base["muon_multiple_scattering"]
     config.kernel_config = kernel
-    # Paraxial cross-backend comparison; the secant coupling is
-    # exercised by its own runs.
-    config.secant_theta_transport = False
+    config.secant_theta_transport = secant
     mceq = MCEqRun(
         interaction_model=base["interaction_model"],
         primary_model=None,
@@ -97,10 +95,12 @@ def _solve(kernel, base):
 
 
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_2d_accelerate_matches_numpy(base_config):
+@pytest.mark.parametrize("secant", [False, "require"], ids=["paraxial", "coupled"])
+def test_2d_accelerate_matches_numpy(base_config, secant):
     """Accelerate ETD2 on the 2D stitched matrix matches numpy ETD2 to round-off."""
-    sol_numpy = _solve("numpy_etd2", base_config)
-    sol_acc = _solve("accelerate_etd2", base_config)
+    sol_numpy = _solve("numpy_etd2", base_config, secant)
+    sol_acc = _solve("accelerate_etd2", base_config, secant)
+    assert np.isfinite(sol_acc).all()
     assert sol_numpy.shape == sol_acc.shape
     np.testing.assert_allclose(sol_numpy, sol_acc, rtol=1e-10, atol=1e-12)
 

@@ -7,6 +7,7 @@ Author: Anatoli Fedynitch, 2022
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <Accelerate/Accelerate.h>
 
 #define SIZE_MSTORE 10
@@ -16,7 +17,7 @@ static void *mstore[SIZE_MSTORE];
 
 void free_mstore_at(int idx)
 {
-    if (mstore[idx])
+    if (idx >= 0 && idx < SIZE_MSTORE && mstore[idx])
     {
         sparse_matrix_destroy(mstore[idx]);
         mstore[idx] = NULL;
@@ -54,12 +55,11 @@ int gemv(double alpha, int ia, double *x, double *y)
     return 0;
 }
 
-// SpMM: C := alpha * A * B + C  (accumulate, no beta), B is (n_rows_A, nrhs),
-// C is (n_rows_A, nrhs). Column-major layout (CblasColMajor) so a single
-// stride of ldX = n_rows_A walks columns the same way numpy's (dim, K)
-// Fortran-contiguous layout does. Caller is responsible for zeroing C
-// before the first accumulating call if a non-accumulating result is wanted.
-int gemm(double alpha, int ia, int nrhs, double *B, int ldb, double *C, int ldc)
+// SpMM: C := alpha * A * B + C (accumulate, no beta).
+// The dense layout and leading dimensions belong to the caller: CblasRowMajor
+// uses row strides, CblasColMajor uses column strides. Zero C before the first
+// call in a non-accumulating chain.
+int gemm(int order, double alpha, int ia, int nrhs, double *B, int ldb, double *C, int ldc)
 {
     if (!mstore[ia])
     {
@@ -68,7 +68,7 @@ int gemm(double alpha, int ia, int nrhs, double *B, int ldb, double *C, int ldc)
     }
 
     if (sparse_matrix_product_dense_double(
-            CblasColMajor, CblasNoTrans, nrhs, alpha, mstore[ia],
+            (enum CBLAS_ORDER)order, CblasNoTrans, nrhs, alpha, mstore[ia],
             B, ldb, C, ldc) != SPARSE_SUCCESS)
     {
         printf("Error in sparse matrix-matrix multiplication.\n");
@@ -100,7 +100,7 @@ int gemv_f32(float alpha, int ia, float *x, float *y)
     return 0;
 }
 
-int gemm_f32(float alpha, int ia, int nrhs, float *B, int ldb, float *C, int ldc)
+int gemm_f32(int order, float alpha, int ia, int nrhs, float *B, int ldb, float *C, int ldc)
 {
     if (!mstore[ia])
     {
@@ -108,7 +108,7 @@ int gemm_f32(float alpha, int ia, int nrhs, float *B, int ldb, float *C, int ldc
         return -1;
     }
     if (sparse_matrix_product_dense_float(
-            CblasColMajor, CblasNoTrans, nrhs, alpha,
+            (enum CBLAS_ORDER)order, CblasNoTrans, nrhs, alpha,
             (sparse_matrix_float)mstore[ia],
             B, ldb, C, ldc) != SPARSE_SUCCESS)
     {
@@ -118,110 +118,84 @@ int gemm_f32(float alpha, int ia, int nrhs, float *B, int ldb, float *C, int ldc
     return 0;
 }
 
-// fp32 sparse-matrix construction. Mirrors ``create_sparse_matrix`` but
-// targets sparse_matrix_create_float / sparse_insert_entries_float.
-int create_sparse_matrix_f32(
-    int store_idx, int M, int N, int nnz,
-    const long long *row, const long long *col,
-    const float *values)
+// Build from CSR rows, using only one row of temporary 64-bit indices.
+// The bulk COO insertion path requires full row/column index arrays and a
+// values copy, and queues them before commit. Row insertion avoids that peak.
+static int create_csr_matrix(int store_idx, int M, int N,
+                             const long long *indptr, const int *indices,
+                             const void *values, bool use_float)
 {
-    if (store_idx < -1)
-    {
-        printf("store_idx variable must be >= -1");
-        return store_idx;
-    }
-    else if (store_idx == -1)
+    if (store_idx < -1 || store_idx >= SIZE_MSTORE)
+        return -1;
+    if (store_idx == -1)
     {
         for (int i = 0; i < SIZE_MSTORE; ++i)
-        {
             if (!mstore[i])
             {
                 store_idx = i;
                 break;
             }
-        }
         if (store_idx == -1)
         {
             printf("Matrix store full, increase SIZE_MSTORE\n");
             return -1;
         }
     }
-    else if (mstore[store_idx])
-    {
-        sparse_matrix_destroy(mstore[store_idx]);
-    }
+    else
+        free_mstore_at(store_idx);
 
-    mstore[store_idx] = (void *)sparse_matrix_create_float(M, N);
-    if (sparse_insert_entries_float(
-            mstore[store_idx], nnz, values, row, col) != SPARSE_SUCCESS)
+    void *matrix = use_float ? (void *)sparse_matrix_create_float(M, N)
+                             : (void *)sparse_matrix_create_double(M, N);
+    if (!matrix)
+        return -1;
+
+    long long max_nnz = 0;
+    for (int row = 0; row < M; ++row)
+        if (indptr[row + 1] - indptr[row] > max_nnz)
+            max_nnz = indptr[row + 1] - indptr[row];
+    sparse_index *columns = malloc((max_nnz ? max_nnz : 1) * sizeof(*columns));
+    if (!columns)
     {
-        printf("Failed to insert values into sparse matrix (f32).\n");
+        sparse_matrix_destroy(matrix);
         return -1;
     }
-    if (sparse_commit(mstore[store_idx]) != SPARSE_SUCCESS)
+    for (int row = 0; row < M; ++row)
     {
-        printf("Failed to commit inserted values into sparse matrix (f32).\n");
+        long long start = indptr[row], nnz = indptr[row + 1] - start;
+        if (!nnz)
+            continue;
+        for (long long j = 0; j < nnz; ++j)
+            columns[j] = indices[start + j];
+        sparse_status status = use_float
+            ? sparse_insert_row_float(matrix, row, nnz, (const float *)values + start, columns)
+            : sparse_insert_row_double(matrix, row, nnz, (const double *)values + start, columns);
+        if (status != SPARSE_SUCCESS)
+        {
+            free(columns);
+            sparse_matrix_destroy(matrix);
+            return -1;
+        }
+    }
+    free(columns);
+    if (sparse_commit(matrix) != SPARSE_SUCCESS)
+    {
+        sparse_matrix_destroy(matrix);
         return -1;
     }
+    mstore[store_idx] = matrix;
     return store_idx;
 }
 
-int create_sparse_matrix(
-    int store_idx, int M, int N, int nnz,
-    const long long *row, const long long *col,
-    const double *values)
+int create_sparse_matrix(int store_idx, int M, int N,
+                         const long long *indptr, const int *indices,
+                         const double *values)
 {
-    if (store_idx < -1)
-    {
-        printf("store_idx variable must be >= -1");
-        return store_idx;
-    }
-    else if (store_idx == -1)
-    {
-        // find free slot
-        for (int i = 0; i < SIZE_MSTORE; ++i)
-        {
-            if (!mstore[i])
-            {
-                store_idx = i;
-                if (DEBUG)
-                    printf("Assigned free store_idx %i.\n", store_idx);
-                break;
-            }
-        }
-        if (store_idx == -1)
-        {
-            printf("Matrix store full, increase SIZE_MSTORE\n");
-            return -1;
-        }
-    }
-    else if (mstore[store_idx])
-    {
-        if (DEBUG)
-            printf("Overwriting existing matrix @ store_idx %i.\n", store_idx);
-        sparse_matrix_destroy(mstore[store_idx]);
-    }
+    return create_csr_matrix(store_idx, M, N, indptr, indices, values, false);
+}
 
-    mstore[store_idx] = (void *)sparse_matrix_create_double(M, N);
-
-    if (sparse_insert_entries_double(
-            mstore[store_idx], nnz,
-            values,
-            row,
-            col) != SPARSE_SUCCESS)
-    {
-
-        printf("Failed to insert values into sparse matrix.\n");
-        return -1;
-    };
-    if (sparse_commit(mstore[store_idx]) != SPARSE_SUCCESS)
-    {
-        printf("Failed to commit inserted values into sparse matrix.\n");
-        return -1;
-    }
-
-    if (DEBUG)
-        printf("Matrix added at %i\n", store_idx);
-
-    return store_idx;
+int create_sparse_matrix_f32(int store_idx, int M, int N,
+                             const long long *indptr, const int *indices,
+                             const float *values)
+{
+    return create_csr_matrix(store_idx, M, N, indptr, indices, values, true);
 }

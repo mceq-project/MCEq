@@ -6,14 +6,12 @@ platform-independent is the *contract* between :class:`MCEq.solvers.
 SpaccApplyOff` and the two ctypes entry points it drives:
 
     gemv_ctargs(alpha, cx, cy)                  y += alpha * M * x
-    gemm_ctargs(alpha, nrhs, cB, ldb, cC, ldc)  C += alpha * M * B
+    gemm_ctargs(alpha, nrhs, cB, ldb, cC, ldc, layout=102)
 
-with ``B`` and ``C`` COLUMN-major and ``ldb`` / ``ldc`` their column
-strides, while the driver's own ``(dim, K)`` buffers are row-major. The
-fake below implements exactly that, rebuilding every operand from the raw
-pointer it is handed and honouring the leading dimensions — so a missed
-transpose, a wrong stride or a tile pointed at the wrong column shows up
-as a numerical difference instead of passing silently.
+The dense order is explicit: layout 101 selects row-major buffers, 102
+column-major buffers. The fake rebuilds every operand from its raw pointer
+and leading dimension, so wrong layout, stride, or pointer offsets show up
+as numerical differences. The driver uses its row-major buffers directly.
 
 The reference is the same driver on the scipy binding: identical operator,
 identical stage order, only ``apply_off`` differs.
@@ -50,11 +48,8 @@ class FakeSpaccMatrix:
     """Ctypes-level stand-in for :class:`MCEq.solvers._kernels.spacc.SpaccMatrix`.
 
     Takes pointers, not arrays: ``B`` and ``C`` are rebuilt with
-    ``np.ctypeslib.as_array`` over ``ldb`` / ``ldc``-strided columns, which
-    is the only way the fake can catch a caller that hands over a
-    row-major buffer or an off-by-one tile offset. ``calls`` records
-    ``(kind, alpha, nrhs)`` per invocation, so a test can assert which
-    entry point ran and with which tile widths.
+    ``np.ctypeslib.as_array`` using the requested dense layout and leading
+    dimensions. ``calls`` records ``(kind, alpha, nrhs)`` per invocation.
 
     The multiply itself is scipy's CSR product, the same routine the
     reference binding runs, so the two agree to the bit once the layout is
@@ -76,11 +71,22 @@ class FakeSpaccMatrix:
             ctypes.cast(ptr, ctypes.POINTER(self._ct)), shape=(n,)
         )
 
-    def _block(self, ptr, ld, nrhs):
-        """The column-major block at ``ptr``: ``nrhs`` consecutive columns of
-        ``ld`` elements each, transposed to ``(dim_rows, nrhs)`` — the layout
-        Accelerate's ``CblasColMajor`` walks. A writable view."""
-        return self._vec(ptr, ld * nrhs).reshape(nrhs, ld).T[: self.dim_rows]
+    def _block(self, ptr, ld, nrows, nrhs, layout):
+        """Writable dense view with the same order and strides as CBLAS."""
+        assert layout in (101, 102)
+        if layout == 101:
+            assert ld >= nrhs
+            return np.lib.stride_tricks.as_strided(
+                self._vec(ptr, (nrows - 1) * ld + nrhs),
+                shape=(nrows, nrhs),
+                strides=(ld * self.dtype.itemsize, self.dtype.itemsize),
+            )
+        assert ld >= nrows
+        return np.lib.stride_tricks.as_strided(
+            self._vec(ptr, (nrhs - 1) * ld + nrows),
+            shape=(nrows, nrhs),
+            strides=(self.dtype.itemsize, ld * self.dtype.itemsize),
+        )
 
     def close(self):
         """Idempotent slot release, as the real wrapper has."""
@@ -92,10 +98,10 @@ class FakeSpaccMatrix:
         y = self._vec(cy, self.dim_rows)
         y += (self.csr @ x) * alpha
 
-    def gemm_ctargs(self, alpha, nrhs, cB, ldb, cC, ldc):
+    def gemm_ctargs(self, alpha, nrhs, cB, ldb, cC, ldc, layout=102):
         self.calls.append(("gemm", float(alpha), int(nrhs)))
-        B = self._block(cB, int(ldb), int(nrhs))
-        C = self._block(cC, int(ldc), int(nrhs))
+        B = self._block(cB, int(ldb), self.dim_cols, int(nrhs), layout)
+        C = self._block(cC, int(ldc), self.dim_rows, int(nrhs), layout)
         C += (self.csr @ B) * alpha
 
 
@@ -184,8 +190,7 @@ def _rel(a, b):
 def test_spacc_apply_off_matches_scipy(K, per_lane, dtype):
     """The Accelerate binding reproduces the scipy binding at the same dtype.
 
-    K = 70 crosses the 64-column ``_SPACC_SPMM_TILE`` boundary, where a
-    tiling off-by-one is visible and nowhere else. Both sides run the same
+    K = 70 exceeds the old column-major tile width. Both sides run the same
     scipy product in the same order, so the comparison isolates layout: at
     either precision the two agree to the bit unless a stride is wrong.
     """
@@ -223,16 +228,12 @@ def _one_step_calls(K):
     return p, handles
 
 
-@pytest.mark.parametrize(("K", "widths"), [(3, [3]), (64, [64]), (70, [64, 6])])
-def test_spacc_apply_off_tiles_at_64_columns(K, widths):
-    """K > 64 is split into 64-column SpMM tiles; K <= 64 is one call.
-
-    The driver applies the operator twice per step (state and predictor),
-    so one pass of tiles per handle becomes two.
-    """
+@pytest.mark.parametrize("K", [3, 64, 70])
+def test_spacc_apply_off_uses_one_rowmajor_product(K):
+    """Each stage passes the full row-major state to one SpMM call."""
     _, (int_fake, _) = _one_step_calls(K)
     assert {c[0] for c in int_fake.calls} == {"gemm"}
-    assert [c[2] for c in int_fake.calls] == widths * 2
+    assert [c[2] for c in int_fake.calls] == [K, K]
 
 
 def test_spacc_apply_off_single_column_uses_gemv():
@@ -430,24 +431,18 @@ def test_mkl_close_releases_bind_scratch():
     assert ao._ptrs == {}
 
 
-@pytest.mark.parametrize("K", [1, 3], ids=["gemv", "staged"])
+@pytest.mark.parametrize("K", [1, 3], ids=["gemv", "rowmajor"])
 def test_spacc_close_releases_bind_scratch(K):
-    """Both Accelerate paths release their staging buffers on ``close()`` --
-    the Fortran-ordered trio and its tile pointers above K = 1, the single
-    dec buffer and its pointer at it."""
+    """Both paths release the decay scratch and pointers to driver state."""
     p = _problem(K)
     op = compile_operator(p["int_m"], p["dec_m"], None)
     ao = SpaccApplyOff(*_fakes(op))
     be = HostBackend(op, ao)
     dX, rho_inv = _path(p, False)
     sol, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
-    assert ao._staged is (K > 1)
-    refs = [
-        weakref.ref(a) for a in [ao._dec] + ([ao._x_f, ao._out_f] if ao._staged else [])
-    ]
+    refs = [weakref.ref(ao._dec)]
     del sol
     be.close()
     assert _alive(refs) == 0
-    assert (ao._x_f, ao._out_f, ao._dec, ao._tiles) == (None,) * 4
-    assert (ao._dec_p, ao._x_p, ao._out_p) == (None,) * 3
+    assert (ao._dec, ao._dec_p, ao._x_p, ao._out_p) == (None,) * 4
     assert ao._ptrs == {}

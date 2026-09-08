@@ -35,9 +35,8 @@ spacc.create_sparse_matrix.argtypes = [
     c_int,
     c_int,
     c_int,
-    c_int,
     POINTER(c_longlong),
-    POINTER(c_longlong),
+    POINTER(c_int),
     POINTER(c_double),
 ]
 
@@ -49,11 +48,11 @@ spacc.gemv.argtypes = [
     POINTER(c_double),
 ]
 
-# gemm: C := alpha * A * B + C with B, C dense (n_rows_A, nrhs) column-major.
-# Wraps Apple Accelerate's sparse_matrix_product_dense_double; used by
-# MCEq.solvers.SpaccApplyOff, one call per 64-column tile. See spacc.c.
+# gemm: C := alpha * A * B + C with caller-selected dense layout.
+# SpaccApplyOff passes row-major driver buffers directly. See spacc.c.
 spacc.gemm.restype = c_int
 spacc.gemm.argtypes = [
+    c_int,
     c_double,
     c_int,
     c_int,
@@ -68,6 +67,7 @@ spacc.gemv_f32.restype = c_int
 spacc.gemv_f32.argtypes = [c_float, c_int, POINTER(c_float), POINTER(c_float)]
 spacc.gemm_f32.restype = c_int
 spacc.gemm_f32.argtypes = [
+    c_int,
     c_float,
     c_int,
     c_int,
@@ -81,9 +81,8 @@ spacc.create_sparse_matrix_f32.argtypes = [
     c_int,
     c_int,
     c_int,
-    c_int,
     POINTER(c_longlong),
-    POINTER(c_longlong),
+    POINTER(c_int),
     POINTER(c_float),
 ]
 
@@ -133,14 +132,16 @@ class SpaccMatrix:
         self._gemv = getattr(spacc, gemv)
         self._gemm = getattr(spacc, gemm)
 
-        spm = scipy_sparse_matrix.tocoo()
-        self.dim_rows, self.dim_cols = spm.shape
-        self.nnz = spm.nnz
-        self.col = spm.col.astype("longlong")
-        self.row = spm.row.astype("longlong")
-        self.data = spm.data.astype(self.dtype)
         self.store_id = None
-        self._create_matrix()
+        csr = scipy_sparse_matrix.tocsr()
+        if not csr.has_canonical_format:
+            csr = csr.copy()
+            csr.sum_duplicates()
+        self.dim_rows, self.dim_cols = csr.shape
+        if max(csr.shape) > np.iinfo(np.int32).max:
+            raise ValueError("Accelerate matrix dimensions must fit in int32")
+        self.nnz = csr.nnz
+        self._create_matrix(csr)
 
     def close(self):
         """Free the underlying Accelerate sparse-matrix slot.
@@ -162,18 +163,25 @@ class SpaccMatrix:
         except Exception:
             pass
 
-    def _create_matrix(self):
-        self.store_id = self._create(
+    def _create_matrix(self, csr):
+        # Construction buffers live only until sparse_commit returns. The
+        # native matrix owns its entries; retaining COO copies here adds
+        # 24 bytes per nonzero at fp64, on top of the compiled CSR operator.
+        indptr = np.ascontiguousarray(csr.indptr, dtype=np.int64)
+        indices = np.ascontiguousarray(csr.indices, dtype=np.int32)
+        data = np.ascontiguousarray(csr.data, dtype=self.dtype)
+        store_id = self._create(
             -1,
             self.dim_rows,
             self.dim_cols,
-            self.nnz,
-            self.row.ctypes.data_as(POINTER(c_longlong)),
-            self.col.ctypes.data_as(POINTER(c_longlong)),
-            self.data.ctypes.data_as(POINTER(self._ct)),
+            indptr.ctypes.data_as(POINTER(c_longlong)),
+            indices.ctypes.data_as(POINTER(c_int)),
+            data.ctypes.data_as(POINTER(self._ct)),
         )
-        if self.store_id < 0:
+        if store_id < 0:
             raise Exception("Matrix creation failed.")
+        # A failed construction never owns a slot (in particular, not -1).
+        self.store_id = store_id
 
     def gemv_ctargs(self, alpha, cx, cy):
         """General Matrix-Vector multiplication, expects arguments
@@ -201,19 +209,14 @@ class SpaccMatrix:
         if self._gemv(alpha, self.store_id, cx, cy) != 0:
             raise Exception("Sparse matrix-vector multiplication failed.")
 
-    def gemm_ctargs(self, alpha, nrhs, cB, ldb, cC, ldc):
-        """Sparse-dense SpMM with raw ctypes pointers.
+    def gemm_ctargs(self, alpha, nrhs, cB, ldb, cC, ldc, layout=102):
+        """``C := alpha * M * B + C`` through raw ctypes pointers.
 
-        Performs ``C := alpha * M * B + C`` where ``B`` and ``C`` are dense
-        ``(dim_cols, nrhs)`` / ``(dim_rows, nrhs)`` matrices in column-major
-        layout with leading dimensions ``ldb`` / ``ldc``. Accumulating —
-        zero ``C`` before the first call if you want a non-accumulating
-        result.
-
-        No dimensional checks are performed. Caller is responsible for
-        ensuring ``B`` and ``C`` are column-major arrays of the wrapper's
-        dtype (Fortran-contiguous; ``np.asfortranarray`` is the canonical
-        way).
+        ``layout=102`` selects column-major buffers; ``layout=101`` selects
+        row-major buffers. ``ldb`` and ``ldc`` are the corresponding column
+        or row strides in elements. B has shape ``(dim_cols, nrhs)`` and C
+        has shape ``(dim_rows, nrhs)``. Both must match the handle's dtype.
+        Zero C before the first call for a non-accumulating result.
         """
-        if self._gemm(alpha, self.store_id, nrhs, cB, ldb, cC, ldc) != 0:
+        if self._gemm(layout, alpha, self.store_id, nrhs, cB, ldb, cC, ldc) != 0:
             raise Exception("Sparse matrix-matrix multiplication failed.")
