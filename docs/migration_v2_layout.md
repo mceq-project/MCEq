@@ -114,7 +114,7 @@ only `MCEq.core` as the import façade stays permanently).
 | `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | removed at 2.0 |
 | `MCEq.particlemanager.ParticleManager` | `MCEq.species.manager.ParticleManager` | kept at 2.0 (public-usage census) |
 | `MCEq.secant` | `MCEq.operators.secant` | removed at 2.0 |
-| `MCEq.spacc` | `MCEq.solvers.backends.accelerate` | removed at 2.0 |
+| `MCEq.spacc` | `MCEq.solvers._kernels.spacc` | removed at 2.0 |
 | `mceq_config` | `MCEq.config` | permanent |
 
 "Kept at 2.0" reflects the public-usage census (2026-09-06) and the

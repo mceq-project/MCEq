@@ -217,7 +217,7 @@ class MklSparseMatrix:
         """``y = alpha * A * x + beta * y`` via raw pointers of the wrapper's
         dtype.
 
-        Mirrors :meth:`MCEq.spacc.SpaccMatrix.gemv_ctargs` so the ETD2
+        Mirrors :meth:`MCEq.solvers._kernels.spacc.SpaccMatrix.gemv_ctargs` so the ETD2
         kernels can be written backend-agnostic up to the gemv binding.
         """
         fl_pr = self._ct
@@ -244,7 +244,7 @@ class MklSparseMatrix:
         are the leading dimensions; per-tile callers offset the pointer
         instead.
 
-        Default ``beta = 1.0`` matches :class:`MCEq.spacc.SpaccMatrix.gemm_ctargs`
+        Default ``beta = 1.0`` matches :class:`MCEq.solvers._kernels.spacc.SpaccMatrix.gemm_ctargs`
         (accumulating SpMM). Caller is responsible for zeroing ``C`` before
         the first call in an accumulator chain.
         """

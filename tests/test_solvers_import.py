@@ -44,7 +44,7 @@ REPORT = textwrap.dedent(
         repr(
             {{
                 "modules": sorted(
-                    m for m in ("cupy", "MCEq.spacc", "MCEq.solvers._kernels.etd2")
+                    m for m in ("cupy", "MCEq.solvers._kernels.spacc", "MCEq.solvers._kernels.etd2")
                     if m in sys.modules
                 ),
                 "mkl_handle": config.mkl is not None,

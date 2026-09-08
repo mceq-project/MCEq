@@ -1,6 +1,6 @@
 """``SpaccApplyOff`` against a fake Accelerate handle, on every platform.
 
-The real ``MCEq.spacc`` loads ``libspacc`` at import and only macOS builds
+The real ``MCEq.solvers._kernels.spacc`` loads ``libspacc`` at import and only macOS builds
 carry one, so every other Accelerate test skips elsewhere. What is
 platform-independent is the *contract* between :class:`MCEq.solvers.
 SpaccApplyOff` and the two ctypes entry points it drives:
@@ -47,7 +47,7 @@ from MCEq.solvers import (
 
 
 class FakeSpaccMatrix:
-    """Ctypes-level stand-in for :class:`MCEq.spacc.SpaccMatrix`.
+    """Ctypes-level stand-in for :class:`MCEq.solvers._kernels.spacc.SpaccMatrix`.
 
     Takes pointers, not arrays: ``B`` and ``C`` are rebuilt with
     ``np.ctypeslib.as_array`` over ``ldb`` / ``ldc``-strided columns, which

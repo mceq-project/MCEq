@@ -75,10 +75,6 @@ exhaustive_ignores =
 # particlemanager: a compat shim since §13.2 item 6 split the species layer into
 # `species/`. Phase 7 deletes the shim and this line (D14).
     particlemanager
-# Compiled kernels and their thin wrappers. `etd2_kernels` moved to
-# `solvers/_kernels/etd2` at M11 (no flat shim kept: private module, user
-# census 0). `spacc` moves at M12, the macOS half of the same phase.
-    spacc
 # Leaves with no MCEq imports: the version string, and `hankel` since Phase 6
 # moved its content to `driver/results.py` — the shim re-exports from the
 # driver, and the layers contract does not constrain ignored modules. Phase 7
@@ -243,7 +239,6 @@ source_modules =
     MCEq.ddm
     MCEq.ddm_utils
     MCEq.hankel
-    MCEq.spacc
 forbidden_modules =
     MCEq.config
 unmatched_ignore_imports_alerting = error

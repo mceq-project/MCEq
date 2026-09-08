@@ -25,8 +25,6 @@ for fn in os.listdir(base):
         break
 
 # Declaration of function argument types
-spacc.test.restype = c_int
-
 spacc.free_mstore.restype = None
 
 spacc.free_mstore_at.restype = None
@@ -65,76 +63,6 @@ spacc.gemm.argtypes = [
     c_int,
 ]
 
-spacc.daxpy.restype = None
-spacc.daxpy.argtypes = [
-    c_int,
-    c_double,
-    POINTER(c_double),
-    POINTER(c_double),
-]
-
-daxpy = spacc.daxpy
-
-# ETD2 fused post-apply kernels: one fused (dim, K) pass in place of the
-# 4-ufunc predictor / corrector chains. All matrices are column-major
-# (Fortran-contiguous); eD/phi1/phi2 are either (dim,) (multirhs) or
-# (dim, K) (multipath). See spacc.c.
-#
-# These eight bindings have no Python caller: MCEq.solvers.HostBackend runs
-# the row-major fused kernels of MCEq.solvers._kernels.etd2 on every host backend,
-# Accelerate included. They stay declared here so the Python surface matches
-# the C the shipped libspacc exports; removing both halves is a macOS-side
-# job, since spacc.c can only be rebuilt and benchmarked there.
-spacc.etd2_post_apply1_multirhs.restype = None
-spacc.etd2_post_apply1_multirhs.argtypes = [
-    c_int,
-    c_int,
-    c_double,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-spacc.etd2_post_apply2_multirhs.restype = None
-spacc.etd2_post_apply2_multirhs.argtypes = [
-    c_int,
-    c_int,
-    c_double,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-spacc.etd2_post_apply1_multipath.restype = None
-spacc.etd2_post_apply1_multipath.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-spacc.etd2_post_apply2_multipath.restype = None
-spacc.etd2_post_apply2_multipath.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-    POINTER(c_double),
-]
-
-etd2_post_apply1_multirhs = spacc.etd2_post_apply1_multirhs
-etd2_post_apply2_multirhs = spacc.etd2_post_apply2_multirhs
-etd2_post_apply1_multipath = spacc.etd2_post_apply1_multipath
-etd2_post_apply2_multipath = spacc.etd2_post_apply2_multipath
-
 # ---- fp32 bindings ----
 spacc.gemv_f32.restype = c_int
 spacc.gemv_f32.argtypes = [c_float, c_int, POINTER(c_float), POINTER(c_float)]
@@ -158,55 +86,6 @@ spacc.create_sparse_matrix_f32.argtypes = [
     POINTER(c_longlong),
     POINTER(c_float),
 ]
-spacc.etd2_post_apply1_multirhs_f32.restype = None
-spacc.etd2_post_apply1_multirhs_f32.argtypes = [
-    c_int,
-    c_int,
-    c_float,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-spacc.etd2_post_apply2_multirhs_f32.restype = None
-spacc.etd2_post_apply2_multirhs_f32.argtypes = [
-    c_int,
-    c_int,
-    c_float,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-spacc.etd2_post_apply1_multipath_f32.restype = None
-spacc.etd2_post_apply1_multipath_f32.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-spacc.etd2_post_apply2_multipath_f32.restype = None
-spacc.etd2_post_apply2_multipath_f32.argtypes = [
-    c_int,
-    c_int,
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-    POINTER(c_float),
-]
-
-etd2_post_apply1_multirhs_f32 = spacc.etd2_post_apply1_multirhs_f32
-etd2_post_apply2_multirhs_f32 = spacc.etd2_post_apply2_multirhs_f32
-etd2_post_apply1_multipath_f32 = spacc.etd2_post_apply1_multipath_f32
-etd2_post_apply2_multipath_f32 = spacc.etd2_post_apply2_multipath_f32
 
 # Initialize
 spacc.free_mstore()

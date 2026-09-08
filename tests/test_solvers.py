@@ -12,10 +12,10 @@ from MCEq import config
 def test_spacc_matrix_creation(toy_solver_problem, dtype):
     """SpaccMatrix should be created from a scipy sparse matrix without error.
 
-    Both entry-point families of ``MCEq.spacc._SPACC_TYPES``: the mstore slot
+    Both entry-point families of ``MCEq.solvers._kernels.spacc._SPACC_TYPES``: the mstore slot
     is typed at creation, so fp32 goes through ``create_sparse_matrix_f32``.
     """
-    import MCEq.spacc as spacc
+    import MCEq.solvers._kernels.spacc as spacc
 
     int_m = toy_solver_problem[3]
     sm = spacc.SpaccMatrix(int_m, dtype=dtype)
@@ -34,7 +34,7 @@ def test_spacc_matrix_creation(toy_solver_problem, dtype):
 @pytest.mark.parametrize(("dtype", "rtol"), [(np.float64, 1e-12), (np.float32, 1e-5)])
 def test_spacc_gemv_matches_scipy(toy_solver_problem, dtype, rtol):
     """gemv_npargs should produce the same result as scipy sparse dot."""
-    import MCEq.spacc as spacc
+    import MCEq.solvers._kernels.spacc as spacc
 
     int_m = toy_solver_problem[3]
     sm = spacc.SpaccMatrix(int_m, dtype=dtype)
@@ -57,7 +57,7 @@ def test_spacc_gemv_matches_scipy(toy_solver_problem, dtype, rtol):
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 def test_spacc_double_del_is_safe(toy_solver_problem):
     """Calling __del__ twice on a SpaccMatrix must not crash (double-free guard)."""
-    import MCEq.spacc as spacc
+    import MCEq.solvers._kernels.spacc as spacc
 
     int_m = toy_solver_problem[3]
     sm = spacc.SpaccMatrix(int_m)
@@ -74,7 +74,7 @@ def test_spacc_del_with_none_store_id():
     """SpaccMatrix.__del__ with store_id=None must not crash (failed-init guard)."""
     from scipy.sparse import eye
 
-    import MCEq.spacc as spacc
+    import MCEq.solvers._kernels.spacc as spacc
 
     sm = spacc.SpaccMatrix(eye(3, format="coo"))
     sm.store_id = None  # Simulate a failed __init__
@@ -87,7 +87,7 @@ def test_spacc_matrix_store_full():
     """Filling SIZE_MSTORE (10) slots and then freeing them leaves store clean."""
     from scipy.sparse import eye
 
-    import MCEq.spacc as spacc
+    import MCEq.solvers._kernels.spacc as spacc
 
     # Clear any leftover matrices from previous tests
     spacc.spacc.free_mstore()

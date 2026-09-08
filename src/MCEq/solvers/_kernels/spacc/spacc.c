@@ -1,0 +1,227 @@
+/*Interface to the SParse blas functions in Apple's ACCelerate framework,
+called SPACC. This seems to be the fastest gemv on Apple Silicon Macs.
+
+This code is part of MCEq https://github.com/afedynitch/MCEq licensed under the BSD 3-clause.
+
+Author: Anatoli Fedynitch, 2022
+*/
+
+#include <stdio.h>
+#include <Accelerate/Accelerate.h>
+
+#define SIZE_MSTORE 10
+#define DEBUG false
+
+static void *mstore[SIZE_MSTORE];
+
+void free_mstore_at(int idx)
+{
+    if (mstore[idx])
+    {
+        sparse_matrix_destroy(mstore[idx]);
+        mstore[idx] = NULL;
+        if (DEBUG)
+            printf("Matrix destroyed at %i\n", idx);
+    }
+}
+
+void free_mstore()
+{
+    for (int i = 0; i < SIZE_MSTORE; ++i)
+    {
+        if (mstore[i])
+        {
+            free_mstore_at(i);
+        }
+    }
+}
+
+int gemv(double alpha, int ia, double *x, double *y)
+{
+    if (!mstore[ia])
+    {
+        printf("Matrix with index %i not found.\n", ia);
+        return -1;
+    }
+
+    if (sparse_matrix_vector_product_dense_double(
+            CblasNoTrans, alpha, mstore[ia], x, 1, y, 1) != SPARSE_SUCCESS)
+    {
+        printf("Error in sparse matrix-vector multiplication.\n");
+        return -1;
+    };
+
+    return 0;
+}
+
+// SpMM: C := alpha * A * B + C  (accumulate, no beta), B is (n_rows_A, nrhs),
+// C is (n_rows_A, nrhs). Column-major layout (CblasColMajor) so a single
+// stride of ldX = n_rows_A walks columns the same way numpy's (dim, K)
+// Fortran-contiguous layout does. Caller is responsible for zeroing C
+// before the first accumulating call if a non-accumulating result is wanted.
+int gemm(double alpha, int ia, int nrhs, double *B, int ldb, double *C, int ldc)
+{
+    if (!mstore[ia])
+    {
+        printf("Matrix with index %i not found.\n", ia);
+        return -1;
+    }
+
+    if (sparse_matrix_product_dense_double(
+            CblasColMajor, CblasNoTrans, nrhs, alpha, mstore[ia],
+            B, ldb, C, ldc) != SPARSE_SUCCESS)
+    {
+        printf("Error in sparse matrix-matrix multiplication.\n");
+        return -1;
+    };
+
+    return 0;
+}
+
+// fp32 variants of gemv/gemm. The mstore entries are typed at creation
+// (sparse_matrix_create_double vs _float), so the caller has to keep
+// fp32 and fp64 matrices in separate store slots. ``gemv_f32`` and
+// ``gemm_f32`` cast the handle to ``sparse_matrix_float`` blindly —
+// the wrapper-side Python layer enforces matching dtypes.
+int gemv_f32(float alpha, int ia, float *x, float *y)
+{
+    if (!mstore[ia])
+    {
+        printf("Matrix with index %i not found.\n", ia);
+        return -1;
+    }
+    if (sparse_matrix_vector_product_dense_float(
+            CblasNoTrans, alpha, (sparse_matrix_float)mstore[ia],
+            x, 1, y, 1) != SPARSE_SUCCESS)
+    {
+        printf("Error in sparse matrix-vector multiplication (f32).\n");
+        return -1;
+    }
+    return 0;
+}
+
+int gemm_f32(float alpha, int ia, int nrhs, float *B, int ldb, float *C, int ldc)
+{
+    if (!mstore[ia])
+    {
+        printf("Matrix with index %i not found.\n", ia);
+        return -1;
+    }
+    if (sparse_matrix_product_dense_float(
+            CblasColMajor, CblasNoTrans, nrhs, alpha,
+            (sparse_matrix_float)mstore[ia],
+            B, ldb, C, ldc) != SPARSE_SUCCESS)
+    {
+        printf("Error in sparse matrix-matrix multiplication (f32).\n");
+        return -1;
+    }
+    return 0;
+}
+
+// fp32 sparse-matrix construction. Mirrors ``create_sparse_matrix`` but
+// targets sparse_matrix_create_float / sparse_insert_entries_float.
+int create_sparse_matrix_f32(
+    int store_idx, int M, int N, int nnz,
+    const long long *row, const long long *col,
+    const float *values)
+{
+    if (store_idx < -1)
+    {
+        printf("store_idx variable must be >= -1");
+        return store_idx;
+    }
+    else if (store_idx == -1)
+    {
+        for (int i = 0; i < SIZE_MSTORE; ++i)
+        {
+            if (!mstore[i])
+            {
+                store_idx = i;
+                break;
+            }
+        }
+        if (store_idx == -1)
+        {
+            printf("Matrix store full, increase SIZE_MSTORE\n");
+            return -1;
+        }
+    }
+    else if (mstore[store_idx])
+    {
+        sparse_matrix_destroy(mstore[store_idx]);
+    }
+
+    mstore[store_idx] = (void *)sparse_matrix_create_float(M, N);
+    if (sparse_insert_entries_float(
+            mstore[store_idx], nnz, values, row, col) != SPARSE_SUCCESS)
+    {
+        printf("Failed to insert values into sparse matrix (f32).\n");
+        return -1;
+    }
+    if (sparse_commit(mstore[store_idx]) != SPARSE_SUCCESS)
+    {
+        printf("Failed to commit inserted values into sparse matrix (f32).\n");
+        return -1;
+    }
+    return store_idx;
+}
+
+int create_sparse_matrix(
+    int store_idx, int M, int N, int nnz,
+    const long long *row, const long long *col,
+    const double *values)
+{
+    if (store_idx < -1)
+    {
+        printf("store_idx variable must be >= -1");
+        return store_idx;
+    }
+    else if (store_idx == -1)
+    {
+        // find free slot
+        for (int i = 0; i < SIZE_MSTORE; ++i)
+        {
+            if (!mstore[i])
+            {
+                store_idx = i;
+                if (DEBUG)
+                    printf("Assigned free store_idx %i.\n", store_idx);
+                break;
+            }
+        }
+        if (store_idx == -1)
+        {
+            printf("Matrix store full, increase SIZE_MSTORE\n");
+            return -1;
+        }
+    }
+    else if (mstore[store_idx])
+    {
+        if (DEBUG)
+            printf("Overwriting existing matrix @ store_idx %i.\n", store_idx);
+        sparse_matrix_destroy(mstore[store_idx]);
+    }
+
+    mstore[store_idx] = (void *)sparse_matrix_create_double(M, N);
+
+    if (sparse_insert_entries_double(
+            mstore[store_idx], nnz,
+            values,
+            row,
+            col) != SPARSE_SUCCESS)
+    {
+
+        printf("Failed to insert values into sparse matrix.\n");
+        return -1;
+    };
+    if (sparse_commit(mstore[store_idx]) != SPARSE_SUCCESS)
+    {
+        printf("Failed to commit inserted values into sparse matrix.\n");
+        return -1;
+    }
+
+    if (DEBUG)
+        printf("Matrix added at %i\n", store_idx);
+
+    return store_idx;
+}

@@ -4,10 +4,10 @@
 to Accelerate's column-major accumulating SpMM through Fortran-ordered
 scratch and a fixed column tile; :func:`accelerate_backend` hands it to
 :class:`MCEq.solvers.backends.host.HostBackend`. The handles themselves are
-:class:`MCEq.spacc.SpaccMatrix`.
+:class:`MCEq.solvers._kernels.spacc.SpaccMatrix`.
 
 Everything Accelerate-shaped belongs here -- the layout staging, the tile
-size, the ctypes scalars. ``MCEq.spacc`` loads ``libspacc`` at import and
+size, the ctypes scalars. ``MCEq.solvers._kernels.spacc`` loads ``libspacc`` at import and
 only macOS builds carry one, so it is imported inside the constructor.
 """
 
@@ -30,7 +30,7 @@ _SPACC_SPMM_TILE = 64
 #: ctypes scalar per state dtype for the Accelerate pointer arguments —
 #: the whole of the fp64/fp32 difference in :class:`SpaccApplyOff`. The
 #: entry-point families themselves are picked by
-#: :data:`MCEq.spacc._SPACC_TYPES` when the handle is built.
+#: :data:`MCEq.solvers._kernels.spacc._SPACC_TYPES` when the handle is built.
 _SPACC_CTYPES = {np.dtype(np.float64): c_double, np.dtype(np.float32): c_float}
 
 
@@ -149,10 +149,10 @@ def accelerate_backend(op, fp_precision=64):
     """Host backend on Apple Accelerate Sparse BLAS; owns the handles it
     creates.
 
-    The import is local because ``MCEq.spacc`` loads ``libspacc`` at import
+    The import is local because ``MCEq.solvers._kernels.spacc`` loads ``libspacc`` at import
     and only macOS builds carry one.
     """
-    from MCEq.spacc import SpaccMatrix
+    from MCEq.solvers._kernels.spacc import SpaccMatrix
 
     dtype = _state_dtype(fp_precision)
     handles = tuple(

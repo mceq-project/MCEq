@@ -74,7 +74,7 @@ config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
 
 import numpy as np
 from scipy.sparse import eye
-import MCEq.spacc as spacc
+import MCEq.solvers._kernels.spacc as spacc
 
 # Five live matrices, half the SIZE_MSTORE pool, so the m2 below still has a
 # free slot. One is fp32: the slot is typed at creation, so the fp32 family
@@ -96,7 +96,7 @@ del m2
 _SCRIPT_SPACC_STORE_FULL = """
 import sys
 from scipy.sparse import eye
-import MCEq.spacc as spacc
+import MCEq.solvers._kernels.spacc as spacc
 
 matrices = []
 for _ in range(10):

@@ -47,9 +47,9 @@ install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/solvers/_kernels/etd
 
 if(APPLE)
   # –– declare and name the extension with the correct SOABI suffix
-  python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
+  python_add_library(_libspacc MODULE src/MCEq/solvers/_kernels/spacc/spacc.c WITH_SOABI)
 
-  # –– install into <INSTALL_DIR>/spacc (so in editable→gemm/spacc)
+  # Install beside the ctypes loader in the solvers kernel package.
   install(TARGETS _libspacc LIBRARY # on macOS, MODULE behaves like LIBRARY
-                                    DESTINATION ${INSTALL_DIR}/spacc)
+                                    DESTINATION ${INSTALL_DIR}/solvers/_kernels/spacc)
 endif()
