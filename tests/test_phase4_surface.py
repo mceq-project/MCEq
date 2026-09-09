@@ -23,10 +23,11 @@ Two facts about today that shape what is asserted here:
   off its "was this defined locally?" filter when `__all__` is present, so a
   `from .interaction_tables import *` shim with no `__all__` would silently
   drop the re-exported *functions* from the rendered page -- the Phase 3 trap
-  that cost `MCEq.geometry.atmosphere_parameters` six documented functions
-  (see `tests/geometry/test_geometry_shims.py`). `docs/api-reference/data.rst`
-  and `docs/api-reference/particlemanager.rst` both run `.. automodapi::`, so
-  the shims for those two need an explicit `__all__` to stay rendered.
+  that once cost a function-shim six documented functions (that shim was
+  retired at M14; see `tests/geometry/test_geometry_shims.py` for the pin
+  history). `docs/api-reference/data.rst` and
+  `docs/api-reference/particlemanager.rst` both run `.. automodapi::`, so the
+  shims for those two need an explicit `__all__` to stay rendered.
 * Each name is still *defined* in the flat module -- until Phase 4 moves
    it, which `test_the_flat_module_still_owns_every_name` records. A moved
    name is then listed in `DEFINES` with its new home and the test checks

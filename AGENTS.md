@@ -89,7 +89,7 @@ under `docs/` (Sphinx).
 5. `src/MCEq/solvers.py` — ETD2 integration kernels (numpy/MKL/Accelerate/CUDA).
 6. `src/MCEq/environment/` — atmospheres, columns, geomagnetic cutoffs;
    `src/MCEq/geometry/` keeps the census-kept shims (`geometry.py`,
-   `density_profiles.py`, `atmosphere_parameters.py`, C-extension
+   `density_profiles.py`, `geometry.py`, C-extension
    re-exports under `nrlmsise00/`, `corsikaatm/`; built via CMake into
    `environment/_ext/`).
 7. `src/MCEq/models/ddm/` — `ddm.py`, `ddm_utils.py`: Data-Driven Model.

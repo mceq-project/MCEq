@@ -50,7 +50,7 @@ IMPORT_TABLE = [
     (
         "MCEq.geometry.atmosphere_parameters",
         "MCEq.environment.parameters",
-        "kept20",
+        "gone",
     ),
     ("MCEq.geometry.nrlmsise00", "MCEq.environment._ext.nrlmsise00", "keep"),
     ("MCEq.geometry.corsikaatm", "MCEq.environment._ext.corsikaatm", "keep"),
@@ -88,6 +88,7 @@ STATUS_NOTE = {
     "removed": "removed at 2.0 (public-usage census: no users)",
     "removed-rr": "removed at 2.0 (maintainer re-ruling 2026-09-09)",
     "kept20": "kept at 2.0, removed in the next follow-up release",
+    "gone": "removed at 2.0 (M14; census saw no external users)",
     "moved": "old name gone (private module)",
 }
 

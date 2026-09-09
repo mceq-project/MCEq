@@ -128,11 +128,11 @@ def _gtracr_location_from_atmosphere(density_model):
     """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
     Raises ``ValueError`` unless the model exposes detector coordinates or a
-    location name present in :data:`atmosphere_parameters.LOCATIONS`.
+    location name present in :data:`MCEq.environment.parameters.LOCATIONS`.
 
     The coordinates always come from MCEq — ``_detector_latitude /
     _detector_longitude`` for the detector-centred models, the
-    :data:`atmosphere_parameters.LOCATIONS` table for a named site — and
+    :data:`MCEq.environment.parameters.LOCATIONS` table for a named site — and
     :func:`get_cutoff_map` samples at exactly those. The name is a label on
     them, not a lookup key, so how it is obtained cannot move the sampling
     point:

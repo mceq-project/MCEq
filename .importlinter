@@ -59,7 +59,7 @@ exhaustive = True
 exhaustive_ignores =
 # environment; sits beside the stack, constrained by C2 and C3 instead.
 # `geometry` stays listed: the v2.0 cull deleted six of its module shims but
-# the census-kept ones (atmosphere_parameters, geometry, density_profiles) and
+# the census-kept ones (geometry, density_profiles) and
 # the C-extension re-export directories keep the package alive for user code.
     environment
     geometry

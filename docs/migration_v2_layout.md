@@ -99,7 +99,7 @@ the rest keep working under both spellings.
 | `MCEq.download` | `MCEq.data.download` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.etd2_kernels` | `MCEq.solvers._kernels.etd2` | old name gone (private module) |
 | `MCEq.geometry.EarthsAtmosphere` | `MCEq.environment.base.EarthsAtmosphere` | kept at 2.0 (public-usage census) |
-| `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | kept at 2.0, removed in the next follow-up release |
+| `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | removed at 2.0 (M14; census saw no external users) |
 | `MCEq.geometry.column` | `MCEq.environment.column` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.geometry.corsikaatm` | `MCEq.environment._ext.corsikaatm` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.density_profiles` | `MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)` | kept at 2.0 (public-usage census) |

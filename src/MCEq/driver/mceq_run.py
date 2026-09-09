@@ -823,7 +823,7 @@ class MCEqRun:
         True and ``self.geomagnetic_cutoff`` is True or None. Eligible
         atmospheres are MSIS*-derived classes (both MSIS00 and MSIS21
         hierarchies) and any other atmosphere whose ``self.location``
-        appears in :data:`atmosphere_parameters.LOCATIONS`.
+        appears in :data:`MCEq.environment.parameters.LOCATIONS`.
         """
         from MCEq.environment.msis00 import MSIS00Atmosphere
         from MCEq.environment.msis21 import MSIS21Atmosphere

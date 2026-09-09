@@ -8,10 +8,9 @@ the census-absent `MCEq.geometry` module shims `column`, `gtracr_cutoff`,
 (canonical homes under `MCEq.environment.*`); and `MCEqRun.solve_multirhs`
 (use `solve_batch` and read `res.sol` / `res.grid_sol`). `MCEq.ddm` was
 deleted despite one live downstream import per the maintainer re-ruling of
-2026-09-09 (patch PR filed upstream). Kept: `MCEq.core` and `mceq_config`
+2026-09-09 (patch PR filed upstream). Also removed at M14: the
+`MCEq.geometry.atmosphere_parameters` re-export (canonical home
+`MCEq.environment.parameters`). Kept: `MCEq.core` and `mceq_config`
 (permanent façades), the census-kept sub-APIs (`MCEq.particlemanager`,
-`MCEq.data`, `MCEq.geometry.density_profiles` / `.geometry` /
-`.atmosphere_parameters` through the next follow-up release), the flat
-config names (silent and canonical, ruling D-3), and the `enable_muon_
-energy_loss` config attr (kept per the census Drop->Keep contradiction
-flag: unpatchable nuVeto live write). See `docs/migration_v2_layout.md`.
+`MCEq.data`, `MCEq.geometry.density_profiles` / `.geometry`), the flat
+config names (silent and canonical, ruling D-3). See `docs/migration_v2_layout.md`.

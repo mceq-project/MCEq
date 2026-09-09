@@ -13,10 +13,10 @@ mixes the two import paths.
 The v2.0 cull deleted six of the nine module shims (``column``,
 ``gtracr_cutoff``, ``location_centered``, ``msis21_atmosphere``, ``registry``,
 ``nrlmsise00_mceq``; the census found no users) and their pins went with them.
+M14 retired the last function-shim, ``atmosphere_parameters``, once its only
+test consumer (``test_core.py``) was repointed to ``MCEq.environment.parameters``.
 What stays pinned here: the ``geometry`` shim (kept — public census), the
-``density_profiles`` star-import surface, the two C-extension shims, and the
-``atmosphere_parameters`` shim (kept through M13; deleted in M14 with the
-``test_core.py`` import it protects).
+``density_profiles`` star-import surface, and the two C-extension shims.
 
 DB-free: nothing here constructs an ``MCEqRun``.
 """
@@ -140,25 +140,3 @@ def test_density_profiles_rejects_an_unknown_attribute():
 
     with pytest.raises(AttributeError):
         dp.NoSuchAtmosphere
-
-
-def test_atmosphere_parameters_shim_keeps_its_documented_functions():
-    """The six ``get_*``/``list_*`` names sphinx-automodapi would otherwise drop.
-
-    ``automodapi`` only disables its "local to this module?" filter when
-    ``__all__`` is present. A ``from ... import *`` shim has none, so every
-    re-exported *function* is judged foreign and silently vanishes from the
-    rendered page, while dicts and lists survive (they have no ``__name__``).
-    """
-    import MCEq.geometry.atmosphere_parameters as ap
-
-    for name in (
-        "get_atmosphere_parameters",
-        "get_day_time_seconds",
-        "get_location_data",
-        "get_month_day_of_year",
-        "get_nrlmsise00_defaults",
-        "list_available_corsika_atmospheres",
-    ):
-        assert name in ap.__all__, f"{name} would vanish from the API docs"
-        assert callable(getattr(ap, name))
