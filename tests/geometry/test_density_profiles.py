@@ -1444,3 +1444,42 @@ def test_ragged_grid_error_does_not_recommend_nan(tmp_path):
     assert "do not all have 2 levels" in message
     assert "mark gaps with nan" not in message
     assert "discarded on load" in message
+
+
+def test_pressure_stays_consistent_with_density_and_temperature():
+    """p = rho R T / M has to hold in the extensions too, not only on the table.
+
+    The loader derives density from p and T that way, and both extensions hold
+    T fixed, so a constant-pressure tail contradicts the density tail it sits
+    next to.
+    """
+    atm = dp.TabulatedAtmosphere(TABLE_PATH, surface_elevation_m=0.0)
+    # Table nodes, and heights inside the two extension segments.  Between two
+    # table rows the relation only holds to ~4e-5, because get_temperature
+    # interpolates linearly while get_density and get_pressure interpolate in
+    # the log -- that is the interpolation scheme, not the tail, and it is the
+    # same before and after this fix.  Each extension spans a single interval
+    # with a constant temperature at both ends, so there it is exact.
+    for h in (0.0, 1.0e5, 2.834e5, 4.7e6, 6.0e6, 9.0e6, 1.12e7):
+        expected = (
+            float(atm.get_density(h))
+            * float(atm.get_temperature(h))
+            * dp._R_GAS
+            / dp._M_AIR
+        )
+        assert float(atm.get_pressure(h)) == pytest.approx(expected, rel=1e-9), h
+
+
+def test_pressure_extension_values():
+    """Pinned so a later change to the tail cannot pass the relation silently."""
+    atm = dp.TabulatedAtmosphere(TABLE_PATH, surface_elevation_m=0.0)
+    assert float(atm.get_pressure(0.0)) == pytest.approx(961.517, rel=1e-5)
+    assert float(atm.get_pressure(1.128e7)) == pytest.approx(1.20323e-4, rel=1e-4)
+
+
+def test_msis_extension_still_reports_no_pressure():
+    """MSIS is not asked for pressure; nan is the honest answer up there."""
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", season="January"
+    )
+    assert np.isnan(atm.get_pressure(9.0e6))

@@ -1721,7 +1721,10 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         if self.temp is not None:
             self.temp = np.hstack([self.temp[0], self.temp])
         if self.pressure is not None:
-            self.pressure = np.hstack([self.pressure[0], self.pressure])
+            # The temperature is held constant across the extension, so
+            # p = rho R T / M makes the pressure follow the density exactly.
+            p_bottom = self.pressure[0] * rho_bottom / self.dens[1]
+            self.pressure = np.hstack([p_bottom, self.pressure])
 
     def _msis_extension_doy(self):
         """Day of year the MSIS extension is evaluated at.
@@ -1834,7 +1837,10 @@ class TabulatedAtmosphere(EarthsAtmosphere):
             if self.temp is not None:
                 self.temp = np.hstack([self.temp, self.temp[-1]])
             if self.pressure is not None:
-                self.pressure = np.hstack([self.pressure, self.pressure[-1]])
+                # Same isothermal assumption as the density tail above, so the
+                # two stay consistent with the temperature that is held fixed.
+                p_top = self.pressure[-1] * rho_top / self.dens[-2]
+                self.pressure = np.hstack([self.pressure, p_top])
             return
 
         # An MSIS extension: blend the top of the table into MSIS so that the
