@@ -27,9 +27,10 @@ from MCEq.misc import info
 #: default when this function is defined (v1 semantics, pinned by the
 #: solve1d golden's signature probe); pass ``None`` to resolve the
 #: setting from the run. The module is fetched dynamically rather than
-#: with a static ``from MCEq import config``: the ``MCEq.hankel`` shim
-#: re-exports from here, and a static edge would make the chain
-#: ``hankel -> results -> config`` visible to contract C5.
+#: with a static import: the driver may import config either way (C5
+#: exempts it), but the AST-based structure golden sees only static
+#: import statements, and the dynamic form keeps the golden's import
+#: graph the shape it was pinned with.
 config = import_module("MCEq.config")
 
 
@@ -536,8 +537,9 @@ def convert_to_theta_space(
     """Convert Hankel-space amplitudes from the 2D MCEq solver to real
     (angular) space.
 
-    The transform itself is :func:`MCEq.hankel.inverse_hankel_legacy`;
-    this method adds the state-vector indexing and the theta grid.
+    The transform itself is :func:`MCEq.driver.results.inverse_hankel_legacy`
+    (the same module); this method adds the state-vector indexing and the
+    theta grid.
 
     Args:
         hankel_transf (list of np.arrays): Hankel-space amplitudes at the
@@ -557,8 +559,6 @@ def convert_to_theta_space(
         tuple: ``(k_oversampled, oversampled_amps, theta_range,
         f_theta)`` with the list entries indexed ``[depth][eidx]``.
     """
-    from MCEq.hankel import inverse_hankel_legacy
-
     if log_theta:
         theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
     else:

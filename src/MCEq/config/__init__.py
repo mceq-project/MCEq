@@ -324,7 +324,7 @@ muon_multiple_scattering = True
 #: over-predicting the wide-angle density of species in local
 #: production/loss equilibrium (sub-GeV hadrons and muons) by
 #: sec(theta). Physics, operator construction and solver integration:
-#: :mod:`MCEq.secant`. All angles are relative to the shower axis (like
+#: :mod:`MCEq.operators.secant`. All angles are relative to the shower axis (like
 #: the Hankel modes), independent of the axis' zenith angle.
 #: "auto" (default) and True both apply it on every solve with a 2D
 #: database — every entry point, every kernel, fp32 and fp64. False: off.
@@ -586,7 +586,7 @@ def secant_theta_cap():
     The cap is defined relative to the shower axis (like the Hankel
     modes themselves) and must lie in [50, 90): sec(theta) diverges at
     90 deg, and below ~50 deg the coupling operator's eigenbasis is
-    numerically defective so it cannot be built (see :mod:`MCEq.secant`).
+    numerically defective so it cannot be built (see :mod:`MCEq.operators.secant`).
     """
     cap = float(secant_theta_cap_deg)
     if not 50.0 <= cap < 90.0:

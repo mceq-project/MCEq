@@ -1,6 +1,6 @@
 """Backend bindings of the ETD2RK step loop, one module per library.
 
-A backend places a :class:`~MCEq.operator_assembly.CompiledOperator` on its
+A backend places a :class:`~MCEq.operators.compiled.CompiledOperator` on its
 sparse library or device and executes the stages of
 :func:`MCEq.solvers.etd2.etd2_driver` there. The four constructors
 re-exported here are what :data:`MCEq.solvers.etd2._BACKENDS` binds by name.

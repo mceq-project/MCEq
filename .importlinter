@@ -50,7 +50,7 @@ containers =
 layers =
     core : driver
     solvers
-    operator_assembly : secant : operators
+    operators
     species
     data
     config
@@ -62,24 +62,16 @@ exhaustive_ignores =
 # is still there for user code; Phase 7 deletes the shims and this line.
     environment
     geometry
-# download: a compat shim since §13.2 item 5 moved the code under `data`. It
-# re-exports from `MCEq.data.download` and C5/C2 constrain its one edge; Phase 7
-# deletes the shim (decision D6).
-    download
 # models, imported by the driver only (C4). §13.2 item 7 landed the move: the
-# code is `MCEq.models.ddm`, and `ddm`/`ddm_utils` remain as flat re-export
-# shims (D14) constrained against a back-edge by C4b. Phase 7 deletes the shims.
+# code is `MCEq.models.ddm`; the flat `ddm`/`ddm_utils` re-export shims were
+# deleted at the v2.0 cull.
     models
-    ddm
-    ddm_utils
 # particlemanager: a compat shim since §13.2 item 6 split the species layer into
-# `species/`. Phase 7 deletes the shim and this line (D14).
+# `species/`. Kept at 2.0 (public-usage census).
     particlemanager
-# Leaves with no MCEq imports: the version string, and `hankel` since Phase 6
-# moved its content to `driver/results.py` — the shim re-exports from the
-# driver, and the layers contract does not constrain ignored modules. Phase 7
-# deletes the shim and this line (decision D6).
-    hankel
+# Leaves with no MCEq imports: the version string. (The kernel packages moved
+# under solvers/_kernels at M11/M12 and are constrained as solvers modules;
+# the v2.0 cull deleted the flat shims that used to sit here.)
     version
 unmatched_ignore_imports_alerting = error
 ignore_imports =
@@ -100,14 +92,12 @@ ignore_imports =
 # cascade. Two forbidden contracts rather than one independence contract: the
 # latter would also forbid data <-> species, which the target layering allows.
 #
-# `operator_assembly` and `secant` are the Phase 5 re-export shims (D14); they
-# stay listed beside `operators` until Phase 7 deletes them.
-#
-# `MCEq.driver` and `MCEq.download` are listed too: C1 puts `environment` in
-# `exhaustive_ignores`, so the layers contract does not constrain it at all and
-# an environment -> driver edge would otherwise pass every gate. (Since Phase 6
-# commit 6 the driver code is a package, so the whole `MCEq.driver` subtree is
-# named; the former `MCEq.core` spelling only covered the shim.)
+# `MCEq.driver` is listed: C1 puts `environment` in `exhaustive_ignores`, so
+# the layers contract does not constrain it at all and an environment ->
+# driver edge would otherwise pass every gate. (Since Phase 6 commit 6 the
+# driver code is a package, so the whole `MCEq.driver` subtree is named; the
+# former `MCEq.core` spelling only covered the shim. The `MCEq.download` flat
+# shim was deleted at the v2.0 cull.)
 [importlinter:contract:C2]
 name = C2 environment does not import data/species/operators/solvers/driver
 type = forbidden
@@ -118,12 +108,9 @@ forbidden_modules =
     MCEq.data
     MCEq.particlemanager
     MCEq.operators
-    MCEq.operator_assembly
-    MCEq.secant
     MCEq.solvers
     MCEq.core
     MCEq.driver
-    MCEq.download
     MCEq.models
     MCEq.species
 unmatched_ignore_imports_alerting = error
@@ -165,8 +152,6 @@ source_modules =
     MCEq.species
     MCEq.models
     MCEq.operators
-    MCEq.operator_assembly
-    MCEq.secant
     MCEq.solvers
     MCEq.misc
     MCEq.config
@@ -183,8 +168,6 @@ source_modules =
     MCEq.particlemanager
     MCEq.species
     MCEq.operators
-    MCEq.operator_assembly
-    MCEq.secant
     MCEq.solvers
     MCEq.misc
     MCEq.config
@@ -192,26 +175,24 @@ source_modules =
     MCEq.geometry
 forbidden_modules =
     MCEq.models
-    MCEq.ddm
-    MCEq.ddm_utils
 
 # ------------------------------------------------------------- C4b: models shim
 # The analogue of C2b for the models move (§13.2 item 7). C4 forbids the rest of
 # the tree reaching `MCEq.models`, but `MCEq.models` is not itself a C4 source,
-# so nothing there stops the moved code importing back through the flat
-# `MCEq.ddm` / `MCEq.ddm_utils` shims -- a cycle (models -> shim -> models) that
-# every other contract passes. This closes it: the shims may import the package,
-# never the reverse. Proven non-vacuous by a planted probe import (adding
-# `from MCEq import ddm` inside `models/ddm/ddm.py` turns C4b BROKEN), as C2b was.
+# so nothing there stops the moved code importing back through a flat
+# compatibility shim -- a cycle (models -> shim -> models) that every other
+# contract passes. The `MCEq.ddm` / `MCEq.ddm_utils` flat shims were deleted at
+# the v2.0 cull, so what this contract still guards is the species side:
+# `models` reaching `MCEq.particlemanager` instead of `MCEq.species`. Proven
+# non-vacuous by a planted probe import (a `from MCEq import particlemanager`
+# inside `models/ddm/ddm.py` turns C4b BROKEN), as C2b was.
 [importlinter:contract:C4b]
-name = C4b the models/species shims import their package, never the reverse
+name = C4b the models/species code does not reach back through a flat shim
 type = forbidden
 source_modules =
     MCEq.models
     MCEq.species
 forbidden_modules =
-    MCEq.ddm
-    MCEq.ddm_utils
     MCEq.particlemanager
 unmatched_ignore_imports_alerting = error
 
@@ -230,15 +211,10 @@ source_modules =
     MCEq.species
     MCEq.models
     MCEq.operators
-    MCEq.operator_assembly
-    MCEq.secant
     MCEq.solvers
     MCEq.misc
     MCEq.environment
     MCEq.geometry
-    MCEq.ddm
-    MCEq.ddm_utils
-    MCEq.hankel
 forbidden_modules =
     MCEq.config
 unmatched_ignore_imports_alerting = error

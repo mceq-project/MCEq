@@ -33,7 +33,7 @@ Construction of ``T`` (per-column ridge with a flat-state damping term)::
              + || T (lam2 I + w_f 1 1^T)^(1/2) ||_F^2
 
 with ``R`` the readout linear map (cubic kappa-oversampling + trapz, the
-same convention as :func:`MCEq.hankel.inverse_hankel_legacy`) on a dense
+same convention as :func:`MCEq.driver.results.inverse_hankel_legacy`) on a dense
 theta grid, ``W`` the sqrt(theta dtheta) measure, and the rank-one term
 damping ``T @ 1`` (kappa-flat = collimated states are not elongated).
 Rows with ``kappa > row_kmax`` are zeroed: the correction has no support

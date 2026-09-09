@@ -43,9 +43,9 @@ The solver is layered like the matrix build:
 
 1. :class:`MCEq.core.MatrixBuilder` produces the constant operator as two
    sparse matrices, ``int_m`` (:math:`A`) and ``dec_m`` (:math:`B`);
-   :mod:`MCEq.secant` produces the constant sec(θ) mode-coupling operators.
-2. :func:`MCEq.operator_assembly.compile_operator` assembles a
-   :class:`~MCEq.operator_assembly.CompiledOperator` — the diagonal /
+   :mod:`MCEq.operators.secant` produces the constant sec(θ) mode-coupling operators.
+2. :func:`MCEq.operators.compiled.compile_operator` assembles a
+   :class:`~MCEq.operators.compiled.CompiledOperator` — the diagonal /
    off-diagonal split as CSR in the kernel's state layout (the low-E-first
    layout when the sec(θ) transport is on), the layout itself, and the
    coupling operators. Host-only and backend-agnostic; every backend sums

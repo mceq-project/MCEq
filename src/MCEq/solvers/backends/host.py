@@ -65,7 +65,7 @@ class HostBackend:
     numpy elementwise kernels, the fused C step stages and BLAS GEMMs; the
     SpMM is the ``apply_off`` binding of the sparse library (scipy, MKL or
     Apple Accelerate). ``op`` is
-    the :class:`~MCEq.operator_assembly.CompiledOperator` the binding was
+    the :class:`~MCEq.operators.compiled.CompiledOperator` the binding was
     built from — it carries the layout and the coupling operators.
 
     ``dtype`` is the state precision, float64 or float32: the state, the

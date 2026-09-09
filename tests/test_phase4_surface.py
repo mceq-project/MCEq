@@ -1,13 +1,15 @@
-"""The public surface of the five flat modules Phase 4 moves, pinned before the move.
+"""The public surface of the flat modules Phase 4 moved, pinned as literals.
 
 Phase 4 splits `MCEq.data` into `data/` (`hdf5_store`, `interaction_tables`,
 `decay_tables`, `cross_sections`, `continuous_losses`, `equivalences`),
 `MCEq.particlemanager` into `species/`, `MCEq.ddm` + `MCEq.ddm_utils` into
-`models/ddm`, and `MCEq.download` under `data/`. Each flat module stays behind
-as a silent re-export shim for this release (D14: silent now, warn next, remove
-after). While there is still exactly one import path, "the shim re-exports the
-right things" cannot be tested by comparing the two paths -- so this file writes
-the surface down as literals instead, and the Phase 4 shims have to satisfy it.
+`models/ddm`, and `MCEq.download` under `data/`. The `MCEq.ddm`,
+`MCEq.ddm_utils` and `MCEq.download` shims were deleted at the v2.0 cull and
+their surface pins went with them; the `MCEq.data` and
+`MCEq.particlemanager` re-exports are permanent (public-usage census) and
+their pins stay. While there is one import path per name, "the shim re-exports
+the right things" cannot be tested by comparing the two paths -- so this file
+writes the surface down as literals instead, and the shims have to satisfy it.
 
 Every name below was checked against HEAD (c81d182) before it was written down.
 The assignment's list needed **no corrections**: all 22 names resolve, and all
@@ -15,7 +17,7 @@ of them are in `vars()` of the module that is supposed to carry them.
 
 Two facts about today that shape what is asserted here:
 
-* None of the five modules defines `__all__` (verified at c81d182). So this
+* None of the modules defined `__all__` (verified at c81d182). So this
   file pins membership in `vars(module)`, not membership in `__all__`. That is
   the weaker of the two and it is deliberate: `sphinx-automodapi` only turns
   off its "was this defined locally?" filter when `__all__` is present, so a
@@ -24,7 +26,7 @@ Two facts about today that shape what is asserted here:
   that cost `MCEq.geometry.atmosphere_parameters` six documented functions
   (see `tests/geometry/test_geometry_shims.py`). `docs/api-reference/data.rst`
   and `docs/api-reference/particlemanager.rst` both run `.. automodapi::`, so
-  the Phase 4 shims for those two need an explicit `__all__` to stay rendered.
+  the shims for those two need an explicit `__all__` to stay rendered.
 * Each name is still *defined* in the flat module -- until Phase 4 moves
    it, which `test_the_flat_module_still_owns_every_name` records. A moved
    name is then listed in `DEFINES` with its new home and the test checks
@@ -54,7 +56,9 @@ import pytest
 #: nothing else reaches (`_pname`, `_DDMEntry`, `_DDMChannel`,
 #: `_generate_DDM_matrix`, `_download_file`, ...) are deliberately absent --
 #: they are not part of the pinned contract. (`_select_em_rho_slice` left the
-#: package for `MCEq.data.em_tables.select_em_rho_slice` in Phase 4.)
+#: package for `MCEq.data.em_tables.select_em_rho_slice` in Phase 4.) The
+#: `MCEq.ddm` / `MCEq.ddm_utils` / `MCEq.download` pins were removed with the
+#: v2.0 cull of those shims.
 SURFACE: dict[str, tuple[str, ...]] = {
     "MCEq.data": (
         "ContinuousLosses",
@@ -69,27 +73,12 @@ SURFACE: dict[str, tuple[str, ...]] = {
         "MCEqParticle",
         "ParticleManager",
         # Private, and therefore never carried by `import *` nor picked up by a
-        # hand-written `__all__`. `src/MCEq/ddm.py:14` and `tests/test_ddm.py:5`
-        # both import it by name; see `test_ddm_and_particlemanager_share_pdata`.
+        # hand-written `__all__`. `src/MCEq/models/ddm/ddm.py:13` and
+        # `tests/test_ddm.py:5` both import it by name; the single-object
+        # invariant now holds between the canonical module and this shim
+        # (see `test_models_ddm_uses_the_particlemanager_pdata`).
         "_pdata",
         "backward_compatible_namestr",
-    ),
-    "MCEq.ddm": (
-        "DDMSplineDB",
-        "DataDrivenModel",
-        "isospin_partners",
-        "isospin_symmetries",
-    ),
-    "MCEq.ddm_utils": (
-        "fmteb",
-        "gen_matrix_variations",
-    ),
-    "MCEq.download": (
-        "FileIntegrityCheck",
-        "base_url",
-        "ensure_db_available",
-        "file_checksum",
-        "release_tag",
     ),
 }
 
@@ -105,12 +94,6 @@ DEFINES = {
     ("MCEq.data", "Decays"): "MCEq.data.decay_tables",
     ("MCEq.data", "InteractionCrossSections"): "MCEq.data.cross_sections",
     ("MCEq.data", "Interactions"): "MCEq.data.interaction_tables",
-    ("MCEq.download", "FileIntegrityCheck"): "MCEq.data.download",
-    ("MCEq.download", "ensure_db_available"): "MCEq.data.download",
-    ("MCEq.ddm", "DDMSplineDB"): "MCEq.models.ddm.ddm",
-    ("MCEq.ddm", "DataDrivenModel"): "MCEq.models.ddm.ddm",
-    ("MCEq.ddm_utils", "fmteb"): "MCEq.models.ddm.ddm_utils",
-    ("MCEq.ddm_utils", "gen_matrix_variations"): "MCEq.models.ddm.ddm_utils",
     ("MCEq.particlemanager", "MCEqParticle"): "MCEq.species.particle",
     ("MCEq.particlemanager", "ParticleManager"): "MCEq.species.manager",
 }
@@ -206,36 +189,38 @@ def test_the_flat_module_still_owns_every_name(module_name, name):
     )
 
 
-def test_ddm_and_particlemanager_share_pdata():
+def test_models_ddm_uses_the_particlemanager_pdata():
     """One `PYTHIAParticleData`, not two.
 
-    `ddm.py` does `from .particlemanager import _pdata` and uses it for the
-    `x_min` cut (`ddm.py:136`, `ddm.py:838`); `tests/test_ddm.py:25` asserts
+    `models/ddm/ddm.py` does `from MCEq.species.constants import _pdata` and
+    uses it for the `x_min` cut; `tests/test_ddm.py` asserts
     `ddm_entry.x_min == _pdata.mass(211) / 2` against the *particlemanager*
-    object. If the Phase 4 shims each construct their own table those two
-    stay equal by luck, so pin the identity while it is still trivially true.
+    object. If the moved code constructed its own table those two stay equal by
+    luck, so pin the identity. (This test read the pair through the flat
+    `MCEq.ddm` shim until the v2.0 cull deleted it; the invariant is unchanged,
+    only the spelling of the models-side path.)
     """
-    import MCEq.ddm
+    import MCEq.models.ddm.ddm as models_ddm
     import MCEq.particlemanager
 
-    assert MCEq.ddm._pdata is MCEq.particlemanager._pdata
+    assert models_ddm._pdata is MCEq.particlemanager._pdata
 
 
 def test_ddm_spline_cache_is_a_class_attribute_on_the_class():
-    """`DDMSplineDB._ddm_splines` must stay reachable through the flat name.
+    """`DDMSplineDB._ddm_splines` must stay reachable on the class.
 
     `tests/golden/gen_species.py` saves and restores it around its build.
     Since the B7 fix (R3) it is an empty default the instances never share --
     the save/restore is a harmless belt-and-braces -- but the name must stay
     defined on the class or the generator's `dict(DDMSplineDB._ddm_splines)`
-    line raises. A shim that re-exported a *wrapper* instead of the class
-    would give that save/restore a different object too.
+    line raises. A wrapper instead of the class would give that save/restore a
+    different object too.
 
     Structure only. The per-instance behaviour is
     `test_ddm_spline_cache_is_per_instance_after_the_b7_fix`; a class can
     satisfy everything below and still share (or not) however it likes.
     """
-    from MCEq.ddm import DDMSplineDB
+    from MCEq.models.ddm.ddm import DDMSplineDB
 
     assert isinstance(DDMSplineDB, type), "DDMSplineDB must be the class itself"
     assert "_ddm_splines" in vars(DDMSplineDB), (
@@ -259,7 +244,7 @@ def test_ddm_spline_cache_is_per_instance_after_the_b7_fix():
     first write, the class default stays empty, and the shadow asymmetry is
     gone.
     """
-    from MCEq.ddm import DDMSplineDB
+    from MCEq.models.ddm.ddm import DDMSplineDB
 
     first = DDMSplineDB(enable_channels=[(2212, 211)])
     assert "_ddm_splines" in vars(first), (
@@ -285,8 +270,7 @@ def test_repeat_load_on_one_instance_replaces_instead_of_appending():
     holds exactly the restricted channel set, nothing from the first load
     survives, and the class default is still untouched.
     """
-    from MCEq.ddm import DDMSplineDB
-    from MCEq.models.ddm.ddm import _DEFAULT_DDM_FILE
+    from MCEq.models.ddm.ddm import _DEFAULT_DDM_FILE, DDMSplineDB
 
     db = DDMSplineDB()
     assert len(db._ddm_splines) > 1, "the full load should hold many channels"

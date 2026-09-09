@@ -446,7 +446,7 @@ def _record_ddm(arrays, mceq, n_species):
 
     ``inject_ddm`` rebuilds int_m and dec_m, so this runs last on the fixture.
     """
-    from MCEq import ddm
+    from MCEq.models.ddm import ddm
 
     full = ddm.DataDrivenModel()
     entry = full.spline_db.get_entry(**DDM_ENTRY)
@@ -541,7 +541,7 @@ def build():
     # private dict and the class default stays empty, so this save/restore
     # guards nothing -- kept because deleting it is a generator edit with its
     # own review cost, and it stays correct if the cache ever moves back.
-    from MCEq.ddm import DDMSplineDB
+    from MCEq.models.ddm.ddm import DDMSplineDB
 
     saved_ddm_splines = dict(DDMSplineDB._ddm_splines)
     arrays = {}

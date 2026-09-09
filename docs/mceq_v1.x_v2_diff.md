@@ -1216,7 +1216,7 @@ zenith-independent.
 2. **Hankel reconstruction quality (investigated, legacy retained).**
    We investigated replacing the legacy cubic-interp + `np.trapz`
    inverse Hankel (`MCEqRun.convert_to_theta_space`, ported to
-   `MCEq.hankel.inverse_hankel_legacy`) with a Filon-J₀ quadrature
+   `MCEq.driver.results.inverse_hankel_legacy`) with a Filon-J₀ quadrature
    that integrates the J₀ oscillation exactly per segment via the
    closed form `∫ k J₀(αk) dk = (k/α) J₁(αk)`. Two variants tested:
 
@@ -1266,7 +1266,7 @@ zenith-independent.
    ~80–150 LOC of careful work; deferred until a downstream physics
    problem demonstrably needs better accuracy.
 
-   `MCEq.hankel.inverse_hankel_legacy` is retained as the standalone,
+   `MCEq.driver.results.inverse_hankel_legacy` is retained as the standalone,
    testable extraction (`tests/test_hankel.py` pins its accuracy on
    Gaussian round-trip). `MCEqRun.convert_to_theta_space` is left
    unchanged in v2 — same algorithm as PR #48, verified against the

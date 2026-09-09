@@ -58,7 +58,7 @@ under `docs/` (Sphinx).
 - **Intermediate depths** — pass `int_grid` to `solve()` and read out with
   `get_solution(..., grid_idx=...)`.
 - **Tweak particle production** — `set_mod_pprod` for ad-hoc modifications;
-  the Data-Driven Model (`src/MCEq/ddm.py`) for spline-based, data-driven
+  the Data-Driven Model (`src/MCEq/models/ddm/ddm.py`) for spline-based, data-driven
   corrections.
 - **Config knobs** — `src/MCEq/config.py` holds module-level globals (energy
   range, solver kernel, debug level, database file). Set them *before*
@@ -90,7 +90,7 @@ under `docs/` (Sphinx).
 6. `src/MCEq/geometry/` — `geometry.py` (spherical-Earth path lengths),
    `density_profiles.py` (atmospheres), C extensions in `nrlmsise00/` and
    `corsikaatm/` (built via CMake).
-7. `src/MCEq/ddm.py`, `ddm_utils.py` — Data-Driven Model.
+7. `src/MCEq/models/ddm/` — `ddm.py`, `ddm_utils.py`: Data-Driven Model.
 
 ## Build & test
 
