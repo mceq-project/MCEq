@@ -1,12 +1,12 @@
-"""Detached configuration snapshot for one :class:`MCEqRun` (plan D3).
+"""Detached configuration snapshot for one :class:`MCEqRun`.
 
-``MCEqRun(..., config=RunConfig())`` freezes the process-wide settings at
-construction time: the run reads its groups and flat names through the
-returned object afterwards, and later writes to :mod:`MCEq.config` (or the
-``mceq_config`` shim) have no effect on it. ``config=None`` (the default)
-keeps the documented tier-2 D3 semantics — live read-through, where a
-post-construction ``config.x = ...`` is seen at the next ``solve()`` —
-which is exactly what every existing caller relies on.
+``MCEqRun(..., config=RunConfig.snapshot())`` captures the process-wide
+settings at construction time: the run reads its groups and flat names through
+the returned object afterwards, and later writes to :mod:`MCEq.config` have no
+effect on it. ``config=None`` (the default) keeps live read-through: settings
+are read from the process configuration when consumed. In both cases a later
+change does not automatically rebuild existing matrices or cached paths, so
+calls that cache operators or integration paths still use what they built.
 
 The snapshot holds copies, not views: every settings group is deep-copied
 from the resolved values (dict-valued settings deep-copied, so mutating
@@ -18,10 +18,12 @@ two derived helpers (``cfg.secant_mode(is_2d)``,
 ``cfg.secant_theta_cap()``) — so driver code reads ``cfg.X`` uniformly
 whether ``cfg`` is the live module or a detached snapshot.
 
-Two process-level exceptions are documented, not accidental: library
-handles (the MKL ``cdll``, the CUDA context) and kernel detection
-side effects belong to the process, not to a run; a snapshot freezes
-``kernel_config`` as a string but the libraries still load globally.
+Library handles and detection side effects stay process-wide rather than per
+run: the MKL handle and the CUDA context belong to the process, and a snapshot
+freezes ``kernel_config`` as a string while the libraries still load globally.
+Some reads also remain process-level: logging, the default
+``get_solution(return_as=...)`` value captured at import, and the dense EM
+eigenvalue threshold.
 """
 
 from __future__ import annotations
@@ -43,13 +45,13 @@ class FrozenGroup(SimpleNamespace):
     group can never silently diverge from its own snapshot. Payloads
     inside dict-valued fields (``filters``, ``etd2_path``) stay ordinary
     mutable copies — a snapshot promises no immutability of contents,
-    only of which value a name points at (M5, ruling D-2: detached
-    copies, documented, not immutable payloads).
+    only of which value a name points at.
 
-    Carries the one method the driver's §9 validator needs from a group —
-    :meth:`with_overrides` — returning another frozen copy, so the
-    validator works identically on a live ``GroupView`` and on a snapshot
-    group without either type importing the other.
+    Carries the one method the driver's physics-settings validator needs from
+    a group — :meth:`with_overrides`, returning another detached group for
+    :func:`MCEq.driver.system.run_physics_view` — so the validator works
+    identically on a live ``GroupView`` and on a snapshot group without either
+    type importing the other.
     """
 
     def __init__(self, **fields):

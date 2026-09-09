@@ -2,9 +2,8 @@
 
 Importing MCEq must not dlopen a BLAS, probe a GPU or decide which solver
 kernel will run: those are properties of the machine that only matter once a
-solve is set up, and paying for them at import made `import MCEq.config` a
-half-second affair. Every probe here is cached after its first call;
-:func:`reset_cache` exists for tests that need to re-probe.
+solve is set up. Hardware and library probes run on first use and cache their
+results; :func:`reset_cache` exists for tests that need to re-probe.
 """
 
 from __future__ import annotations
@@ -101,8 +100,9 @@ def available(capability):
 def resolve_kernel(requested):
     """Map a `kernel_config` value onto the kernel that will actually run.
 
-    Raises when a specific kernel is named and its capability is missing, so a
-    value assigned after import fails the same way one set before it does.
+    Raises when a specific kernel is named and its capability is missing. The
+    request is validated each time this function is called; assigning a
+    concrete value to ``kernel_config`` bypasses this resolution path.
     """
     name = ALIASES.get(str(requested).lower(), str(requested).lower())
     if name == "auto":

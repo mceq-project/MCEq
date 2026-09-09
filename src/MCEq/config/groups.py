@@ -1,15 +1,16 @@
 """Grouped views over the flat configuration names.
 
-The layered architecture hands each component the settings it actually uses
-instead of the whole module: ``HDF5Backend(paths, grid)`` rather than a module
-`HDF5Backend` reaches into. The groups here are the argument objects for that,
-one per layer, named after the plan's section 2.2 table.
+Each group exposes the settings needed by one component, so a component
+receives ``HDF5Backend(paths, grid)`` rather than reaching into the
+:mod:`MCEq.config` module.
 
 They are **views, not snapshots**. A group reads the flat name from
 :mod:`MCEq.config` at attribute access, so a component that holds one still
 sees ``config.e_min = ...`` written after it was constructed — which is what
 the tests, the notebooks and the golden generators all rely on. That also means
-a group costs nothing to build and there is exactly one place a value lives.
+a group costs nothing to build, and there is exactly one place a value lives.
+Reading a group does not rebuild objects already constructed from earlier
+values.
 
 Mutation goes the same way::
 
@@ -29,9 +30,8 @@ import sys
 class GroupView:
     """A named subset of the flat config namespace.
 
-    ``fields`` maps the group's attribute name onto the flat name it reads.
-    The two differ where the plan renamed something (``dtype`` for
-    ``floatlen``, ``filters`` for ``adv_set``).
+    ``fields`` maps each group attribute onto the flat config name it reads,
+    for example ``dtype`` to ``floatlen`` and ``filters`` to ``adv_set``.
     """
 
     __slots__ = ("_fields", "_name", "_over")
@@ -81,14 +81,15 @@ class GroupView:
         return {attr: getattr(self, attr) for attr in sorted(fields)}
 
     def with_overrides(self, **values):
-        """A read-only copy of this view with ``values`` pinned.
+        """A view with ``values`` supplied and live reads for every other field.
 
-        Overridden fields return the pinned value; every other field stays
+        Overridden fields return the supplied value; every other field stays
         a live read of the flat namespace, exactly as on the base view.
-        The copy refuses writes, so a corrected copy can never leak back
-        into the flat config. This is the mechanism behind the
-        ``run_physics`` validator (``enable_em`` forces an unpolarized copy for one run
-        without touching the defaults).
+        A nonempty override set refuses writes — an override made here can
+        never leak back into the flat config; an empty override set remains
+        writable. Used by :func:`MCEq.driver.system.run_physics_view`, which
+        forces ``muon_helicity_dependence=False`` for one EM run without
+        touching the defaults.
         """
         fields = object.__getattribute__(self, "_fields")
         unknown = sorted(set(values) - set(fields))
@@ -191,8 +192,7 @@ GROUPS = {
     },
 }
 
-#: Flat name -> the group that owns it. Doubles as the migration table: a flat
-#: name absent here has no group and is a candidate for deletion.
+#: Flat config name -> the group and group attribute that own it.
 FLAT_TO_GROUP = {
     flat: (group, attr)
     for group, fields in GROUPS.items()
