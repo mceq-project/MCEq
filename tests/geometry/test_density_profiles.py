@@ -1376,4 +1376,7 @@ def test_msis_tail_actually_differs_between_opposite_azimuths():
     antipodal = float(atm.get_density(9.0e6))
     atm.set_theta(0.0, azimuth_deg=0.0)
     overhead = float(atm.get_density(9.0e6))
-    assert antipodal != overhead
+    # A bare `!=` would also pass with the detector coordinate: two different
+    # seam heights leave a ~5e-6 relative difference of their own.  The real
+    # effect is ~9e-2, so require a margin that noise cannot reach.
+    assert abs(antipodal / overhead - 1.0) > 1e-3
