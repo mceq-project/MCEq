@@ -1489,8 +1489,18 @@ class AtmosphereTable:
         """Index of the node below *value* and the fractional weight above it."""
         if periodic:
             # The axis wraps, so the last cell spans axis[-1] -> axis[0] + 360.
+            # A cell-centred grid starts above 0, and everything below its first
+            # node lies in that wrap cell, a turn further along.
+            if value < axis[0]:
+                value = value + 360.0
             extended = np.concatenate([axis, [axis[0] + 360.0]])
-            idx = int(np.clip(np.searchsorted(extended, value) - 1, 0, len(axis) - 1))
+            idx = int(
+                np.clip(
+                    np.searchsorted(extended, value, side="right") - 1,
+                    0,
+                    len(axis) - 1,
+                )
+            )
             span = extended[idx + 1] - extended[idx]
         else:
             idx = int(np.clip(np.searchsorted(axis, value) - 1, 0, len(axis) - 2))
