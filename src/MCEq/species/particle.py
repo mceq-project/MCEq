@@ -1,9 +1,9 @@
 """``MCEqParticle``: one particle's properties, channels, and rates.
 
 One particle's bookkeeping, the species layer's counterpart to the manager.
-Reads the shared table through :mod:`MCEq.species.constants` and its settings
-from the injected physics group; the function-local ``config`` fallback in
-``__init__`` is unchanged and carries the C5 ledger line.
+Reads the shared particle table from :mod:`MCEq.species.constants` and uses
+the required, injected ``physics`` settings; there is no configuration
+fallback.
 """
 
 import numpy as np
@@ -18,9 +18,10 @@ class MCEqParticle:
 
     Args:
       pdg_id (int): PDG ID of the particle
-      egrid (np.array, optional): energy grid (centers)
-      cs_db (object, optional): reference to an instance of
-                                :class:`InteractionYields`
+      helicity (int): helicity -1, 0, or 1 (0 means undefined or average)
+      energy_grid: energy-grid object (centers, edges, widths, bin count)
+      cs_db: cross-section provider, i.e.
+             :class:`MCEq.data.InteractionCrossSections`
       physics: settings group (``config.physics``) holding the decay and
                resonance filters. :class:`ParticleManager` passes its own.
     """
@@ -81,14 +82,14 @@ class MCEqParticle:
         self.is_tracking = False
         #: decay channels if any
         self.decay_dists = {}
-        #: (int) Particle Data Group Monte Carlo particle ID
+        #: `(PDG ID, helicity)` particle identifier
         self.pdg_id = (pdg_id, helicity)
-        #: (int) Unique PDG ID that is different for tracking particles
+        #: `(PDG ID, helicity)` identifier, distinct for tracking particles
         self.unique_pdg_id = (pdg_id, helicity)
-        #: (int) MCEq ID
+        #: (int) particle index in the state layout
         self.mceqidx = -1
 
-        #: (float) interaction threshold (idx where cs>0)
+        #: (int) interaction threshold (idx where cs>0)
         self.int_idx = 0
         #: (float) critical energy in air at the surface
         self.E_crit = 0
@@ -113,7 +114,7 @@ class MCEqParticle:
             self._init_defaults_from_pythia_database()
 
         if self._energy_grid is not None and cs_db is not None:
-            #: interaction cross section in 1/cm2
+            #: interaction cross section in cm²
             self.set_cs(cs_db)
 
     def _init_defaults_from_pythia_database(self):
@@ -122,7 +123,7 @@ class MCEqParticle:
         self.is_nucleus = _pdata.is_nucleus(self.pdg_id[0])
         #: (bool) particle is a hadron
         self.is_hadron = _pdata.is_hadron(self.pdg_id[0])
-        #: (bool) particle is a hadron
+        #: (bool) particle is a lepton
         self.is_lepton = _pdata.is_lepton(self.pdg_id[0])
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(self.pdg_id[0])
@@ -143,7 +144,6 @@ class MCEqParticle:
             name += "_r"
         self.name = name
         #: (bool) particle is stable
-        #: TODO the exclusion of neutron decays is a hotfix
         self.is_stable = (
             not self.ctau < np.inf
             or self.pdg_id[0] in self._physics.filters["disable_decays"]
@@ -151,7 +151,7 @@ class MCEqParticle:
 
     def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
         """Add custom particle type. (Incomplete and not debugged)"""
-        #: (int) Particle Data Group Monte Carlo particle ID
+        #: `(PDG ID, helicity)` particle identifier
         self.pdg_id = (pdg_id, helicity)
         #: (bool) if it's an electromagnetic particle
         self.is_em = kwargs.pop("is_em", abs(pdg_id) == 11 or pdg_id == 22)
@@ -159,7 +159,7 @@ class MCEqParticle:
         self.is_nucleus = kwargs.pop("is_nucleus", _pdata.is_nucleus(self.pdg_id[0]))
         #: (bool) particle is a hadron
         self.is_hadron = kwargs.pop("is_hadron", _pdata.is_hadron(self.pdg_id[0]))
-        #: (bool) particle is a hadron
+        #: (bool) particle is a lepton
         self.is_lepton = kwargs.pop("is_lepton", _pdata.is_lepton(self.pdg_id[0]))
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(self.pdg_id[0])
@@ -347,19 +347,19 @@ class MCEqParticle:
 
     @property
     def lidx(self):
-        """Returns lower index of particle range in state vector.
+        """Lower offset of this particle's energy bins in a state vector.
 
         Returns:
-          (int): lower index in state vector :attr:`MCEqRun.phi`
+          (int): index of this particle's first energy bin
         """
         return self.mceqidx * self._energy_grid.d
 
     @property
     def uidx(self):
-        """Returns upper index of particle range in state vector.
+        """Exclusive upper offset of this particle's energy bins in a state vector.
 
         Returns:
-          (int): upper index in state vector :attr:`MCEqRun.phi`
+          (int): index just past this particle's last energy bin
         """
         return (self.mceqidx + 1) * self._energy_grid.d
 
@@ -374,13 +374,12 @@ class MCEqParticle:
         :math:`1/\beta` and understates decay of slow (:math:`\beta<1`)
         particles; the momentum form is exact at all energies.
 
-        A stable particle (``ctau = inf``) returns zeros -- the physical
-        inverse length -- not the ``inf`` the pre-fix docstring promised;
-        ``inf`` is what the ``ctau == 0`` path returns, now as a length-``d``
-        vector (B9, R3).
+        A stable particle (``ctau = inf``) returns zeros — the physical
+        inverse length; ``inf`` is what the ``ctau == 0`` path returns, as a
+        length-``d`` vector.
 
         Returns:
-          (numpy.array): :math:`\frac{\rho}{\lambda_{dec}}` in 1/cm,
+          (numpy.array): :math:`\frac{\rho}{\lambda_{dec}}` in cm⁻¹,
           shape ``(d,)`` on every path
         """
         try:
@@ -396,7 +395,8 @@ class MCEqParticle:
         Args:
           mbarn (bool) : if True cross section in mb otherwise in cm**2
         Returns:
-          (float): :math:`\\sigma_{\\rm prod}` in mb or cm**2
+          (numpy.array): :math:`\\sigma_{\\rm prod}`, one value per energy bin,
+          in mb or cm**2
         """
         from MCEq.data.cross_sections import InteractionCrossSections
 
@@ -409,7 +409,8 @@ class MCEqParticle:
         """Returns inverse interaction length for this particle's ``A_target``.
 
         Returns:
-          (float): :math:`\\frac{1}{\\lambda_{int}}` in cm**2/g
+          (numpy.array): :math:`\\frac{1}{\\lambda_{int}}`, one value per
+          energy bin, in cm**2/g
         """
 
         m_target = self.A_target * ATOMIC_MASS_UNIT_G  # <A> * m_u [g]
@@ -435,15 +436,14 @@ class MCEqParticle:
 
     def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
-        to ``kin_energy`` for hadron-air collisions.
+        to ``kin_energy`` for hadron-air collisions on this projectile.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            kin_energy (float): approximate interaction kin_energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
-            verbose (bool): print out the closest enerkin_energygy
+            kin_energy (float): approximate interaction kinetic energy
+            sec_pdg: `(PDG ID, helicity)` key of the secondary particle
+            verbose (bool): print out the closest energy
         Returns:
             (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
@@ -460,15 +460,12 @@ class MCEqParticle:
         return xl_grid, xl_dist
 
     def dNdec_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
-        r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
-        to ``kin_energy`` for hadron-air collisions.
-
-        The function respects modifications applied via :func:`_set_mod_pprod`.
+        r"""Returns the decay spectrum :math:`dN/dx_{\rm Lab}` of this parent
+        at the kinetic-energy bin nearest to ``kin_energy``.
 
         Args:
-            kin_energy (float): approximate interaction energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
+            kin_energy (float): approximate parent kinetic energy
+            sec_pdg: `(PDG ID, helicity)` key of the decay child
             verbose (bool): print out the closest energy
         Returns:
             (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
@@ -486,18 +483,19 @@ class MCEqParticle:
         return xl_grid, xl_dist
 
     def dN_dEkin(self, kin_energy, sec_pdg, verbose=True, **kwargs):
-        r"""Returns :math:`dN/dE_{\rm Kin}` in lab frame for an interaction energy
-        close to ``kin_energy`` (total) for hadron-air collisions.
+        r"""Returns :math:`dN/dE_{\rm Kin}` in lab frame for an interaction
+        kinetic energy close to ``kin_energy``.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
 
         Args:
-            kin_energy (float): approximate interaction energy
-            prim_pdg (int): PDG ID of projectile
-            sec_pdg (int): PDG ID of secondary particle
+            kin_energy (float): approximate interaction kinetic energy
+            sec_pdg: `(PDG ID, helicity)` key of the secondary particle
             verbose (bool): print out the closest energy
         Returns:
-            (:func:`numpy.array`, :func:`numpy.array`): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
+            (:func:`numpy.array`, :func:`numpy.array`): the secondary
+            kinetic-energy grid and the yield column divided by the width of
+            the parent bin
         """
 
         eidx = (np.abs(self._energy_grid.c - kin_energy)).argmin()
@@ -510,10 +508,10 @@ class MCEqParticle:
         return ekin_grid[: eidx + 1], elab_dist
 
     def _critical_energy(self):
-        """Returns critical energy where decay and interaction
-        are balanced.
+        """Set the approximate atmospheric critical energy ``E_crit``.
 
-        Approximate value in Air.
+        The critical energy is where decay and interaction balance. Stable
+        particles and nonpositive lifetimes receive infinity.
         """
         if self.is_stable or self.ctau <= 0.0:
             self.E_crit = np.inf
@@ -543,7 +541,7 @@ class MCEqParticle:
         return NotImplemented
 
     def __neq__(self, other):
-        """Checks name for equality"""
+        """Check names for inequality"""
         if isinstance(other, MCEqParticle):
             return self.name != other.name
         return NotImplemented

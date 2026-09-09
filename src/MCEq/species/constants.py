@@ -1,9 +1,10 @@
 """Species-layer constants: the shared table singleton and unit constants.
 
-``_pdata`` stays an import-time instance (the plan's lazification wish would
-hide it from ``vars()``, which the pinned surface contract forbids — see the
-test note in ``tests/test_phase4_surface.py``). ``_pname`` and the neutrino
-name map moved here verbatim from the flat ``particlemanager`` module.
+One particle-data table is created at import time and shared with the
+particle and DDM implementations. Making it lazy would hide it from
+``vars()``, which the public-surface test forbids (see the test note in
+``tests/test_phase4_surface.py``). ``_pname`` and the neutrino name map are
+defined here.
 """
 
 from particletools.tables import PYTHIAParticleData
