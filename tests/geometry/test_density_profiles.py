@@ -1216,3 +1216,65 @@ def test_msis_blend_on_a_two_row_table_is_quiet_and_finite(tmp_path):
         )
     assert np.all(np.isfinite(atm.dens))
     assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+def test_msis_extension_without_a_season_uses_midyear():
+    """No season and no doy must still build, at the wrappers' own default."""
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole"
+    )
+    assert atm._msis_extension_doy() == 152  # June
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+def test_msis_extension_doy_beats_season():
+    """A table knows its date better than its month; doy wins, as in MSIS21."""
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        doy=200,
+    )
+    assert atm._msis_extension_doy() == 200
+
+
+def test_msis_extension_season_sets_the_doy():
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", season="March"
+    )
+    assert atm._msis_extension_doy() == 60
+
+
+def test_msis_extension_doy_changes_the_tail():
+    """The resolved day of year actually reaches MSIS."""
+    january = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", doy=15
+    )
+    july = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", doy=196
+    )
+    assert january.get_density(8.0e6) != july.get_density(8.0e6)
+
+
+@pytest.mark.parametrize("bad", [0, 366, -5])
+def test_tabulated_rejects_an_out_of_range_doy(bad):
+    with pytest.raises(ValueError, match=r"doy"):
+        dp.TabulatedAtmosphere(TABLE_PATH, doy=bad)
+
+
+def test_tabulated_rejects_an_unknown_season():
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="isothermal", location="SouthPole", season="Smarch"
+    )
+    with pytest.raises(ValueError, match="unknown season"):
+        atm._msis_extension_doy()
+
+
+def test_location_centered_forwards_the_doy():
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    atm = dp.TabulatedLocationCentered(
+        grid, detector_coord=(20.0, -30.0), depth_m=1948.0, doy=200
+    )
+    assert atm.doy == 200
+    assert atm._msis_extension_doy() == 200

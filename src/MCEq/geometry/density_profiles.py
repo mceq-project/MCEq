@@ -9,6 +9,7 @@ from MCEq import config
 
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import (
+    MONTH_TO_DAY_OF_YEAR,
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
@@ -1587,6 +1588,9 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         ``"msis00"`` extension.
       season (str, optional): month name, for bookkeeping and for the
         ``"msis00"`` extension.
+      doy (int, optional): day of year in [1, 365] for the MSIS extension.
+        Takes precedence over *season*; with neither, the extension is
+        evaluated mid-year, the default both MSIS wrappers start from.
     """
 
     def __init__(
@@ -1598,12 +1602,20 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         msis_blend_bins=5,
         location=None,
         season=None,
+        doy=None,
     ):
         if top_extension not in ("msis", "msis21", "msis00", "isothermal", "none"):
             raise ValueError(
                 f"{self.__class__.__name__}(): unknown top_extension "
                 f"'{top_extension}'. Choose 'msis', 'msis21', 'msis00', "
                 "'isothermal' or 'none'."
+            )
+
+        if doy is not None and not 1 <= int(doy) <= 365:
+            raise ValueError(
+                f"{self.__class__.__name__}(): doy={doy} is out of range. Pass "
+                "a day of year in [1, 365] -- the range both MSIS wrappers "
+                "accept."
             )
 
         # Base class first: it creates self.geom, which the height bookkeeping
@@ -1617,6 +1629,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         )
         self.location = location
         self.season = season
+        self.doy = doy
         self.top_extension = top_extension
         self.msis_blend_bins = msis_blend_bins
 
@@ -1696,6 +1709,26 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         if self.pressure is not None:
             self.pressure = np.hstack([self.pressure[0], self.pressure])
 
+    def _msis_extension_doy(self):
+        """Day of year the MSIS extension is evaluated at.
+
+        Resolved here rather than left to the wrappers: ``MSIS00Atmosphere``
+        ignores *doy* whenever *season* is also set, ``MSIS21Atmosphere`` lets
+        *doy* win, and with neither the MSISE-00 path passes ``None`` straight
+        into a range check and raises ``TypeError``.
+        """
+        if self.doy is not None:
+            return int(self.doy)
+        if self.season is not None:
+            if self.season not in MONTH_TO_DAY_OF_YEAR:
+                raise ValueError(
+                    f"{self.__class__.__name__}(): unknown season "
+                    f"'{self.season}'. Choose one of "
+                    f"{list(MONTH_TO_DAY_OF_YEAR)}, or pass doy=<1..365>."
+                )
+            return MONTH_TO_DAY_OF_YEAR[self.season]
+        return MONTH_TO_DAY_OF_YEAR["June"]
+
     def _msis_extension_model(self):
         """The MSIS atmosphere the profile is blended into at the top.
 
@@ -1719,12 +1752,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                 "top_extension='isothermal'."
             )
 
+        doy = self._msis_extension_doy()
+
         model = None
         if self.top_extension in ("msis", "msis21"):
             try:
                 from MCEq.geometry.msis21_atmosphere import MSIS21Atmosphere
 
-                model = MSIS21Atmosphere(seed, self.season)
+                model = MSIS21Atmosphere(seed, None, doy=doy)
             except ImportError:
                 if self.top_extension == "msis21":
                     raise ValueError(
@@ -1741,7 +1776,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                     "extending with MSISE-00 instead of NRLMSIS 2.1.",
                 )
         if model is None:
-            model = MSIS00Atmosphere(seed, self.season)
+            model = MSIS00Atmosphere(seed, None, doy=doy)
         if coord is not None:
             model.set_location_coord(*coord)
         return model
@@ -1925,6 +1960,8 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
       top_extension (str): see :class:`TabulatedAtmosphere`.
       location (str, optional): name of the site, for bookkeeping.
       season (str, optional): month name, for bookkeeping.
+      doy (int, optional): day of year for the MSIS extension, see
+        :class:`TabulatedAtmosphere`.
     """
 
     #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
@@ -1946,6 +1983,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         n_averaging_steps=500,
         location=None,
         season=None,
+        doy=None,
     ):
         longitude, latitude = detector_coord
         self._detector_longitude = longitude
@@ -1969,6 +2007,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             msis_blend_bins=msis_blend_bins,
             location=location or f"({longitude:.3f}°E, {latitude:.3f}°N)",
             season=season,
+            doy=doy,
         )
         if not self.table.is_gridded:
             raise ValueError(
