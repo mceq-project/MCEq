@@ -1782,10 +1782,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         msis_dens = np.array([msis.get_density(h) for h in h_extra])
         msis_temp = np.array([msis.get_temperature(h) for h in h_extra])
 
+        # i counts down from the seam, so the ramp has to start at pure MSIS
+        # (i = 0) and reach pure table at the bottom of the blend
+        # (i = n_blend - 1).  With one level there is nothing to ramp between,
+        # and both weights would come out zero.
         n_blend = min(self.msis_blend_bins, len(self.h) - 1)
-        for i in range(n_blend):
-            w_tab = 1.0 - np.exp(-n_blend + i + 1)
-            w_msis = 1.0 - np.exp(-i)
+        for i in range(n_blend if n_blend > 1 else 0):
+            w_tab = 1.0 - np.exp(-i)
+            w_msis = 1.0 - np.exp(-(n_blend - 1 - i))
             norm = 1.0 / (w_tab + w_msis)
             self.dens[-i - 1] = (
                 self.dens[-i - 1] * w_tab + msis.get_density(self.h[-i - 1]) * w_msis

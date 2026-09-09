@@ -1,6 +1,7 @@
 import importlib.util
 import inspect
 import pathlib
+import warnings
 
 import numpy as np
 import pytest
@@ -1147,3 +1148,71 @@ def test_msis21_shares_km3net_site_table():
     from MCEq.geometry import msis21_atmosphere
 
     assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS
+
+
+def _blend_fractions(atm, table, msis, n):
+    """Table share of the blended density at the n levels below the seam.
+
+    0 means the level came out as pure MSIS, 1 as pure table.  Returned in
+    ascending height, so the last entry is the seam itself.
+    """
+    return [
+        (float(atm.get_density(h)) - float(msis.get_density(h)))
+        / (float(np.interp(h, table.h_cm, table.rho_gcm3)) - float(msis.get_density(h)))
+        for h in table.h_cm[-n:]
+    ]
+
+
+def test_msis_blend_hands_over_to_the_table_going_down():
+    """Pure MSIS at the seam, pure table at the bottom of the blend.
+
+    Inverted weights put the step the blend exists to remove one level below
+    where the seam used to be.
+    """
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(
+        table,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        msis_blend_bins=5,
+    )
+    msis = dp.MSIS00Atmosphere("SouthPole", "January")
+
+    frac = _blend_fractions(atm, table, msis, 5)
+    assert frac == pytest.approx([1.0, 0.60052, 0.5, 0.39948, 0.0], abs=1e-4)
+
+
+def test_msis_blend_leaves_no_step_at_its_lower_edge():
+    """The level below the blend is pure table, and so is the last blended one."""
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(
+        table,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        msis_blend_bins=5,
+    )
+    msis = dp.MSIS00Atmosphere("SouthPole", "January")
+
+    frac = _blend_fractions(atm, table, msis, 6)
+    # Ascending height: untouched table, then the ramp down to the seam.
+    assert frac[0] == pytest.approx(1.0, abs=1e-9)
+    assert frac[1] == pytest.approx(1.0, abs=1e-4)
+    assert all(a >= b for a, b in zip(frac, frac[1:]))
+
+
+def test_msis_blend_on_a_two_row_table_is_quiet_and_finite(tmp_path):
+    """n_blend clamps to 1, which has nothing to blend -- and must not warn."""
+    path = tmp_path / "two_rows.csv"
+    path.write_text(
+        "# MCEq tabulated atmosphere v1\nh_cm,T_K,p_hPa\n"
+        "4000000.0,262.25,1.62937\n4700000.0,270.65,1.10906\n"
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        atm = dp.TabulatedAtmosphere(
+            path, top_extension="msis00", location="SouthPole", season="January"
+        )
+    assert np.all(np.isfinite(atm.dens))
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
