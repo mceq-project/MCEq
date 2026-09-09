@@ -1,4 +1,4 @@
-"""Compatibility shim: see :mod:`MCEq.environment.geometry`."""
+"""Compatibility re-exports from :mod:`MCEq.environment.geometry`."""
 
 from MCEq.environment.geometry import (  # noqa: F401
     EarthGeometry,

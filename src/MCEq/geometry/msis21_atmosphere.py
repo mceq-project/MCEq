@@ -1,4 +1,4 @@
-"""Compatibility shim: MSIS 2.1 now lives in :mod:`MCEq.environment.msis21`."""
+"""Compatibility exports of the MSIS21 atmosphere classes."""
 
 from MCEq.environment.msis21 import (
     MSIS21Atmosphere,

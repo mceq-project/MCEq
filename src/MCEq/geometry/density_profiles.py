@@ -1,15 +1,15 @@
-"""Compatibility shim: the atmospheres now live in :mod:`MCEq.environment`.
+"""Compatibility exports of the atmosphere classes from :mod:`MCEq.environment`.
 
 The atmospheres now live in ``environment/{base,corsika,isothermal,
-msis00,tabulated,target}.py``. This shim keeps ``from MCEq.geometry.density_profiles import ...`` working, including the
-``import *`` form that ``docs/examples/Plot_density_depth_relations.ipynb``
-relies on.
+msis00,tabulated,target}.py``. This module keeps ``from MCEq.geometry.density_profiles import ...``
+working, including the ``import *`` form that
+``docs/examples/Plot_density_depth_relations.ipynb`` relies on.
 
-``__all__`` is explicit and pins the exact 19 names the star-import bound before
-the split -- ``np``, ``join``, ``ABCMeta``, ``abstractmethod`` and ``info``
-included. They leak by accident rather than design, but the notebook calls
-``np.linspace`` without importing numpy itself, so dropping them would break it
-while every test still passed.
+``__all__`` is explicit and preserves the exact 19 names the star-import bound
+before the split -- ``np``, ``join``, ``ABCMeta``, ``abstractmethod`` and
+``info`` included. The notebook calls ``np.linspace`` without importing numpy
+itself, so the exported ``np`` name has to stay.
+``tests/geometry/test_geometry_shims.py`` checks this export list.
 """
 
 from abc import ABCMeta, abstractmethod  # noqa: F401  (star-import surface)
@@ -62,13 +62,10 @@ __all__ = [
     "np",
 ]
 
-# The MSIS21 names stayed reachable from here through PEP 562 because an eager
-# import would have made the old density_profiles <-> msis21_atmosphere cycle
-# order-dependent. The cycle is gone now (both sides take their base from
-# environment.base and their site table from environment.parameters), but the
-# laziness is kept so that touching this shim does not drag the MSIS21 tree in.
-# They are deliberately absent from __all__, as they were before the split:
-# a module __getattr__ does not extend `import *`.
+# The MSIS21 names are resolved lazily through PEP 562 so that touching this
+# module does not require the optional MSIS21 backend. They are deliberately
+# absent from __all__, as they were before the split: a module __getattr__ does
+# not extend `import *`.
 _MSIS21_EXPORTS = (
     "MSIS21Atmosphere",
     "MSIS21LocationCentered",

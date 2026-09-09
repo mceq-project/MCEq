@@ -1,16 +1,12 @@
-"""Compatibility shim: see :mod:`MCEq.environment.parameters`.
+"""Compatibility re-exports from :mod:`MCEq.environment.parameters`.
 
-``__all__`` is explicit and lists exactly what this module's namespace held
+``__all__`` is kept explicit and lists exactly what this module's namespace held
 before the split, plus ``KM3NET_DETECTORS``, which moved here from
 ``density_profiles`` so that both MSIS backends can reach one site table.
 
-It is not decoration. ``sphinx-automodapi`` only disables its "is this object
-local to the module?" filter when ``__all__`` is present; without it, every
-re-exported *function* is judged non-local (its ``__module__`` is
-``MCEq.environment.parameters``) and silently vanishes from the rendered API
-page, while the data objects survive because they have no ``__name__``. A
-``from ... import *`` shim therefore loses exactly the six ``get_*`` /
-``list_*`` functions this page documents.
+It is not decoration: ``sphinx-automodapi`` only lists re-exported functions
+when ``__all__`` marks them local, so without the list the six ``get_*`` /
+``list_*`` functions would vanish from the rendered API page.
 """
 
 from MCEq.environment.parameters import (  # noqa: F401

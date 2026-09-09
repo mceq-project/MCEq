@@ -1,4 +1,4 @@
-"""Compatibility shim: see :mod:`MCEq.environment.registry`."""
+"""Compatibility exports of the environment-model registry."""
 
 from MCEq.environment.registry import (  # noqa: F401
     DENSITY_MODELS,

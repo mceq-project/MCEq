@@ -1,4 +1,4 @@
-"""Compatibility shim: see :mod:`MCEq.environment._ext.corsikaatm`."""
+"""Compatibility re-exports of the CORSIKA atmosphere extension."""
 
 from MCEq.environment._ext.corsikaatm import (  # noqa: F401
     corsika_acc,

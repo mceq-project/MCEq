@@ -1,4 +1,4 @@
-"""Compatibility shim: see :mod:`MCEq.environment.column`."""
+"""Compatibility re-exports from :mod:`MCEq.environment.column`."""
 
 from MCEq.environment.column import (  # noqa: F401
     fit_column_splines,

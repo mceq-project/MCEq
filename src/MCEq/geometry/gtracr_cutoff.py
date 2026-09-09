@@ -1,11 +1,9 @@
-"""Compatibility shim: see :mod:`MCEq.environment.geomagnetic.cutoff`.
+"""Compatibility exports from :mod:`MCEq.environment.geomagnetic.cutoff`.
 
 ``docs/examples/Full_sky_carousel.ipynb`` documents
 ``MCEq.geometry.gtracr_cutoff.CACHE_VERSION`` as the way to invalidate a cutoff
-cache, so this path has to keep resolving.
-
-The private names come along because ``tests/golden/gen_environment.py`` pins
-the cache key, the native grid shape and the default mass groups through them.
+cache, so this path has to keep resolving. The private helpers are imported by
+``tests/golden/gen_environment.py``.
 """
 
 from MCEq.environment.geomagnetic.cutoff import (  # noqa: F401
