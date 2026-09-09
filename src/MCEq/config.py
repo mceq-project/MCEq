@@ -640,6 +640,15 @@ release_tag = "builds_on_azure/"
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v142.h5
 file_checksum = "247f40203436c69431db4d393316940636badb2c231f68d51870fb49bf476946"
 
+#: Databases withdrawn from the release assets.  The v1.4.0 and v1.4.1
+#: databases simulated neutron projectiles as protons, and the files were
+#: pulled afterwards, so a download of one now returns a 404 body.  Selecting
+#: one is a mistake worth naming rather than a silent, repeating re-download.
+retired_db_fnames = (
+    "mceq_db_lext_dpm193_v140.h5",
+    "mceq_db_lext_dpm191.h5",
+)
+
 
 def ensure_db_available():
     """Download the MCEq database if not already present.
@@ -652,6 +661,15 @@ def ensure_db_available():
     files are accepted as-is if they exist.
     """
     import os
+
+    if mceq_db_fname in retired_db_fnames:
+        raise ValueError(
+            f"config.mceq_db_fname is set to '{mceq_db_fname}', which was "
+            "withdrawn from the MCEq release assets: the v1.4.0 and v1.4.1 "
+            "databases simulated neutron projectiles as protons, and the files "
+            "no longer exist to download. Use the default "
+            "'mceq_db_lext_dpm193_v142.h5'."
+        )
 
     _url = base_url + release_tag + mceq_db_fname
     filepath = data_dir / mceq_db_fname
@@ -670,7 +688,7 @@ def ensure_db_available():
             print(_url)
         _download_file(_url, filepath)
 
-    for old_name in ("mceq_db_lext_dpm193_v140.h5", "mceq_db_lext_dpm191.h5"):
+    for old_name in retired_db_fnames:
         old_db = data_dir / old_name
         if old_db.exists():
             print(f"Removing previous database {old_db.name}.")
