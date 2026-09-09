@@ -22,9 +22,9 @@ def _live_config():
     Same device as :func:`MCEq.misc._views`: the remaining
     ``None -> global`` fallbacks (a standalone ``etd2_nonuniform_path``
     call, a user-built ``EarthGeometry()``) must keep reading the live
-    module, but this layer must not carry a static import edge to it
-    (contract C5). Milestones M3/M5 shrink these fallbacks to the two
-    documented process-level exceptions.
+    module, but this layer must not carry a static import edge to it.
+    These are the process-level defaults for standalone calls that omit
+    path settings; run-level callers pass their own settings.
     """
     from importlib import import_module
 
@@ -38,11 +38,11 @@ def _live_config():
 #: this branch is never entered for production runs.
 _EM_BLOWUP_CAVEAT = """\
 At extreme zenith the e± semi-Lagrangian L/R rows produce ``inf`` in
-``F_phi`` / ``F_a`` (no diagonal damping). The blowup is contained to
-those rows: e±/γ do not feed back into hadrons via ``int_m`` / ``dec_m``,
-so muons and neutrinos are unaffected. Each ETD2 kernel wraps its loop
+``F_phi`` / ``F_a`` (no diagonal damping). Each ETD2 kernel wraps its loop
 with ``np.errstate(over='ignore', invalid='ignore')`` to suppress the
-resulting overflow / NaN warnings. To exclude the EM block entirely, set
+resulting overflow / NaN warnings; that suppression does not establish
+that the returned lepton spectra are finite or unaffected. To exclude the
+EM block entirely, set
 ``config.adv_set['disabled_particles'] = [11, -11]`` (the default).
 """
 
@@ -62,8 +62,10 @@ def etd2_nonuniform_path(
 
     Step sizes follow ``h_k = min(dX_max, eps / |d ln rho_inv / dX|(X_k))``
     with a ``max(.., dX_min)`` floor. ``rho_inv`` for the kernel is the
-    integral mean of ``density_model.r_X2rho`` over each step (via
-    ``scipy.integrate.quad``), not a point sample — this is essential at
+    integral mean of ``density_model.r_X2rho`` over each step, estimated from
+    a cumulative trapezoid integral on a hybrid log/linear sample grid;
+    ``scipy.integrate.quad`` is used per step only when ``ri`` does not accept
+    array input. The step mean — not a point sample — is essential at
     the very first step which crosses the spline-saturation cap.
 
     See ``docs/mceq_v1.x_v2_diff.md`` ("Step-size control and the resonance
@@ -181,19 +183,14 @@ def etd2_nonuniform_path(
             X_max = min(X_max, float(max_X))
             if X_max > X_min:
                 # Concentrated log-sample plus a dense linear sample for
-                # the bulk. The log part must span the WHOLE domain, not
+                # the bulk. The log part must span the whole domain, not
                 # stop at X = 1: on near-horizontal trajectories
                 # (max_X ~ 3e4) the interval X = 1..50 g/cm^2 still sits
                 # at 80..35 km altitude where 1/rho varies over decades,
                 # and a linear bulk sample alone (max_X/4000 ~ 7 g/cm^2
-                # per point) under-resolves it. The mis-integrated
-                # per-step means (x0.4..x1.6) imprinted a coherent
-                # 10-25% bump-dip on ALL species at X ~ 5-40 g/cm^2 for
-                # theta >~ 85 deg (found via nu3d q-table wiggles at
-                # ~40 km altitude, 2026-07-10). Log sampling costs
-                # nothing in the bulk, where 1/rho is flat per log-X;
-                # the linear sample is kept so vertical-path accuracy
-                # is unchanged.
+                # per point) under-resolves it. Log sampling costs nothing
+                # in the bulk, where 1/rho is flat per log-X; the linear
+                # sample is kept so vertical-path accuracy is unchanged.
                 X_log_lo = max(1e-7, X_min if X_min > 0 else 1e-7)
                 if X_max > X_log_lo:
                     X_top = np.geomspace(X_log_lo, X_max, 6001)
@@ -235,7 +232,7 @@ def etd2_nonuniform_path(
 
 
 def em_cascade_dx_cap(step_scale, em):
-    """Pure core of the Cure-B dX cap: ``em.step_safety / step_scale``, or inf.
+    """Additional stiffness-based EM step cap: ``em.step_safety / step_scale``, or inf.
 
     ``np.inf`` (no cap) when ``em.adaptive_step`` is off or the EM
     cascade is inactive (``step_scale`` not > 0), so the legacy schedule is

@@ -162,8 +162,8 @@ class MklSparseMatrix:
         self._mv = getattr(mkl, f"mkl_sparse_{prec}_mv")
         self._mm = getattr(mkl, f"mkl_sparse_{prec}_mm")
 
-        # A complex or integer CSR would otherwise be cast silently, dropping
-        # the imaginary part or the fractional one; only the two real float
+        # Require real float32 or float64 input: the conversions below would
+        # silently change complex or integer data. Only the two real float
         # widths convert to each other meaningfully here.
         if csr.dtype not in _MKL_TYPES:
             raise TypeError(
@@ -329,7 +329,8 @@ class MklApplyOff:
     """``out = int_off x + ri dec_off x`` through MKL sparse BLAS.
 
     The driver's ``(dim, K)`` buffers are C-contiguous, so one row-major
-    ``mkl_sparse_d_mm`` per stage covers all lanes (SpMV at K = 1). A
+    ``mkl_sparse_d_mm`` (or ``mkl_sparse_s_mm`` at float32) per stage covers
+    all lanes (SpMV at K = 1). A
     scalar ``ri`` is fused into the dec SpMM's alpha; a ``(K,)`` lane row
     scales a separate accumulator. ``owns`` closes the handles with the
     binding. ``dtype`` is the state precision and matches the handles'.

@@ -15,22 +15,21 @@
  * size is already folded into the phi factors, so a stage is an elementwise
  * product of three arrays.
  *
- * Aliasing: the output buffer is distinct from every input, which is what
- * `restrict` states. The driver holds to it — the predictor writes the
- * predictor buffer while reading the state, and the corrector writes the
- * state while reading the predictor — and an in-place call would be wrong
- * for the corrector in any case, which reads `a` after writing `x`.
+ * Aliasing: the output arrays must not alias any input array, as required by
+ * these `restrict` pointers. The driver supplies separate state and predictor
+ * buffers.
  *
  * ETD2_PREDICT and ETD2_CORRECT are the formula table of
  * MCEq.solvers.numerics verbatim (PREDICTOR_EXPR, CORRECTOR_EXPR); the cupy
  * kernels of the CUDA backend are generated from those same two strings, and
- * tests/test_solvers.py pins the match.
+ * tests/test_solvers.py::test_c_stages_match_numpy_lowering checks agreement
+ * with the NumPy expressions.
  */
 
 #include <stddef.h>
 
 /* Windows: export each function from the DLL. Mirrors the pattern in
- * src/MCEq/geometry/{corsikaatm,nrlmsise00}/*.c. On non-MSVC platforms
+ * src/MCEq/environment/_ext/{corsikaatm,nrlmsise00}/*.c. On non-MSVC platforms
  * the attribute resolves to nothing and default ELF/Mach-O symbol
  * visibility applies. */
 #if defined(_MSC_VER) && _MSC_VER >= 1200

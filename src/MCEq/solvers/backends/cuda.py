@@ -76,10 +76,10 @@ def _preload_nvidia_pip_libs():
 #
 # The SpMM is eager cuSPARSE through ``cupyx.scipy.sparse.csr_matrix @
 # dense_2d``. No CUDA Graph capture: cupy 14 explicitly blocks cuSPARSE
-# during ``stream.begin_capture()`` and PriNCe found (and we confirmed)
-# the eager SpMM is already amortised at K ≥ 32, so the graph win for
-# multi-RHS is marginal. The fused elementwise stages broadcast the
-# per-step factors across the K axis.
+# during ``stream.begin_capture()``, and the eager SpMM is already
+# amortised at K >= 32, so the graph win for multi-RHS is marginal. The
+# fused elementwise stages broadcast the per-step factors across the K
+# axis.
 # --------------------------------------------------------------------
 _CUDA_ETD2_KERNELS = None
 
@@ -92,8 +92,9 @@ def _build_cuda_etd2_kernels(cp):
     :data:`~MCEq.solvers.numerics.PHI_C_BODY` for the two factor stages,
     :data:`~MCEq.solvers.numerics.PREDICTOR_EXPR` and
     :data:`~MCEq.solvers.numerics.CORRECTOR_EXPR` for the two state stages --
-    so a change to a formula reaches this backend, the C kernels and the
-    numpy path together.
+    so a change to a formula reaches this backend and the NumPy path
+    together. The C kernels duplicate the same formulas and require matching
+    edits; tests compare the implementations against each other.
 
     The state stages are dtype-agnostic through the ``T`` template; cupy
     compiles a specialisation per input dtype combination on first launch.

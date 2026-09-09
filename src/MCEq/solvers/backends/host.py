@@ -41,7 +41,7 @@ def _fused_stages(dtype):
     ``tests/test_solvers_import.py``). An unbuilt source tree, or a platform
     where the extension does not compile, falls back to the numpy lowering of
     the same table; the two agree to the bit, which
-    ``test_c_stages_match_numpy_lowering`` pins.
+    ``tests/test_solvers.py::test_c_stages_match_numpy_lowering`` checks.
     """
     try:
         from MCEq.solvers._kernels.etd2 import (

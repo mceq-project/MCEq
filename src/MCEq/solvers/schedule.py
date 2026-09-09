@@ -11,8 +11,6 @@ slots and :func:`compile_carousel_schedule` turns that assignment into the
 
 Packing policy belongs here -- how pixels share a pipeline. What the loop
 does with a schedule belongs in :mod:`MCEq.solvers.etd2`.
-
-Design: ../mceq-em-integration/wiki/methods/multi-rhs-lpt-carousel.md
 """
 
 from collections import namedtuple

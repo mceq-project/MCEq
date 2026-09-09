@@ -48,12 +48,6 @@ import numpy as np
 #: radius, which is what makes the radius, not the series order, the thing
 #: that sets the accuracy. phi2's third Horner term is what lets its radius
 #: widen that far, and buys 39x for one multiply-add.
-#:
-#: Two improvements are left: phi1's radius optimum on that grid is 2.0e-4
-#: (4.9e-13, at identical cost), and forming the numerator with ``expm1``
-#: gives phi1 9.1e-14 and phi2 4.4e-12 at these radii, or 2.2e-16 and 8.0e-14
-#: with the radii retuned for it too (3.5e-6, 2.2e-3) — but needs a second
-#: transcendental over the whole state where ``e^z`` is already there for ``eD``.
 _PHI1_SMALL = 1.3e-4
 _PHI2_SMALL = 6.31e-3
 _INV_6 = 1.0 / 6.0
@@ -172,8 +166,8 @@ def step_buffers(shape):
     dominates the SpMMs once those run on a tuned BLAS.
 
     Six float64 arrays and one boolean of ``shape``. At the full-sky
-    operating point dim=7986, K=3072 that is 1.2 GB; see
-    wiki/methods/multi-rhs-etd2-design.md Stage 3.
+    operating point dim=7986, K=3072 the float64 arrays alone require
+    about 1.18 GB.
     """
     return {
         "hD": np.empty(shape, dtype=np.float64),

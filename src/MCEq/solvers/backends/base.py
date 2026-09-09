@@ -35,12 +35,13 @@ eigenbasis GEMMs, is the exception).
 Why: ``phi1 = (e^z - 1) / z`` and ``phi2 = (e^z - 1 - z) / z^2`` cancel
 catastrophically around the Taylor-switch thresholds, which are
 calibrated for FP64 rounding — in FP32 they lose 3-7 digits. The
-diagonals are also cheap (``O(dim)`` per step against the ``O(nnz*K)``
-SpMM), so FP64 there costs nothing measurable. The contract binds the
-*inputs* of stage 1 and not only its arithmetic: rounding the diagonals
-to FP32 first costs a factor ~100 in the accuracy of ``exp(h D)`` and
-makes two backends that otherwise hold the contract disagree by far more
-than FP32 roundoff.
+diagonals are also cheap: ``O(dim)`` work per step for a shared
+integration path and ``O(dim * K)`` for one path per lane, against the
+``O(nnz*K)`` SpMM, so FP64 there costs nothing measurable. The contract
+binds the *inputs* of stage 1 and not only its arithmetic: rounding the
+diagonals to FP32 first costs a factor ~100 in the accuracy of
+``exp(h D)`` and makes two backends that otherwise hold the contract
+disagree by far more than FP32 roundoff.
 """
 
 #: State dtype per ``fp_precision``; the one place 32/64 becomes a dtype.

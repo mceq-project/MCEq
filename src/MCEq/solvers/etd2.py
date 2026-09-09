@@ -37,8 +37,8 @@ def etd2_driver(
     through an integrating factor, the off-diagonal remainder explicitly.
     ``S = I`` is the paraxial transport. With the sec(theta) transport
     ``S = I + T Pi``, where ``T`` is the constant Hankel-space representation
-    of multiplication by ``min(sec theta, sec theta_cap)`` (see
-    :mod:`MCEq.operators.secant`) and ``Pi`` the projector onto the columns
+    of multiplication by ``min(sec theta, sec theta_cap)`` minus the identity
+    (see :mod:`MCEq.operators.secant`) and ``Pi`` the projector onto the columns
     with ``E_kin < config.secant_theta_e_max``. The operator is then split, per
     state column i in the support of Pi and the coupled mode subspace P
     (S_P = (I+T)[P,P]):
