@@ -2,8 +2,7 @@
 
 Operator assembly lives in the ``operators`` layer of the package. The names
 below are the surface this module defined before the move, so code importing
-them from here keeps working: silent in this release, a
-``DeprecationWarning`` in the next, removed after (refactoring plan, D14).
+them from here keeps working.
 """
 
 from MCEq.operators.compiled import (

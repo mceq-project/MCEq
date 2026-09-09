@@ -1,9 +1,8 @@
-"""Compat shim: the download code moved to :mod:`MCEq.data.download`.
+"""Compatibility exports of database download and integrity-check helpers
+from :mod:`MCEq.data.download`.
 
-The fetch/verify code lives under the ``data`` package; ``MCEq.download``
-stays as the public entry point user code
-and ``MCEq.core`` already reach through; it re-exports the five names the
-surface test pins and nothing else. Phase 7 deletes this shim (decision D6).
+``MCEq.download`` re-exports the five names the surface test pins and nothing
+else.
 """
 
 from MCEq.data.download import (  # noqa: F401

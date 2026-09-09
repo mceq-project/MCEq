@@ -1,14 +1,15 @@
 """Process-wide ``libmkl_rt`` handle: the one owner, the one memo.
 
-Lives here — below :mod:`MCEq.config`, importing nothing from MCEq — because
-two layers legitimately need the handle and neither may import the other:
-the MKL backend constructs its wrappers from it (``MklSparseMatrix`` pins a
-per-instance reference so all wrappers share one symbol table), and
-:func:`MCEq.config.set_mkl_threads` reaches ``mkl_set_num_threads`` through
-it (thread limits are process-wide, plan D17). Config injects the path
-resolver at its own import time (detection is config's job), so loading an
-MCEq module never dlopens anything: the library loads on the first handle
-or the first thread-limit call, exactly as before.
+This module owns and caches the handle shared by the MKL backend and the
+thread-limit setter. It lives below :mod:`MCEq.config` and imports nothing
+from MCEq, because those two layers both need the handle and neither may
+import the other: the MKL backend constructs its wrappers from it
+(``MklSparseMatrix`` pins a per-instance reference so all wrappers share one
+symbol table), and :func:`MCEq.config.set_mkl_threads` reaches
+``mkl_set_num_threads`` through it (thread limits are process-wide, plan
+D17). Configuration supplies the path-resolver callback. Importing this
+module does not load MKL; :func:`load` does so on demand and returns ``None``
+if the library is unavailable.
 
 Behaviour is unchanged from when the memo lived in ``config``: one cdll for
 the process lifetime, ``os.fspath`` at the boundary (the Windows loader on
@@ -50,9 +51,5 @@ def load(path=None):
 
 
 def lib():
-    """The handle if already loaded, else None — read-only, never loads.
-
-    The golden harness needs to ask "is MKL resident?" without dlopening
-    it into the process it describes.
-    """
+    """The handle if already loaded, else None — read-only, never loads."""
     return _LIB

@@ -1,9 +1,9 @@
-"""Compatibility facade for :mod:`MCEq.driver.mceq_run` (§8.6).
+"""Compatibility import path for :mod:`MCEq.driver.mceq_run`.
 
-``MCEq.core`` is a *permanent* facade: the v1.4.1 import path and every name
-it has always exposed keep resolving here. The implementation lives in
-:mod:`MCEq.driver.mceq_run`, which this module re-exports,
-plus the compat names documented on the re-export lines below.
+Exports :class:`MCEqRun`, :class:`MCEqBatchResult`, and
+:class:`MatrixBuilder` through the ``MCEq.core`` import path; the
+implementations live in :mod:`MCEq.driver.mceq_run`,
+:mod:`MCEq.driver.results`, and :mod:`MCEq.operators.matrix_builder`.
 """
 
 from MCEq.driver.mceq_run import MCEqRun
