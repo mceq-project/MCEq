@@ -949,7 +949,7 @@ def _etd2_oversampled(int_m, dec_m, phi0, dX, rho_inv, oversample):
     """ETD2RK with `oversample` substeps per native step. Mirrors the
     production kernel's update rule so the convergence test exercises the
     same math."""
-    from MCEq.operator_assembly import split_diagonal
+    from MCEq.operators.compiled import split_diagonal
 
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     phi = phi0.astype(np.float64).copy()
@@ -1185,7 +1185,7 @@ def test_solve_etd2_accelerate_matches_numpy_etd2_real(mceq_sib21):
         backend="numpy",
     )
 
-    from MCEq.operator_assembly import split_diagonal
+    from MCEq.operators.compiled import split_diagonal
 
     _, _, int_off, dec_off = split_diagonal(mceq_sib21.int_m, mceq_sib21.dec_m)
     assert int_off.nnz > 0 and dec_off.nnz > 0, (

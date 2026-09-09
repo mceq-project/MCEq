@@ -160,7 +160,7 @@ def mceq_qgs(_mceq_qgs_instance):
 
 @pytest.fixture(scope="function")
 def ddm_entry():
-    from MCEq import ddm, ddm_utils
+    from MCEq.models.ddm import ddm, ddm_utils
 
     entry = ddm._DDMEntry(
         ebeam=ddm_utils.fmteb(2.0),
@@ -178,7 +178,7 @@ def ddm_entry():
 
 @pytest.fixture(scope="function")
 def ddm_channel():
-    from MCEq import ddm, ddm_utils
+    from MCEq.models.ddm import ddm, ddm_utils
 
     ch = ddm._DDMChannel(projectile=2212, secondary=211)
     ch.add_entry(
@@ -197,7 +197,7 @@ def ddm_channel():
 
 @pytest.fixture(scope="function")
 def ddm_spline_db():
-    from MCEq import ddm
+    from MCEq.models.ddm import ddm
 
     db = ddm.DDMSplineDB(
         enable_channels=[(2212, 211)],
@@ -208,7 +208,7 @@ def ddm_spline_db():
 
 @pytest.fixture(scope="function")
 def data_driven_model():
-    from MCEq import ddm
+    from MCEq.models.ddm import ddm
 
     _ddm = ddm.DataDrivenModel(
         e_min=5.0,

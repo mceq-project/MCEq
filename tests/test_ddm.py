@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.interpolate import splrep
 
-from MCEq.particlemanager import _pdata
+from MCEq.species.constants import _pdata
 
 # DDMEntry
 
@@ -148,7 +148,7 @@ def test_DataDrivenModel_repr(data_driven_model):
 
 
 def test_ddm_utils_fmteb():
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     ebeam_float = 2.5
     ebeam_str = "2.5"
@@ -163,7 +163,7 @@ def test_ddm_utils_fmteb():
 
 
 def test_ddm_utils_spline_min_max_at_knot():
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     tck = (
         np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
@@ -187,7 +187,7 @@ def test_ddm_utils_spline_min_max_at_knot():
 
 
 def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     channel = data_driven_model.find_channel(2212, 211)
 
@@ -212,7 +212,7 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
 
 
 def test_ddm_utils_eval_spline():
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     x = np.linspace(0.1, 0.99, 10)
     x_fit = np.linspace(0.1, 0.99, 20)
@@ -253,7 +253,7 @@ def test_ddm_utils_eval_spline():
 
 
 def test_gen_dndx(data_driven_model):
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     # Log binning down to 1e-3 so that entry.x_min (0.0045 for 211 at 31 GeV)
     # falls *inside* the grid. The old linear 0.1..1 binning started an order
@@ -277,7 +277,7 @@ def test_gen_dndx(data_driven_model):
 
 
 def test_gen_averaged_dndx(data_driven_model):
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     # Same reason as in test_gen_dndx: the old 0.1..1 binning left the
     # x < x_min mask empty, so the final assertion could not fail.

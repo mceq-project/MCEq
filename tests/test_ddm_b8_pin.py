@@ -52,7 +52,7 @@ def ddm_full():
     ``MCEqRun`` it is handed, and the shared session run never mutates, so
     repeated calls on one instance are stable.
     """
-    from MCEq import ddm
+    from MCEq.models.ddm import ddm
 
     return ddm.DataDrivenModel(
         enable_channels=[(2212, 211)],
@@ -87,7 +87,7 @@ def test_b8_stored_window_is_ignored_bitwise(mceq_sib21, ddm_full, window):
     fix that deletes the attributes fails at construction. Neither outcome may
     be met with a regenerated expectation here without a ledger update.
     """
-    from MCEq import ddm
+    from MCEq.models.ddm import ddm
 
     lo, hi = window
     full_matrices = ddm_full.ddm_matrices(mceq_sib21)
@@ -127,7 +127,7 @@ def test_b8_direct_generator_does_honour_the_windows(mceq_sib21, ddm_full):
     leaves it green; only a change to ``_generate_DDM_matrix`` or
     ``_eval_energy_cuts`` can flip it, and that is a different ledger event.
     """
-    from MCEq import ddm_utils
+    from MCEq.models.ddm import ddm_utils
 
     ref = ddm_full.ddm_matrices(mceq_sib21)[(2212, 211)]
     channel = _single_channel(ddm_full)
@@ -161,7 +161,7 @@ def test_b8_fixed_semantics_differ_from_todays_noop(mceq_sib21):
     full-grid behaviours are distinct, so wiring the window through
     ``ddm_matrices`` cannot leave every test in this file green.
     """
-    from MCEq import ddm, ddm_utils
+    from MCEq.models.ddm import ddm, ddm_utils
 
     w = ddm.DataDrivenModel(
         e_min=2e3,

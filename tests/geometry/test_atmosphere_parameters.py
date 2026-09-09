@@ -2,7 +2,7 @@ import numpy as np
 
 
 def test_corsika_atmosphere_param_shapes():
-    from MCEq.geometry.atmosphere_parameters import _cosika_atmosphere_params
+    from MCEq.environment.parameters import _cosika_atmosphere_params
 
     required_keys = {"_aatm", "_batm", "_catm", "_thickl", "_hlay"}
 
@@ -23,7 +23,7 @@ def test_corsika_atmosphere_param_shapes():
 
 
 def test_month_to_day_of_year():
-    from MCEq.geometry.atmosphere_parameters import MONTH_TO_DAY_OF_YEAR
+    from MCEq.environment.parameters import MONTH_TO_DAY_OF_YEAR
 
     assert len(MONTH_TO_DAY_OF_YEAR) == 12
 
@@ -38,7 +38,7 @@ def test_month_to_day_of_year():
 
 
 def test_locations():
-    from MCEq.geometry.atmosphere_parameters import LOCATIONS
+    from MCEq.environment.parameters import LOCATIONS
 
     for loc, (lon, lat, h_cm) in LOCATIONS.items():
         assert isinstance(lon, float)
@@ -50,7 +50,7 @@ def test_locations():
 
 
 def test_default_geophysical_constants():
-    from MCEq.geometry.atmosphere_parameters import get_nrlmsise00_defaults
+    from MCEq.environment.parameters import get_nrlmsise00_defaults
 
     f107a, f107, ap = get_nrlmsise00_defaults()
 
@@ -60,7 +60,7 @@ def test_default_geophysical_constants():
 
 
 def test_get_location_data():
-    from MCEq.geometry.atmosphere_parameters import get_location_data
+    from MCEq.environment.parameters import get_location_data
 
     loc = get_location_data("SouthPole")
     assert isinstance(loc, tuple)
@@ -74,7 +74,7 @@ def test_get_location_data():
 
 
 def test_get_month_day_of_year():
-    from MCEq.geometry.atmosphere_parameters import get_month_day_of_year
+    from MCEq.environment.parameters import get_month_day_of_year
 
     assert get_month_day_of_year("January") == 1
     assert get_month_day_of_year("December") == 335
@@ -82,7 +82,7 @@ def test_get_month_day_of_year():
 
 
 def test_get_day_time_seconds():
-    from MCEq.geometry.atmosphere_parameters import get_day_time_seconds
+    from MCEq.environment.parameters import get_day_time_seconds
 
     assert get_day_time_seconds("day") == 43200.0
     assert get_day_time_seconds("night") == 0.0

@@ -1,7 +1,8 @@
 import pytest
 
 import MCEq.config as config
-from MCEq.particlemanager import MCEqParticle, ParticleManager
+from MCEq.species.manager import ParticleManager
+from MCEq.species.particle import MCEqParticle
 
 
 @pytest.fixture

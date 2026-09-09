@@ -34,7 +34,7 @@ import pytest
 import scipy.sparse as sp
 
 from MCEq import config
-from MCEq.operator_assembly import compile_operator
+from MCEq.operators.compiled import compile_operator
 from MCEq.solvers import (
     HostBackend,
     ScipyApplyOff,

@@ -60,7 +60,7 @@ def test_legacy_round_trip_baseline(sigma):
     rapidly across the irregular k-grid. Loose pass thresholds — these are
     *baselines* to be beaten by the Filon method (Task 2.2).
     """
-    from MCEq.hankel import inverse_hankel_legacy
+    from MCEq.driver.results import inverse_hankel_legacy
 
     F_k = gaussian_F(K_GRID, sigma)
     theta = np.linspace(0, np.pi / 2, 600)
@@ -75,7 +75,7 @@ def test_legacy_round_trip_baseline(sigma):
 
 def test_legacy_returns_correct_shape():
     """The legacy function returns an array with the same shape as `theta`."""
-    from MCEq.hankel import inverse_hankel_legacy
+    from MCEq.driver.results import inverse_hankel_legacy
 
     F_k = gaussian_F(K_GRID, 0.05)
     theta = np.linspace(0, 1.0, 100)
@@ -86,7 +86,7 @@ def test_legacy_returns_correct_shape():
 
 def test_legacy_baseline_summary(capsys):
     """Print the σ vs rel-err table to stdout (visible with pytest -s)."""
-    from MCEq.hankel import inverse_hankel_legacy
+    from MCEq.driver.results import inverse_hankel_legacy
 
     print()
     print(f"{'sigma':>8}  {'rel_err_max':>14}")

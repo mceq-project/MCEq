@@ -113,7 +113,7 @@ class TestInjectDdmRoutesThroughHook:
     """inject_ddm is now a caller of the hook, not a dict write."""
 
     def test_wiring_sees_override(self, run_sib21):
-        from MCEq import ddm
+        from MCEq.models.ddm import ddm
 
         model = ddm.DataDrivenModel()
         ref = model.ddm_matrices(run_sib21)[(2212, 211)]
@@ -131,7 +131,7 @@ class TestInjectDdmRoutesThroughHook:
     def test_survives_regenerate_matrices(self, run_sib21):
         """The regression the hook exists to close: the pre-R2-B code
         wrote hadr_yields directly and regenerate_matrices wiped it."""
-        from MCEq import ddm
+        from MCEq.models.ddm import ddm
 
         model = ddm.DataDrivenModel()
         ref = model.ddm_matrices(run_sib21)[(2212, 211)]
@@ -144,7 +144,7 @@ class TestInjectDdmRoutesThroughHook:
         run_sib21.regenerate_matrices()
 
     def test_survives_same_model_reload_cleared_on_model_change(self, run_sib21):
-        from MCEq import ddm
+        from MCEq.models.ddm import ddm
 
         model = ddm.DataDrivenModel()
         ref = model.ddm_matrices(run_sib21)[(2212, 211)]

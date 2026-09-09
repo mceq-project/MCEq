@@ -155,7 +155,8 @@ def test_average_A_target_auto_still_resolves_medium():
 def test_bare_groupless_construction_is_TypeError():
     from MCEq.data import ContinuousLosses, Decays, HDF5Backend, Interactions
     from MCEq.operators.matrix_builder import MatrixBuilder
-    from MCEq.particlemanager import MCEqParticle, ParticleManager
+    from MCEq.species.manager import ParticleManager
+    from MCEq.species.particle import MCEqParticle
 
     db = object()
     with pytest.raises(TypeError):

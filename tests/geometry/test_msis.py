@@ -180,7 +180,7 @@ def test_msis00_setters_invalidate_the_altitude_memo():
     to clear it, or a repeated `get_density(h)` at the same altitude returns
     the previous state's value.
     """
-    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
+    from MCEq.environment.msis00_backend import cNRLMSISE00
 
     msis = cNRLMSISE00()
     msis.set_location("SouthPole")

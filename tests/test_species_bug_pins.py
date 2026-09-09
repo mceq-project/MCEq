@@ -14,7 +14,8 @@ import numpy as np
 
 import MCEq.config as config
 from MCEq.misc import energy_grid
-from MCEq.particlemanager import MCEqParticle, _pdata
+from MCEq.species.constants import _pdata
+from MCEq.species.particle import MCEqParticle
 
 #: Five bins, one decade apart -- enough to tell a vector from a scalar.
 GRID = energy_grid(c=np.logspace(0.0, 3.0, 5), b=None, w=None, d=5)

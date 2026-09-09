@@ -35,7 +35,7 @@ corsika_expected = [
 
 # Test that all corsika atmospheres are tested
 def test_cka_atm_completeness():
-    from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
+    from MCEq.environment.parameters import list_available_corsika_atmospheres
 
     missing = []
     expected_entries = {(loc, season) for loc, season, _ in corsika_expected}

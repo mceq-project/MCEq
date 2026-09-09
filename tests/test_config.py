@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import MCEq.config as cfg
-from MCEq import download
+from MCEq.data import download
 
 DEFAULT_DB = "mceq_db_lext_dpm193_v140.h5"
 CUSTOM_DB = "mceq_db_v140reduced_compact.h5"
