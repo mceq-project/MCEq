@@ -9,8 +9,8 @@ environment (:mod:`MCEq.environment`)
 
 The environment layer: density profiles, the polar geometry helper, and
 the geomagnetic cutoff machinery. In v1 this code lived under
-``MCEq.geometry``; that package re-exports from here until 2.0 (see
-:doc:`/migration_v2_layout`).
+``MCEq.geometry``; the census-kept shims there re-export from here
+(see :doc:`/migration_v2_layout`).
 
 Reference/API
 =============
