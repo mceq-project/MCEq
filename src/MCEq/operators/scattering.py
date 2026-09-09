@@ -65,9 +65,9 @@ def theta_s_squared(e_kin, muon_mass=MUON_MASS):
     is a low-energy effect.
 
     ``e_kin`` is kinetic energy, the MCEq grid convention; ``muon_mass`` turns
-    it into ``E`` and ``beta``. Below the mass the momentum is floored at a
-    positive tiny value so ``beta`` stays finite rather than returning nan for
-    a grid that extends under threshold.
+    it into ``E`` and ``beta``. Nonpositive computed momentum-squared values
+    are floored before the division, so ``beta`` stays finite rather than
+    returning nan.
     """
     e_lab = np.asarray(e_kin) + muon_mass
     p2 = e_lab**2 - muon_mass**2
@@ -80,7 +80,8 @@ def mode_damping(theta_s_sq, kappa):
     """The diagonal contribution ``-kappa^2 theta_s^2 / 4`` of one Hankel mode.
 
     Eq. (1) of the module docstring, one value per energy bin, to be added to
-    the muon diagonals of that mode. Negative definite, so it only damps.
+    the muon diagonals of that mode. Nonpositive, so it only damps (exactly
+    zero for mode zero).
 
     Scales as ``kappa^2`` at fixed energy and vanishes identically at
     ``kappa = 0``; a caller that assembles sparse entries skips that mode
@@ -90,12 +91,13 @@ def mode_damping(theta_s_sq, kappa):
 
 
 def muon_state_offsets(pdg2pref):
-    """State-vector row offsets of every muon species present in ``pdg2pref``.
+    """State-vector row offsets of the physical muon species in ``pdg2pref``.
 
     ``pdg2pref`` is a particle manager's ``(pdg, helicity) -> particle`` map.
-    A species is taken when it has been assigned a slot in the state vector,
-    which is what ``lidx`` and a non-negative ``mceqidx`` say; tracking-only
-    and disabled species have neither.
+    Only the physical ``MUON_KEYS`` are considered, so tracking aliases are
+    excluded. A species is taken when it has been assigned a slot in the
+    state vector, which is what ``lidx`` and a non-negative ``mceqidx`` say;
+    disabled species have neither.
     """
     offsets = []
     for key in MUON_KEYS:

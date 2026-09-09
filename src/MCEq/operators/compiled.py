@@ -8,7 +8,8 @@ layout of its choosing, and with the sec(theta) transport it needs the
 constant mode-coupling operators of :mod:`MCEq.operators.secant` alongside.
 This module is the layer in between — host-only and backend-agnostic.
 :func:`compile_operator` turns the matrices (and the optional coupling
-operator set) into one immutable :class:`CompiledOperator`; the backends in
+operator set) into one :class:`CompiledOperator`, to be treated as read-only
+while a backend or cache uses it; the backends in
 :mod:`MCEq.solvers` place that object onto their library handles or device
 and execute the step loop of :func:`MCEq.solvers.etd2_driver` against it.
 :func:`em_step_scale` is the other property of ``A`` the step loop needs and
@@ -109,10 +110,14 @@ def _permute_csr(off, perm, inv_perm):
 class CompiledOperator:
     """The ETD2RK operator, assembled for the step loop.
 
+    Treat the object as read-only while a backend or cache uses it; nothing
+    here enforces that.
+
     Attributes:
       dim: state dimension (``n_k * dim_states`` for 2D databases).
       d_int, d_dec: ``(dim,)`` fp64 diagonals of A and B in the layout.
-      int_off, dec_off: canonical CSR off-diagonals in the layout.
+      int_off, dec_off: CSR off-diagonals in the layout, preserving the
+        original within-row entry order (column indices need not be sorted).
       layout: :func:`identity_layout` or :func:`secant_layout` namespace.
       coupling: :func:`secant_coupling` namespace, or ``None`` (paraxial).
       sec_ops: the operator set the coupling was built from (identity is
@@ -163,26 +168,26 @@ def compile_operator(int_m, dec_m, sec_ops=None):
 
 
 def em_step_scale(int_m, particles, dense_eig_max=4000):
-    """Cure-B stiffness scale r_EM of the e+/-/gamma block of ``int_m``.
+    """EM stiffness-based step limit r_EM of the e+/-/gamma block of ``int_m``.
 
     Returns ``spec(int_off_EM)``: the spectral radius of the *off-diagonal*
     part of ``int_m`` restricted to the e+/-/gamma rows and columns, in
     1/(g/cm^2). This is the same quantity (``spec(int_off)``) that fixes the
-    legacy ``config.etd2_path['dX_max']`` for the hadronic matrix (~0.094),
-    evaluated on the much stiffer EM block (~0.13). The spectral radius — not a
-    matrix norm — is the right scale: the EM off-diagonal is a near-singular,
-    highly non-normal difference+production operator whose 1-norm is dominated
-    by the near-cancelling continuous-loss bands and is meaningless as a step
-    scale. ``int_m`` is X-constant, so r_EM is one global scalar;
-    :meth:`MCEq.core.MCEqRun._em_cascade_step_scale` memoises it against the
-    identity of the matrix it was taken from. Returns 0.0 when ``particles``
-    holds no e+/-/gamma (EM cascade inactive).
+    legacy ``config.etd2_path['dX_max']`` for the hadronic matrix, evaluated
+    on the stiffer EM block. The spectral radius — not a matrix norm — is the
+    right scale: the EM off-diagonal is a near-singular, highly non-normal
+    difference+production operator whose 1-norm is dominated by the
+    near-cancelling continuous-loss bands and is meaningless as a step scale.
+    ``int_m`` is X-constant, so r_EM is one global scalar;
+    :meth:`MCEq.driver.mceq_run.MCEqRun._em_cascade_step_scale` memoises it
+    against the identity of the matrix it was taken from. Returns 0.0 when
+    ``particles`` holds no e+/-/gamma (EM cascade inactive).
 
     ``particles`` are the cascade species, read for ``is_em`` and for the
     ``lidx``/``uidx`` of those that are. Those offsets index one ``dim_states``
     block, so on the ``(n_k * dim_states)`` operator the 2D assembly stitches
-    this reads Hankel mode 0 alone — pinned in ``tests/test_operators_pin.py``
-    for the ``n_k``-extended operator too.
+    this reads Hankel mode 0 alone. See the corresponding test in
+    ``tests/test_operators_pin.py``.
     """
     col_ranges = [
         np.arange(p.lidx, p.uidx) for p in particles if getattr(p, "is_em", False)
@@ -197,11 +202,12 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
     # (a few e+/-/gamma species x dim_e, typically < ~2000) and strongly
     # NON-NORMAL (||A||_2 / rho ~ 3). Sparse ``eigs(k=1, 'LM')`` routinely
     # FAILS to converge on it (ARPACK DNAUPD finds no eigenvalue to tolerance),
-    # and an except-branch that substitutes a matrix norm then returns 2-3x the
-    # true spectral radius AND is nondeterministic, capping dX far tighter than
-    # this function promises. Dense ``eigvals`` is exact, deterministic and
-    # cheap at this size; ARPACK + norm survive only as a fallback for an
-    # unexpectedly huge block.
+    # and an except-branch that substitutes a matrix norm then overestimates
+    # the spectral radius AND is nondeterministic, capping dX tighter than
+    # intended. Dense eigendecomposition is deterministic and cheap at this
+    # size and avoids those convergence failures; it produces a numerical
+    # estimate. ARPACK + norm survive only as a fallback for an unexpectedly
+    # huge block.
     n = block.shape[0]
     try:
         if n <= int(dense_eig_max):
