@@ -50,6 +50,18 @@ import scipy.sparse as sp
 from MCEq.misc import info
 from MCEq.operators import loss_stencil, scattering
 
+#: Stiffness threshold of the species-adaptive upwind layer, see
+#: :meth:`MatrixBuilder._upwind_rows_for`. The row count covers every row whose
+#: explicit one-step stiffness ``dX_max * |dEdX| / (E * dlnE)`` reaches this
+#: fraction; the expfit interior row is contractive below it and mixed-sign
+#: (unstable in isolation) above.
+UPWIND_STIFFNESS_THRESHOLD = 0.5
+
+#: Floor of the adaptive layer: the number of monotone rows the boundary cliff
+#: of ``docs/mceq_v1.x_v2_diff.md`` 5.3 needs on its own, independent of the
+#: loss stiffness. Matches the ``loss_stencil_low_upwind_rows`` default.
+UPWIND_ROWS_FLOOR = 8
+
 
 class MatrixBuilder:
     """This class constructs the interaction and decay matrices.
@@ -229,14 +241,83 @@ class MatrixBuilder:
 
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
-        position in the C matrix."""
+        position in the C matrix.
+
+        The derivative operator is the species-adaptive one from
+        :meth:`_differential_operator_for`: for the ``expfit_low_upwind*``
+        composites the monotone low-energy layer widens per particle to cover
+        its own stiffness; every other family keeps the shared
+        :attr:`op_matrix`.
+        """
+        op = self._differential_operator_for(pdg_id)
         op_mat = -np.diag(1 / self._energy_grid.c).dot(
-            self.op_matrix.dot(np.diag(self._pman[pdg_id].dEdX))
+            op.dot(np.diag(self._pman[pdg_id].dEdX))
         )
 
         if self._losses.average_operator:
             return self._average_operator(op_mat)
         return op_mat
+
+    def _upwind_rows_for(self, pdg_id):
+        """Species-adaptive count of monotone upwind rows for one particle.
+
+        The smallest count covering every row whose ETD2 one-step stiffness
+        ``dX_max * |dEdX| / (E * dlnE)`` reaches :data:`UPWIND_STIFFNESS_THRESHOLD`:
+        there the mixed-sign expfit row is unstable under the diagonal-only ETD
+        split (the kernel exponentiates the diagonal and treats the stencil
+        explicitly, so the isolated one-step map tends ``-D^-1 Off``, whose
+        spectral radius the monotone rows bound at 1). Floored at
+        :data:`UPWIND_ROWS_FLOOR` -- the boundary-cliff layer of docs 5.3 the
+        composites exist for -- and capped at ``dim - 2``, the clamp
+        ``differential_operator`` applies. ``dX_max`` is read off the live
+        config module (deferred import, same device as
+        :func:`MCEq.solvers.path._live_config`): the ``solver`` group is not
+        injected here, and this keeps the layer consistent with the path of a
+        plain ``solve()``. EM species return 0 -- their block runs under the
+        Cure-B cap of ``operators/compiled.py`` and its documented caveat is
+        separate; the instability this covers is the hadron blocks.
+        """
+        particle = self._pman[pdg_id]
+        if getattr(particle, "is_em", False):
+            return 0
+        from importlib import import_module
+
+        d_x_max = float(import_module("MCEq.config").etd2_path["dX_max"])
+        dedx = np.abs(np.asarray(particle.dEdX, dtype=np.float64))
+        dln_e = float(
+            np.mean(loss_stencil.log_spacings(np.asarray(self._energy_grid.b, float)))
+        )
+        stiffness = d_x_max * dedx / (np.asarray(self._energy_grid.c, float) * dln_e)
+        hits = np.flatnonzero(stiffness >= UPWIND_STIFFNESS_THRESHOLD)
+        n_rows = 0 if hits.size == 0 else int(hits.max()) + 1
+        return min(max(n_rows, UPWIND_ROWS_FLOOR), int(self._energy_grid.d) - 2)
+
+    def _differential_operator_for(self, pdg_id):
+        """The derivative operator to fold one particle's ``dEdX`` into.
+
+        The shared :attr:`op_matrix` unless the stencil is an
+        ``expfit_low_upwind*`` composite AND the particle's adaptive row count
+        differs from the configured :attr:`op_matrix` count -- one operator per
+        distinct row count, built on first use and cached.
+        """
+        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
+        if not str(method).startswith("expfit_low_upwind"):
+            return self.op_matrix
+        n_rows = self._upwind_rows_for(pdg_id)
+        if n_rows == 0 or n_rows == self._op_matrix_rows:
+            return self.op_matrix
+        cached = self._adaptive_ops.get(n_rows)
+        if cached is None:
+            cached = loss_stencil.differential_operator(
+                self._energy_grid.b,
+                int(self._energy_grid.d),
+                method=method,
+                alpha0=getattr(self._losses, "stencil_alpha0", 3.0),
+                low_upwind_rows=n_rows,
+                dtype=self._grid.dtype,
+            )
+            self._adaptive_ops[n_rows] = cached
+        return cached
 
     # ----------------------------------------------------------------------
     # the int_m_hadr + dEdx_band split (D27)
@@ -575,16 +656,34 @@ class MatrixBuilder:
         families at ``losses.stencil_alpha0``, and the composites replace
         ``losses.stencil_low_upwind_rows`` low-energy rows.
 
+        This shared matrix is what a direct ``op_matrix`` read sees and what
+        every species the adaptive layer does not widen is folded with; for a
+        widened hadron species :meth:`cont_loss_operator` substitutes a
+        per-row-count variant from :meth:`_differential_operator_for`, so this
+        method also (re)initialises that cache.
+
         Called from :meth:`__init__` and nowhere else, so
         :meth:`MCEq.core.MCEqRun.regenerate_matrices` rebuilds the blocks
         against the ``op_matrix`` the constructor left behind; a stencil change
         needs this method called explicitly.
         """
+        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
+        low_upwind_rows = getattr(self._losses, "stencil_low_upwind_rows", 8)
         self.op_matrix = loss_stencil.differential_operator(
             self._energy_grid.b,
             int(self._energy_grid.d),
-            method=getattr(self._losses, "stencil_method", "expfit_low_upwind2"),
+            method=method,
             alpha0=getattr(self._losses, "stencil_alpha0", 3.0),
-            low_upwind_rows=getattr(self._losses, "stencil_low_upwind_rows", 8),
+            low_upwind_rows=low_upwind_rows,
             dtype=self._grid.dtype,
         )
+        #: The row count ``op_matrix`` actually got (same clamp the builder
+        #: applies inside ``differential_operator``), so the adaptive layer can
+        #: reuse it instead of rebuilding an identical matrix.
+        self._op_matrix_rows = min(
+            max(3, int(low_upwind_rows)), int(self._energy_grid.d) - 2
+        )
+        #: Adaptive variants, one per distinct row count (see
+        #: :meth:`_differential_operator_for`). Rebuilt here so a stencil change
+        #: through a config write plus an explicit call cannot hit a stale cache.
+        self._adaptive_ops = {}
