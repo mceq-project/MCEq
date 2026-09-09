@@ -1,9 +1,8 @@
 """Particle-count and Z-factor observables read from a solved cascade.
 
-The ``n_*`` counting helpers and the energy-dependent Z-factors, moved
-out of the ``MCEqRun`` façade at M9 and bound as methods there
-(``n_particles = observables.n_particles`` etc.). All take the
-:class:`MCEqRun` façade as their first argument.
+Observable functions bound as :class:`MCEqRun` methods
+(``n_particles = observables.n_particles`` etc.); their first argument is
+the run.
 """
 
 import numpy as np

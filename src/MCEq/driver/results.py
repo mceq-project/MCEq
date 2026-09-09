@@ -2,8 +2,8 @@
 
 ``MCEqBatchResult`` is what :meth:`MCEqRun.solve_batch` and
 :meth:`MCEqRun.solve_fullsky` return; the :func:`get_solution` family
-here is the extraction backend behind both that class and the
-``MCEqRun`` façade, which binds the functions as methods
+here is the extraction backend behind both that class and ``MCEqRun``,
+which binds the functions as methods
 (``get_solution = results.get_solution`` etc. in ``mceq_run.py``).
 :func:`inverse_hankel_legacy` maps 2D Hankel-mode amplitudes F(kappa)
 back to angular densities f(theta).
@@ -23,11 +23,12 @@ from scipy.interpolate import interp1d
 
 from MCEq.misc import info
 
-#: ``get_solution``'s ``return_as`` default binds the live config module at
-#: import time (v1 semantics, pinned by the solve1d golden's signature
-#: probe). The module is fetched dynamically rather than with a static
-#: ``from MCEq import config``: the ``MCEq.hankel`` shim re-exports from
-#: here, and a static edge would make the chain
+#: ``get_solution``'s default ``return_as`` below captures the process
+#: default when this function is defined (v1 semantics, pinned by the
+#: solve1d golden's signature probe); pass ``None`` to resolve the
+#: setting from the run. The module is fetched dynamically rather than
+#: with a static ``from MCEq import config``: the ``MCEq.hankel`` shim
+#: re-exports from here, and a static edge would make the chain
 #: ``hankel -> results -> config`` visible to contract C5.
 config = import_module("MCEq.config")
 
@@ -36,18 +37,18 @@ class MCEqBatchResult:
     """Result of a batched (multi-RHS) solve.
 
     Returned by :meth:`MCEqRun.solve_batch` and
-    :meth:`MCEqRun.solve_fullsky`. Wraps the raw ``(dim_states, K)``
-    final-state matrix together with the batch metadata and provides
-    named per-column spectrum extraction through :meth:`get_solution`,
-    with exactly the same particle-name semantics as
-    :meth:`MCEqRun.get_solution`.
+    :meth:`MCEqRun.solve_fullsky`. Wraps the final-state matrix — shape
+    ``(n_k * dim_states, K)``, where ``n_k = 1`` in 1-D runs — together
+    with the batch metadata and provides named per-column spectrum
+    extraction through :meth:`get_solution`, with exactly the same
+    particle-name semantics as :meth:`MCEqRun.get_solution`.
 
     Attributes:
-      sol (np.ndarray[dim_states, K]): final state, one column per batch
-        member.
-      grid_sol (np.ndarray[len(int_grid), dim_states, K] | None): stacked
-        snapshots when ``int_grid`` was requested (shared-path batches
-        only), else ``None``.
+      sol (np.ndarray[n_k * dim_states, K]): final state, one column per
+        batch member.
+      grid_sol (np.ndarray[len(int_grid), n_k * dim_states, K] | None):
+        stacked depth snapshots when ``int_grid`` was requested
+        (shared-path batches only), else ``None``.
       nsteps_per_col (np.ndarray[K] | None): integration steps per column.
       shared_path (bool): True when every column solved through one path
         tuple — the multi-RHS route, the condition list deduplicated to a
@@ -352,8 +353,8 @@ def get_solution(
       integrate (bool, optional): return averge particle number instead of
       flux (multiply by bin width)
       return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
-        or ``total momentum`` flux. This defaults to ``kinetic energy`` and is in general taken from
-        ``MCEq.config.return_as``
+        or ``total momentum`` flux. When omitted, the process default captured at import is used;
+        pass ``None`` to use the run's output setting
       dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helicities,
         e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helicity for mu+.
 
@@ -403,7 +404,7 @@ def _get_solution_from_state(
       particle_name (str): see :meth:`get_solution`.
       mag, integrate, return_as, dont_sum_helicities: see
         :meth:`get_solution`. ``return_as=None`` resolves to
-        ``config.return_as``.
+        ``run._cfg.output.return_as``.
 
     Returns:
       (np.ndarray): flux of particles on energy grid :attr:`e_grid`
@@ -523,13 +524,6 @@ def _get_solution_from_state(
     )
 
 
-# --- Delegation into CascadeSystem (driver/system.py) -----------------
-# The §8.7 keep-list names the physics system owns are properties here,
-# so every attribute access written against the single-class original
-# still resolves. ``int_m``/``dec_m`` are read-write: the batch sweep
-# harness in tests/golden/_operator_sweep.py swaps matrices directly.
-
-
 def convert_to_theta_space(
     run,
     hankel_transf,
@@ -546,8 +540,8 @@ def convert_to_theta_space(
     this method adds the state-vector indexing and the theta grid.
 
     Args:
-        hankel_transf (list of np.arrays): list of Hankel space solutions at
-            the requested slant depths (i.e. the output of ``run.grid_sol``)
+        hankel_transf (list of np.arrays): Hankel-space amplitudes at the
+            requested slant depths, each reshaped to ``(n_k, dim_states)``
         pdg_id (int): PDG ID of the particle whose angular density is being
             requested (e.g. 14 for NuMu)
         hel (int): helicity of the particle whose angular density is being

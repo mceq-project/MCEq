@@ -1,17 +1,13 @@
 """Batch orchestration: K independent solves, sky grids, multi-RHS.
 
-The functions take the :class:`MCEqRun` facade as their first argument
-(``run``) and use it as the orchestrator used to: resolve the secant
-operator set, build paths (``run._calculate_integration_path`` /
+The functions take the :class:`MCEqRun` object as their first argument
+(``run``) and use its methods to resolve the secant operator set, build
+paths (``run._calculate_integration_path`` /
 ``run._build_condition_paths`` -- the fork pool and the path builder live
 in ``driver/paths.py``), run the ETD2 routes, and wrap results in
-:class:`MCEq.driver.results.MCEqBatchResult`.
-
-They call ``run.solve_batch`` etc. through the facade (monkey-patching
-the facade method still reaches this code). ``solve_fullsky``'s 2-D-phi0
-cutoff warning uses ``stacklevel=2``: the facade method is the module
-function itself (a direct binding, no delegator frame between the caller
-and here).
+:class:`MCEq.driver.results.MCEqBatchResult`. Going through the methods
+keeps method overrides effective. ``solve_fullsky``'s 2-D-phi0
+cutoff warning uses ``stacklevel=2`` so it points at the caller's frame.
 """
 
 from time import time
@@ -50,11 +46,14 @@ def solve_batch(
 
     * ``conditions=None`` (default): all columns share the current
       ``(zenith, atmosphere)``. K is the number of ``phi0`` columns.
-      Supports ``int_grid`` snapshots and fp32 (non-numpy backends).
+      Supports ``int_grid`` snapshots; float32 and float64 are supported
+      by the NumPy, MKL, Accelerate, and CUDA backends.
     * ``conditions=[...]``: one dict per batch member with optional
       keys ``zenith_deg``, ``azimuth_deg`` and ``density_model``
-      (config tuple or instance); missing keys fall back to the
-      instance's current setting. One integration path is built per
+      (config tuple or instance); missing zenith and density-model
+      values use the current settings, while a missing azimuth is
+      passed as ``None``, allowing the atmosphere's azimuth-averaging
+      behavior. One integration path is built per
       *distinct* condition (duplicates — including azimuth pixels of
       azimuth-independent atmospheres — share a path), and the batch
       runs on the LPT carousel so total kernel work is
@@ -120,10 +119,9 @@ def solve_batch(
         :meth:`solve`.
 
     Returns:
-      :class:`MCEqBatchResult`: final states plus per-column
-      named-spectrum extraction. The result no longer unpacks as the
-      old ``(sol, grid_sol)`` tuple (M7); read ``res.sol`` /
-      ``res.grid_sol``.
+      :class:`MCEqBatchResult`: final states in ``res.sol`` plus
+      requested depth snapshots in ``res.grid_sol``, with per-column
+      named-spectrum extraction.
     """
     dtype = np.dtype(dtype)
     if dtype not in (np.float32, np.float64):
@@ -356,10 +354,10 @@ def solve_fullsky(
     """Propagate phi0 through every (zenith, azimuth) pixel of a sky grid.
 
     Builds a per-pixel integration path (zenith- and azimuth-dependent
-    ``dX``/``rho_inv``/``nsteps``) and runs a Stage-5 LPT static
-    carousel: pixels are scheduled into ``K_pipe`` pipeline slots so
-    the total kernel work is ``Σ nsteps × ms/RHS`` rather than
-    ``max(nsteps) × K``. Wired for all four backends
+    ``dX``/``rho_inv``/``nsteps``) and propagates the sky grid using
+    longest-processing-time-first scheduling, reusing a fixed number of
+    active batch slots so the total kernel work is ``Σ nsteps × ms/RHS``
+    rather than ``max(nsteps) × K``. Wired for all four backends
     (``numpy_etd2``, ``cuda_etd2``, ``mkl_etd2``, ``accelerate_etd2``).
 
     Args:
@@ -391,9 +389,7 @@ def solve_fullsky(
         :class:`MCEqBatchResult` — final state per pixel
         ``(dim_states, K)`` plus the sky grid, with per-pixel
         named-spectrum extraction (:meth:`MCEqBatchResult.get_solution`,
-        :meth:`MCEqBatchResult.skymap`). The result no longer unpacks as
-        the old ``(sol, nsteps_per_col[, pixel_index])`` tuple (M7);
-        read the attributes.
+        :meth:`MCEqBatchResult.skymap`). Read the result's attributes.
     """
     info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
     start = time()
@@ -539,12 +535,3 @@ def solve_fullsky(
 
     info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
     return res
-
-
-# --- the ETD2RK step loop: operator assembly, backends, routes -----------
-#
-# ``compile_operator`` turns ``int_m`` / ``dec_m`` (and the secant
-# operator set) into one CompiledOperator; a backend of
-# ``config.kernel_config`` binds it; ``etd2_driver`` runs every route on
-# it. Both objects are cached here against the identity of their inputs.
-# fp32 is a dtype the backends carry, not a kernel family of its own.

@@ -1,19 +1,17 @@
 """The cascade system: database handle, yield/decay tables, particle manager.
 
-``CascadeSystem`` is the object the :class:`MCEqRun` facade delegates its
-whole "what is the physics system" question to: the HDF5 backend, the four
-table interfaces, the cross-section set, the particle manager, the matrix
-builder, and the two assembled matrices ``int_m`` / ``dec_m``. Everything
-physics-side lives here; the solution vectors, the initial condition and its
-restore-replay, geometry and solve orchestration stay on the facade. The
-the two splits of the original model-loading ladder (skip-check and
-resize/rebuild tail) are documented on :meth:`reload_for_model`.
+``CascadeSystem`` owns the physics-side state used by :class:`MCEqRun`: the
+HDF5 backend, the four table interfaces, the cross-section set, the particle
+manager, the matrix builder, and the two assembled matrices ``int_m`` /
+``dec_m``. The solution vectors, initial condition and its restore-replay,
+geometry, and solve orchestration stay on ``MCEqRun``, which controls the
+load, resize, and build sequence. The split of model loading across the
+skip-check and the resize/rebuild tail is documented on
+:meth:`reload_for_model`.
 
-No reference from here back to the facade, on purpose: the
-restore-replay list stores facade method *names*, not bound methods (PR
-#163 — bound methods pinned whole MCEqRun instances and overflowed the
-macOS Accelerate sparse-matrix store), so the resize cannot be replayed
-from here. The facade drives load -> resize -> build through
+This module never refers back to ``MCEqRun``: the restore-replay list stores
+method *names*, not bound methods, so the resize cannot be replayed from
+here. ``MCEqRun`` drives load -> resize -> build through
 :meth:`reload_for_model` and :meth:`build_matrices`.
 """
 
@@ -26,14 +24,15 @@ from MCEq.species.manager import ParticleManager
 
 
 def run_physics_view(cfg=None):
-    """The ``physics`` group a *run* should use, with the §9 validator applied.
+    """Return the run's physics settings, applying the EM compatibility rule.
 
     ``enable_em`` and muon-helicity rows are incompatible: the L/R semi-
     Lagrangian muon rows have no diagonal damping and destabilize the EM
     cascade (EM-blowup caveat, ``MCEq.solvers.path``). The rule is enforced
     here — at the single point where the driver hands a physics group to a
-    run — as a validator: warn, and return a corrected read-only copy of
-    the view. The flat ``muon_helicity_dependence`` default is never
+    run — as a validator: warn, and return a read-only copy of the view with
+    muon helicity dependence disabled. The flat
+    ``muon_helicity_dependence`` default is never
     written, so a later EM-off run in the same process is unaffected; every
     other reader of ``config.physics`` sees the setting exactly as the user
     set it. Lives in the driver rather than in ``config`` because the
@@ -53,19 +52,19 @@ def run_physics_view(cfg=None):
 class CascadeSystem:
     """Database handle, loaded tables, particle manager, matrix builder.
 
-    Built by :class:`MCEqRun`. The ctor runs the original constructor
-    segment verbatim: database, the four table interfaces (cross-sections
-    constructed with the normalized model name but not yet loaded), the
-    empty particle-manager slots, the energy grid taken from the backend.
-    Loading the model and building the pman happens in the first
-    :meth:`reload_for_model`, driven by the facade's
-    ``set_interaction_model`` exactly as the single-class original did.
+    Built by :class:`MCEqRun`. The constructor creates the database handle,
+    the four table interfaces (cross-sections constructed with the supplied
+    model name but not yet loaded), the empty particle-manager slots, and
+    takes the energy grid from the backend. Loading the model and building
+    the particle manager happen in the first :meth:`reload_for_model`,
+    driven by :meth:`MCEqRun.set_interaction_model`.
 
     Args:
-      interaction_model (str): normalized model name (or falsy to defer).
+      interaction_model (str): model-name string; the tables are loaded
+        later by :meth:`reload_for_model`.
       medium (str): interaction medium (air/water).
       low_energy_model, he_le_transition, he_le_trwidth: resolved values of
-        the facade's low-energy-extension kwargs.
+        the low-energy-extension arguments.
     """
 
     def __init__(
@@ -79,10 +78,10 @@ class CascadeSystem:
     ):
         self._cfg = config if cfg is None else cfg
         self.medium = medium
-        # Group views, not snapshots: a config write after construction is
-        # seen. The physics view goes through the §9 validator: for an EM run
-        # it is a read-only copy with muon_helicity_dependence forced False,
-        # and this one instance is what every table and the pman read.
+        # Use the supplied live configuration or snapshot. The physics view
+        # goes through ``run_physics_view``: for an EM run it is a read-only
+        # copy with muon_helicity_dependence disabled, and this one instance
+        # is what every table and the particle manager read.
         self._physics = run_physics_view(cfg)
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=medium,
@@ -102,12 +101,12 @@ class CascadeSystem:
             mceq_hdf_db=self._mceq_db, physics=self._physics
         )
 
-        #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
+        #: Cross-section data managed by :class:`MCEq.data.InteractionCrossSections`
         self._int_cs = MCEq.data.InteractionCrossSections(
             mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
         )
 
-        #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
+        #: Continuous-energy-loss data managed by :class:`MCEq.data.ContinuousLosses`
         self._cont_losses = MCEq.data.ContinuousLosses(
             mceq_hdf_db=self._mceq_db, physics=self._physics
         )
@@ -133,12 +132,11 @@ class CascadeSystem:
     def reload_for_model(self, interaction_model, particle_list, update_particle_list):
         """Load tables and (re)build the pman/matrix_builder for one model.
 
-        The original ``set_interaction_model`` branch ladder, verbatim from
-        the normalize-and-load point down. Three splits moved to the facade
-        wrapper: ``info(1)`` + the skip short-circuit (before the load) and
-        the resize/rebuild tail (after it) — the resize replays the facade's
-        initial-condition methods by name (PR #163), so only the facade can
-        drive the order. ``force`` is likewise decided by the wrapper.
+        Handles the model-loading branches from the normalize-and-load point
+        down. ``MCEqRun.set_interaction_model`` decides whether loading is
+        required, then coordinates loading, state resizing, and matrix
+        construction; the resize replays the initial-condition methods by
+        name, so only ``MCEqRun`` can drive the order.
 
         Args:
           interaction_model (str): normalized model name
@@ -149,7 +147,6 @@ class CascadeSystem:
 
         self._int_cs.load(interaction_model)
 
-        # TODO: simplify this, stuff not needed anymore
         if not update_particle_list and self._particle_list is not None:
             info(10, "Re-using particle list.")
             self._interactions.load(interaction_model, parent_list=self._particle_list)
@@ -209,18 +206,17 @@ class CascadeSystem:
     def build_matrices(self, skip_decay_matrix=False):
         """Assemble ``int_m``/``dec_m`` from the current particle manager.
 
-        The original tail of ``set_interaction_model``, verbatim, as its own
-        step so the facade can slot the resize between load and build.
+        A separate step so ``MCEqRun`` can update its state layout between
+        loading and matrix construction.
         """
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=skip_decay_matrix
         )
 
     def regenerate(self, skip_decay_matrix=False):
-        """Force a yields reload and rebuild, for production modifications.
+        """Reconnect particle channels to the current interaction tables.
 
-        The original ``MCEqRun.regenerate_matrices`` first line, verbatim;
-        the resize stays in the facade wrapper (module docstring) and the
-        build is the shared :meth:`build_matrices`.
+        Used after production modifications. The caller resizes the state
+        layout and rebuilds matrices separately through :meth:`build_matrices`.
         """
         self.pman.set_interaction_model(self._int_cs, self._interactions, force=True)

@@ -3,14 +3,12 @@
 ``InitialState`` composes the initial-condition vector the solver starts
 from — the machinery behind ``MCEqRun.set_primary_model`` /
 ``set_single_primary_particle`` / ``set_initial_spectrum`` /
-``initial_state()`` — and owns the restore list whose *method names* the
-facade replays after every species-dimension change (names, never bound
-methods). The pman/energy-grid reads route through the system, ``_phi0``
+``initial_state()`` — and owns the restore list, which stores method
+names rather than bound methods to avoid retaining a reference to the
+run. ``MCEqRun`` controls restoration. The particle manager and energy
+grid are read from :class:`MCEq.driver.system.CascadeSystem`, ``_phi0``
 is ``phi0`` here, and the resize of the composition vector is
-:meth:`resize` (driven by the facade, which zeroes its own ``_solution``
-and replays the list).
-
-Reads the physics system (pman, energy grid) but never the facade.
+:meth:`resize`.
 """
 
 import numpy as np
@@ -40,9 +38,10 @@ class InitialState:
         matrices.
 
         Args:
-          interaction_model (:class:`CRFluxModel.PrimaryFlux`): reference
-          to primary model **class**
-          tag (tuple): positional argument list for model class
+          model_class_or_object: a :class:`crflux.models.PrimaryFlux`
+            subclass, or an instance of one
+          tag: passed as a single positional argument to the class when
+            constructing the model object
         """
 
         assert not isinstance(model_class_or_object, tuple), (
@@ -67,11 +66,9 @@ class InitialState:
         info(1, f"Primary model set to {self.pmodel.name}")
 
         # Save primary flux model for restoration after interaction model
-        # changes. Store the method *name*, not a bound method — see the
-        # comment in ``_resize_vectors_and_restore`` (PR #163).
+        # changes. Store the method *name*, not a bound method, to avoid
+        # retaining a reference to the run.
         self._restore_initial_condition = [("set_primary_model", self.pmodel)]
-        # TODO: Maybe needs to catch the removal of the np.vectorize
-        # self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
         self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
 
         try:
@@ -144,8 +141,8 @@ class InitialState:
         multiple particles. If it is `False` the initial condition is reset to zero
         before adding the particle.
 
-        A continuous input energy range is allowed between
-        :math:`50*A~ \\text{GeV} < E_\\text{nucleus} < 10^{10}*A \\text{GeV}`.
+        The kinetic energy per nucleon must fit the active energy grid
+        and the three-bin deposition stencil.
 
         Args:
           E (float): kinetic energy of a nucleus in GeV
@@ -246,12 +243,13 @@ class InitialState:
         argument to `True` for subsequent species to define initial
         spectra combined from different particles.
 
-        The (differential) spectrum has to be distributed on the energy
-        grid as dN/dptot, i.e. divided by the bin widths and with the
-        total momentum units in GeV(/c).
+        The spectrum is supplied as one differential-spectrum value per
+        kinetic-energy bin and copied into the selected particle's
+        state-vector slice without converting between energy and momentum
+        conventions.
 
         Args:
-          spectrum (np.array): spectrum dN/dptot
+          spectrum (np.array): differential spectrum on the kinetic-energy grid
           pdg_id (int): PDG ID in case of a particle
         """
 
@@ -311,8 +309,8 @@ class InitialState:
             - a single primary: ``{"E": <GeV>, "corsika_id": <A*100+Z>}``
               or ``{"E": <GeV>, "pdg_id": <PDG>}`` (forwarded to
               :meth:`set_single_primary_particle`), or
-            - a user spectrum: ``{"spectrum": <array dN/dptot>,
-              "pdg_id": <PDG>}`` (forwarded to
+            - a user spectrum: ``{"spectrum": <array on the
+              kinetic-energy grid>, "pdg_id": <PDG>}`` (forwarded to
               :meth:`set_initial_spectrum`).
 
         Returns:
@@ -361,10 +359,8 @@ class InitialState:
     def resize(self, restore_list, replay):
         """Reallocate ``phi0`` to the current system size and replay.
 
-        The original ``_resize_vectors_and_restore`` first line, verbatim,
-        plus the restore loop; the caller (facade) zeroes its own solution
-        vector and passes the replay of the stored method names, since the
-        restore entries name facade methods (module docstring).
+        The caller zeroes its own solution vector, then passes the
+        recorded method names and the replay callback.
         """
         self.phi0 = np.zeros(self._system.pman.dim_states)
         if len(restore_list) > 0:

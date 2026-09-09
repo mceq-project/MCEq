@@ -1,17 +1,17 @@
-"""Run-coupled path glue: the path cache, the EM cap, the condition-path pool.
+"""Run-level integration-path construction, caching, and batch preparation.
 
-Moved from :mod:`MCEq.solvers.path` at M6 (ruling D-4, amending D2/D26):
-these functions drive the ``MCEqRun`` facade — they write
+These functions operate on an ``MCEqRun`` object: they write
 ``run.integration_path`` / ``run._cached_etd2_path_params``, switch the
-run's zenith / atmosphere, and the fork pool holds the facade in a module
-global — so they belong to the driver, not to the solver layer. The pure
-path builder stays :func:`MCEq.solvers.path.etd2_nonuniform_path`; the
-EM stiffness memo stays on ``MCEqRun._em_cascade_step_scale`` (the cap
-function here consumes it and passes the value down pure).
+run's zenith / atmosphere, and the fork pool holds the run in a module
+global, so they belong to the driver rather than the solver layer.
+Numerical path construction is implemented in
+:func:`MCEq.solvers.path.etd2_nonuniform_path`; the EM stiffness memo
+stays on ``MCEqRun._em_cascade_step_scale`` (the cap function here
+consumes it and passes the value down pure).
 
-``MCEqRun`` keeps thin delegators for all three entry points, so subclass
-overrides of ``set_density_model`` / ``set_zenith_azimuth`` /
-``_calculate_integration_path`` still reach this code.
+``MCEqRun._calculate_integration_path`` and
+``MCEqRun._em_cascade_dx_cap`` delegate here, so subclass overrides of
+``set_density_model`` / ``set_zenith_azimuth`` still reach this code.
 """
 
 import numpy as np
@@ -22,14 +22,14 @@ from MCEq.solvers.path import etd2_nonuniform_path
 
 
 def em_cascade_dx_cap(run, r_em):
-    """Cure-B effective dX cap from the EM-cascade stiffness *r_em*, or np.inf.
+    """Effective EM stiffness-based step cap, or np.inf.
 
-    The run-coupled half: settings come from ``run.config.em`` (the run's
-    snapshot or the live group), never from a module-level config import
-    (C5). *r_em* is the caller's memoised stiffness (the facade method
-    passes its own ``_em_cascade_step_scale()``, so the memo stays on the
-    run). The arithmetic lives in the pure core
-    :func:`MCEq.solvers.path.em_cascade_dx_cap`.
+    Combine the run's EM settings with the supplied stiffness estimate to
+    determine the additional step cap. Settings come from
+    ``run.config.em`` (the run's snapshot or the live group), never from a
+    module-level config import. *r_em* is the caller's memoised
+    stiffness, so the memo stays on the run. The arithmetic lives in the
+    pure core :func:`MCEq.solvers.path.em_cascade_dx_cap`.
     """
     return path_em_cascade_dx_cap(r_em, run.config.em)
 
@@ -46,14 +46,14 @@ def calculate_integration_path(
     dX_min=None,
     fd_span=None,
 ):
-    # ETD2 is the only path builder. Step sizes follow the
-    # atmosphere-aware non-uniform schedule keyed off the local
-    # |d ln rho_inv / dX|; see ``MCEq.solvers.etd2_nonuniform_path``.
-    # Cure B: additionally cap dX_max by the explicit-stepping stiffness
-    # of the EM block of int_m (no-op when the em group's adaptive_step
+    # Build the density-gradient schedule and apply the additional EM
+    # stiffness cap when enabled. Step sizes follow the atmosphere-aware
+    # non-uniform schedule keyed off the local |d ln rho_inv / dX|; see
+    # ``MCEq.solvers.etd2_nonuniform_path``. The EM stiffness cap applies
+    # to the EM block of int_m (no-op when the em group's adaptive_step
     # is off). int_m is X-constant, so this is a single global cap that the
     # density-gradient schedule never relaxes above. Settings read the
-    # run's ``solver`` group (snapshot or live view — C5).
+    # run's ``solver`` group (snapshot or live view).
     solver = run.config.solver
     em_cap = em_cascade_dx_cap(run, run._em_cascade_step_scale())
     if np.isfinite(em_cap):
@@ -107,11 +107,11 @@ def calculate_integration_path(
 # and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
 # instance itself never has to be picklable. Each worker process gets
 # its own CoW copy of the density model, so per-worker
-# ``set_zenith_azimuth`` mutations stay process-local. Only used when
-# ``solve_fullsky(path_workers=N>0)`` is requested *and* the atmosphere
-# is not azimuth-symmetric (MSIS location-centered case). Every atmosphere
-# is fork-reproducible; the paths a worker returns are bitwise equal to the
-# serial ones.
+# ``set_zenith_azimuth`` mutations stay process-local. The pool is used
+# when multiple distinct paths are requested, ``path_workers > 1``, and no
+# per-condition density-model overrides require serial handling. Every
+# atmosphere is fork-reproducible; the paths a worker returns are bitwise
+# equal to the serial ones.
 _PATH_WORKER_MCEQ = None
 
 
@@ -141,8 +141,9 @@ def build_condition_paths(
 
     Each condition is a dict with optional keys ``zenith_deg``,
     ``azimuth_deg`` and ``density_model`` (config tuple or density-
-    model instance); missing keys fall back to the instance's current
-    setting. Conditions that resolve to the same physical path — the
+    model instance). Missing zenith and density-model fields use current
+    values; missing azimuth is ``None``. Conditions that resolve to the
+    same physical path — the
     same density model and zenith, and the same azimuth when the
     model's ``depends_on_azimuth`` is True — share one path tuple, so
     duplicates (e.g. azimuth pixels of an azimuth-independent
@@ -207,10 +208,8 @@ def build_condition_paths(
             return ("cfg", repr(tuple(dm_spec)))
         return ("obj", id(dm_spec))
 
-    # Save the *current* direction from the density model, which is the
-    # only place the azimuth lives. ``MCEqRun.theta_deg`` does track the
-    # zenith since B13 was fixed, but it carries no azimuth, so restoring
-    # from the atmosphere keeps both halves of the direction together.
+    # Save both angles from the density model, which owns the active
+    # azimuth setting.
     saved_dm = run.density_model
     saved_zen = getattr(saved_dm, "theta_deg", None)
     saved_az = getattr(saved_dm, "_current_azimuth_deg", None)
