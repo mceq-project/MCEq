@@ -1448,7 +1448,7 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
     # test to put on a spectrum
     for key, dip in (
         ("spectrum/single_total_mu+", -1.360e-2),
-        ("spectrum/single_total_numu", -3.638e-6),
+        ("spectrum/single_total_numu", -3.032e-6),
     ):
         row = arrays[key]
         assert not _flux_metric.sign_definite(row)
@@ -1466,20 +1466,20 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
         assert _flux_metric.sign_definite(
             row[: _flux_metric.n_retained(row.size, trim)]
         )
-    # the artefact deepens with zenith: -1.06% of the peak at 0 deg, -12.9% at 72
+    # the artefact deepens with zenith: -1.06% of the peak at 0 deg, -13.0% at 72
     assert carousel[0].min() / carousel[0].max() == pytest.approx(-0.0106, abs=1e-4)
-    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1288, abs=1e-4)
+    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1299, abs=1e-4)
 
 
 def test_solve2d_trim_does_not_make_the_guard_a_no_op():
-    """27 of the 124 spectrum rows are still gated, and they are the right ones.
+    """28 of the 124 spectrum rows are still gated, and they are the right ones.
 
     Six of the eight multi-RHS lanes are primaries at 30 GeV and below, whose
     spectra oscillate about zero halfway down the grid rather than at its edge;
-    the three deepest carousel `nue` lanes (68, 70, 72 deg) reach one bin past
-    the trim. Those are cancellation residuals, which is what the sign test is
-    for -- the trim moves the edge artefact out of its way, it does not disarm
-    it.
+    the four deepest carousel `nue` lanes (65, 68, 70, 72 deg) reach one bin
+    past the trim. Those are cancellation residuals, which is what the sign
+    test is for -- the trim moves the edge artefact out of its way, it does not
+    disarm it.
     """
     if not SOLVE2D_PATH.exists():
         pytest.skip("solve2d golden has not been generated here")
@@ -1500,8 +1500,8 @@ def test_solve2d_trim_does_not_make_the_guard_a_no_op():
         if bad:
             rejected[key] = bad
 
-    assert sum(len(rows) for rows in rejected.values()) == 27
-    assert rejected["spectrum/carousel_total_nue"] == [9, 10, 11]
+    assert sum(len(rows) for rows in rejected.values()) == 28
+    assert rejected["spectrum/carousel_total_nue"] == [8, 9, 10, 11]
     for species in ("mu+", "mu-", "nue", "numu"):
         assert rejected[f"spectrum/multirhs_total_{species}"] == [1, 2, 3, 4, 5, 6]
     # and the multi-RHS residuals really are deep, not an edge effect
@@ -1525,7 +1525,7 @@ SOLVE2D_SPECTRUM_LAYOUT = _flux_metric.Layout(
 
 
 def test_solve2d_trim_admits_the_named_spectra():
-    """What the trim buys on the real 2D golden: 12 admitted rows become 97.
+    """What the trim buys on the real 2D golden: 12 admitted rows become 96.
 
     And with them the fall-through goes away: untrimmed, 24 of the 28 spectrum
     keys had no row the guard would score and were bounded by `fallback_rtol`;
@@ -1551,7 +1551,7 @@ def test_solve2d_trim_admits_the_named_spectra():
         counts[trim] = (admitted, total, declined)
 
     assert counts[0] == (12, 124, 24)
-    assert counts[_flux_metric.TRIM_TOP_BINS] == (97, 124, 0)
+    assert counts[_flux_metric.TRIM_TOP_BINS] == (96, 124, 0)
 
 
 def test_layout_from_provenance_round_trip():

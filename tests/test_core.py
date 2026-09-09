@@ -143,9 +143,10 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # artifact of the e+- continuous-loss operator, unchanged by the upwind rows.
 # The 1e3 primary sits closest to the grid floor and so is the most sensitive
 # to generic_losses_all_charged=True (nmu -0.6%, nnumu -2.6%); the 1e4/1e5
-# primaries move by <0.06%.
+# primaries move by <0.06%. Retuned 2026-09-09 for the generic-spline edge
+# clamp (+1.2% on nnumu at 1e3; the boost-7165 pion no longer extrapolates).
 testdata_primary = [
-    [1e3, 1.2263006596230545e-05, 2.3468347087477152e-07, -4.393840454489053e-08],
+    [1e3, 1.2298250970471001e-05, 2.3751092301812317e-07, -4.397660019572766e-08],
     [1e4, 0.09919964595464914, 0.024600024310737535, 0.001460721937230645],
     [1e5, 0.9112967205413417, 0.28325496449179144, 0.020282423131684792],
 ]
