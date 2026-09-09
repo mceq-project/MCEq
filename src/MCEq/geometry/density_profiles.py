@@ -1781,10 +1781,24 @@ class TabulatedAtmosphere(EarthsAtmosphere):
             model.set_location_coord(*coord)
         return model
 
+    @staticmethod
+    def _to_msis_longitude(lon):
+        """The same meridian, spelled on the MSIS wrappers' [-180, 180) branch.
+
+        Table longitudes are stored on [0, 360) and
+        :meth:`AtmosphereTable.column` accepts either branch, but both MSIS
+        wrappers reject anything past 180.  This is a change of representation,
+        not of position: 315 deg E and -45 deg E name one meridian.
+        """
+        return (float(lon) + 180.0) % 360.0 - 180.0
+
     def _msis_extension_coord(self):
         """(longitude, latitude) to place the MSIS extension at, or None."""
         if self._coord is not None:
-            return (float(self._coord[0]), float(self._coord[1]))
+            return (
+                self._to_msis_longitude(self._coord[0]),
+                float(self._coord[1]),
+            )
         return None
 
     def _extend_above(self, h_top):

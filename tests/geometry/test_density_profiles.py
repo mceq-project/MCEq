@@ -1278,3 +1278,39 @@ def test_location_centered_forwards_the_doy():
     )
     assert atm.doy == 200
     assert atm._msis_extension_doy() == 200
+
+
+def test_msis_extension_accepts_a_table_longitude_past_180():
+    """Table longitudes live on [0, 360); the MSIS wrappers only take [-180, 180].
+
+    315 deg E and -45 deg E are the same meridian -- AtmosphereTable.column
+    already treats them as one, see test_column_rejects_a_longitude_beyond_one_turn.
+    """
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    east = dp.TabulatedAtmosphere(
+        grid, coord=(315.0, -30.0), top_extension="msis00", season="January"
+    )
+    west = dp.TabulatedAtmosphere(
+        grid, coord=(-45.0, -30.0), top_extension="msis00", season="January"
+    )
+    assert np.isclose(east.max_X, west.max_X, rtol=1e-12)
+
+
+def test_location_centered_accepts_a_detector_longitude_past_180():
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    atm = dp.TabulatedLocationCentered(
+        grid,
+        detector_coord=(315.0, -30.0),
+        depth_m=1948.0,
+        top_extension="msis00",
+        season="January",
+    )
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [(315.0, -45.0), (-45.0, -45.0), (0.0, 0.0), (180.0, -180.0), (359.9, -0.1)],
+)
+def test_to_msis_longitude_is_a_change_of_spelling(given, expected):
+    assert dp.TabulatedAtmosphere._to_msis_longitude(given) == pytest.approx(expected)
