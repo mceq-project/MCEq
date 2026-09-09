@@ -649,8 +649,11 @@ def test_msis21_impact_point_matches_msis00(label, make00, make21):
 
 
 def test_msis21_shares_km3net_site_table():
-    """Site coordinates must come from one table, not a second copy."""
-    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    from MCEq.geometry import msis21_atmosphere
+    """Site coordinates must come from one table, not a second copy.
 
-    assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS
+    Pinned through the ``msis21_atmosphere`` shim until the v2.0 cull deleted
+    it; the same-object property now reads on the canonical module.
+    """
+    from MCEq.environment.parameters import KM3NET_DETECTORS
+
+    assert dp._KM3NET_DETECTORS is KM3NET_DETECTORS

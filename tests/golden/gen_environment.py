@@ -345,7 +345,7 @@ UNCOVERED = (
     "xfail for the same reason)",
 )
 
-#: ``(label, key_arguments)`` for :func:`MCEq.geometry.gtracr_cutoff._cache_key`.
+#: ``(label, key_arguments)`` for :func:`MCEq.environment.geomagnetic.cutoff._cache_key`.
 GTRACR_KEY_CELLS = (
     ("igrf_default", ("IceCube", "igrf", "2020-01-01", 100.0, 30000, 0.1, 55.0, 0.5)),
     ("table_orca", ("ORCA", "table", "2026-09-03", 80.0, 1000, 0.5, 20.0, 0.25)),
@@ -816,8 +816,8 @@ def _record_gtracr(arrays):
     """
     import crflux.models as pm
 
+    from MCEq.environment.geomagnetic import cutoff as gc
     from MCEq.geometry import density_profiles as dprof
-    from MCEq.geometry import gtracr_cutoff as gc
 
     for label, args in GTRACR_KEY_CELLS:
         key_str, key_hash = gc._cache_key(*args)
@@ -1065,8 +1065,8 @@ def _concrete_atmosphere_classes() -> list[str]:
     """
     import inspect
 
+    from MCEq.environment import msis21 as m21
     from MCEq.geometry import density_profiles as dprof
-    from MCEq.geometry import msis21_atmosphere as m21
     from MCEq.geometry.density_profiles import EarthsAtmosphere
 
     found = set()

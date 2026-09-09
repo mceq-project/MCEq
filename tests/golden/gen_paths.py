@@ -72,7 +72,7 @@ LocationCentered variants). pytest.raises(ValueError)
 does not catch it. Pinned as the exception type name in
 zenith_guard/exception_above_max_theta.
 
-available_density_models is MCEq.geometry.registry.available_models(), the same
+available_density_models is MCEq.environment.registry.available_models(), the same
 table set_density_model dispatches through, so a name can no longer be offered
 without being buildable or the reverse. It used to be a list literal local to
 that method with a parallel elif ladder beside it, and the two disagreed:
@@ -105,7 +105,7 @@ def _available_density_models() -> list[str]:
     which is what made bug B15 possible: the literal and the ``elif`` ladder
     could disagree, and did.
     """
-    from MCEq.geometry.registry import available_models
+    from MCEq.environment.registry import available_models
 
     return available_models()
 

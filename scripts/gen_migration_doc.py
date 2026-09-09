@@ -26,8 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from MCEq.config.groups import GROUPS  # noqa: E402
 
 # Every moved import path a v1 user might type, as (v1 path, v2 home,
-# status). "shim" = importable under both names, deleted at 2.0;
-# "facade" = permanent alias by decision (D-list in the refactor plan).
+# status). "facade" = permanent alias by decision (D-list in the refactor
+# plan); "keep" = survives 2.0 (public-usage census); "shim" = importable
+# under both names; "removed" = old name deleted at the v2.0 cull.
 IMPORT_TABLE = [
     ("MCEq.core.MCEqRun", "MCEq.driver.mceq_run.MCEqRun", "facade"),
     (
@@ -35,43 +36,59 @@ IMPORT_TABLE = [
         "MCEq.species.manager.ParticleManager",
         "keep",
     ),
-    ("MCEq.particlemanager.MCEqParticle", "MCEq.species.particle.MCEqParticle", "shim"),
+    (
+        "MCEq.particlemanager.MCEqParticle",
+        "MCEq.species.particle.MCEqParticle",
+        "shim",
+    ),
     (
         "MCEq.geometry.density_profiles",
         "MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)",
         "keep",
     ),
     ("MCEq.geometry.geometry", "MCEq.environment.geometry", "keep"),
-    ("MCEq.geometry.atmosphere_parameters", "MCEq.environment.parameters", "shim"),
-    ("MCEq.geometry.nrlmsise00", "MCEq.environment._ext.nrlmsise00", "shim"),
-    ("MCEq.geometry.nrlmsise00_mceq", "MCEq.environment.msis00_backend", "shim"),
-    ("MCEq.geometry.corsikaatm", "MCEq.environment._ext.corsikaatm", "shim"),
-    ("MCEq.geometry.gtracr_cutoff", "MCEq.environment.geomagnetic.cutoff", "shim"),
-    ("MCEq.geometry.column", "MCEq.environment.column", "shim"),
-    ("MCEq.geometry.location_centered", "MCEq.environment.location_centered", "shim"),
-    ("MCEq.geometry.msis21_atmosphere", "MCEq.environment.msis21", "shim"),
+    (
+        "MCEq.geometry.atmosphere_parameters",
+        "MCEq.environment.parameters",
+        "kept20",
+    ),
+    ("MCEq.geometry.nrlmsise00", "MCEq.environment._ext.nrlmsise00", "keep"),
+    ("MCEq.geometry.corsikaatm", "MCEq.environment._ext.corsikaatm", "keep"),
     (
         "MCEq.geometry.EarthsAtmosphere",
         "MCEq.environment.base.EarthsAtmosphere",
         "keep",
     ),
-    ("MCEq.ddm", "MCEq.models.ddm.ddm", "shim"),
-    ("MCEq.ddm_utils", "MCEq.models.ddm.ddm_utils", "shim"),
-    ("MCEq.hankel", "MCEq.driver.results.inverse_hankel_legacy", "shim"),
-    ("MCEq.download", "MCEq.data.download", "shim"),
-    ("MCEq.spacc", "MCEq.solvers.backends.accelerate", "shim"),
+    ("MCEq.geometry.column", "MCEq.environment.column", "removed"),
+    ("MCEq.geometry.gtracr_cutoff", "MCEq.environment.geomagnetic.cutoff", "removed"),
+    (
+        "MCEq.geometry.location_centered",
+        "MCEq.environment.location_centered",
+        "removed",
+    ),
+    ("MCEq.geometry.msis21_atmosphere", "MCEq.environment.msis21", "removed"),
+    ("MCEq.geometry.nrlmsise00_mceq", "MCEq.environment.msis00_backend", "removed"),
+    ("MCEq.geometry.registry", "MCEq.environment.registry", "removed"),
+    ("MCEq.ddm", "MCEq.models.ddm.ddm", "removed-rr"),
+    ("MCEq.ddm_utils", "MCEq.models.ddm.ddm_utils", "removed"),
+    ("MCEq.hankel", "MCEq.driver.results.inverse_hankel_legacy", "removed"),
+    ("MCEq.download", "MCEq.data.download", "removed"),
+    ("MCEq.secant", "MCEq.operators.secant", "removed"),
+    ("MCEq.operator_assembly", "MCEq.operators.compiled", "removed"),
+    ("MCEq.spacc", "MCEq.solvers._kernels.spacc", "moved"),
     ("MCEq.etd2_kernels", "MCEq.solvers._kernels.etd2", "moved"),
-    ("MCEq.secant", "MCEq.operators.secant", "shim"),
-    ("MCEq.operator_assembly", "MCEq.operators.matrix_builder", "shim"),
     ("mceq_config", "MCEq.config", "facade"),
     ("MCEq.misc.EnergyGrid / energy_grid / gen_xmat", "MCEq.data.energy_grid", "shim"),
 ]
 
 STATUS_NOTE = {
     "facade": "permanent",
-    "shim": "removed at 2.0",
-    "moved": "old name gone (private module)",
+    "shim": "importable under both names",
     "keep": "kept at 2.0 (public-usage census)",
+    "removed": "removed at 2.0 (public-usage census: no users)",
+    "removed-rr": "removed at 2.0 (maintainer re-ruling 2026-09-09)",
+    "kept20": "kept at 2.0, removed in the next follow-up release",
+    "moved": "old name gone (private module)",
 }
 
 
@@ -119,15 +136,15 @@ alias of `MCEq.config` and disappears at 2.0.
 
 The layered v2 tree (`util -> config -> data -> species -> operators ->
 solvers -> driver`, with `environment` and `models` beside it) is the
-implementation home of everything below. The v1 path column keeps
-working in v2.x; the 2.0 column marks what is deleted (decision D6 —
-only `MCEq.core` as the import façade stays permanently).
+implementation home of everything below. The paths marked removed at 2.0
+no longer import (decision D6 and the release-cut census ruling —
+only `MCEq.core` as the import façade and the census-kept shims stay);
+the rest keep working under both spellings.
 
 {import_table()}
 
-"Kept at 2.0" reflects the public-usage census (2026-09-06) and the
-M13 keep-list ruling; the census is re-run at the release cut and can
-move an entry.
+"Kept at 2.0" and "removed at 2.0" reflect the public-usage census
+re-run of 2026-09-09 and the M13 keep-list ruling of the release cut.
 
 
 ## Deprecated names that warn

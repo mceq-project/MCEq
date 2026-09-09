@@ -58,8 +58,9 @@ layers =
 exhaustive = True
 exhaustive_ignores =
 # environment; sits beside the stack, constrained by C2 and C3 instead.
-# Phase 3 landed the rename. `geometry` stays listed because the shim package
-# is still there for user code; Phase 7 deletes the shims and this line.
+# `geometry` stays listed: the v2.0 cull deleted six of its module shims but
+# the census-kept ones (atmosphere_parameters, geometry, density_profiles) and
+# the C-extension re-export directories keep the package alive for user code.
     environment
     geometry
 # models, imported by the driver only (C4). §13.2 item 7 landed the move: the

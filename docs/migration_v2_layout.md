@@ -86,40 +86,41 @@ alias of `MCEq.config` and disappears at 2.0.
 
 The layered v2 tree (`util -> config -> data -> species -> operators ->
 solvers -> driver`, with `environment` and `models` beside it) is the
-implementation home of everything below. The v1 path column keeps
-working in v2.x; the 2.0 column marks what is deleted (decision D6 —
-only `MCEq.core` as the import façade stays permanently).
+implementation home of everything below. The paths marked removed at 2.0
+no longer import (decision D6 and the release-cut census ruling —
+only `MCEq.core` as the import façade and the census-kept shims stay);
+the rest keep working under both spellings.
 
 | v1 import path | v2 home | after 2.0 |
 |---|---|---|
 | `MCEq.core.MCEqRun` | `MCEq.driver.mceq_run.MCEqRun` | permanent |
-| `MCEq.ddm` | `MCEq.models.ddm.ddm` | removed at 2.0 |
-| `MCEq.ddm_utils` | `MCEq.models.ddm.ddm_utils` | removed at 2.0 |
-| `MCEq.download` | `MCEq.data.download` | removed at 2.0 |
+| `MCEq.ddm` | `MCEq.models.ddm.ddm` | removed at 2.0 (maintainer re-ruling 2026-09-09) |
+| `MCEq.ddm_utils` | `MCEq.models.ddm.ddm_utils` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.download` | `MCEq.data.download` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.etd2_kernels` | `MCEq.solvers._kernels.etd2` | old name gone (private module) |
 | `MCEq.geometry.EarthsAtmosphere` | `MCEq.environment.base.EarthsAtmosphere` | kept at 2.0 (public-usage census) |
-| `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | removed at 2.0 |
-| `MCEq.geometry.column` | `MCEq.environment.column` | removed at 2.0 |
-| `MCEq.geometry.corsikaatm` | `MCEq.environment._ext.corsikaatm` | removed at 2.0 |
+| `MCEq.geometry.atmosphere_parameters` | `MCEq.environment.parameters` | kept at 2.0, removed in the next follow-up release |
+| `MCEq.geometry.column` | `MCEq.environment.column` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.geometry.corsikaatm` | `MCEq.environment._ext.corsikaatm` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.density_profiles` | `MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.geometry` | `MCEq.environment.geometry` | kept at 2.0 (public-usage census) |
-| `MCEq.geometry.gtracr_cutoff` | `MCEq.environment.geomagnetic.cutoff` | removed at 2.0 |
-| `MCEq.geometry.location_centered` | `MCEq.environment.location_centered` | removed at 2.0 |
-| `MCEq.geometry.msis21_atmosphere` | `MCEq.environment.msis21` | removed at 2.0 |
-| `MCEq.geometry.nrlmsise00` | `MCEq.environment._ext.nrlmsise00` | removed at 2.0 |
-| `MCEq.geometry.nrlmsise00_mceq` | `MCEq.environment.msis00_backend` | removed at 2.0 |
-| `MCEq.hankel` | `MCEq.driver.results.inverse_hankel_legacy` | removed at 2.0 |
-| `MCEq.misc.EnergyGrid / energy_grid / gen_xmat` | `MCEq.data.energy_grid` | removed at 2.0 |
-| `MCEq.operator_assembly` | `MCEq.operators.matrix_builder` | removed at 2.0 |
-| `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | removed at 2.0 |
+| `MCEq.geometry.gtracr_cutoff` | `MCEq.environment.geomagnetic.cutoff` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.geometry.location_centered` | `MCEq.environment.location_centered` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.geometry.msis21_atmosphere` | `MCEq.environment.msis21` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.geometry.nrlmsise00` | `MCEq.environment._ext.nrlmsise00` | kept at 2.0 (public-usage census) |
+| `MCEq.geometry.nrlmsise00_mceq` | `MCEq.environment.msis00_backend` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.geometry.registry` | `MCEq.environment.registry` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.hankel` | `MCEq.driver.results.inverse_hankel_legacy` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.misc.EnergyGrid / energy_grid / gen_xmat` | `MCEq.data.energy_grid` | importable under both names |
+| `MCEq.operator_assembly` | `MCEq.operators.compiled` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | importable under both names |
 | `MCEq.particlemanager.ParticleManager` | `MCEq.species.manager.ParticleManager` | kept at 2.0 (public-usage census) |
-| `MCEq.secant` | `MCEq.operators.secant` | removed at 2.0 |
-| `MCEq.spacc` | `MCEq.solvers._kernels.spacc` | removed at 2.0 |
+| `MCEq.secant` | `MCEq.operators.secant` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.spacc` | `MCEq.solvers._kernels.spacc` | old name gone (private module) |
 | `mceq_config` | `MCEq.config` | permanent |
 
-"Kept at 2.0" reflects the public-usage census (2026-09-06) and the
-M13 keep-list ruling; the census is re-run at the release cut and can
-move an entry.
+"Kept at 2.0" and "removed at 2.0" reflect the public-usage census
+re-run of 2026-09-09 and the M13 keep-list ruling of the release cut.
 
 
 ## Deprecated names that warn

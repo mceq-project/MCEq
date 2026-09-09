@@ -87,9 +87,11 @@ under `docs/` (Sphinx).
 4. `src/MCEq/particlemanager.py` — `ParticleManager`/`MCEqParticle`: particle
    properties and matrix-index mapping (uses `particletools`).
 5. `src/MCEq/solvers.py` — ETD2 integration kernels (numpy/MKL/Accelerate/CUDA).
-6. `src/MCEq/geometry/` — `geometry.py` (spherical-Earth path lengths),
-   `density_profiles.py` (atmospheres), C extensions in `nrlmsise00/` and
-   `corsikaatm/` (built via CMake).
+6. `src/MCEq/environment/` — atmospheres, columns, geomagnetic cutoffs;
+   `src/MCEq/geometry/` keeps the census-kept shims (`geometry.py`,
+   `density_profiles.py`, `atmosphere_parameters.py`, C-extension
+   re-exports under `nrlmsise00/`, `corsikaatm/`; built via CMake into
+   `environment/_ext/`).
 7. `src/MCEq/models/ddm/` — `ddm.py`, `ddm_utils.py`: Data-Driven Model.
 
 ## Build & test

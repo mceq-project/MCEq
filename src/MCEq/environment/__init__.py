@@ -9,5 +9,7 @@ model names to classes through dotted strings so that selecting an MSIS00 model
 does not import the MSIS21 tree or vice versa; an eager ``__init__`` would
 defeat that. Import the concrete module you need.
 
-``MCEq.geometry.*`` provides compatibility re-exports over this package.
+``MCEq.geometry.*`` keeps a reduced set of compatibility re-exports over
+this package (the v2.0 cull deleted the census-absent module shims; see
+``docs/migration_v2_layout.md``).
 """

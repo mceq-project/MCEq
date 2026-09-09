@@ -1,4 +1,4 @@
-"""``MCEq.geometry.*`` is a shim layer over ``MCEq.environment``; pin its surface.
+"""The surviving ``MCEq.geometry.*`` shims are re-exports; pin their surface.
 
 Phase 3 moved the atmospheres into ``MCEq.environment`` and left every old
 module behind as a re-export. ``__all__`` in a shim is a *declaration*; this
@@ -9,6 +9,14 @@ The property that matters is not "the import works" but "the same object is
 reachable by both paths". A shim that rebound a name to a different object
 would pass a smoke test and silently break ``isinstance`` for user code that
 mixes the two import paths.
+
+The v2.0 cull deleted six of the nine module shims (``column``,
+``gtracr_cutoff``, ``location_centered``, ``msis21_atmosphere``, ``registry``,
+``nrlmsise00_mceq``; the census found no users) and their pins went with them.
+What stays pinned here: the ``geometry`` shim (kept — public census), the
+``density_profiles`` star-import surface, the two C-extension shims, and the
+``atmosphere_parameters`` shim (kept through M13; deleted in M14 with the
+``test_core.py`` import it protects).
 
 DB-free: nothing here constructs an ``MCEqRun``.
 """
@@ -21,38 +29,12 @@ import pytest
 
 #: shim module -> (new home, the names the shim must re-export).
 MOVED = {
-    "MCEq.geometry.column": ("MCEq.environment.column", ["fit_column_splines"]),
-    "MCEq.geometry.location_centered": (
-        "MCEq.environment.location_centered",
-        ["LocationCenteredMixin"],
-    ),
     # ``np`` is deliberate here as well: the ``EarthGeometry`` docstring embeds a
     # ``.. plot::`` directive whose body does ``from MCEq.geometry.geometry
     # import *`` and then calls ``np.linspace``.
     "MCEq.geometry.geometry": (
         "MCEq.environment.geometry",
         ["EarthGeometry", "chirkin_cos_theta_star", "np"],
-    ),
-    "MCEq.geometry.registry": (
-        "MCEq.environment.registry",
-        ["DENSITY_MODELS", "available_models", "build", "density_model_class"],
-    ),
-    "MCEq.geometry.nrlmsise00_mceq": (
-        "MCEq.environment.msis00_backend",
-        ["NRLMSISE00Base", "cNRLMSISE00", "test"],
-    ),
-    "MCEq.geometry.msis21_atmosphere": (
-        "MCEq.environment.msis21",
-        [
-            "MSIS21Atmosphere",
-            "MSIS21IceCubeCentered",
-            "MSIS21KM3NeTCentered",
-            "MSIS21LocationCentered",
-        ],
-    ),
-    "MCEq.geometry.gtracr_cutoff": (
-        "MCEq.environment.geomagnetic.cutoff",
-        ["CACHE_VERSION", "build_phi0_with_cutoff", "get_cutoff_map"],
     ),
     "MCEq.geometry.corsikaatm": (
         "MCEq.environment._ext.corsikaatm",
@@ -158,16 +140,6 @@ def test_density_profiles_rejects_an_unknown_attribute():
 
     with pytest.raises(AttributeError):
         dp.NoSuchAtmosphere
-
-
-def test_the_km3net_table_is_one_object_on_every_path():
-    """Both MSIS backends must read one site table, not two copies."""
-    import MCEq.geometry.density_profiles as dp
-    import MCEq.geometry.msis21_atmosphere as m21
-    from MCEq.environment.parameters import KM3NET_DETECTORS
-
-    assert dp._KM3NET_DETECTORS is KM3NET_DETECTORS
-    assert m21._KM3NET_DETECTORS is KM3NET_DETECTORS
 
 
 def test_atmosphere_parameters_shim_keeps_its_documented_functions():

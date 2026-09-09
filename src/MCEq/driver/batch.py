@@ -382,7 +382,7 @@ def solve_fullsky(
             this call. ``None`` means "use ``run.geomagnetic_cutoff``"
             (auto-detect from the atmosphere if also ``None``).
         cutoff_kwargs: optional dict forwarded to
-            :func:`MCEq.geometry.gtracr_cutoff.get_cutoff_map`
+            :func:`MCEq.environment.geomagnetic.cutoff.get_cutoff_map`
             (e.g. ``{"iter_num": 30000, "bfield_type": "igrf"}``).
 
     Returns:
@@ -457,7 +457,7 @@ def solve_fullsky(
             "solve_fullsky: 2-D phi0 supplied — the geomagnetic cutoff "
             "is NOT applied on top (the caller owns the per-pixel "
             "primary spectrum). Bake the cutoff into phi0 with "
-            "MCEq.geometry.gtracr_cutoff.build_phi0_with_cutoff, or "
+            "MCEq.environment.geomagnetic.cutoff.build_phi0_with_cutoff, or "
             "pass geomagnetic_cutoff=False to silence this warning.",
             stacklevel=2,
         )
