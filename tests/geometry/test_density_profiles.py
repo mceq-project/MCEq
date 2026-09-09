@@ -1316,6 +1316,27 @@ def test_to_msis_longitude_is_a_change_of_spelling(given, expected):
     assert dp.TabulatedAtmosphere._to_msis_longitude(given) == pytest.approx(expected)
 
 
+@pytest.mark.parametrize("given", [315.0, -45.0, 0.0, 180.0, 359.9, -360.0, 360.0])
+def test_to_msis_longitude_accepts_either_branch_within_one_turn(given):
+    dp.TabulatedAtmosphere._to_msis_longitude(given)  # must not raise
+
+
+def test_to_msis_longitude_rejects_a_value_beyond_one_turn():
+    with pytest.raises(ValueError, match=r"outside \[-360, 360\]"):
+        dp.TabulatedAtmosphere._to_msis_longitude(999.0)
+
+
+def test_single_column_atmosphere_rejects_a_longitude_beyond_one_turn():
+    """_select_column returns a non-gridded table unvalidated -- the longitude
+    bound must be enforced downstream, on the single-column path, or nothing
+    checks *coord* before it reaches MSIS.
+    """
+    with pytest.raises(ValueError, match=r"outside \[-360, 360\]"):
+        dp.TabulatedAtmosphere(
+            TABLE_PATH, coord=(999.0, 45.0), top_extension="msis00", season="January"
+        )
+
+
 def _lc_grid_atmosphere(**kwargs):
     grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
     return dp.TabulatedLocationCentered(
