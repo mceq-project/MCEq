@@ -1364,8 +1364,12 @@ class AtmosphereTable:
                 f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
                 f"columns do not all have {n_lev} levels -- the column at "
                 f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
-                f"has {counts[bad]}. Keep every level in every column (mark gaps "
-                "with nan in a data column rather than dropping the row)."
+                f"has {counts[bad]}. Keep every level in every column, with a "
+                "finite positive density on each -- either rho_gcm3, or T_K "
+                "and p_hPa together. A row whose density is missing or nan is "
+                "discarded on load and leaves the same hole, so fill the gap "
+                "(interpolate between the neighbouring levels) instead of "
+                "marking it."
             )
 
         steps = np.diff(lon_axis)

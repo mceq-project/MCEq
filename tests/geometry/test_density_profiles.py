@@ -1418,3 +1418,29 @@ def test_column_interpolates_across_the_seam_of_a_cell_centred_grid(tmp_path):
     assert seam.T_K[0] == pytest.approx(
         0.5 * (node_lo.T_K[0] + node_hi.T_K[0]), rel=1e-12
     )
+
+
+def test_ragged_grid_error_does_not_recommend_nan(tmp_path):
+    """The old remedy was self-defeating: a nan density is dropped on load.
+
+    Following it produced the very error it was printed under.
+    """
+    # 8 rows over a 2x2 grid, so the row count IS a whole number of columns
+    # (n_lev = 2) -- otherwise the loader stops at the earlier "not a whole
+    # number of columns" error and never reaches the one under test.  The
+    # levels are just distributed unevenly: 3, 1, 2, 2.
+    lines = ["# MCEq tabulated atmosphere v1", "lat_deg,lon_deg,h_cm,T_K,p_hPa"]
+    levels = {(-30.0, 0.0): 3, (-30.0, 90.0): 1, (30.0, 0.0): 2, (30.0, 90.0): 2}
+    for (lat, lon), n_lev in levels.items():
+        for k in range(n_lev):
+            lines.append(f"{lat},{lon},{k * 1.0e6},280.0,{1000.0 / (k + 1)}")
+    path = tmp_path / "ragged.csv"
+    path.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(ValueError) as excinfo:
+        dp.AtmosphereTable.load_from_csv(path)
+
+    message = str(excinfo.value)
+    assert "do not all have 2 levels" in message
+    assert "mark gaps with nan" not in message
+    assert "discarded on load" in message
