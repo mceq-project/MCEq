@@ -15,15 +15,14 @@ for fn in os.listdir(base):
         corsika_acc = cdll.LoadLibrary(os.path.join(base, fn))
         break
 else:
-    # Without this the next statement dereferences an unbound name and the
-    # user gets `NameError: name 'corsika_acc' is not defined`, which says
-    # nothing about the real cause. The likeliest cause since this package
-    # moved out of MCEq/geometry/ is a stale build: the .so is gitignored, so
-    # `git pull` relocates this loader and leaves the library behind.
+    # Without this, the next statement dereferences an unbound name and the
+    # user gets a NameError that says nothing about the real cause. The
+    # compiled CORSIKA library must be installed beside this module; it is
+    # gitignored, so a fresh checkout needs a build (`pip install -e .`).
     raise ImportError(
-        f"No _libcorsikaatm*{suffix} found in {base}. The C extensions moved "
-        "to MCEq/environment/_ext/; reinstall (`pip install -e .`) or move the "
-        "stale .so out of MCEq/geometry/corsikaatm/."
+        f"No _libcorsikaatm*{suffix} found in {base}. Install the compiled "
+        "CORSIKA atmosphere library beside this module "
+        "(`pip install -e .`)."
     )
 
 for func in [

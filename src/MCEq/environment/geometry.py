@@ -160,8 +160,9 @@ class EarthGeometry:
         return np.sqrt(self.r_top**2 - self._A_2(theta) ** 2) - self._A_1(theta)
 
     def cos_th_star(self, theta):
-        r"""Returns the zenith angle at atmospheric boarder
-        :math:`\cos(\theta^*)` in [rad] as a function of zenith at detector.
+        r"""Returns the dimensionless zenith cosine at the atmospheric border
+        :math:`\cos(\theta^*)` as a function of the zenith angle
+        :math:`\theta` [rad] at the detector.
         """
         return (self._A_1(theta) + self.path_len(theta)) / self.r_top
 
@@ -197,10 +198,10 @@ def chirkin_cos_theta_star(costheta):
     <http://arxiv.org/abs/hep-ph/0407078v1>`_.
 
     Args:
-        costheta (float): :math:`\cos(\theta)` in [rad]
+        costheta (float): dimensionless :math:`\cos(\theta)`
 
     Returns:
-        float: :math:`\cos(\theta*)` in [rad]
+        float: dimensionless :math:`\cos(\theta*)`
     """
 
     p1 = 0.102573

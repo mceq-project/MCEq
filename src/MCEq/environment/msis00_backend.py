@@ -104,64 +104,17 @@ class cNRLMSISE00(NRLMSISE00Base):
         self._invalidate()
 
     def _update_lst(self):
-        """Hold the site at LOCAL noon, and keep ``sec`` consistent with it.
+        """Use local noon at every location.
 
-        NRLMSISE-00 takes ``lst`` as a separate input from ``sec`` and
-        ``g_long``. Its own documentation (``nrlmsise-00.h``, NOTES ON INPUT
-        VARIABLES) says the three "are used independently in the model" but
-        that "for the most physically realistic calculation these three
-        variables should be consistent (lst=sec/3600 + g_long/15)" -- a
-        recommendation, not a hard requirement, and it notes that Equation of
-        Time departures are legitimate. The model uses ``lst`` for the diurnal
-        and semidiurnal tides.
+        ``lst = 12`` hours and ``sec = 43200 - 240 * longitude`` seconds UT, so
+        the NRLMSISE-00 consistency relation ``lst = sec/3600 + longitude/15``
+        holds exactly and every site is sampled at its own local noon. The
+        model uses ``lst`` for the diurnal and semidiurnal tides.
 
-        Two things were wrong before. ``lst`` was written once at construction
-        and never again, so every site was evaluated at the *default*
-        location's solar time -- 12.0, the South Pole at longitude 0 -- which
-        violated the consistency relation everywhere else. Then the first fix
-        restored consistency by recomputing ``lst`` from the fixed ``sec``,
-        which satisfies the relation but silently means **12:00 UT**: Tokyo
-        came out at ``lst`` 21.3, a night atmosphere.
-
-        What MCEq wants from a named location is a representative *daytime*
-        atmosphere, so the local time of day is the quantity to hold fixed and
-        ``sec`` -- which is UT and has no setter -- is the one to derive.
-        ``DAY_TIMES_SEC`` says as much: its keys are ``day`` and ``night`` and
-        its comment reads "12:00 PM in seconds from midnight", i.e. it was
-        always a local time-of-day selector. So:
-
-            lst = DAY_TIMES_SEC[...] / 3600            (12.0, local noon)
-            sec = lst * 3600 - 240 * longitude          (the UT that implies)
-
-        ``sec`` stays inside [0, 86400] for any valid longitude (0 s at +180
-        deg, 86400 s at -180), so no wrapping is needed. Every site is now
-        sampled at its own local noon, and the consistency relation holds
-        exactly.
-
-        Ruled by Anatoli, 2026-09-04.
-
-        **The original numbers were nearly right, and the intermediate fix was
-        the excursion.** The old bug pinned ``lst`` at 12.0 for every site,
-        which *is* local noon -- it only failed to keep ``sec`` consistent with
-        it. So this restores densities close to the pre-fix values: measured
-        over the 12 shipped ``LOCATIONS`` x 12 months, local noon differs from
-        the original buggy state by **0.000 % at sea level, 0.07 % at 95 km**
-        and at most 0.62 % (SoudanMine/December, 112.8 km) -- the residue is
-        the model's separate UT term, ``cos(sr*(sec - p[79]) + 2*dgtr*g_long)``,
-        which is the part the old code really did get wrong. Against the
-        intermediate 12:00 UT state the differences are the large ones:
-        0.41 % at sea level, 22.95 % at 95 km, 46.6 % near 107 km.
-
-        **This diverges from MSIS 2.1 by construction.** ``nrlmsis/globe.py``
-        computes ``lst = utsec/3600 + lon/15`` from a fixed ``utsec``, so MSIS21
-        samples 12:00 UT. Comparing the two backends at a non-zero longitude
-        therefore compares different times of day, and that is deliberate: the
-        gap is pinned by
-        ``test_msis00_is_local_noon_and_msis21_is_ut_noon`` in
-        ``tests/geometry/test_environment_pins.py`` so it cannot drift
-        unnoticed. Moving MSIS21 to local noon too is a one-line change
-        (``self._sec = DAY_TIMES_SEC["day"] - 240.0 * lon``) if that is ever
-        wanted.
+        MSIS 2.1 samples 12:00 UT instead (its ``lst`` is derived from a fixed
+        UT seconds), so comparisons of the two backends at nonzero longitude
+        sample different local times. That difference is intentional and
+        pinned by ``tests/geometry/test_environment_pins.py::test_msis00_is_local_noon_and_msis21_is_ut_noon``.
         """
         lst_hours = self.daytimes["day"] / 3600.0
         self.inp.lst = c_double(lst_hours)
@@ -185,11 +138,10 @@ class cNRLMSISE00(NRLMSISE00Base):
         """Drop the altitude memo of :meth:`_retrieve_result`.
 
         The memo keys on altitude alone, so every setter that changes latitude,
-        longitude or day of year has to clear it: without this a
+        longitude or day of year has to clear it: otherwise a
         ``get_density(h)`` repeated at the same altitude returns the previous
-        location's or season's value (measured 12.5 % low for a doy change from
-        1 to 200 at 20 km, and it is what corrupts the azimuth-averaged
-        ``MSIS00LocationCentered.get_density``).
+        location's or season's value, including inside the azimuth-averaged
+        ``MSIS00LocationCentered.get_density``.
         """
         self.last_alt = None
 

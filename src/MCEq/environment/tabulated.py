@@ -31,13 +31,10 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         self.extrapolate = extrapolate
 
-        # Was a verbatim copy of the shared table; the two agreed exactly, key
-        # order included. Copied rather than aliased: ``month2doy`` is a plain
-        # public attribute, so binding the module global here would make
-        # ``atm.month2doy["June"] = ...`` retune the day-of-year for every
-        # MSIS00 and MSIS21 object in the process. (``cNRLMSISE00`` has aliased
-        # it since upstream 7026005 and still does -- pre-existing, not
-        # changed here.)
+        # Copied per instance, not aliased: ``month2doy`` is a plain public
+        # attribute, so binding the shared module table here would make
+        # ``atm.month2doy["June"] = ...`` retune the day-of-year map for every
+        # MSIS object in the process.
         self.month2doy = dict(MONTH_TO_DAY_OF_YEAR)
 
         self.season = season

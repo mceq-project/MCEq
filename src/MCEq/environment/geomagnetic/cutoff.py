@@ -90,8 +90,8 @@ def _cache_dir(paths=None) -> Path:
     """Return ``<paths.data_dir>/gtracr_cutoffs/``; create if missing.
 
     ``paths`` is a ``config.paths`` group; ``None`` reads the global one
-    through a dynamic import (C5: this layer keeps no static edge to
-    ``MCEq.config``; the driver always passes the run's group).
+    through a dynamic import, keeping this layer free of a static import
+    edge to ``MCEq.config``; the driver always passes the run's group.
     """
     if paths is None:
         from importlib import import_module
@@ -127,9 +127,8 @@ def _cache_key(
 def _gtracr_location_from_atmosphere(density_model):
     """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
-    Raises ``ValueError`` if the atmosphere has no notion of geographic
-    location, which is what makes the cutoff feature refuse a CORSIKA or
-    isothermal profile.
+    Raises ``ValueError`` unless the model exposes detector coordinates or a
+    location name present in :data:`atmosphere_parameters.LOCATIONS`.
 
     The coordinates always come from MCEq — ``_detector_latitude /
     _detector_longitude`` for the detector-centred models, the
@@ -141,8 +140,9 @@ def _gtracr_location_from_atmosphere(density_model):
     - the KM3NeT subclasses carry ``_detector_name`` (``ORCA`` / ``ARCA``),
       set from the same ``_KM3NET_DETECTORS`` entry the coordinates come
       from, so the tag cannot drift away from the position it names;
-    - IceCube is the geographic pole, which is exact and unambiguous;
-    - anything else gets a stub spelling out its own coordinates.
+    - without an explicit detector name, coordinates within 1e-6 degrees of
+      (-90, 0) are labelled ``IceCube``; everything else gets a stub
+      spelling out its own coordinates.
     """
     from MCEq.environment.parameters import LOCATIONS
 
@@ -348,8 +348,8 @@ def get_cutoff_map(
 # Primary spectrum with per-pixel cutoff
 # ---------------------------------------------------------------------------
 
-# GaisserHonda / GSF mass-group nominal charges (Z) + atomic numbers (A).
-# Used as the canonical superposition for primary spectra without their
+# GaisserHonda / GSF mass-group nominal nuclear charges (Z) and mass numbers
+# (A). Used as the canonical superposition for primary spectra without their
 # own per-species rigidity awareness.
 _DEFAULT_MASS_GROUPS = (
     # (corsika_id, Z, A)
@@ -370,16 +370,18 @@ def build_phi0_with_cutoff(
 ) -> np.ndarray:
     """Build a ``(dim_states, K)`` phi0 with rigidity cutoff applied.
 
-    For each mass group ``(Z, A)`` with cutoff ``R_c[pixel]``, nucleons
-    of nucleus-total-energy ``A * E_nuc`` are accepted iff
-    ``E_nuc > Z * R_c`` (ultrarelativistic ⇒ ``R ≈ E / Z``). Below the
-    threshold the species contributes zero. Above, the standard
-    proton+neutron superposition is applied as in
+    For each mass group ``(Z, A)`` with cutoff ``R_c[pixel]``, the group is
+    accepted where ``A * E_nuc > Z * R_c`` — nucleus total energy
+    ``A * E_nuc`` against the rigidity threshold ``Z * R_c``, in the
+    ultrarelativistic approximation ``R ≈ E / Z``. Below the threshold the
+    species contributes zero. Above, the standard proton+neutron
+    superposition is applied as in
     :meth:`MCEqRun.set_primary_model`.
 
     ``physics`` is a ``config.physics`` group supplying
     ``minimal_primary_energy``; ``None`` reads the global one through a
-    dynamic import (C5; the driver always passes the run's group).
+    dynamic import, keeping this layer free of a static import edge to
+    ``MCEq.config``; the driver always passes the run's group.
     """
     if physics is None:
         from importlib import import_module

@@ -31,7 +31,6 @@ class CorsikaAtmosphere(EarthsAtmosphere):
 
     def __init__(self, location, season=None, environment=None):
         # Check if the atmosphere is available
-        # Use the renamed list_available_atmospheres function
         available_atmospheres = list_available_corsika_atmospheres()
         if (location, season) not in available_atmospheres:
             raise ValueError(
@@ -42,13 +41,12 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         self.init_parameters(location, season)
         import MCEq.environment._ext.corsikaatm as corsika_acc
 
-        # Assuming corsika_acc is defined elsewhere or needs to be imported
         self.corsika_acc = corsika_acc
         EarthsAtmosphere.__init__(self, environment=environment)
 
     def init_parameters(self, location, season):
-        """Initializes :attr:`_atm_param` by fetching them from the
-        `atmosphere_parameters` module.
+        """Initializes :attr:`_atm_param` by fetching the parameters from
+        :mod:`MCEq.environment.parameters`.
 
         Args:
           location (str): The location identifier.
@@ -57,7 +55,6 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         Raises:
           Exception: if parameter set not available (via get_atmosphere_parameters)
         """
-        # Use the renamed get_atmosphere_parameters function
         _aatm, _batm, _catm, _thickl, _hlay = get_atmosphere_parameters(
             location, season
         )
@@ -95,7 +92,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     def get_density(self, h_cm):
         """Returns the density of air in g/cm**3.
 
-        Uses the optimized module function :func:`corsika_get_density_jit`.
+        Uses the compiled :func:`MCEq.environment._ext.corsikaatm.corsika_get_density`.
 
         Args:
           h_cm (float): height in cm
@@ -104,12 +101,12 @@ class CorsikaAtmosphere(EarthsAtmosphere):
           float: density :math:`\\rho(h_{cm})` in g/cm**3
         """
         return self.corsika_acc.corsika_get_density(h_cm, *self._atm_param)
-        # return corsika_get_density_jit(h_cm, self._atm_param)
 
     def get_mass_overburden(self, h_cm):
         """Returns the mass overburden in atmosphere in g/cm**2.
 
-        Uses the optimized module function :func:`corsika_get_m_overburden_jit`
+        Uses the compiled
+        :func:`MCEq.environment._ext.corsikaatm.corsika_get_m_overburden`.
 
         Args:
           h_cm (float): height in cm
@@ -118,21 +115,21 @@ class CorsikaAtmosphere(EarthsAtmosphere):
           float: column depth :math:`T(h_{cm})` in g/cm**2
         """
         return self.corsika_acc.corsika_get_m_overburden(h_cm, *self._atm_param)
-        # return corsika_get_m_overburden_jit(h_cm, self._atm_param)
 
     def rho_inv(self, X, cos_theta):
         """Returns reciprocal density in cm**3/g using planar approximation.
 
-        This function uses the optimized function :func:`planar_rho_inv_jit`
+        Calls the compiled ``planar_rho_inv`` with slant depth in g/cm² and
+        the dimensionless zenith cosine. Valid for :math:`\\theta < 70^\\circ`.
 
         Args:
-          h_cm (float): height in cm
+          X (float): slant depth in g/cm**2
+          cos_theta (float): :math:`\\cos(\\theta)`, dimensionless
 
         Returns:
           float: :math:`\\frac{1}{\\rho}(X,\\cos{\\theta})` cm**3/g
         """
         return self.corsika_acc.planar_rho_inv(X, cos_theta, *self._atm_param)
-        # return planar_rho_inv_jit(X, cos_theta, self._atm_param)
 
     def calc_thickl(self):
         """Calculates thickness layers for :func:`depth2height`

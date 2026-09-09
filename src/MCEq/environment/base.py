@@ -1,9 +1,10 @@
 """The abstract atmosphere: column depth, splines and the zenith contract.
 
-:class:`EarthsAtmosphere` is what every density model in this package derives
-from. It owns the path integration that turns a density profile into the
-depth/density splines the solver reads, and delegates the actual air density to
-a subclass through :meth:`get_density`.
+:class:`EarthsAtmosphere` is the base class for the atmospheric density models
+in this package. It owns the path integration that turns a density profile into
+the depth/density splines the solver reads, and delegates the actual air
+density to a subclass through :meth:`get_density`. (:class:`GeneralizedTarget`
+is a separate, independent target model and does not derive from this class.)
 """
 
 from abc import ABCMeta, abstractmethod
@@ -17,12 +18,12 @@ from MCEq.misc import info
 def _default_environment_group():
     """The live ``config.environment`` view, fetched dynamically.
 
-    The no-argument construction path (a user-built
-    ``CorsikaAtmosphere()``, the tutorial's bare model) keeps reading
-    process-wide settings, but this layer must not carry a static import
-    edge to :mod:`MCEq.config` (contract C5). The device is the one
-    :func:`MCEq.misc._views` uses. Driver-built atmospheres never come
-    here: ``set_density_model`` injects the run's environment group.
+    The no-argument construction path (a model built without an injected
+    ``environment`` group) keeps reading process-wide settings at
+    construction, but this layer must not carry a static import edge to
+    :mod:`MCEq.config`. The device is the one :func:`MCEq.misc._views`
+    uses. Driver-built atmospheres never come here: ``set_density_model``
+    injects the run's environment group.
     """
     from importlib import import_module
 
@@ -136,26 +137,27 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         # ``dl = 0`` is the atmosphere top, so this is the path minimum.
         max_den = self.get_density(self.geom.h(0, thrad))
 
-        # One scalar ``geom.h`` call per sample. The MSIS21 overrides pass the
-        # heights of a single array call instead, and the two spellings differ
-        # by one ULP of ``r_E`` at 258 of 901 zeniths -- see
-        # ``tests/geometry/test_environment_pins.py``. Which one a given
-        # atmosphere uses is therefore its own business, not the fit's.
+        # One scalar ``geom.h`` call per sample, preserved because changing the
+        # height evaluation order changes the spline inputs through
+        # floating-point rounding; the MSIS21 overrides pass the heights of a
+        # single array call instead and differ by one ULP of ``r_E`` at some
+        # zeniths -- see ``tests/geometry/test_environment_pins.py``.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
         fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
     @property
     def max_X(self):
-        """Depth at altitude 0."""
+        """Slant depth at the configured observation level."""
         if not hasattr(self, "_max_X"):
             self.set_theta(0)
         return self._max_X
 
     @property
     def max_den(self):
-        """Atmosphere-top density -- the path minimum, despite the name (B29).
+        """Before spline construction, the configured density estimate.
 
-        Two meanings across its lifetime; see the note in :func:`__init__`.
+        After the first ``set_theta``, the density evaluated at the
+        atmosphere's upper endpoint -- the path minimum, despite the name.
         """
         if not hasattr(self, "_max_den"):
             self.set_theta(0)
@@ -163,7 +165,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
 
     @property
     def s_h2X(self):
-        """Spline for conversion from altitude to depth."""
+        """Spline for conversion from altitude to log depth."""
         if not hasattr(self, "_s_h2X"):
             self.set_theta(0)
         return self._s_h2X
@@ -177,19 +179,17 @@ class EarthsAtmosphere(metaclass=ABCMeta):
 
     @property
     def s_lX2h(self):
-        """Spline for conversion from depth to altitude."""
+        """Spline for conversion from log depth to altitude."""
         if not hasattr(self, "_s_lX2h"):
             self.set_theta(0)
         return self._s_lX2h
 
     def set_theta(self, theta_deg):
-        """Configures geometry and initiates spline calculation for
-        :math:`\\rho(X)`.
+        """Validate the zenith angle and rebuild the atmospheric splines.
 
         Calls :func:`calculate_density_spline`, which makes :func:`r_X2rho`
-        available to the core code. There is no spline cache and no
-        ``use_atm_cache`` config option -- this docstring described both for
-        years -- only the ``theta_deg`` short-circuit below.
+        available to the core code. The splines are always rebuilt; there is
+        no spline cache.
 
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector
@@ -214,8 +214,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
 
-        The spline `s_X2rho` is used, which was calculated or retrieved
-        from cache during the :func:`set_theta` call.
+        Evaluated with the spline ``s_X2rho``, built by the ``set_theta`` call.
 
         Args:
            X (float):  slant depth in g/cm**2
@@ -230,8 +229,8 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         """Returns the depth along path as function of height above
         surface.
 
-        The spline `s_X2rho` is used, which was calculated or retrieved
-        from cache during the :func:`set_theta` call.
+        Evaluated as ``exp(s_h2X(h))`` with the height-to-log-depth spline
+        built by the ``set_theta`` call.
 
         Args:
            h (float):  vertical height above surface in cm
@@ -246,8 +245,8 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         """Returns the height above surface as a function of slant depth
         for currently selected zenith angle.
 
-        The spline `s_lX2h` is used, which was calculated or retrieved
-        from cache during the :func:`set_theta` call.
+        Evaluated as ``s_lX2h(log(X))`` with the log-depth-to-height spline
+        built by the ``set_theta`` call.
 
         Args:
            X (float):  slant depth in g/cm**2
@@ -261,14 +260,14 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     def X2rho(self, X):
         """Returns the density :math:`\\rho(X)`.
 
-        The spline `s_X2rho` is used, which was calculated or retrieved
-        from cache during the :func:`set_theta` call.
+        Evaluated with the depth-to-density spline ``s_X2rho``, built by the
+        ``set_theta`` call.
 
         Args:
            X (float):  slant depth in g/cm**2
 
         Returns:
-           float: :math:`\\rho` in cm**3/g
+           float: :math:`\\rho` in g/cm**3
 
         """
         return self.s_X2rho(X)
@@ -286,7 +285,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         return 0.000283 * self.get_density(h_cm) / self.get_density(0)
 
     def gamma_cherenkov_air(self, h_cm):
-        """Returns the Lorentz factor gamma of Cherenkov threshold in air (MeV)."""
+        """Returns the dimensionless Lorentz factor gamma at Cherenkov threshold in air."""
 
         nrel = self.nref_rel_air(h_cm)
         return (1.0 + nrel) / np.sqrt(2.0 * nrel + nrel**2)

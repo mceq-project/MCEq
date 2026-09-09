@@ -53,8 +53,8 @@ corsika_get_density(double h_cm, double *a,
 
     Args:
       h_cm (float): height above surface in cm
-      param (numpy.array): 5x5 parameter array from
-                        :class:`CorsikaAtmosphere`
+      a, b, c, t, hl: pointers to the five CORSIKA atmosphere-parameter
+                        arrays (five length-5 arrays)
 
     Returns:
       float: :math:`\\rho(h)` in g/cm**3
@@ -81,16 +81,16 @@ corsika_get_m_overburden(double h_cm, double *a,
                          double *b, double *c,
                          double *t, double *hl)
 {
-    /*Optimized calculation of :math:`\\T(h)` in
+    /*Optimized calculation of the overburden :math:`T(h)` in
     according to CORSIKA type parameterization.
 
     Args:
       h_cm (float): height above surface in cm
-      param (numpy.array): 5x5 parameter array from
-                        :class:`CorsikaAtmosphere`
+      a, b, c, t, hl: pointers to the five CORSIKA atmosphere-parameter
+                        arrays (five length-5 arrays)
 
     Returns:
-      float: :math:`\\rho(h)` in g/cm**3
+      float: :math:`T(h)` in g/cm**2
     */
 
     double res = 0.0;

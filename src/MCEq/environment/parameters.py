@@ -264,7 +264,7 @@ DEFAULT_AP = 4.0
 
 def list_available_corsika_atmospheres(
     print_reference_table=False, format_output=False
-):  # Renamed from list_available_corsika_atmospheres
+):
     """Returns a list of available (location, season) tuples for CORSIKA-style models.
 
     Args:
@@ -292,9 +292,7 @@ def list_available_corsika_atmospheres(
     return list(_cosika_atmosphere_params.keys())
 
 
-def get_atmosphere_parameters(
-    location, season
-):  # Renamed from get_corsika_atmosphere_parameters
+def get_atmosphere_parameters(location, season):
     (
         """
     Returns the atmospheric parameters for a given location and season for CORSIKA-style models.
@@ -352,9 +350,8 @@ def get_day_time_seconds(day_time_name):
 # ---------------------------------------------------------------------------
 # KM3NeT detector coordinates (approximate positions)
 # ---------------------------------------------------------------------------
-# Lives here rather than beside the MSIS00 classes so that both MSIS backends
-# can reach it without importing each other -- the last of the three edges
-# that made the geometry siblings cyclic (contract C7).
+# Shared detector coordinates for both MSIS backends; they live here so
+# neither backend needs to import the other.
 KM3NET_DETECTORS = {
     # ORCA: offshore Toulon (France), ~2450 m depth
     "ORCA": {"longitude": 6.033, "latitude": 42.803, "depth_m": 2450.0},

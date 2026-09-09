@@ -18,7 +18,6 @@ The class hierarchy mirrors :mod:`MCEq.environment.msis00`:
 - :class:`MSIS21KM3NeTCentered`    — ORCA / ARCA
 
 Requires ``nrlmsis`` (https://github.com/afedynitch/nrlmsis2.1) installed.
-The vectorised below-ZETA_B path is on master as of 2026-05-24.
 """
 
 from __future__ import annotations
@@ -258,9 +257,8 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         max_den = float(rho_vec[0])
 
-        # ``h_vec_cm[i] == geom.h(dl_vec[i], thrad)``, so ``dl_vec[2:]`` is
-        # ``h_vec_cm[2:]`` — the heights the base tail recomputes with one
-        # scalar call each, one ULP of ``r_E`` away from these.
+        # Spline samples use the vectorised heights already computed above,
+        # preserving this model's existing floating-point evaluation order.
         fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1], max_den=max_den)
 
     # ------------------------------------------------------------------
@@ -391,9 +389,10 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
         """Batched rho(X) spline using calc_altitude_array.
 
         Single-azimuth: one vectorised call.
-        Azimuth-averaging: n_azimuth vectorised calls (one per direction),
-        averaged before the spline fit — far better than the height-major
-        loop in the legacy MSIS00 path.
+        Azimuth-averaging: n_azimuth vectorised calls (one per azimuth), with
+        all sampled heights evaluated in a single backend call per azimuth and
+        the densities averaged before the spline fit. MSIS00 also iterates over
+        azimuths first, but evaluates its heights through scalar calls.
         """
         from time import time
 

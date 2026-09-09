@@ -24,12 +24,13 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp, *, max_den):
       rho_vec: density at each of the ``n_steps`` samples of *dl_vec*.
       dl_vec: slant path from the top of the atmosphere to the observation
         level, ``linspace(0, path_len, n_steps)``.
-      h_intp: height at ``dl_vec[2:]``, in reverse path order. A list or an
-        array; the two are bitwise equivalent here. It is an argument rather
-        than something computed from *dl_vec* because the scalar-``geom.h`` and
-        array-``geom.h`` spellings differ by one ULP of ``r_E`` at 258 of 901
-        zeniths, and both are in use -- ``tests/geometry/test_environment_pins.py``
-        pins that difference and bounds it at two ULP.
+      h_intp: height at ``dl_vec[2:]``, in reverse path order. Supplied by the
+        caller rather than computed from *dl_vec* so each atmosphere can keep
+        its own scalar-``geom.h`` or array-``geom.h`` evaluation: the two
+        spellings differ by about one ULP of ``r_E`` at some zeniths, the
+        splines must reproduce their own model's rounding, and
+        ``tests/geometry/test_environment_pins.py`` bounds the difference at
+        two ULP.
       max_den: the caller's atmosphere-top density. Keyword-only and required
         on purpose: it is the one stored quantity the four callers derive
         differently, and ``EarthsAtmosphere.__init__`` pre-sets ``_max_den``
@@ -55,22 +56,19 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp, *, max_den):
     ``*LocationCentered`` classes at every zenith, since those hand the
     geometry an effective *local* zenith of at most 90 degrees. It does not
     coincide for a genuinely upgoing column above a raised observation level:
-    with ``h_obs > 0`` and theta > 90 the height is V-shaped along the path, and
-    ``UnivariateSpline`` then rejects *h_intp* outright with "x must be strictly
-    increasing if s = 0" -- 229 of 1998 samples are non-increasing at
-    theta = 91.4 deg, ``h_obs`` = 2 km. ``set_h_obs`` admits those angles
-    (``max_theta = geom.theta_max_deg`` = 91.435 deg there), so the class accepts
-    zeniths this fit cannot serve. Nothing in the tree reaches it; it is a real
-    latent defect rather than a handled case, and reversing the arrays is no
-    workaround for it.
+    with ``h_obs > 0`` and theta > 90 the height is V-shaped along the path,
+    and ``UnivariateSpline`` then rejects *h_intp* outright with "x must be
+    strictly increasing if s = 0". ``set_h_obs`` admits those angles
+    (``max_theta = geom.theta_max_deg`` = 91.435 deg there), so the class
+    accepts zeniths this fit cannot serve; reversing the arrays is no
+    workaround.
 
-    ``_s_X2rho`` is fitted on ``X_int``, so its domain starts at
-    ``X_int[0] > 0`` and every solve extrapolates it down to
-    ``config.X_start == 0``. That extrapolation is load-bearing, not a hazard:
-    it is the top-of-atmosphere saturation of ``1/rho`` that
-    ``etd2_nonuniform_path`` sizes its first steps against, and
-    ``_s_X2rho.get_knots()[0]`` recovers the fitted lower bound exactly for
-    anyone who needs it.
+    ``_s_X2rho`` is fitted from the first positive depth (``X_int[0] > 0``),
+    so every solve extrapolates it down to ``config.X_start == 0``. That
+    extrapolation is required, not a hazard: the integration-path builder
+    sizes its first steps against the extrapolated top-of-atmosphere
+    saturation of ``1/rho``, and ``_s_X2rho.get_knots()[0]`` recovers the
+    fitted lower bound exactly for anyone who needs it.
     """
     from scipy.integrate import cumulative_trapezoid
     from scipy.interpolate import UnivariateSpline
@@ -78,21 +76,18 @@ def fit_column_splines(atmosphere, rho_vec, dl_vec, h_intp, *, max_den):
     h_intp = np.asarray(h_intp)
     X_int = cumulative_trapezoid(rho_vec, dl_vec)
 
-    # Assigned before anything that can raise, which is the order the four
-    # callers had. It means a rejected ``h_intp`` leaves ``_max_X`` describing
-    # the new zenith while the splines still describe the old one -- see B28 --
-    # but changing that is a behaviour change, not a relocation.
+    # Endpoint values are assigned before anything that can raise, matching
+    # the order the four callers had. A rejected ``h_intp`` therefore leaves
+    # ``_max_X`` describing the new zenith while the splines still describe
+    # the old one; changing that is a behaviour change, not a relocation.
     atmosphere._max_X = X_int[-1]
     atmosphere._max_den = max_den
 
-    # ``np.log`` of the CONTIGUOUS slice, reversed after, rather than of the
-    # reversed view. Elementwise, so the two are equal on this host; they are
-    # not equal by construction, because numpy dispatches the float64 ``log``
-    # SVML loop only on AVX512-SKX and conditions that dispatch on contiguity.
-    # The base tail fed ``np.log`` a Python list, hence contiguous, and the
-    # MSIS21 tails fed it a negative-stride view -- so the two families already
-    # disagreed in this respect and a shared helper has to pick one. It picks
-    # the contiguous form, which is what the majority of atmospheres had.
+    # Log of the CONTIGUOUS depth slice, reversed after, rather than of the
+    # reversed view: elementwise equal on this host but not equal by
+    # construction, since numpy may dispatch the float64 ``log`` differently
+    # depending on contiguity. The contiguous form preserves the evaluation
+    # order the majority of atmospheres used.
     log_X_intp = np.log(X_int[1:])[::-1]
     atmosphere._s_h2X = UnivariateSpline(h_intp, log_X_intp, k=2, s=0.0)
     atmosphere._s_X2rho = UnivariateSpline(X_int, rho_vec[1:], k=2, s=0.0)

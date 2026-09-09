@@ -1,4 +1,4 @@
-"""A generic homogeneous target, e.g. a fixed-target or beam-dump setup.
+"""A piecewise-constant material target, e.g. a fixed-target or beam-dump setup.
 
 :class:`GeneralizedTarget` is not an :class:`~MCEq.environment.base.
 EarthsAtmosphere`: it has no zenith angle and its ``set_theta`` raises. That
@@ -14,9 +14,9 @@ class GeneralizedTarget:
     """This class provides a way to run MCEq on piece-wise constant
     one-dimenional density profiles.
 
-    The default values for the average density mirror the config file
-    variables `len_target`, `env_density` and `env_name` as of import.
-    The density profile has to be built by calling subsequently
+    Omitted constructor arguments are resolved from the environment settings
+    at construction; the configured target length is converted from metres to
+    centimetres. The density profile has to be built by calling subsequently
     :func:`add_material`. The current composition of the target
     can be checked with :func:`draw_materials` or :func:`print_table`.
 
@@ -39,10 +39,9 @@ class GeneralizedTarget:
         env_name=None,
         environment=None,
     ):
-        # Resolved here rather than as signature defaults: a default binds when
-        # this module is first imported, which happens lazily from
-        # MCEqRun.set_density_model, so whether a caller's `config.len_target`
-        # was seen depended on whether it was written before that import.
+        # Omitted parameters are resolved from the supplied environment
+        # settings here, not in the signature, so they are read at
+        # construction time.
         if len_target is None or env_density is None or env_name is None:
             if environment is None:
                 from importlib import import_module
@@ -208,7 +207,7 @@ class GeneralizedTarget:
             Exception: If requested position exceeds target.
         """
         X = np.atleast_1d(X)
-        # allow for some small constant extrapolation for odepack solvers
+        # Allow small constant-density extrapolation beyond the target endpoint
         if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
             X[-1] = self.max_X
         if np.min(X) < 0.0 or np.max(X) > self.max_X:

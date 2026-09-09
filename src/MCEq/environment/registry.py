@@ -1,18 +1,10 @@
 """Name to atmosphere class: the table behind ``MCEqRun.set_density_model``.
 
-The dispatch used to be a list literal and an ``elif`` ladder inside that
-method, which had two consequences worth removing. A name could be present in
-one and absent from the other -- ``MSIS00_KM3NeT`` was, bug B15 -- and the only
-way to ask the code which models exist was to parse the literal out of the
-method's source with :mod:`ast`, which ``tests/golden/gen_paths.py`` did.
-
-Entries are dotted ``module:qualname`` strings resolved on first use, so
-importing this module costs nothing and selecting an MSIS00 model does not drag
-in the MSIS21 tree or vice versa. That laziness was a property of the ``elif``
-ladder (it ran ``import MCEq.geometry.density_profiles`` inside the method) and
-is kept deliberately.
-
-
+One table defines both the model lookup and the available-model listing, so
+the two cannot disagree. Entries are dotted ``module:qualname`` strings
+resolved on first use, so importing this module costs nothing and selecting an
+MSIS00 model does not drag in the MSIS21 tree or vice versa; implementation
+modules are imported only when a model is requested.
 """
 
 from __future__ import annotations
@@ -22,7 +14,7 @@ from importlib import import_module
 #: Public model name -> ``"module:qualname"``. Order is the order
 #: :func:`available_models` reports and the error message lists, so it is the
 #: user-visible ordering; keep the MSIS families together and grouped by
-#: backend generation, as the original literal did.
+#: backend.
 DENSITY_MODELS: dict[str, str] = {
     "MSIS00": "MCEq.environment.msis00:MSIS00Atmosphere",
     "MSIS00_IC": "MCEq.environment.msis00:MSIS00IceCubeCentered",
@@ -36,8 +28,7 @@ DENSITY_MODELS: dict[str, str] = {
     "GeneralizedTarget": "MCEq.environment.target:GeneralizedTarget",
 }
 
-#: Models whose constructor takes no configuration. ``set_density_model``
-#: discarded ``model_config`` for these, and still does.
+#: Models whose constructor ignores ``model_config``.
 _NO_CONFIG = frozenset({"GeneralizedTarget"})
 
 
@@ -57,13 +48,12 @@ def build(name: str, model_config, environment=None):
     """Instantiate the atmosphere *name* with *model_config*.
 
     ``model_config`` is splatted into the constructor, except for the models in
-    :data:`_NO_CONFIG`, which are constructed with no arguments -- the
-    behaviour of the ``elif`` ladder this replaces.
+    :data:`_NO_CONFIG`, which are constructed with no arguments.
 
     ``environment`` is the caller's ``environment`` settings group, forwarded
     as a keyword to every model: a driver-built atmosphere then reads the
-    run's settings (snapshot-aware, D3/C5), not the process globals. ``None``
-    keeps the live-read fallback for user-built models.
+    run's settings, not the process globals. ``None`` keeps the live-read
+    fallback for user-built models.
 
     Raises:
         KeyError: if *name* is not a registered model. The caller owns the

@@ -66,7 +66,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         and geo coordinates.
 
         Args:
-          location (str): Supported are "SouthPole" and "Karlsruhe"
+          location (str): location name from ``MCEq.environment.parameters.LOCATIONS``
           season (str): months of the year: January, February, etc.
           use_loc_altitudes (bool): If to use default altitudes from location
         """
@@ -95,7 +95,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """Updates parameters of the density model
 
         Args:
-          location_coord (tuple of str): (longitude, latitude)
+          location_coord (tuple): longitude and latitude in degrees (numeric)
           season (str): months of the year: January, February, etc.
           doy (int): day of the year. 'doy' takes precedence over 'season' if both are set
         """
@@ -153,10 +153,10 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         self._clear_cache()
 
     def set_season(self, month):
-        """Changes MSIS location by month strings defined in _msis_wrapper.
+        """Set the season from a month name.
 
         Args:
-          location (str): month as defined in :class:`NRLMSISE-00.`
+          month (str): month name as defined in :class:`NRLMSISE-00`.
 
         """
         self._msis.set_season(month)
@@ -181,7 +181,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
           h_cm (float): height in cm
 
         Returns:
-          float: density :math:`T(h_{cm})` in K
+          float: temperature :math:`T(h_{cm})` in K
         """
         return self._msis.get_temperature(h_cm)
 
@@ -375,10 +375,9 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
 
         max_den = float(rho_vec[0])
 
-        # Scalar ``geom.h``, as in the base tail this branch replaces. These
-        # are the same values as ``h_vec[2:][::-1]`` -- same function, same
-        # arguments -- so the recomputation is redundant, but removing it is a
-        # change of its own and not part of this extraction.
+        # Evaluate heights with scalar ``geom.h`` calls, as the base
+        # atmosphere does, to preserve the spline inputs under floating-point
+        # rounding.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
         fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
