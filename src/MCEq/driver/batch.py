@@ -271,68 +271,6 @@ def solve_batch(
     )
 
 
-def solve_multirhs(
-    run,
-    phi0_matrix,
-    int_grid=None,
-    grid_var="X",
-    *,
-    dtype=np.float64,
-    X_start=None,
-    eps=None,
-    dX_max=None,
-    dX_min=None,
-    fd_span=None,
-):
-    """Propagate K independent initial conditions through one shared
-    ETD2 operator.
-
-    .. deprecated::
-        Thin wrapper around :meth:`solve_batch` with
-        ``conditions=None``. Prefer :meth:`solve_batch`, which
-        additionally handles per-column directions/atmospheres and
-        returns an :class:`MCEqBatchResult` with named-spectrum
-        extraction. Kept for backwards compatibility.
-
-    Args:
-      phi0_matrix (np.ndarray[dim_states, K]): initial state matrix.
-        Each column carries one independent initial spectrum.
-      int_grid, grid_var, dtype, X_start, eps, dX_max, dX_min,
-      fd_span: see :meth:`solve_batch`.
-
-    Returns:
-      (np.ndarray[dim_states, K], np.ndarray[len(int_grid), dim_states, K]):
-      final state matrix and stacked snapshots.
-    """
-    import warnings
-
-    warnings.warn(
-        "solve_multirhs is deprecated; use solve_batch (same shared-path "
-        "route when conditions=None) and read res.sol / res.grid_sol.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    phi0_matrix = np.asarray(phi0_matrix)
-    if phi0_matrix.ndim != 2:
-        raise ValueError(
-            f"solve_multirhs: phi0_matrix must be 2-D (dim_states, K), "
-            f"got shape {phi0_matrix.shape}"
-        )
-    res = run.solve_batch(
-        phi0_matrix,
-        None,
-        int_grid,
-        grid_var,
-        dtype=dtype,
-        X_start=X_start,
-        eps=eps,
-        dX_max=dX_max,
-        dX_min=dX_min,
-        fd_span=fd_span,
-    )
-    return res.sol, res.grid_sol
-
-
 def solve_fullsky(
     run,
     zenith_grid,

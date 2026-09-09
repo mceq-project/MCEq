@@ -845,7 +845,6 @@ class MCEqRun:
     # the functions in driver/batch.py. The first parameter of each function is
     # named ``run`` precisely so that this binding reads as the method.
     solve_batch = batch.solve_batch
-    solve_multirhs = batch.solve_multirhs
     solve_fullsky = batch.solve_fullsky
     _build_condition_paths = paths.build_condition_paths
     # Result-extraction and observable functions bound as methods; their

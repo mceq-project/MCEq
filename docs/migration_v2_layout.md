@@ -125,7 +125,8 @@ re-run of 2026-09-09 and the M13 keep-list ruling of the release cut.
 
 ## Deprecated names that warn
 
-Only genuinely retired APIs warn today: `MCEqRun.set_theta_deg` (use
-`set_zenith_azimuth`, decision D7) and `MCEqRun.solve_multirhs` (use
-`solve_batch`). Flat config access and the shim import paths above do
-not warn (D14 resolution, ruling D-3).
+One genuinely retired API still warns: `MCEqRun.set_theta_deg` (use
+`set_zenith_azimuth`, decision D7). `MCEqRun.solve_multirhs` warned through
+the 1.x/2.0 development cycle and is now removed at 2.0 (use `solve_batch`
+and read `res.sol` / `res.grid_sol`). Flat config access and the kept shim
+import paths do not warn (D14 resolution, ruling D-3).

@@ -44,7 +44,7 @@ LIMIT = 700
 #: ``--update``, so recorded == measured and no entry ever grants regrowth
 #: headroom.
 ALLOW = {
-    "src/MCEq/driver/mceq_run.py": 1095,  # re-pinned by the prose pass (comment trim); remaining: env binding ~160, model load ~70
+    "src/MCEq/driver/mceq_run.py": 1094,  # re-pinned at the v2.0 cull (solve_multirhs binding); remaining: env binding ~160, model load ~70
     "src/MCEq/models/ddm/ddm.py": 866,  # re-pinned by the prose pass; split by a later follow-up
 }
 

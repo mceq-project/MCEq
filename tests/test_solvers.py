@@ -532,8 +532,8 @@ def test_solve_etd2_numpy_multirhs_matches_single_rhs_toy(K):
 
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solve_multirhs_dtype_float32():
-    """End-to-end fp32 dispatch through MCEqRun.solve_multirhs.
+def test_solve_batch_dtype_float32():
+    """End-to-end fp32 dispatch through ``MCEqRun.solve_batch``.
 
     Compares the fp32 Accelerate multi-RHS path to the fp64 reference at K=4
     on the real SIBYLL21 config; asserts per-cell relative error stays
@@ -570,17 +570,15 @@ def test_solve_multirhs_dtype_float32():
         K = 4
         phi0_multi = np.stack([s * phi0 for s in rng.uniform(0.5, 1.5, K)], axis=1)
 
-        with pytest.warns(DeprecationWarning, match="solve_batch"):
-            sol_f64, _ = mceq.solve_multirhs(phi0_multi)
-            sol_f32, _ = mceq.solve_multirhs(phi0_multi, dtype=np.float32)
+        sol_f64 = mceq.solve_batch(phi0_multi).sol
+        sol_f32 = mceq.solve_batch(phi0_multi, dtype=np.float32).sol
         assert sol_f64.dtype == np.float64
         assert sol_f32.dtype == np.float32
 
         denom = np.maximum(np.abs(sol_f64), 1e-30)
         rel = np.abs(sol_f32.astype(np.float64) - sol_f64) / denom
         assert rel.max() < 1e-4, (
-            f"solve_multirhs fp32 vs fp64 max rel err {rel.max():.2e} "
-            f"exceeds 1e-4 budget"
+            f"solve_batch fp32 vs fp64 max rel err {rel.max():.2e} exceeds 1e-4 budget"
         )
         mceq.close()
     finally:
@@ -594,9 +592,9 @@ def test_solve_etd2_rank_follows_phi():
 
     A 1-D state gives a 1-D solution and a ``(dim, 1)`` batch gives the same
     values as a column, so the batch route needs no name of its own and
-    ``solve_etd2`` refuses neither rank. The 2-D requirement that a caller
-    asking for a batch does need lives at the API boundary
-    (``MCEqRun.solve_multirhs``), which guards it.
+    ``solve_etd2`` refuses neither rank. A caller that wants to require a
+    real batch does so at its own boundary: ``MCEqRun.solve_batch``
+    broadcasts a 1-D state to every member rather than rejecting it.
     """
     import scipy.sparse as sp
 
@@ -2379,28 +2377,6 @@ def test_solve_fullsky_2d_phi0_explicit_cutoff_warns(mceq_sib21):
         ).copy()
         with pytest.warns(UserWarning, match="NOT applied"):
             mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True)
-    finally:
-        config.kernel_config = saved_kernel
-
-
-def test_solve_multirhs_alias_matches_solve_batch(mceq_sib21):
-    """The deprecated solve_multirhs wrapper returns the raw
-    (sol, grid_sol) pair of the equivalent solve_batch call."""
-    saved_kernel = config.kernel_config
-    try:
-        config.kernel_config = "numpy_etd2"
-        phi0_base = mceq_sib21.get_initial_state()
-        phi0_multi = np.stack([phi0_base, 0.5 * phi0_base], axis=1)
-
-        with pytest.warns(DeprecationWarning, match="solve_batch"):
-            sol_a, grid_a = mceq_sib21.solve_multirhs(phi0_multi)
-        res = mceq_sib21.solve_batch(phi0_multi)
-        assert isinstance(sol_a, np.ndarray)
-        assert np.array_equal(sol_a, res.sol)
-
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ValueError, match="must be 2-D"):
-                mceq_sib21.solve_multirhs(phi0_base)
     finally:
         config.kernel_config = saved_kernel
 
