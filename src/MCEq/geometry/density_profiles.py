@@ -2063,6 +2063,49 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             azimuth_deg,
         )
 
+    @staticmethod
+    def _ring_centre(coords):
+        """Centre of a ring of ``(lat, lon)`` points, as ``(lon, lat)``.
+
+        The azimuth grid traces a small circle around the detector, so a plain
+        mean of the longitudes is meaningless across the 0/360 seam.  Averaging
+        the unit vectors and renormalising gives the circle's centre: the
+        detector for a near-side ring, the antipode for an upgoing one.
+        """
+        lat = np.deg2rad(np.array([c[0] for c in coords], dtype=np.float64))
+        lon = np.deg2rad(np.array([c[1] for c in coords], dtype=np.float64))
+        x = float(np.mean(np.cos(lat) * np.cos(lon)))
+        y = float(np.mean(np.cos(lat) * np.sin(lon)))
+        z = float(np.mean(np.sin(lat)))
+        norm = np.sqrt(x * x + y * y + z * z)
+        if norm < 1e-12:
+            # A ring of 90 deg angular radius has no centre on either side; any
+            # point on it is as representative as the mean would have been.
+            return (float(coords[0][1]), float(coords[0][0]))
+        return (
+            float(np.rad2deg(np.arctan2(y, x))),
+            float(np.rad2deg(np.arcsin(z / norm))),
+        )
+
+    def _msis_extension_coord(self):
+        """(longitude, latitude) the MSIS tail belongs over.
+
+        The profile is the table's column at the shower impact point, so the
+        tail above it belongs there too, not over the detector: at large zenith
+        angles the two are hundreds of km apart, and at 180 deg the impact point
+        is the antipode.  Before the first :meth:`set_theta` there is no
+        direction yet, and the detector is the right answer.
+        """
+        if self._current_impact_longitude is not None:
+            return (
+                self._to_msis_longitude(self._current_impact_longitude),
+                float(self._current_impact_latitude),
+            )
+        if self._azimuth_avg_coords:
+            lon, lat = self._ring_centre(self._azimuth_avg_coords)
+            return (self._to_msis_longitude(lon), lat)
+        return super()._msis_extension_coord()
+
     # ------------------------------------------------------------------
     # Direction
     # ------------------------------------------------------------------

@@ -1314,3 +1314,66 @@ def test_location_centered_accepts_a_detector_longitude_past_180():
 )
 def test_to_msis_longitude_is_a_change_of_spelling(given, expected):
     assert dp.TabulatedAtmosphere._to_msis_longitude(given) == pytest.approx(expected)
+
+
+def _lc_grid_atmosphere(**kwargs):
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    return dp.TabulatedLocationCentered(
+        grid,
+        detector_coord=(20.0, -30.0),
+        depth_m=1948.0,
+        max_theta=180.0,
+        **kwargs,
+    )
+
+
+def test_msis_tail_follows_the_impact_point_for_a_fixed_azimuth():
+    """The tail belongs above the column, and the column is at the impact point."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(80.0, azimuth_deg=90.0)
+
+    lon, lat = atm._msis_extension_coord()
+    assert lat == pytest.approx(atm.current_impact_latitude, abs=1e-9)
+    assert lon == pytest.approx(
+        dp.TabulatedAtmosphere._to_msis_longitude(atm.current_impact_longitude),
+        abs=1e-9,
+    )
+
+
+def test_msis_tail_for_an_upgoing_angle_is_at_the_antipode():
+    """theta=180 puts the column on the far side; the tail must go with it."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(180.0, azimuth_deg=0.0)
+
+    lon, lat = atm._msis_extension_coord()
+    assert lat == pytest.approx(30.0, abs=1e-3)
+    assert lon == pytest.approx(-160.0, abs=1e-3)
+
+
+def test_azimuth_averaged_msis_tail_sits_at_the_centre_of_the_ring():
+    """The averaged column is a ring around the detector -- or the antipode."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+
+    atm.set_theta(80.0)
+    lon, lat = atm._msis_extension_coord()
+    assert (lon, lat) == pytest.approx((20.0, -30.0), abs=1e-3)
+
+    atm.set_theta(180.0)
+    lon, lat = atm._msis_extension_coord()
+    assert (lon, lat) == pytest.approx((-160.0, 30.0), abs=1e-3)
+
+
+def test_msis_tail_before_set_theta_is_the_detector():
+    """The constructor builds a profile before any direction is chosen."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    assert atm._msis_extension_coord() == pytest.approx((20.0, -30.0), abs=1e-9)
+
+
+def test_msis_tail_actually_differs_between_opposite_azimuths():
+    """Not just the coordinate: the extended profile has to change with it."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(180.0, azimuth_deg=0.0)
+    antipodal = float(atm.get_density(9.0e6))
+    atm.set_theta(0.0, azimuth_deg=0.0)
+    overhead = float(atm.get_density(9.0e6))
+    assert antipodal != overhead
