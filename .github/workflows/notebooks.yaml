@@ -152,7 +152,12 @@ jobs:
       #   Angular_shower_development            needs the 2D URQMD-150GeV
       #                                         FLUKA DB (the D25 2D asset:
       #                                         not in CI, not redistribut-
-      #                                         able)
+      #                                         able; the host copy M15
+      #                                         probed is legacy `projectiles`
+      #                                         layout that the v2 backend
+      #                                         rejects), and its `particle`
+      #                                         import is not in the
+      #                                         notebooks group
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
