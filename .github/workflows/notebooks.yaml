@@ -3,10 +3,10 @@ name: Notebooks
 # Executes the example notebooks under docs/examples/ and examples/ with
 # `pytest --nbmake`, so a notebook cannot silently rot against the library API.
 #
-# Seven of the eleven notebooks execute; four are `--ignore`d, one line each,
-# for the honest per-notebook reasons tabulated above the pytest step (the
-# rewrites landed in Phase 6 commit 9 -- deleting an `--ignore` line is the
-# whole change).
+# Eight of the twelve notebooks execute; four are `--ignore`d, one line each,
+# for the honest per-notebook reasons tabulated above the pytest step (M15
+# refreshed all twelve for v2 and re-measured each ignore; deleting an
+# `--ignore` line is the whole change when a notebook becomes executable).
 #
 # A separate workflow rather than a job in test.yaml: the trigger differs. A
 # notebook edit must not start the 40-job test matrix, and test.yaml's path
@@ -78,7 +78,7 @@ jobs:
 
       # `--ignore` prunes a path before collection, so nbmake never opens the
       # ignored notebooks and a corrupted one would pass unnoticed. This step
-      # covers all eleven -- it is the only thing the four ignored ones get.
+      # covers all twelve -- it is the only thing the four ignored ones get.
       - name: Validate notebook JSON
         shell: bash
         run: |
@@ -101,11 +101,11 @@ jobs:
           sys.exit(bad != 0)
           PY
 
-      # `--nbmake-kernel=python3` overrides each notebook's own kernelspec.
-      # Seven notebooks declare `python2` and one declares `mceq_dev_396`; no
-      # runner has either, and the flag is what lets an `--ignore` line be
-      # deleted without editing the notebook's metadata. It is inert for the
-      # one notebook running today, which already declares `python3`.
+      # `--nbmake-kernel=python3` runs the gate on a kernel that always
+      # exists. Every notebook now declares `python3` itself (M15), so the
+      # flag is belt-and-braces: it keeps a freshly-added notebook honest even
+      # if its metadata claims a private kernel name, as several did before
+      # the v2 refresh (python2, mceq_dev_396).
       #
       # A notebook that wants the database cached above has to set
       # `config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"` itself. The
@@ -114,23 +114,45 @@ jobs:
       # forgets this line costs CI a 292 MB fetch.
       #
       # Why the four remaining notebooks are ignored (honest per-notebook
-      # reason; the D28 <=2 target is met in spirit — the two beyond it run
-      # in CI only with model swaps their teaching content forbids, recorded
-      # here instead of silently kept or butchered):
+      # reason; M15 re-measured all four against every database MCEq ships
+      # or downloads -- the CI-reduced file carries QGSJETII04 + SIBYLL21
+      # only, the 292 MB lext DB adds DPMJETIII193, EPOSLHC(+R), QGSJETIII,
+      # SIBYLL23D/E(+star variants), and nothing carries SIBYLL23C or the
+      # old DPMJet/QGSJet generations):
       #
-      #   Muon spectra                          Python 2 `print` statements
-      #                                         (py3 SyntaxError at parse
-      #                                         time) AND 6 of its 8 models
-      #                                         are in no shipped DB
+      #   Muon spectra                          6 of its 8 models (both
+      #                                         DPMJet-III variants,
+      #                                         QGSJet-II-03, QGSJet-01c,
+      #                                         SIBYLL-2.3c; EPOS-LHC is
+      #                                         only in the lext DB) are in
+      #                                         no shipped DB. The Python-2
+      #                                         prints and kernelspec that
+      #                                         also blocked it are fixed;
+      #                                         a DB reissue is the way
+      #                                         this one comes back.
       #   Partial_hadron_contribution           imports CRFluxModels
-      #                                         (pre-crflux, pip-absent)
+      #                                         (pre-crflux, pip-absent) and
+      #                                         decomposes per hadron via
+      #                                         MCEqRun.set_obs_particles,
+      #                                         which the v2 API cull
+      #                                         removed; also needs
+      #                                         SIBYLL2.3c + low-energy
+      #                                         extension (no shipped DB).
       #   Full_sky_carousel                     SIBYLL23D — not in the CI DB
       #                                         and the point of the notebook
       #                                         is the 2D-capable DB +
       #                                         MSIS21/geomagnetic cutoffs;
       #                                         swapping models guts the
-      #                                         demo. Needs full DB + gtracr.
-      #   Angular_shower_development            needs the 2D FLUKA DB
+      #                                         demo. Verified runnable to
+      #                                         the cutoff cell on the lext
+      #                                         DB, where gtracr 2.0.0's API
+      #                                         breaks the cutoff adapter
+      #                                         (src-side; see the ORCA cell
+      #                                         note in the notebook).
+      #   Angular_shower_development            needs the 2D URQMD-150GeV
+      #                                         FLUKA DB (the D25 2D asset:
+      #                                         not in CI, not redistribut-
+      #                                         able)
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
