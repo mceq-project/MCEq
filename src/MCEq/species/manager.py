@@ -1,13 +1,7 @@
 """``ParticleManager``: the registry of tracked particles and index tables.
 
-The registry the flat ``MCEq.particlemanager`` shim re-exports. The dead
-``if False:`` index dump the old module carried at the end of
-``print_particle_tables`` is gone. The deferred
-``from MCEq.particlemanager import MCEqParticle`` inside ``_init_categories``
-was deleted, not respelled: ``particle`` imports nothing from ``manager``, so
-the name is bound at module level instead, and the import-time
-``manager -> particle`` edge that replaces the deferred one is exactly what
-C7's widened ancestors now guard.
+Builds the particle registry from ``MCEq.species.particle``. The flat
+``MCEq.particlemanager`` module re-exports this implementation.
 """
 
 from math import copysign
@@ -39,12 +33,11 @@ class ParticleManager:
         *,
         physics,
     ):
-        # Resolved here rather than as a signature default: a default binds when
-        # this module is first imported, which happens lazily from MCEqRun, so
-        # whether a caller's `config.interaction_medium` was seen depended on
-        # whether it was written before that import.
+        # Resolve the default medium from the supplied physics settings at
+        # construction, rather than as a signature default (which would bind
+        # at module import time and depend on write order).
         medium = physics.interaction_medium if medium is None else medium
-        # (dict) Dimension of primary grid
+        #: Energy-grid object containing centers, edges, widths, and bin count
         self._energy_grid = energy_grid
         # Particle index shortcuts
         #: (dict) Converts PDG ID to index in state vector
@@ -62,8 +55,7 @@ class ParticleManager:
         self.mceqidx2pref = {}
         #: (dict) Converts index in state vector to PDG ID
         self.mceqidx2pdg = {}
-        #: (dict) Converts index in state vector to reference
-        # of :class:`particlemanager.MCEqParticle`
+        #: Map state-vector particle indices to particle names
         self.mceqidx2pname = {}
         # Save setup of tracked particles to reapply the relations
         # when models change
@@ -80,9 +72,10 @@ class ParticleManager:
         self._medium = medium
         # Settings group, handed on to every MCEqParticle built here
         self._physics = physics
-        # Dictionary to save te tracking particle config
+        # List of saved tracking-particle definitions
         self.tracking_relations = []
-        # Save the tracking relations requested by default tracking
+        # Requested tracking definitions, including user requests and
+        # configured defaults
         self._tracking_requested = []
 
         self._init_categories(particle_pdg_list=pdg_id_list)
@@ -187,24 +180,25 @@ class ParticleManager:
     ):
         """Allows tracking decay and particle production chains.
 
-        Replaces previous ``obs_particle`` function that allowed to track
-        only leptons from decays certain particles. This present feature
-        removes the special PDG IDs 71XX, 72XX, etc and allows to define
-        any channel like::
+        Tracks any parent-to-child channel under an alias, replacing the older
+        ``obs_particle`` mechanism (which tracked only leptons from selected
+        decays and reserved the special PDG IDs 71XX, 72XX, etc). Parent and
+        child keys are ``(PDG ID, helicity)`` tuples::
 
-            $ particleManagerInstance.add_tracking_particle([211], 14, 'pi_numu')
+            $ particleManagerInstance.add_tracking_particle([(211, 0)], (14, 0), 'pi_numu')
 
-        This will store muon neutrinos from pion decays under the alias 'pi_numu'.
+        This stores muon neutrinos from pion decays under the alias 'pi_numu'.
         Multiple parents are allowed::
 
             $ particleManagerInstance.add_tracking_particle(
-                [411, 421, 431], 14, 'D_numu')
+                [(411, 0), (421, 0), (431, 0)], (14, 0), 'D_numu')
 
         Args:
 
-            alias (str): Name alias under which the result is accessible in get_solution
-            parents (list): list of parent particle PDG ID's
-            child (int): Child particle
+            parent_list (list): list of ``(PDG ID, helicity)`` parent keys
+            child_pdg (tuple): ``(PDG ID, helicity)`` child key
+            alias_name (str): name under which the result is accessible in
+                get_solution
             from_interactions (bool): track particles from interactions
         """
         from copy import copy
@@ -343,8 +337,8 @@ class ParticleManager:
                 from leptons
             from_interactions (bool, optional): track particles coming from
                 interactions of parents instead of decays
-            use_helicities (bool, optional): ignore leptons with
-                non-zero/defined helicity
+            use_helicities (bool, optional): include nonzero-helicity leptons
+                when true; otherwise select helicity zero only
             include_antiparticle (bool, optional): ex. [211, 321] will be
                 automatically converted to [211,-211,321,-321]
         """
@@ -367,18 +361,14 @@ class ParticleManager:
             )
 
     def _init_categories(self, particle_pdg_list):
-        """Determines the list of particles for calculation and
-        returns lists of instances of :class:`data.MCEqParticle` .
+        """Populate particle categories from the supplied particle list, using
+        the model-derived fallback when no list is supplied.
 
         The particles which enter this list are those, which have a
         defined index in the SIBYLL 2.3 interaction model. Included are
         most relevant baryons and mesons and some of their high mass states.
         More details about the particles which enter the calculation can
         be found in :mod:`particletools`.
-
-        Returns:
-          (tuple of lists of :class:`data.MCEqParticle`): (all particles,
-          cascade particles, resonances)
         """
 
         info(5, "Generating particle list.")

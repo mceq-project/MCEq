@@ -9,7 +9,7 @@ from MCEq import mkl_runtime as _mkl_runtime
 
 from . import detect
 
-#: Debug flag for verbose printing, 0 silences MCEq entirely
+#: Debug verbosity; level 0 still permits messages logged at level 0
 debug_level = 1
 #: Override debug prinput for functions listed here (just give the name,
 #: "get_solution" for instance) Warning, this option slows down initialization
@@ -49,7 +49,7 @@ return_as = "kinetic energy"
 density_model = ("CORSIKA", ("BK_USStd", None))
 #: Alternatives:
 #: density_model = ('MSIS21', ('SouthPole', 'January'))   # NRLMSIS 2.1 — needs 'nrlmsis' (opt-in)
-#: density_model = ('MSIS00', ('SouthPole', 'January'))  # MSISE-00 (Fortran-via-C, fork-unsafe)
+#: density_model = ('MSIS00', ('SouthPole', 'January'))  # MSISE-00 (bundled C implementation)
 #: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
 #: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
 #: density_model = ('MSIS21_KM3NeT', ('ORCA', 'January'))      # detector-centered NRLMSIS 2.1 at ORCA
@@ -75,7 +75,7 @@ interaction_medium = "air"
 A_target = "auto"
 
 #: parameters for EarthGeometry
-r_E = 6371.315e3  # Earth radius in m (as in CORSIKA; was 6391 km < v2.0, a typo)
+r_E = 6371.315e3  # Earth radius in m, as in CORSIKA
 h_obs = 0.0  # observation level in m
 h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
@@ -107,15 +107,12 @@ e_max = 1e11
 #: (``em_db_fname``)
 enable_em = False
 
-#: Air-target EM matrices: select a specific density slice from a
+#: Air density in g/cm³ used to select a density slice from a
 #: ρ-stratified EM database (one produced by
 #: ``mceq-maintenance-tools/database_generator/5_assemble_em_db.py``
-#: with ``--air-density-grid``).  Value is air density in g/cm³.
-#: ``None`` (default) loads the legacy single-density slice — back-compat
-#: with un-stratified EM databases.  When set, the loader picks the
-#: ρ subgroup whose stored density is closest in log10 to this value.
-#: Used for LPM-realistic atmospheric cascades; see
-#: ``wiki/methods/lpm-density-factorization.md`` in mceq-em-integration.
+#: with ``--air-density-grid``). The loader chooses the nearest stored
+#: density in log10 space; ``None`` selects the legacy single-density
+#: slice for back-compat with un-stratified EM databases.
 em_air_density = None
 
 #: ETD2RK kernel implementation. Choices:
@@ -132,24 +129,22 @@ _kernel_config_request = "auto"
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
-#: CUDA Floating point precision (default 32-bit 'float')
+#: CUDA floating-point precision (default 64 bits)
 cuda_fp_precision = 64
 
 #: Floating point precision (is set automatically)
 floatlen = None
 
-#: Number of MKL threads (for sparse matrix multiplication the performance
-#: advantage from using more than a few threads is limited by memory bandwidth)
+#: BLAS thread limit, defaulting to ``min(16, os.cpu_count() or 1)``.
 #: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL. Default is ``min(16, os.cpu_count())``: MKL's
-#: sparse SpMV scales near-linearly to ~16 threads on the SIBYLL21
-#: matrices, then plateaus / regresses on most servers due to memory
-#: bandwidth and NUMA effects. The same count is applied to every BLAS pool
-#: MCEq can reach, OpenBLAS included, because the dense mode-coupling GEMMs of
-#: the secant routes are skinny ((n_P, n_k) @ (n_k, n_g*K)) and an all-cores
-#: fan-out on those shapes is pure contention — 66x slower than a capped pool
-#: at K = 8 on a 48-core host. Override after import for full control:
-#: ``MCEq.config.set_mkl_threads(n)``.
+#: numpy is linked to MKL. Sparse products and narrow dense products can be
+#: limited by memory bandwidth or thread contention: MKL's sparse SpMV scales
+#: near-linearly to ~16 threads, then plateaus or regresses on most servers,
+#: and the dense mode-coupling GEMMs of the secant routes are skinny
+#: ((n_P, n_k) @ (n_k, n_g*K)) so an all-cores fan-out on those shapes is pure
+#: contention. :func:`set_mkl_threads` applies the limit to supported, loaded
+#: BLAS libraries, OpenBLAS (what most numpy wheels link) included. Override
+#: after import for full control: ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = min(16, os.cpu_count() or 1)
 
 # =========================================================================
@@ -162,10 +157,8 @@ mkl_threads = min(16, os.cpu_count() or 1)
 #: Each value can be overridden per-call via
 #: `MCEqRun.solve(..., eps=..., dX_max=...)`.
 etd2_path = {
-    #: Within-step | d ln rho_inv / dX | bound. Smaller -> finer steps in
-    #: the upper atmosphere. 0.3 gives sub-percent muon-flux agreement
-    #: across the spectrum at all zeniths; see the design doc for the
-    #: tolerance/step-count tradeoff.
+    #: Bound on the within-step variation of log inverse density. Smaller
+    #: values produce finer steps, especially in the upper atmosphere.
     "eps": 0.3,
     #: Cap on the step size in g/cm^2 — the off-diagonal stability cliff
     #: `h * spec(int_off) < 2`, with spec(int_off) ~ 0.094 for the
@@ -182,53 +175,33 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
-#: EM-cascade adaptive step cap (cure B). The ETD2 ``dX_max`` of 20 g/cm^2
-#: above is set by the off-diagonal stability/accuracy bound
-#: ``h * spec(int_off) < 2`` with ``spec(int_off) ~ 0.094`` for the *hadronic*
-#: matrix. The e+/-/gamma block of ``int_m`` is far stiffer (steep
-#: bremsstrahlung/pair multiplication, near-singular soft tail), so the same
-#: bound demands a much smaller step. When the density-gradient schedule does
-#: not refine on its own (homogeneous media, low-density shower start), the
-#: large legacy step over-integrates the EM cascade and biases the
-#: charged-shower X_max deep by ~8-12 g/cm^2 (muon/hadron profiles are
-#: unaffected: their off-diagonal block is ~200x less stiff). When True, the
-#: effective step is additionally capped at ``em_step_safety / r_EM``, where
-#: ``r_EM`` is the explicit-stepping stiffness scale of the e+/-/gamma block
-#: of ``int_m`` (spectral radius of its off-diagonal part, 1/(g/cm^2)).
-#: Default False preserves the legacy schedule exactly; enable for absolute
-#: EM-X_max work. Because r_EM tracks the operator, the cap also tightens
-#: automatically as the energy grid is refined.
+#: Additionally cap EM integration steps at ``em_step_safety / r_EM``, where
+#: ``r_EM`` estimates the stiffness of the EM off-diagonal interaction block
+#: (the e+/-/gamma block of ``int_m``; the density-gradient schedule alone does
+#: not refine on its own in homogeneous media or at a low-density shower start,
+#: and the legacy 20 g/cm^2 step over-integrates the EM cascade and biases the
+#: charged-shower X_max deep). EM multiplication rates can require finer steps
+#: than the density-gradient criterion. Because r_EM tracks the operator, the
+#: cap also tightens automatically as the energy grid is refined. Disabled by
+#: default, which preserves the legacy schedule exactly.
 em_adaptive_step = False
 
-#: Dimensionless safety factor for ``em_adaptive_step``: effective cap
-#: ``dX = em_step_safety / r_EM`` [g/cm^2]. This is the per-step off-diagonal
-#: accuracy budget ``h * spec(int_off_EM)``; the EM-X_max bias is an accuracy
-#: (not stability) effect, so this is far tighter than the explicit stability
-#: cliff. Re-calibrated 2026-06 against the gamma@100TeV charged-X_max
-#: convergence on the v13 1-MeV air EM grid AFTER the dense-r_EM fix
-#: (true spec(int_off_EM) = 0.5155 1/(g/cm^2); the previous ARPACK/norm
-#: estimate over-stated it and forced ~3x more steps). Convergence vs the
-#: dX->0 limit (e+- >=1 MeV, parabolic peak):
-#:   safety  cap[g/cm^2]  nsteps  dXmax[g/cm^2]  ground-spectrum max-rel
-#:    0.04      0.078       13448     +0.003           0.005%
-#:    0.12      0.233        4562     +0.030           0.046%   <- default
-#:    0.16      0.310        3528     +0.053           0.081%   (spec ceiling)
-#:    0.24      0.466        2290     +0.114           0.172%   (over tolerance)
-#: 0.12 holds X_max to <0.05 g/cm^2 and the ground spectrum to <0.05% of the
-#: dX->0 limit while cutting steps ~3x vs the old 0.04; 0.16 is the largest
-#: value still inside the <0.1 g/cm^2 / <0.1% tolerance. Nmax is
-#: step-independent to <0.001% throughout. (Legacy fixed 20 g/cm^2 steps bias
-#: X_max up to +57 g/cm^2 in homogeneous media.) See the wiki lesson
-#: ``mceq-loss-averaging-grid-fragility``.
+#: Dimensionless safety factor for the EM step cap: ``dX = em_step_safety /
+#: r_EM`` in g/cm^2. Smaller values use finer steps; default 0.12 holds the
+#: EM shower maximum to <0.05 g/cm^2 and the ground spectrum to <0.05% of the
+#: zero-step limit while cutting step counts ~3x versus a value twice as
+#: small; the largest value still inside a <0.1 g/cm^2 / <0.1% tolerance is
+#: 0.16. Nmax is step-independent to <0.001% throughout.
 em_step_safety = 0.12
 
-#: Max EM off-diagonal block dimension for which ``r_EM`` (the cure-B step
+#: Max EM off-diagonal block dimension for which ``r_EM`` (the EM step cap
 #: scale) is computed with a dense ``np.linalg.eigvals``. The EM block is a
 #: small sub-system (a few e+/-/gamma species x dim_e) and strongly
 #: NON-NORMAL, on which sparse ``eigs(k=1)`` routinely fails to converge and
-#: silently degrades to a matrix-norm over-estimate. Dense eigvals is exact,
-#: deterministic and cheap at this size (~1-2 s at dim 2000, computed once per
-#: matrix build and cached). Above this guard, fall back to ARPACK then norm.
+#: silently degrades to a matrix-norm over-estimate. Dense eigenvalues are
+#: estimates, not exact values, but are deterministic and cheap at this size
+#: (~1-2 s at dim 2000, computed once per matrix build and cached). Above this
+#: guard, fall back to ARPACK then matrix-norm.
 em_step_dense_eig_max = 4000
 
 #: Minimal CR nucleon energy in primary model. If (low energy)
@@ -245,15 +218,16 @@ enable_default_tracking = True
 #: Ionization and radiative losses according to stopping power tables (PDG)
 enable_energy_loss = True
 
-#: Apply stopping power to all charged hadrons (the muon dEdX is used and is
-#: ~ok). Default True: without it sub-4-GeV protons and charged hadrons never
-#: range out (~2 MeV/g/cm^2 x 2000 g/cm^2 ~ 4 GeV of ionization loss across a
-#: slant column) and pile up unphysically at the low-energy end of
-#: deep-atmosphere spectra. Requires the monotone low-energy boundary layer of
-#: ``loss_stencil_method = "expfit_low_upwind2"`` (the default): with the pure
-#: ``"expfit"`` operator the extra hadronic loss rows excite the low-energy
-#: boundary cliff and deep-slant solves diverge outright. Set False to
-#: reproduce the v1.x behaviour where only muons (and e+-, see
+#: Apply stopping power to all charged hadrons using the generic hadron loss
+#: table, interpolated in beta-gamma. This allows low-energy charged hadrons to
+#: range out; without it, sub-4-GeV protons and charged hadrons never stop
+#: (~2 MeV/g/cm^2 x 2000 g/cm^2 ~ 4 GeV of ionization loss across a slant
+#: column) and pile up unphysically at the low-energy end of deep-atmosphere
+#: spectra. The default stencil ``loss_stencil_method =
+#: "expfit_low_upwind2"`` uses second-order upwind rows near the lower energy
+#: boundary; with the pure ``"expfit"`` operator the extra hadronic loss rows
+#: excite the low-energy boundary cliff and deep-slant solves diverge outright.
+#: Set False for the v1.x behaviour where only muons (and e+-, see
 #: ``enable_em_ion``) carried continuous losses.
 generic_losses_all_charged = True
 
@@ -267,12 +241,10 @@ fallback_to_air_cs = True
 #: enable EM ionization loss for electrons and positrons
 enable_em_ion = True
 
-#: Improve (explicit solver) stability by averaging the continous loss
-#: operator. Default False: the canonical configuration is the raw
-#: ``expfit_low_upwind2`` loss stencil (now the default, see
-#: ``loss_stencil_method``) with NO averaging — averaging inflates the EM
-#: number Xmax ~+2.7 g/cm^2 / Nmax ~5.6%. Set True only to reproduce
-#: pre-2026-06 historical numbers.
+#: Average the continuous-loss operator through repeated finite steps.
+#: Disabled by default: averaging changes the effective operator and can shift
+#: EM shower observables (inflating the EM number Xmax by a few g/cm^2 and Nmax
+#: by several percent). Set True only to reproduce pre-2026-06 numbers.
 average_loss_operator = False
 
 #: Step size (dX) for averaging
@@ -283,11 +255,11 @@ loss_step_for_average = 1e-1
 #:   "expfit_low_upwind2" (default) -- exponentially-fitted 7-point interior
 #:                 stencil with the low-energy boundary layer
 #:                 (``loss_stencil_low_upwind_rows`` rows) replaced by
-#:                 monotone second-order upwind rows. This is the validated
-#:                 canonical configuration: it removes the low-energy
-#:                 boundary cliff of the pure "expfit" operator (essential
-#:                 for the 1 MeV EM grid, harmless on hadronic-only grids
-#:                 where it touches only the lowest rows).
+#:                 second-order upwind rows in the low-energy boundary region.
+#:                 This is the validated canonical configuration: it removes
+#:                 the low-energy boundary cliff of the pure "expfit" operator
+#:                 (essential for the 1 MeV EM grid, harmless on hadronic-only
+#:                 grids where it touches only the lowest rows).
 #:   "expfit_low_upwind" -- same with first-order upwind rows.
 #:   "expfit"   -- pure 7-point exponentially-fitted stencil anchored at
 #:                 ``loss_stencil_alpha0``. Designed to be near-exact for
@@ -303,13 +275,13 @@ loss_step_for_average = 1e-1
 #: stencils on the boundary rows (0,1,2 and last-2,last-1,last).
 loss_stencil_method = "expfit_low_upwind2"
 
-#: Number of low-energy rows replaced when ``loss_stencil_method`` is
-#: ``"expfit_low_upwind"`` or ``"expfit_low_upwind2"`` (the default). At
-#: 10 bins/decade and a 1 MeV EM floor, the formal one-sided boundary rows
-#: (0..2) are not enough: the raw operator still develops enormous
-#: non-normal transients. Eight rows is the first stable setting in the
-#: realistic-screening 1 MeV/no-averaging diagnostic and leaves the expfit
-#: interior untouched above ~6 MeV.
+#: Number of low-energy rows replaced by the selected upwind stencil when
+#: ``loss_stencil_method`` is ``"expfit_low_upwind"`` or
+#: ``"expfit_low_upwind2"`` (the default); default 8. Increasing this region
+#: reduces exposure to the polynomial boundary rows (whose non-normal
+#: transients grow at a low-energy grid floor) but shrinks the region using the
+#: exponentially fitted stencil. The solver also widens this layer per species
+#: when a particle's loss stiffness requires it; this value is the floor.
 loss_stencil_low_upwind_rows = 8
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to
@@ -397,14 +369,12 @@ low_energy_extension = {
 
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
-    #: Disable particle production by all hadrons, except nucleons
+    #: Exclude proton, neutron, antiproton, and antineutron projectiles
     "disable_interactions_of_unstable": False,
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
-    #: Disable resonance/prompt contribution (this group of options
-    #: is either obsolete or needs maintenance.)
-    #: "disable_resonance_decay" : False,
-    #: Allow only those particles to be projectiles (incl. anti-particles)
+    #: Restrict projectiles to the listed PDG IDs; antiparticle IDs must be
+    #: listed explicitly.
     #: Faster initialization,
     #: For inclusive lepton flux computations:
     #: precision loss ~ 1%, for SIBYLL2.3.X with charm 5% above 10^7 GeV
@@ -415,8 +385,9 @@ adv_set = {
     #: Default disables both e- (PDG 11) and e+ (PDG -11). Until a
     #: validated EM database is shipped, the ETD2 EM cascade can blow up
     #: at extreme zenith — see the "EM cascade caveat" in
-    #: docs/mceq_v1.x_v2_diff.md. Both signs must be listed: the
-    #: disable list is matched literally, not by absolute PDG id.
+    #: docs/mceq_v1.x_v2_diff.md. The HDF5 reader checks absolute particle
+    #: IDs against this list, so a positive ID excludes both signs there;
+    #: later interaction-table filtering uses literal IDs.
     "disabled_particles": [11, -11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
@@ -444,10 +415,6 @@ standard_particles += [-pid for pid in standard_particles]
 #: append 221, 223, 333, if eta, omega and phi needed directly
 standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 
-#: This construct provides access to the attributes as in previous
-#: versions, using `from mceq_config import config`. The future versions
-#: will access the module attributes directly.
-
 #: Platform and backend detection resolve on first read, through the module
 #: ``__getattr__`` below: importing MCEq must not dlopen a BLAS, probe a GPU or
 #: decide which kernel will run. Reading any of ``has_mkl``, ``has_cuda``,
@@ -455,11 +422,10 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 #: real module attribute, so the cost is paid once and later reads are ordinary
 #: attribute lookups.
 
-#: ``libmkl_rt`` handle. Since M4 the memo lives in
-#: :mod:`MCEq.mkl_runtime` (one owner below config, shared by the MKL
-#: backend and :func:`set_mkl_threads`); ``config.mkl`` is a read-only view
-#: of it, served by the module ``__getattr__`` below, and there is
-#: deliberately no module global to shadow that view.
+#: ``libmkl_rt`` handle. :mod:`MCEq.mkl_runtime` owns the process-wide MKL
+#: handle (one owner below config, shared by the MKL backend and
+#: :func:`set_mkl_threads`); ``config.mkl`` exposes it through
+#: ``__getattr__``; no local binding should shadow that view.
 _mkl_runtime.set_resolver(lambda: detect.has_mkl(), detect.mkl_library_path)
 
 _LAZY = {
@@ -475,8 +441,7 @@ _LAZY = {
 
 def __getattr__(name):
     if name == "mkl":
-        # read-only view of the runtime memo: never loads (the golden
-        # harness pins that describing a process must not change it)
+        # Return the existing MKL handle without loading the library.
         return _mkl_runtime.lib()
     probe = _LAZY.get(name)
     if probe is None:
@@ -491,14 +456,14 @@ def __dir__():
 
 
 def _load_mkl():
-    """Lazily load ``libmkl_rt`` exactly once (compat entry point, M4).
+    """Lazily load ``libmkl_rt`` exactly once (compat entry point).
 
-    The memo lives in :mod:`MCEq.mkl_runtime`; the single-handle rule that
-    motivated splitting the load from :func:`set_mkl_threads` — every
-    ``MklSparseMatrix`` wrapper must see one symbol table for the process
-    lifetime — moved with it. Kept as the name user code (and
-    ``tests/test_config.py``) already reaches; the load-path pin test
-    retargeted to the new owner.
+    Delegate to :func:`MCEq.mkl_runtime.load`, which owns the cached
+    process-wide handle. The single-handle rule that motivated splitting the
+    load from :func:`set_mkl_threads` — every ``MklSparseMatrix`` wrapper must
+    see one symbol table for the process lifetime — moved with the memo. Kept
+    as the name user code (and ``tests/test_config.py``) already reaches; the
+    load-path test targets the new owner.
     """
     return _mkl_runtime.load()
 
@@ -538,10 +503,10 @@ def set_mkl_threads(nthreads):
     One process-wide setting, applied once: the solver never adjusts a pool
     around an individual step loop.
 
-    Idempotent on the library side: only ``mkl_set_num_threads`` is
-    called on subsequent invocations. The cached cdll handle is
-    preserved, so handles in ``MclSparseMatrix`` wrappers stay valid
-    across thread-count changes.
+    Idempotent on the library side: reuse the loaded MKL handle. Each call
+    updates the thread environment and reapplies limits to supported, loaded
+    BLAS libraries. The cached cdll handle is preserved, so handles in
+    ``MklSparseMatrix`` wrappers stay valid across thread-count changes.
     """
     global mkl_threads
     from ctypes import byref, c_int
@@ -563,9 +528,9 @@ def set_mkl_threads(nthreads):
                 "the dense secant GEMMs may contend on a many-core host."
             )
     else:
-        # threadpool_limits restores the previous limits when the object is
-        # collected, so the handle is kept for the life of the process. It only
-        # reaches libraries already loaded; the environment above covers the rest.
+        # Retain the limiter so a later call can unregister it. It applies to
+        # already loaded libraries; the environment settings cover libraries
+        # loaded later.
         if _blas_limiter is not None:
             _blas_limiter.unregister()
         _blas_limiter = threadpool_limits(limits=nthreads, user_api="blas")
@@ -578,9 +543,9 @@ def set_mkl_threads(nthreads):
 _publish_thread_env(mkl_threads)
 
 
-#: Take the energy grid from the EM database instead of the hadronic one.
-#: Only meaningful for a standalone EM cascade, where there is no hadronic DB
-#: to define it.
+#: Use the EM database's energy grid and skip hadronic interaction and decay
+#: channels. The backend still requires the hadronic database for other
+#: initialization and loss data.
 em_standalone_grid = False
 
 
@@ -589,10 +554,11 @@ em_standalone_grid = False
 
 
 class MCEqConfigCompatibility(dict):
-    """This class provides access to the attributes of the module as a
-    dictionary, as it was in the previous versions of MCEq
+    """Deprecated compatibility object containing copied namespace attributes.
 
-    This method is deprecated and will be removed in future.
+    Its dictionary entries are separate from the module attributes and do not
+    update module settings. Use ``config.variable`` instead of
+    ``config['variable']``.
     """
 
     def __init__(self, namespace):
@@ -648,8 +614,8 @@ def secant_mode(is_2d):
     return "require" if flag else "off"
 
 
-# Grouped views over the names above, one per layer of the plan's section 2.2.
-# They read and write through to this module, so a component handed
+# Grouped views over the names above. They read and write the corresponding
+# flat configuration attributes, so a component handed
 # `config.grid` still sees a later `config.e_min = ...`.
 from . import groups as _groups  # noqa: E402
 

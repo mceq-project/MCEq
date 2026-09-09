@@ -1,8 +1,7 @@
-"""Continuous ionisation losses: the ``ContinuousLosses`` consumer.
+"""Continuous-energy-loss tables: the ``ContinuousLosses`` consumer.
 
-Plan section 1's ``data/continuous_losses.py``, §13.2 item 4. The class moved
-here verbatim from ``data/__init__.py``, which becomes a pure re-export
-surface; the generic-loss spline check in ``load_db`` is unchanged.
+The class manages stopping-power arrays loaded from the backend and builds the
+generic (proton-curve) spline used for all charged hadrons.
 
 The generic (proton-curve) source follows the lepton branch of the backend:
 with ``enable_em`` on it is ``ionization/hadron``, otherwise ``total/hadron``
@@ -17,22 +16,22 @@ import numpy as np
 
 
 class ContinuousLosses:
-    """Class for managing the dictionary of hadron-air cross-sections.
+    """Manage stopping-power arrays loaded from ``mceq_hdf_db``.
 
     Args:
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
-      material (str): name of the material (not fully implemented)
+      physics: physics settings group used to select the loss case
     """
 
     def __init__(self, mceq_hdf_db, *, physics):
         self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
-        #: reference to energy grid
+        #: Energy grid of the backend
         self.energy_grid = mceq_hdf_db.energy_grid
         #: List of active parents
         self.parents = None
-        #: Dictionary containing the distribuiton matrices
+        #: Stopping-power arrays indexed by particle
         self.index_d = None
         #: Raw ``(boost, dEdX)`` pair behind :attr:`generic_spl`, as read
         #: (before the log transform); see :meth:`load_db`.
@@ -41,7 +40,7 @@ class ContinuousLosses:
         self.load_db()
 
     def __getitem__(self, parent):
-        """Return the cross section in :math:`\\text{cm}^2` as
+        """Return the particle's stopping-power array in GeV/(g/cm²) as
         a dictionary lookup."""
         return self.index_d[parent]
 

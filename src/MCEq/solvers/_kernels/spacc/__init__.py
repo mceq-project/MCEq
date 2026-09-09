@@ -149,7 +149,7 @@ class SpaccMatrix:
         Idempotent — safe to call more than once. Prefer this over
         ``del`` or letting refcount drive ``__del__`` when you need a
         deterministic release of the slot (e.g. when juggling caches
-        in ``MCEqRun._build_kernel_dispatch``); the slot pool
+        in ``MCEqRun._etd2_backend``); the slot pool
         (``SIZE_MSTORE``) is fixed-size, so prompt release matters.
         """
         if self.store_id is not None and spacc is not None:

@@ -52,16 +52,17 @@ A constant is ``a = 0``, where (19) reads ``sum_k c_k = 0`` -- zero row sum.
 
 Row layout
 ----------
-Every family is seven-point and spans at most ``[-3, +3]``, which is what
-makes the interior range ``range(3, dim_e - 3)`` uniform across the dispatch.
-The three lowest and three highest rows would reach outside the grid, so the
-non-upwind families close them with one-sided polynomial fits of the same
-order. Those rows are exact on constants but carry percent-level residuals on
-steep spectra and excite non-normal transients at a low-energy grid floor --
-the "boundary cliff" of ``docs/mceq_v1.x_v2_diff.md`` section 5.3. The
-``expfit_low_upwind*`` composites are the fix in production use: they overwrite
-the lowest ``low_upwind_rows`` rows with monotone upwind rows and keep the
-expfit interior above.
+The high-order interiors use seven points and span at most ``[-3, +3]``, which
+is what makes the interior range ``range(3, dim_e - 3)`` uniform across the
+dispatch; first- and second-order upwind rows use two and three points. The
+three lowest and three highest rows would reach outside the grid, so the
+non-upwind families close them with one-sided polynomial rows of third-,
+fourth-, and fifth-order accuracy. Those rows are exact on constants but carry
+percent-level residuals on steep spectra and excite non-normal transients at a
+low-energy grid floor -- the "boundary cliff" of
+``docs/mceq_v1.x_v2_diff.md`` section 5.3. The ``expfit_low_upwind*`` composites
+are the fix in production use: they overwrite the lowest ``low_upwind_rows``
+rows with upwind rows and keep the expfit interior above.
 
 Energy loss advects the spectrum toward *lower* E, so the upwind direction is
 toward higher E (forward in ``u``), which is also the orientation of the
@@ -81,7 +82,7 @@ __all__ = [
 
 #: Every interior stencil :func:`differential_operator` accepts, in the order
 #: of its own dispatch: the two composites, the three high-order families,
-#: then the two monotone upwind operators.
+#: then the first- and second-order upwind operators.
 STENCIL_METHODS = (
     "expfit_low_upwind2",
     "expfit_low_upwind",
@@ -97,8 +98,8 @@ EXPFIT_DELTAS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
 
 #: ``(offsets, coefficients, denominator)`` of the one-sided polynomial rows at
 #: the low-energy edge -- rows 0, 1 and 2, each relative to its own row index.
-#: Coefficients are truncated Taylor fits of ``d/du`` of the same order as the
-#: interior; each set sums to zero, so each row annihilates a constant.
+#: Third-, fourth-, and fifth-order derivative rows at the three low-energy
+#: positions; each set sums to zero, so each row annihilates a constant.
 _LOW_EDGE_ROWS = (
     ([0, 1, 2, 3], [-11, 18, -9, 2], 6),
     ([-1, 0, 1, 2, 3], [-3, -10, 18, -6, 1], 12),
@@ -169,12 +170,14 @@ def _interior_row(method, h, alpha0):
 
 
 def _write_upwind_rows(op_matrix, h, rows, order):
-    """Fill ``rows`` with the monotone upwind row of the requested order.
+    """Fill ``rows`` with the first- or second-order forward upwind row.
 
     Forward-biased, i.e. toward higher E: ``[-1, 1]/h`` at first order,
-    ``[-3/2, 2, -1/2]/h`` at second. Both annihilate a constant, are
-    unconditionally stable, and are diffusive at ``O(h)`` / ``O(h^2)``, so they
-    converge as the grid refines. Requires ``row + order`` to be on the grid.
+    ``[-3/2, 2, -1/2]/h`` at second. Both annihilate a constant and are
+    diffusive at ``O(h)`` / ``O(h^2)``, so they converge as the grid refines.
+    Stability depends on the time integrator; the second-order formula has a
+    negative off-diagonal coefficient and is not generally positivity-
+    preserving. Requires ``row + order`` to be on the grid.
     """
     for row in rows:
         if order == 1:
@@ -187,13 +190,13 @@ def _write_upwind_rows(op_matrix, h, rows, order):
 
 
 def _upwind_operator(h, dim_e, order, dtype):
-    """The pure upwind families: one monotone row everywhere, no high-order rows.
+    """The pure upwind families: first- or second-order upwind rows everywhere,
+    no high-order rows.
 
     No polynomial boundary rows at all, so the expfit boundary cliff has nothing
-    to excite; the price is first-/second-order accuracy in the bulk. Added for
-    the fine-grid Nmax convergence study
-    (``runs/2026-06-06_em-grid-exact-nmax``). The top ``order`` rows cannot
-    reach forward and take the backward-biased mirror row instead.
+    to excite; the price is first-/second-order accuracy in the bulk. At the
+    upper boundary, use backward-biased mirror rows where the forward stencil
+    does not fit.
     """
     op_matrix = np.zeros((dim_e, dim_e), dtype=dtype)
     last = dim_e - 1

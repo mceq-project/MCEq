@@ -34,12 +34,12 @@ block copy per species carrying losses.
 
 Settings reach the builder as the ``grid``, ``losses`` and ``physics`` group
 views of :mod:`MCEq.config.groups`, not as reads off the config module, so this
-layer stays below the driver (contract C5 in ``.importlinter``). ``grid`` is
+layer stays below the driver (enforced by ``.importlinter``). ``grid`` is
 the third view because ``config.floatlen`` -- the dtype every channel block and
 every assembled CSR is built in -- is mapped into the grid group as
-``grid.dtype`` rather than into ``losses`` or ``physics``. The plan's decision
-D27 names only the latter two, which does not cover those reads; its constraint
-is that no new spec dataclass appears, and three existing views satisfy it.
+``grid.dtype`` rather than into ``losses`` or ``physics``; the constraint on
+this layer is that no new spec dataclass appears, and three existing views
+satisfy it.
 """
 
 from itertools import product
@@ -101,10 +101,8 @@ class MatrixBuilder:
         - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} +
             \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
 
-        For debug_levels >= 2 some general information about matrix
-        shape and the number of non-zero elements is printed. The
-        intermediate matrices :math:`\boldsymbol{C}` and
-        :math:`\boldsymbol{D}` are deleted afterwards to save memory.
+        Matrix-block diagnostics are logged at level 5. ``C_blocks`` and
+        ``D_blocks`` remain stored after assembly.
 
         Set the ``skip_decay_matrix`` flag to avoid recreating the decay
         matrix. This is not necessary if, for example, particle production
@@ -130,7 +128,6 @@ class MatrixBuilder:
 
         # interaction part
         # -I + C
-        # In first interaction mode it is just C
         self.max_lint = 0.0
 
         for parent, child in product(cparts, cparts):
@@ -147,8 +144,8 @@ class MatrixBuilder:
                     self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
             if idx in self.C_blocks:
-                # Multiply with Lambda_int and keep track the maximal
-                # interaction length for the calculation of integration steps
+                # Multiply with Lambda_int and keep track of the maximum
+                # inverse interaction length across the parent species
                 self.max_lint = np.max(
                     [self.max_lint, np.max(parent.inverse_interaction_length())]
                 )
@@ -202,8 +199,8 @@ class MatrixBuilder:
                 if idx not in self.D_blocks:
                     info(25, parent.pdg_id[0], child.pdg_id, "not in D_blocks")
                     continue
-                # Multiply with Lambda_dec and keep track of the
-                # maximal decay length for the calculation of integration steps
+                # Multiply with Lambda_dec and keep track of the maximum
+                # inverse decay length across the parent species
                 self.max_ldec = max(
                     [self.max_ldec, np.max(parent.inverse_decay_length())]
                 )
@@ -228,7 +225,8 @@ class MatrixBuilder:
 
     def _average_operator(self, op_mat):
         """Averages the continuous loss operator by performing
-        1/max_step explicit euler steps"""
+        ``int(1 / losses.step_for_average)`` repeated finite updates of the
+        configured size."""
 
         n_steps = int(1.0 / self._losses.step_for_average)
         info(
@@ -320,7 +318,7 @@ class MatrixBuilder:
         return cached
 
     # ----------------------------------------------------------------------
-    # the int_m_hadr + dEdx_band split (D27)
+    # the int_m_hadr + dEdx_band split
     # ----------------------------------------------------------------------
 
     def _reset_band_split(self):
@@ -369,11 +367,13 @@ class MatrixBuilder:
         ``fl(fl(hadronic + band) + damping)`` against this half's
         ``fl(hadronic + damping)``; float addition is not associative, and a
         few ulp of those entries is the difference (measured: 1542 of 8742, 1
-        to 7 ulp, on the 2D rc7 fixture at float32).
+        to 7 ulp, on the 2D test fixture at float32).
 
         ``int_m`` is not reassembled from the halves -- it is this same
-        accumulation read one block earlier. Cached until the next
-        ``construct_matrices``.
+        accumulation read one block earlier. The split is constructed and
+        cached on first request; separating overlapping damping and loss terms
+        changes low-precision rounding because floating-point addition is not
+        associative, so recomputing it per read would not be stable.
         """
         self._require_live_assembly("int_m_hadr")
         if self._int_m_hadr is None:
