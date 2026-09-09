@@ -45,7 +45,7 @@ LIMIT = 700
 #: headroom.
 ALLOW = {
     "src/MCEq/driver/mceq_run.py": 1095,  # re-pinned by the prose pass (comment trim); remaining: env binding ~160, model load ~70
-    "src/MCEq/models/ddm/ddm.py": 874,  # re-pinned after the B7 fix; split by a later follow-up
+    "src/MCEq/models/ddm/ddm.py": 866,  # re-pinned by the prose pass; split by a later follow-up
 }
 
 

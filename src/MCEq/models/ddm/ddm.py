@@ -12,18 +12,16 @@ from MCEq.misc import info
 from MCEq.models.ddm.ddm_utils import _eval_spline, _generate_DDM_matrix, fmteb
 from MCEq.species.constants import _pdata
 
-#: Default DDM spline file, in the package data directory. Bound at import, as
-#: the ``config.data_dir`` expression it replaces was: neither honours a write
-#: to ``config.data_dir`` made after this module is imported. ``data_dir`` is
-#: defined as ``<base_path>/data`` and nothing in MCEq reassigns it, so the
-#: path is the same one the config expression produced.
+#: Default DDM spline file: ``<base_path>/data/DDM_1.0.npy``, independent of
+#: ``config.data_dir``. Pass a filename to ``DDMSplineDB`` to select another
+#: file.
 _DEFAULT_DDM_FILE = str(pathlib.Path(base_path) / "data" / "DDM_1.0.npy")
 
 # isospin symmetries used in the DDM
 isospin_partners = {2212: 2112, -211: 211}
 isospin_symmetries = {
     2112: {
-        321: 321,  # This is not exact but this is what we have
+        321: 321,  # Approximate neutron K+ production with the proton K+ yield
         211: -211,
         2212: 2112,
         2112: 2212,
@@ -57,8 +55,9 @@ class _DDMEntry:
 
     Attributes
     ----------
-    ebeam : float
-        The beam energy in GeV.
+    ebeam : str
+        The beam energy as a formatted string, in GeV; ``fl_ebeam``
+        provides its numeric value.
     projectile : int
         The PDG code of the projectile.
     secondary : int
@@ -66,7 +65,7 @@ class _DDMEntry:
     x17 : bool
         Whether the spline fits x^1.7 dn/dx or just dn/dx.
     tck : Tuple
-        The knots of the spline.
+        Spline tuple ``(knots, coefficients, degree)"
     cov : npt.NDArray
         The covariance matrix of the spline.
     tv : float
@@ -145,8 +144,6 @@ class _DDMEntry:
 
         Parameters
         ----------
-        ddm: DataDrivenModel
-            Instance of DataDrivenModel.
         gamma : float, optional
             CR nucleon integral spectral index. Default is 1.7.
 
@@ -159,12 +156,12 @@ class _DDMEntry:
 
         Notes
         -----
-        The Z-factor is calculated by integrating the spline defined by the DDM entry
-        over the range from entry.x_min to 1.0. The integral is multiplied by the tuning
-        value of the entry and raised to the power of gamma.
-
-        The error of the Z-factor is propagated using the covariance matrix of the
-        spline and the provided _PROPAGATE_PARAMS.
+        The Z-factor is calculated by integrating ``x**gamma * dN/dx`` for
+        the spline defined by the DDM entry over the range from entry.x_min
+        to 1.0. The error is propagated using the spline covariance matrix
+        and the provided _PROPAGATE_PARAMS. This method does not apply the
+        entry's tuning or error-scale factors; see
+        :meth:`calc_zfactor_and_error2` for the tuned variant.
 
         Examples
         --------
@@ -218,24 +215,22 @@ class _DDMEntry:
 
         Parameters
         ----------
-        ddm: DataDrivenModel
-            Instance of DataDrivenModel.
         gamma : float, optional
             CR nucleon integral spectral index. Default is 1.7.
 
         Returns
         -------
         numpy.ndarray
-            Z-factor values.
+            Z-factor values, including the requested error shift.
         numpy.ndarray
-            Error of the Z-factor values.
+            Error of the Z-factor values, scaled by the entry error scale.
 
         Notes
         -----
-        The main difference to the previous function is the error calculation, which
-        is performed by integrating the error band of the evaluated splines and not
-        by propagating the errors of the integral. This method is a bit more stable
-        for the "problematic" splines.
+        Unlike :meth:`calc_zfactor_and_error`, the central spectrum and its
+        error are integrated separately, using the spline covariance rather
+        than error propagation of the integral. This method is a bit more
+        stable for the "problematic" splines.
 
         Examples
         --------
@@ -323,7 +318,7 @@ class _DDMChannel:
         x17 : bool
             Whether the spline fits x^1.7 dn/dx or just dn/dx.
         tck : Tuple
-            The knots of the spline.
+            Spline tuple ``(knots, coefficients, degree)``.
         cov : npt.NDArray
             The covariance matrix of the spline.
         tv : float, optional
@@ -463,10 +458,8 @@ class DDMSplineDB:
     """A class for maintaining DDMEntryCollections for different
     projectile and secondary particle combinations."""
 
-    #: Empty default only. ``_load_from_file`` binds a fresh dict per instance
-    #: (B7 fix, R3): before it, the first instance's writes landed here and
-    #: every later instance shadowed the class attribute instead of sharing
-    #: it, leaking 13 channel entries into the whole session.
+    #: Empty default only. ``_load_from_file`` binds a fresh dict per
+    #: instance, so each loaded database owns a fresh spline-cache dictionary.
     _ddm_splines: Dict[str, _DDMChannel] = {}
 
     def __init__(
@@ -509,9 +502,8 @@ class DDMSplineDB:
             List of projectile codes to exclude.
         """
 
-        # Per-instance cache (B7 fix, R3): bind before filling, so add_entry
-        # below never reaches the class default, and a repeat call reloads
-        # cleanly instead of appending to the previous load.
+        # Create a fresh cache for this load so instances and reloads do not
+        # accumulate shared entries.
         self._ddm_splines = {}
 
         spl_file = np.load(filename, allow_pickle=True, encoding="latin1").item()
@@ -773,7 +765,7 @@ class DataDrivenModel:
         te: float = 1.0,
     ) -> None:
         """
-        Modify the tuning values and trim errors in the data_combinations dictionary.
+        Modify the tuning values and trim errors of the selected entry in ``spline_db``.
 
         Parameters
         ----------
@@ -793,7 +785,7 @@ class DataDrivenModel:
         Raises
         ------
         AssertionError
-            If neither `spl_idx` nor `ebeam` is set.
+            If both or neither of `spl_idx` and `ebeam` is set.
         """
 
         entry = self.spline_db.get_entry(projectile, secondary, ebeam, spl_idx)

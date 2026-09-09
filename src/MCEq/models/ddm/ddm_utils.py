@@ -10,7 +10,7 @@ from scipy.interpolate import splev
 from MCEq.misc import info
 
 _LIMIT_PROPAGATE = np.inf
-_PROPAGATE_PARAMS = dict(maxiter=10, maxgrad=1, method=0)  # Used to compute the
+_PROPAGATE_PARAMS = dict(maxiter=10, maxgrad=1, method=0)
 _QUAD_PARAMS = dict(limit=150, epsabs=1e-5)
 
 
@@ -233,17 +233,18 @@ def _eval_spline(
     Parameters
     ----------
     x : float or numpy.ndarray
-        The knot points.
+        Evaluation points.
     tck : Tuple[numpy.ndarray, numpy.ndarray, int]
-        A tuple containing the knots of the spline.
+        Spline tuple ``(knots, coefficients, degree)``.
     x17 : bool
-        If True, scale by x^1.7 dn/dx. Otherwise, return only dn/dx.
+        If True, remove the stored ``x**1.7`` weighting. Otherwise, the spline
+        is taken as dn/dx.
     cov : numpy.ndarray
         The covariance matrix of the spline.
     return_error : bool, optional
         If True, return the propagated error of the fit. Default is False.
     gamma_zfac : float, optional
-        The exponent for the gamma function. If None, it is not used. Default is None.
+        Supplies an additional power of x. If None, it is not used. Default is None.
 
     Returns
     -------
@@ -284,15 +285,13 @@ def _eval_spline_and_correction(
     used in DDM to apply the MC correction from pp -> K+ to pC -> K+
 
     Args:
-        x: The knot points.
-        tck_dndx: A tuple containing the knots of the spline.
-        tck_corr: Knots of the spline that is multiplied with the dndx spline.
-        x17: If True, fit x^1.7 dn/dx. Otherwise, fit dn/dx.
-        cov: The covariance matrix .
-        tv: The tuning value.
-        te: The error scale.
+        x: Evaluation points.
+        tck_dndx: Spline tuple ``(knots, coefficients, degree)`` of the dndx spline.
+        tck_corr: Spline tuple of the spline multiplied with the dndx spline.
+        x17: If True, remove the stored ``x**1.7`` weighting.
+        cov: The covariance matrix.
         return_error: If True, return the propagated error of the fit.
-        gamma_zfac: The exponent for the gamma function. If None, it is not used.
+        gamma_zfac: Supplies an additional power of x. If None, it is not used.
 
     Returns:
         The value of the fit at each knot point.
@@ -347,7 +346,8 @@ def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
     If the evaluated x value is less than the minimum x value of the spline,
     the corresponding dN/dx value is set to zero.
 
-    The returned array has the same shape as the provided xbinning.
+    Evaluation happens at the geometric means of adjacent bin edges and the
+    result carries one value per bin, i.e. ``len(xbins) - 1`` values.
 
     Examples
     --------
