@@ -7,7 +7,6 @@ The module imports ``h5py``, ``numpy``, ``scipy.sparse`` and nothing from
 interleaved with the read cursor, equivalence injection, the rho-stack
 choice -- stays with the backend, so :meth:`HDF5Store.read_channel_pack`
 returns the raw :class:`ChannelPack`, not a decoded channel index.
-Design: section 13.1 of the layered-architecture refactor plan.
 """
 
 from typing import NamedTuple
@@ -39,9 +38,8 @@ class HDF5Store:
 
     Construction opens nothing -- the EM database may be absent while
     ``enable_em`` is off, and the backend builds a store for it anyway.
-    Every read opens and closes the file itself; nothing is cached,
-    mirroring the pre-split ``HDF5Backend``, which had no caching and
-    reopened whichever file(s) each public call needed.
+    Each read opens and closes its HDF5 file; this object does not cache
+    open file handles.
     """
 
     def __init__(self, fname):
@@ -107,8 +105,7 @@ def unpack_channel(
 ) -> np.ndarray:
     """Decode one CSR-packed channel to its dense, energy-cut matrix.
 
-    Verbatim extraction of the two unpack branches of
-    ``HDF5Backend._gen_db_dictionary``.  ``mat_data[0]`` carries the CSR
+    ``mat_data[0]`` carries the CSR
     values and ``mat_data[1]`` the column indices of the whole pack;
     ``indptr_row`` is one row of the sibling ``indptrs`` dataset;
     ``start`` / ``length`` locate the channel's entries in the flat

@@ -1,8 +1,6 @@
 """Hadron-air cross-sections: the ``InteractionCrossSections`` consumer.
 
-Plan section 1's ``data/cross_sections.py``, §13.2 item 4. The class moved here
-verbatim from ``data/__init__.py``, which becomes a pure re-export surface; the
-unit constants and the energy-grid reference are unchanged.
+Loads and manages the per-projectile cross-section arrays.
 """
 
 import numpy as np
@@ -35,7 +33,7 @@ class InteractionCrossSections:
         self.energy_grid = mceq_hdf_db.energy_grid
         #: List of active parents
         self.parents = None
-        #: Dictionary containing the distribuiton matrices
+        #: Cross-section arrays indexed by projectile
         self.index_d = None
         #: (str) Interaction Model name
         self.iam = normalize_hadronic_model_name(interaction_model)

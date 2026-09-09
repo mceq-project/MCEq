@@ -1,22 +1,19 @@
-"""Structural types shared by the channel-table classes (R2).
+"""Structural types shared by the channel-table classes.
 
 A *channel table* is any object the species layer can wire itself from:
 it exposes the parent list, the parent→children relations, and a matrix
 lookup, and it supports membership tests. ``MCEqParticle`` consumes
 channel tables through this interface only
-(:meth:`MCEq.species.particle.MCEqParticle._set_channels`), which is why
-the hadronic and decay wiring collapsed to one routine (R2 deliverable
-A: the two ``set_*_channels`` methods share their body, not just their
-shape).
+(:meth:`MCEq.species.particle.MCEqParticle._set_channels`), which lets the
+hadronic and decay wiring share one routine.
 
 Two shipped classes satisfy the protocol structurally — no inheritance
 is introduced anywhere:
 
 * ``MCEq.data.interaction_tables.Interactions`` — 1D matrices and, on
   2D runs, ``(n_k, dim, dim)`` blocks. Keys are ``(pdg, helicity)``
-  tuples; ``get_matrix`` applies the ``mod_pprod`` production
-  modifications (and, from R2 deliverable B on, the channel overrides)
-  on the way out.
+  tuples; ``get_matrix`` applies the absolute channel overrides before the
+  ``mod_pprod`` production modifications on the way out.
 * ``MCEq.data.decay_tables.Decays`` — plain decay matrices, same key
   shape.
 

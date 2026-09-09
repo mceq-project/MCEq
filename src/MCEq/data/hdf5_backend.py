@@ -27,15 +27,14 @@ from MCEq.misc import info
 class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
-    The file contains all necessary ingredients to run MCEq, i.e. no
-    other files are required. This database is not maintained in git
-    and it will change infrequently.
+    Reads the hadronic database and, when EM interactions are enabled, a
+    separate EM database. Neither is maintained in git, and both change
+    infrequently.
 
     ``paths``, ``grid``, ``physics`` and ``em`` are the settings groups this
     backend reads from; all four are required, injected by the driver --
-    there is no fallback to live config. The medium
-    fallback (``medium=None`` -> ``physics.interaction_medium``) resolves
-    against the injected group, not against config.
+    there is no fallback to live config. An omitted medium resolves from the
+    injected ``physics`` group at construction, not against config.
     """
 
     def __init__(
@@ -53,10 +52,8 @@ class HDF5Backend:
         self._grid = grid
         self._physics = physics
         self._em = em
-        # Resolved here rather than as a signature default: a default would bind
-        # when this module is first imported, which happens lazily from
-        # MCEqRun.__init__, so whether a caller's `config.interaction_medium`
-        # was seen depended on whether it was written before that import.
+        # Resolved here rather than as a signature default, so the value is
+        # read from the injected physics group at construction time.
         medium = physics.interaction_medium if medium is None else medium
 
         info(2, "Opening HDF5 file", paths.mceq_db_fname)
@@ -77,13 +74,13 @@ class HDF5Backend:
         # (and must stay absent-constructible): HDF5Store never opens.
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
-        # DIAGNOSTIC (em-20dec-binning-test): when grid.em_standalone_grid is
-        # set, the energy grid is taken from the EM DB instead of the hadronic
-        # DB, so the EM cascade can run on a finer bins/decade grid than the
-        # (10/dec) hadronic DB. The inert hadronic interaction/decay matrices
-        # are then skipped and the e± ionization continuous-loss curve is
-        # interpolated onto the EM grid (see interaction_db / decay_db / cs_db /
-        # continuous_loss_db below). Default off → standard behaviour unchanged.
+        # In standalone EM mode (grid.em_standalone_grid), take the energy grid
+        # from the EM DB instead of the hadronic DB, so the EM cascade can run
+        # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
+        # hadronic interaction/decay matrices are then skipped and the e±
+        # ionization continuous-loss curve is interpolated onto the EM grid
+        # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
+        # Default off.
         self._em_standalone = bool(grid.em_standalone_grid)
         grid_fname = self.em_fname if self._em_standalone else self.had_fname
 
@@ -239,8 +236,7 @@ class HDF5Backend:
         """:func:`MCEq.data.blending.he_le_weight` on this backend's settings.
 
         Reads the dtype off the injected grid group; ``__init__`` always
-        binds it, so there is no live-config fallback here (the
-        ``object.__new__`` shells that needed one are gone).
+        binds it, so there is no live-config fallback here.
         """
         return he_le_weight(
             self._energy_grid.c,

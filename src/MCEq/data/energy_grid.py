@@ -1,35 +1,21 @@
 """The energy grid: the grid tuple, the cut evaluation and the x_lab matrix.
 
-:mod:`MCEq.misc` (C1's bottom layer, the wrong home for a data-layer
-table) keeps a read/write forwarding shim for the three names so user
-code and the bug pins keep resolving them there.
+``EnergyGrid`` aliases the ``energy_grid`` namedtuple. :mod:`MCEq.misc`
+forwards the compatibility names.
 
-Two deliberate non-changes, both of which the plan asks for eventually and
-neither of which belongs in a move commit:
-
-* ``energy_grid`` stays a :func:`~collections.namedtuple`. Plan section 5 wants a
-  frozen dataclass with ``cuts()`` and ``xmat()`` methods; a namedtuple has
-  ``__slots__ = ()`` and no per-instance ``__dict__``, unpacks as a tuple and
-  compares equal to one, and the tests hand ``SimpleNamespace`` stand-ins to the
-  same call sites -- so the conversion is a type change, not a move.
-  ``EnergyGrid`` is bound here as the plan's name for it so the eventual
-  conversion is a change of one assignment.
-* :func:`gen_xmat` keeps its module-global cache, keyed on ``(d, d)`` alone.
-  Two grids of equal ``d`` therefore share one array and the return value *is*
-  the cache -- ``tests/test_data_bug_pins.py`` pins exactly that. The per-grid
-  cached method that replaces it is a separate commit, and the pins are the
-  signal that it landed.
+:func:`gen_xmat` caches by matrix shape: grids of equal ``d`` share one
+array and the return value *is* the cache, so mutating it affects later
+calls. See ``tests/test_data_bug_pins.py``.
 """
 
 from collections import namedtuple
 
 import numpy as np
 
-#: Energy grid (centers, bind widths, dimension)
+#: Energy grid: centers, bin edges, bin widths, bin count
 energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 
-#: Plan section 1's name for the same type. An alias, not a second class: the
-#: namedtuple's ``__name__`` stays ``energy_grid`` so no repr moves.
+#: Alias of the same namedtuple type; its type name remains ``energy_grid``.
 EnergyGrid = energy_grid
 
 #: Matrix with x_lab=E_child/E_parent values
@@ -49,9 +35,9 @@ def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
 
     Returns:
         min_idx: int
-            Index corresponding to the minimum energy value.
+            Index of the bin nearest to ``e_min``.
         max_idx: int
-            Index corresponding to the maximum energy value.
+            Exclusive upper index for the energy-grid slice.
         energy_slice: slice
             Slice corresponding to the energy range.
 
@@ -68,7 +54,11 @@ def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
 
 
 def gen_xmat(energy_grid):
-    """Generates x_lab matrix for a given energy grid"""
+    """Return the cached child-to-parent energy-ratio matrix.
+
+    Rebuilt only when the grid dimension changes: changed centers with the
+    same length reuse the cached array.
+    """
     global _xmat
     dims = (energy_grid.d, energy_grid.d)
     if _xmat is None or _xmat.shape != dims:

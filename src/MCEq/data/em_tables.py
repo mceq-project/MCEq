@@ -19,14 +19,13 @@ from MCEq.misc import info
 def medium_for_em(medium):
     """The medium the EM file should be read for, given the hadronic one.
 
-    The historical ice -> water substitution, with its log line. B4
-    (``tests/test_data_bug_pins.py``, two pins): ``interaction_db`` calls
-    this and throws the result away -- it rewrites its local ``medium``
+    Ice substitutes water, with a log line. NOTE: ``interaction_db`` calls
+    this and discards the return value -- it rewrites its local ``medium``
     but then reads the EM group under ``self.medium`` -- and
-    ``_cs_db_single`` never substitutes at all, so an ice run reads the
-    ice EM file on both paths and only the log line claims water. Until
-    the fix ruling lands the callers keep reading what they always read;
-    a fix must pick one path and update both pins (they pin ice-on-both).
+    ``_cs_db_single`` never substitutes at all, so an ice run reads the ice
+    EM file on both paths and only the log line claims water.
+    ``tests/test_data_bug_pins.py`` pins ice-on-both; a fix must pick one
+    path and update both pins.
     """
     if medium == "ice":
         info(5, "Electromagnetic cross sections for ice replaced by water.")
@@ -47,9 +46,7 @@ def select_em_rho_slice(store, medium, air_density):
     ``None`` when no ρ stack is present / no override is requested.
 
     Only the air medium has a stacked layout in the current pipeline; for
-    other media this returns ``None`` silently.  See
-    ``mceq-em-integration/wiki/methods/lpm-density-factorization.md`` for
-    the design.
+    other media this returns ``None`` silently.
     """
     if air_density is None:
         return None
@@ -93,10 +90,10 @@ def em_cs_group_path(store, medium, caller, air_density):
 def helicity_duplicate(em_index):
     """Copy bremsstrahlung and photon emission to polarised e± and μ±.
 
-    Verbatim extraction of the block ``interaction_db`` runs under
-    ``physics.muon_helicity_dependence``: for each charged lepton and each
-    helicity the ``(h, h)`` and ``(h, γ)`` channels take the value of the
-    unpolarised entry, ``parents`` gains the polarised pair, and
+    Reuse each original channel array for the corresponding helicity
+    channels: for each charged lepton and each helicity the ``(h, h)`` and
+    ``(h, γ)`` channels take the value of the unpolarised entry,
+    ``parents`` gains the polarised pair, and
     ``relations`` / ``particles`` are rebuilt from the resulting index.
 
     This is only approximately valid and is done for consistency. Typically

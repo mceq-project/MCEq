@@ -13,8 +13,8 @@ import os
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
-# sha256 checksum of the default database file
-# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm191_v12.h5
+# sha256 checksum of the default database file (config.mceq_db_fname),
+# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v140.h5
 file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
 
 
@@ -93,12 +93,12 @@ def _download_file(url, outfile):
 def ensure_db_available(cfg):
     """Download the MCEq database if not already present.
 
-    Called by MCEqRun.__init__ with the run's config (the live module, or
-    its D3 snapshot) so that the download is deferred until the database
-    is actually needed, and so this module imports no config itself
-    (C5): ``cfg`` supplies ``data_dir``, ``mceq_db_fname`` and
-    ``debug_level``, flat or group-shaped, and the caller owns the
-    source. Direct callers pass ``MCEq.config`` (or the module they
+    Called by ``MCEqRun.__init__`` with the run's configuration — the live
+    module or a run snapshot — so the download is deferred until the database
+    is actually needed and this module imports no configuration itself.
+    ``cfg`` must expose flat ``data_dir``, ``mceq_db_fname`` and
+    ``debug_level`` attributes; a paths-only group does not supply that
+    interface. Direct callers pass ``MCEq.config`` (or the module they
     override):
 
         from MCEq import config

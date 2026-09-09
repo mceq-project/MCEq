@@ -1,30 +1,27 @@
 """Model-specific projectile equivalences: the table and the three uses of it.
 
-Plan section 1's ``data/equivalences.py``. A database stores production
-matrices for the projectiles its generator actually simulated; every other
-species has to borrow a column. This module holds the borrowing rules:
+A database stores production matrices for the projectiles its generator
+actually simulated; every other species has to borrow a column. This module
+holds the borrowing rules:
 
-* :data:`equivalences`, the per-family ``child -> stand-in`` table, moved here
-  verbatim from ``MCEq.data`` (where it sat above ``HDF5Backend``);
+* :data:`equivalences`, the per-family ``child -> stand-in`` table;
 * :func:`reverse_equivalences` and :func:`apply_equivalences`, the inverse
   lookup and the copy that ``HDF5Backend._gen_db_dictionary`` performs per
   channel when ``assume_nucleon_interactions_for_exotics`` is set;
 * :func:`mapped_cross_section` and :func:`family_fallback`, the cross-section
-  side, formerly ``HDF5Backend._mapped_cross_section``.
+  side.
 
-**Two object identities are load-bearing and a rewrite loses them silently.**
+**Two object identities must be preserved.**
 
 1. ``equivalences["FLUKA"] is equivalences["DPMJET"]`` -- the same dict, not a
    copy, so any edit to one family is seen by the other.
 2. :func:`apply_equivalences` aliases rather than copies: the borrowing
    projectile gets *the same* matrix object as its stand-in, and *the same*
    ``relations`` list, which later iterations of the caller's channel loop keep
-   appending to. Measured on the reduced 1D database with SIBYLL21 and the
-   default ``disabled_particles``: 40 groups of aliased channel matrices (60
-   keys beyond the first of each group) and 2 shared ``relations`` lists,
-   ``310`` sharing ``130``'s and both ``3122``/``-3122`` sharing ``2112``'s.
+   appending to. Callers must therefore account for mutations reached through
+   either name.
 
-Both are asserted in ``tests/test_data_hdf5_decode.py``
+Both are checked in ``tests/test_data_hdf5_decode.py``
 (``test_equivalence_injection_aliases_rather_than_copies``,
 ``test_fluka_and_dpmjet_share_one_equivalence_table``).
 
@@ -37,9 +34,8 @@ the dict too, and ``MCEq.data.equivalences.family_fallback`` raises
 ``AttributeError: 'dict' object has no attribute 'family_fallback'`` even after
 a plain ``import MCEq.data.equivalences``. Only
 ``from MCEq.data.equivalences import family_fallback`` (or a ``sys.modules``
-lookup) reaches the functions. The dict has to win -- it is
-``MCEq.data.equivalences``'s pinned public surface
-(``tests/test_phase4_surface.py``).
+lookup) reaches the functions. The dict has to win -- it is the exported public
+name (``tests/test_phase4_surface.py``).
 
 No config, no HDF5, no numpy: the module reads only :mod:`MCEq.data.model_names`
 and ``misc.info``.
@@ -50,8 +46,6 @@ from collections import defaultdict
 from MCEq.data.model_names import family_of
 from MCEq.misc import info
 
-# TODO: Convert this to some functional generic class. Very erro prone to
-# enter stuff by hand
 equivalences = {
     "SIBYLL23": {
         -4132: 4122,
@@ -204,15 +198,19 @@ def apply_equivalences(
     index_d,
     relations,
 ):
-    """Give every projectile that stands in for ``parent_pdg`` its channel.
+    """Give missing projectiles the simulated parent's channel matrix and list.
+
+    ``parent_pdg`` is the simulated representative; ``eqv_lookup`` lists the
+    projectiles that borrow from it.
 
     Called once per decoded channel by ``HDF5Backend._gen_db_dictionary``, and
     only when ``physics.assume_nucleon_interactions_for_exotics`` is set -- the
     switch stays at the call site so this module reads no configuration.
 
     Mutates ``particle_list``, ``index_d`` and ``relations`` in place, and
-    **aliases**: the stand-in shares the matrix object and the ``relations``
-    list of ``parent_pdg`` (see the module docstring). Returns nothing.
+    **aliases**: the borrowing projectile shares the matrix object and the
+    ``relations`` list of ``parent_pdg`` (see the module docstring). Returns
+    nothing.
     """
     for eqv_parent in eqv_lookup[parent_pdg]:
         if eqv_parent[0] not in model_particles:
@@ -225,8 +223,6 @@ def apply_equivalences(
                 "parent.",
             )
             continue
-        # plain ``if`` (not ``elif``): no behaviour change — the
-        # branch above always ``continue``s, the elif was redundant
         if eqv_parent in available_parents:
             info(
                 10,
@@ -252,17 +248,16 @@ def family_fallback(projectile):
     to pbar, not p; same logic for K-/pi- when the model stores dedicated
     columns) before falling back to the positive one.
 
-    The branches are tested in order and each returns, so **first match wins**,
-    exactly as the ``elif`` chain this replaced did. They are *not* disjoint:
-    ``130`` (K_L) satisfies both the first window (``apid in (130, 310, 311)``)
-    and the second (``100 < apid < 300``), and keeps the kaon representative
-    only because the kaon branch is tested first. Reordering the three ``if``
-    statements would silently reroute K_L to the pion column.
+    Check kaon IDs before pion IDs: ID ``130`` (K_L) satisfies both the kaon
+    window (``apid in (130, 310, 311)``) and the pion window
+    (``100 < apid < 300``), and keeps the kaon representative only because its
+    branch is tested first. Reordering the branches would silently reroute K_L
+    to the pion column.
 
     Anything outside all three windows gets ``[]`` -- leptons, the diffractive
     ``10313``/``10323`` ids, nuclei at or above 5000. This is one of three
     ``PDG -> family representative`` policies in the tree and is deliberately
-    not unified with the other two; see :mod:`MCEq.data.model_names` and
+    not unified with the other two; see
     ``tests/test_data_model_names.py::test_the_two_pdg_policies_are_not_unified``,
     which drives both real callables and fails if they are unified.
     """

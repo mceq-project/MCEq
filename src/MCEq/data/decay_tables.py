@@ -1,9 +1,7 @@
 """Decay yield matrices: the ``Decays`` consumer.
 
-Plan section 1's ``data/decay_tables.py``, §13.2 item 4. The class moved here
-verbatim from ``data/__init__.py``, which becomes a pure re-export surface; no
-name in the class body needed changing (the backend is injected, the config
-fallback stays function-local inside ``__init__``).
+Decay-table selection uses the required, injected ``physics`` settings; there
+is no configuration fallback.
 """
 
 from MCEq.misc import info
@@ -86,13 +84,14 @@ class Decays:
         return self.relations[parent_pdg]
 
     def get_matrix(self, parent, child):
-        """Returns a ``DIM x DIM`` decay matrix.
+        """Return the channel array for parent and child ``(PDG ID, helicity)`` keys.
 
         Args:
-          parent (int): PDG ID of parent particle
-          child (int): PDG ID of final state child particle
+          parent: ``(PDG ID, helicity)`` key of the parent particle
+          child: ``(PDG ID, helicity)`` key of the final-state child
         Returns:
-          numpy.array: decay matrix
+          numpy.array: channel array, shaped ``(d, d)`` or ``(n_k, d, d)``
+          depending on the stored channel
         """
         info(20, "entering with", parent, child)
         if child not in self.relations[parent]:

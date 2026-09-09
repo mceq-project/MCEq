@@ -1,31 +1,15 @@
 """Runtime HE/LE model blending: the sigmoid weight and the two blends.
 
-Plan section 1's ``data/blending.py``. The three functions were
-``HDF5Backend._he_le_weight``, ``HDF5Backend._blend_interaction_dbs`` and the
-blend half of ``HDF5Backend.cs_db``; they read nothing off the backend that is
-not passed in here, so they are free functions and the backend keeps thin
-delegates. Loading stays in ``HDF5Backend`` -- ``cs_db`` still calls
-``_cs_db_single`` twice and hands the two indices over.
+``HDF5Backend`` loads the model tables and passes their arrays to these
+functions; the backend keeps thin delegates.
 
-THE DTYPE BEHAVIOUR IS DELIBERATE, NOT AN OVERSIGHT
----------------------------------------------------
+DTYPE
+-----
 
-``dtype`` is ``config.grid.dtype``, which is ``None`` by default (``floatlen``
-is unset), and ``np.asarray(x, dtype=None)`` PRESERVES ``x``'s dtype while
-``x.astype(None)`` FORCES float64. The consequences are pinned in
-``tests/test_low_energy_blending.py`` and a "cleanup" here changes numbers:
-
-* :func:`he_le_weight` returns float64 in *both* branches whatever the energy
-  grid is, and neither ``dtype=None`` is what makes it so. The hard switch is
-  ``.astype`` on a *bool* array, so ``None`` forces float64 where preserving
-  would have given bool; the sigmoid is float64 over-determinedly, both from
-  the ``dtype=float`` on the energy array and from ``np.log(9.0)`` being an
-  ``np.float64`` scalar that promotes under NEP 50.
-* the one site where ``dtype=None`` genuinely preserves is the channel-pack
-  read in ``_gen_db_dictionary``, so a float32 pack reaches :func:`blend_yields`
-  as float32, is multiplied by the float64 weight and comes back float64 --
-  while an HE-only channel, passed through untouched, stays float32. That
-  asymmetry inside one returned ``index_d`` is today's behaviour.
+With ``dtype=None`` (the default), blend weights use float64 and blended
+channels promote accordingly. An explicit dtype controls the weights.
+Channels without an LE counterpart are passed through unchanged and retain
+their stored arrays and dtype.
 
 The weight is applied as ``w_he[np.newaxis, :]``, i.e. along the LAST axis, so
 one ``(1, n_e)`` array serves both the 1D ``(n_e, n_e)`` channel matrix and the
@@ -49,7 +33,8 @@ def he_le_weight(energy, transition, trwidth, dtype):
         trwidth: full 10--90 % width of the transition in decades; ``0.0``
             makes the weight a hard switch at ``transition``.
         dtype: ``grid.dtype``, i.e. ``None`` unless ``config.floatlen`` is set.
-            See the module docstring -- the result is float64 either way.
+            The default result is float64; an explicit dtype is respected in
+            both transition modes.
     """
     energy = np.asarray(energy, dtype=float)
     if trwidth == 0.0:
@@ -61,7 +46,7 @@ def he_le_weight(energy, transition, trwidth, dtype):
 
 
 def blend_yields(he_index, le_index, he_name, le_name, w_he, transition, trwidth):
-    """Blend yield matrices column-wise, preserving historical semantics.
+    """Blend yield matrices column-wise, using the HE channel set.
 
     The HE model defines the channel set. Channels absent from the LE
     model remain unchanged, matching the former compiled low-energy
@@ -129,7 +114,7 @@ def blend_cross_sections(he_index, le_index, he_name, le_name, w_he):
     blended = {}
     for projectile, he_cs in he_index["index_d"].items():
         le_cs = mapped_cross_section(le_index["index_d"], projectile, le_name)
-        # Historical behaviour: an HE-only projectile remains unchanged.
+        # Leave HE-only projectiles unchanged.
         blended[projectile] = he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
     # LE-only projectiles (e.g. FLUKA's dedicated n, nbar, K0, hyperon
     # columns) keep their identity instead of being dropped: their own
