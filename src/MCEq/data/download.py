@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
+from pathlib import Path
 
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
@@ -63,31 +65,50 @@ class FileIntegrityCheck:
 
 
 def _download_file(url, outfile):
-    """Downloads the MCEq database from github"""
-
+    """Publish a complete download atomically so concurrent readers stay safe."""
     import math
 
     import requests
     from tqdm import tqdm
 
-    # Streaming, so we can iterate over the response.
-    r = requests.get(url, stream=True)
-
-    # Total size in bytes.
-    total_size = int(r.headers.get("content-length", 0))
-    block_size = 1024 * 1024
-    wrote = 0
-    with open(outfile, "wb") as f:
-        for data in tqdm(
-            r.iter_content(block_size),
-            total=math.ceil(total_size // block_size),
-            unit="MB",
-            unit_scale=True,
-        ):
-            wrote = wrote + len(data)
-            f.write(data)
-    if total_size != 0 and wrote != total_size:
-        raise Exception("ERROR, something went wrong")
+    outfile = Path(outfile)
+    temporary = None
+    try:
+        with requests.get(url, stream=True) as response:
+            response.raise_for_status()
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024 * 1024
+            wrote = 0
+            with tempfile.NamedTemporaryFile(
+                dir=outfile.parent,
+                prefix=outfile.name + ".",
+                suffix=".part",
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                for data in tqdm(
+                    response.iter_content(block_size),
+                    total=math.ceil(total_size / block_size),
+                    unit="MB",
+                    unit_scale=True,
+                ):
+                    wrote += len(data)
+                    stream.write(data)
+            if total_size and wrote != total_size:
+                raise OSError("Incomplete MCEq database download")
+        digest = FileIntegrityCheck(temporary).get_file_checksum()
+        if outfile.name == "mceq_db_lext_dpm193_v142.h5" and digest != file_checksum:
+            raise OSError("MCEq database download checksum mismatch")
+        try:
+            os.replace(temporary, outfile)
+        except PermissionError:
+            # Windows may refuse replacement while another reader has the
+            # concurrently published identical file open. It is already ready.
+            if not FileIntegrityCheck(outfile, digest).succeeded():
+                raise
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def ensure_db_available(cfg):

@@ -157,3 +157,41 @@ def test_load_mkl_passes_a_string_path(monkeypatch):
     cfg._load_mkl()
 
     assert isinstance(cfg.mkl, PreFspathCDLL)
+
+
+@pytest.mark.parametrize("failure", [None, "truncated", "stream"])
+def test_download_publishes_only_complete_file(tmp_path, monkeypatch, failure):
+    """Readers keep the old database throughout a download, including failures."""
+    outfile = tmp_path / "custom.h5"
+    outfile.write_bytes(b"old database")
+
+    class Response:
+        headers = {"content-length": "6"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, size):
+            yield b"new"
+            assert outfile.read_bytes() == b"old database"
+            if failure == "stream":
+                raise OSError("connection lost")
+            if failure != "truncated":
+                yield b" db"
+            assert outfile.read_bytes() == b"old database"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: Response())
+    if failure:
+        with pytest.raises(OSError):
+            download._download_file("https://example.invalid/database", outfile)
+        assert outfile.read_bytes() == b"old database"
+    else:
+        download._download_file("https://example.invalid/database", outfile)
+        assert outfile.read_bytes() == b"new db"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["custom.h5"]
