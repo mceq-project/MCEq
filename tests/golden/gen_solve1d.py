@@ -80,7 +80,7 @@ CONFIG_PINS = {
     "em_air_density": None,
     "floatlen": None,
     "cuda_fp_precision": 64,
-    "etd2_path": {"eps": 0.3, "dX_max": 20.0, "dX_min": 0.01, "fd_span": 0.01},
+    "etd2_path": {"eps": 0.01, "dX_max": 2.0, "dX_min": 0.01, "fd_span": 0.01},
     "em_adaptive_step": False,
     "em_step_safety": 0.12,
     "em_step_dense_eig_max": 4000,
