@@ -29,7 +29,7 @@ PRIMARY_ENERGY_GEV = 100.0
 PRIMARY_PDG = 2212
 SAVE_ALTITUDES_KM = (15.0, 5.0, 0.2, 0.0)
 E_MIN, E_MAX = 1e-1, 1e4
-EPS, DX_MAX = 0.05, 2.0
+EPS, DX_MAX = 0.01, 2.0
 OVERSAMPLE_RES, THETA_RES = 5, 600
 
 OUTFILE = pathlib.Path(__file__).parent / "2d_baseline_solution.npz"
@@ -71,6 +71,8 @@ def main():
         "primary_pdg": PRIMARY_PDG,
         "eps": EPS,
         "dX_max": DX_MAX,
+        "effective_max_step": float(np.max(mceq.integration_path[1])),
+        "nsteps": mceq.integration_path[0],
         "kernel_config": "numpy_etd2",
         "secant_theta_transport": str(config.secant_theta_transport),
         "secant_theta_cap_deg": float(config.secant_theta_cap_deg),

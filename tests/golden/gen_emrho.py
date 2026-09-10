@@ -352,7 +352,7 @@ def build():
                 " slice index, so each slice decodes distinct yield matrices."
                 " Densities 1.2e-6/9e-4/8e-3 g/cm3 select slices 0/1/2"
                 " (closest in log10, pinned by slice_idx); gamma primary at"
-                " 30 GeV, solve on int_grid [10, 50] g/cm2 with dX_max 20."
+                " 30 GeV, solve on int_grid [10, 50] g/cm2 requesting dX_max 20; the assembled loss-stencil guard can tighten this ceiling."
                 " gamma_cs pins the cs-to-slice coupling directly, yield_operator"
                 " pins the assembled operator against the yield-slice selection,"
                 " and grid_sol and emin_spectrum pin that the solved dynamics"

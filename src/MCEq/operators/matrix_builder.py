@@ -267,20 +267,18 @@ class MatrixBuilder:
         spectral radius the monotone rows bound at 1). Floored at
         :data:`UPWIND_ROWS_FLOOR` -- the boundary-cliff layer of docs 5.3 the
         composites exist for -- and capped at ``dim - 2``, the clamp
-        ``differential_operator`` applies. ``dX_max`` is read off the live
-        config module (deferred import, same device as
-        :func:`MCEq.solvers.path._live_config`): the ``solver`` group is not
-        injected here, and this keeps the layer consistent with the path of a
-        plain ``solve()``. EM species return 0 -- their block runs under the
+        ``differential_operator`` applies. The reference depth is fixed at 20 g/cm², preserving the production
+        spatial operator independently of temporal solver tolerances. The
+        path controller now limits steps from the assembled bands instead
+        of changing the spatial stencil when tolerances change.
+        EM species return 0 -- their block runs under the
         Cure-B cap of ``operators/compiled.py`` and its documented caveat is
         separate; the instability this covers is the hadron blocks.
         """
         particle = self._pman[pdg_id]
         if getattr(particle, "is_em", False):
             return 0
-        from importlib import import_module
-
-        d_x_max = float(import_module("MCEq.config").etd2_path["dX_max"])
+        d_x_max = 20.0  # fixed stencil-design depth, independent of solver tolerances
         dedx = np.abs(np.asarray(particle.dEdX, dtype=np.float64))
         dln_e = float(
             np.mean(loss_stencil.log_spacings(np.asarray(self._energy_grid.b, float)))

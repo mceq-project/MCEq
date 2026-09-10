@@ -5,9 +5,9 @@ The fixture (see ``tests/data/make_2d_baseline_fixture.py``) is a snapshot
 of the production 2D configuration: FLUKA 2D database (48 Hankel modes),
 sec(theta) transport at the default cap, muon multiple scattering and
 helicity-dependent decays, a single 100 GeV proton at theta=30 deg, solved
-with the numpy ETD2 kernel on a tight step schedule (eps=0.05, dX_max=2 —
-the production defaults are tuned for cosmic-ray spectra and are too coarse
-for a single-energy primary).
+with the numpy ETD2 kernel with the current default settings (eps=0.01, requested dX_max=2),
+further limited by the assembled loss-stencil and secant guard. The fixture
+was refreshed after the September 2026 step-controller correction.
 
 This module re-runs the identical configuration and asserts agreement with
 the stored solution. Because fixture and test share the code path, kernel

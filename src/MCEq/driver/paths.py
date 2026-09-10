@@ -17,6 +17,7 @@ consumes it and passes the value down pure).
 import numpy as np
 
 from MCEq.misc import info
+from MCEq.operators.stiffness import LOSS_STEP_SAFETY, continuous_loss_rate
 from MCEq.solvers.path import em_cascade_dx_cap as path_em_cascade_dx_cap
 from MCEq.solvers.path import etd2_nonuniform_path
 
@@ -34,6 +35,23 @@ def em_cascade_dx_cap(run, r_em):
     return path_em_cascade_dx_cap(r_em, run.config.em)
 
 
+def continuous_loss_dx_cap(run):
+    """Memoize on matrix/secant identity; a rebuild invalidates the cap."""
+    if getattr(run, "int_m", None) is None:
+        return np.inf  # atmosphere-only path planning before assembly
+    builder = run.matrix_builder
+    sec = run._resolve_secant()
+    cached = getattr(run, "_loss_step_cache", None)
+    if cached is None or cached[0] is not run.int_m or cached[1] is not sec:
+        rate = continuous_loss_rate(
+            builder._contloss_bands.values(),
+            None if sec is None else sec["lam"],
+        )
+        cap = LOSS_STEP_SAFETY / rate if rate else np.inf
+        run._loss_step_cache = (run.int_m, sec, cap)
+    return run._loss_step_cache[2]
+
+
 def calculate_integration_path(
     run,
     int_grid,
@@ -46,19 +64,23 @@ def calculate_integration_path(
     dX_min=None,
     fd_span=None,
 ):
-    # Build the density-gradient schedule and apply the additional EM
-    # stiffness cap when enabled. Step sizes follow the atmosphere-aware
-    # non-uniform schedule keyed off the local |d ln rho_inv / dX|; see
-    # ``MCEq.solvers.etd2_nonuniform_path``. The EM stiffness cap applies
-    # to the EM block of int_m (no-op when the em group's adaptive_step
-    # is off). int_m is X-constant, so this is a single global cap that the
-    # density-gradient schedule never relaxes above. Settings read the
-    # run's ``solver`` group (snapshot or live view).
+    # Apply atmosphere accuracy settings plus caps from the assembled loss
+    # stencil (including secant elongation) and the optional EM estimator.
+    # Resolve before caching so live config changes cannot reuse stale paths.
     solver = run.config.solver
-    em_cap = em_cascade_dx_cap(run, run._em_cascade_step_scale())
-    if np.isfinite(em_cap):
-        base_dX_max = dX_max if dX_max is not None else solver.etd2_path["dX_max"]
-        dX_max = min(base_dX_max, em_cap)
+    p = solver.etd2_path
+    X_start = solver.X_start if X_start is None else X_start
+    eps = p["eps"] if eps is None else eps
+    dX_max = p["dX_max"] if dX_max is None else dX_max
+    dX_min = p["dX_min"] if dX_min is None else dX_min
+    fd_span = p["fd_span"] if fd_span is None else fd_span
+    cap = min(
+        em_cascade_dx_cap(run, run._em_cascade_step_scale()),
+        continuous_loss_dx_cap(run),
+    )
+    dX_max = min(dX_max, cap)
+    # A user floor must never undo the stiffness ceiling.
+    dX_min = min(dX_min, dX_max)
     etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
     cached_etd2_params = getattr(run, "_cached_etd2_path_params", None)
 

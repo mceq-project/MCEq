@@ -1460,3 +1460,27 @@ downstream work.
   optical wave fields.* JOSA A **21**, 53–58. Reference DHT for a
   future `convert_to_theta_space` replacement; sampled at zeros of
   `J₀`, would require redesigning the database K_GRID (see §11.6).
+
+### Low-energy step safety
+
+ETD2 defaults are `eps=0.01` and `dX_max=2` g/cm². The density parameter
+controls changes of inverse atmospheric density; it is not an error estimate
+for the cascade. In addition, the path builder limits each step to
+`0.5 / rate`, where `rate` is the largest absolute off-diagonal row sum of
+an assembled continuous-loss band. In coupled 2D transport this rate is
+multiplied by the largest secant eigenvalue (at least one). The diagonal
+loss/decay blocks are exponentiated and are excluded from this explicit rate.
+The existing optional EM cascade cap is also applied.
+
+This conservative policy accounts for grid spacing, the minimum energy,
+loss curves, stencil closures and operator averaging. It is not a global
+error estimator or a proof of stability for arbitrary cascade matrices.
+Reducing the minimum energy can make a calculation substantially slower;
+convergence should be checked with a smaller `dX_max` and `eps` on the same
+grid. The species-adaptive spatial upwind layer uses a fixed 20 g/cm² design
+reference, so changing temporal tolerances no longer changes that operator.
+
+Explicit solve overrides can tighten the safety ceiling but cannot relax it.
+A requested minimum step is clipped to the safety ceiling. Nonfinite loss
+coefficients and invalid path parameters raise an error; cache keys use
+resolved path settings and stiffness caches follow matrix rebuilds.

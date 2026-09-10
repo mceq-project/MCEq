@@ -1668,10 +1668,9 @@ def test_etd2_solve_default_path(mceq_sib21):
     finally:
         config.kernel_config = saved_kernel
 
-    # The ETD2 nonuniform path on the standard atmosphere at 60 deg is
-    # ~150-300 steps depending on the dX_max cap; both ends should be well
-    # under 1000 (an Euler native grid would have ~10000).
-    assert n_etd < 1000, f"ETD2 path is suspiciously dense: n_etd={n_etd}"
+    # Check the effective ceiling; step count depends on the grid and stencil.
+    assert n_etd > 0
+    assert max(mceq_sib21.integration_path[1]) <= config.etd2_path["dX_max"]
     assert n_etd > 10, f"ETD2 path is suspiciously sparse: n_etd={n_etd}"
     assert np.all(np.isfinite(mu_etd)), "ETD2 default solve produced non-finite mu"
 
@@ -1713,15 +1712,15 @@ def test_etd2_solve_path_cache_invalidates_on_param_change(mceq_sib21):
         mceq_sib21.integration_path = None
         mceq_sib21.solve()
         path_a = mceq_sib21.integration_path
-        mceq_sib21.solve(dX_max=10.0)
+        mceq_sib21.solve(dX_max=0.5)
         path_b = mceq_sib21.integration_path
     finally:
         config.kernel_config = saved_kernel
 
-    # dX_max=10 must produce more steps than the default dX_max=20
+    # A tighter ceiling must produce more steps than the current default
     assert path_b[0] > path_a[0], (
         f"dX_max change did not invalidate cache: "
-        f"n(default)={path_a[0]}, n(dX_max=10)={path_b[0]}"
+        f"n(default)={path_a[0]}, n(dX_max=0.5)={path_b[0]}"
     )
 
 
@@ -1938,6 +1937,10 @@ class _StubMCEq:
         m = -1.0 * np.eye(5)  # benign diagonal (removed by the off-split)
         m[0, 1] = m[1, 0] = r_known  # EM-EM off-diagonal block
         self.int_m = sp.csr_matrix(m)
+        from types import SimpleNamespace
+
+        self.matrix_builder = SimpleNamespace(_contloss_bands={})
+        self._resolve_secant = lambda: None
         # M3: the path helpers now read settings through ``run.config``
         # (snapshot or live view); the stub hands them the live module,
         # which is exactly what a default-constructed MCEqRun does.

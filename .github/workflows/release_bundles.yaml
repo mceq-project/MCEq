@@ -11,7 +11,7 @@ jobs:
   bundles:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     # Draft releases require repository push access. The token is exposed only
     # to the download step; checkout does not persist credentials.
     permissions:
@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p bundles
-          gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles --pattern '*v2.0.0-rc1*'
+          gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles --pattern '*v2.0.0-rc2*'
           cd bundles
           sha256sum --check ./*.sha256
       - name: Test installed candidate against 1D bundles

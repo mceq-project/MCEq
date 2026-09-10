@@ -87,10 +87,8 @@ def etd2_nonuniform_path(
         Steps are truncated to land exactly on each ``int_grid`` entry.
       step: the ``solver`` setting group (``X_start``, ``etd2_path``);
         ``None`` → ``MCEq.config.solver``. Read here, when the path is
-        planned — a live instance's next ``solve()`` does not see a write
-        made after the path was built, because
-        ``MCEqRun._calculate_integration_path`` caches on the unresolved
-        keyword arguments.
+        planned. Run-level path caching uses the resolved values, so changes
+        to live settings invalidate a previously built path.
 
     Returns:
       (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
@@ -109,6 +107,19 @@ def etd2_nonuniform_path(
         dX_min = p["dX_min"]
     if fd_span is None:
         fd_span = p["fd_span"]
+
+    values = (X_start, eps, dX_max, dX_min, fd_span)
+    if (
+        not np.isfinite(values).all()
+        or X_start < 0
+        or dX_min < 0
+        or min(eps, dX_max, fd_span) <= 0
+    ):
+        raise ValueError(
+            "ETD2 path settings must be finite and positive (X_start and dX_min >= 0)"
+        )
+    if dX_min > dX_max:
+        raise ValueError("ETD2 dX_min must not exceed dX_max")
 
     ri = density_model.r_X2rho
     max_X = density_model.max_X

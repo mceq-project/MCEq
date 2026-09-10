@@ -159,11 +159,10 @@ mkl_threads = min(16, os.cpu_count() or 1)
 etd2_path = {
     #: Bound on the within-step variation of log inverse density. Smaller
     #: values produce finer steps, especially in the upper atmosphere.
-    "eps": 0.3,
-    #: Cap on the step size in g/cm^2 — the off-diagonal stability cliff
-    #: `h * spec(int_off) < 2`, with spec(int_off) ~ 0.094 for the
-    #: standard MCEq matrix.
-    "dX_max": 20.0,
+    "eps": 0.01,
+    #: Accuracy ceiling in g/cm^2. The actual assembled loss stencil and
+    #: secant coupling may require a smaller step, especially at low energy.
+    "dX_max": 2.0,
     #: Floor on the step size. Prevents the controller from picking 0
     #: when |d ln rho_inv / dX| is very large (top of atmosphere).
     "dX_min": 0.01,

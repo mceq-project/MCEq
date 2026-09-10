@@ -45,11 +45,14 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # to generic_losses_all_charged=True (nmu -0.6%, nnumu -2.6%); the 1e4/1e5
 # primaries move by <0.06%. Retuned 2026-09-09 for the generic-spline edge
 # clamp (+1.2% on nnumu at 1e3; the boost-7165 pion no longer extrapolates).
+# Recalibrated 2026-09-10 for stencil-guarded steps, eps=.01/dX_max=2.
+# A same-operator eps=.003/dX_max=.2 control agrees within 0.006%.
 testdata_primary = [
-    [1e3, 1.2298250970471001e-05, 2.3751092301812317e-07, -4.397660019572766e-08],
-    [1e4, 0.09919964595464914, 0.024600024310737535, 0.001460721937230645],
-    [1e5, 0.9112967205413417, 0.28325496449179144, 0.020282423131684792],
+    [1000.0, 1.2205302546882618e-05, 2.3524586513715353e-07, -4.364873643302216e-08],
+    [10000.0, 0.0986706881262703, 0.02442421924227454, 0.0014503672246277692],
+    [100000.0, 0.9066804216816294, 0.2812661560645263, 0.02013046067430346],
 ]
+
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]
 
 
