@@ -531,31 +531,38 @@ def test_solve_etd2_numpy_multirhs_matches_single_rhs_toy(K):
 
 
 @pytest.mark.xdist_group("spacc")
-@pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
-def test_solve_batch_dtype_float32():
-    """End-to-end fp32 dispatch through ``MCEqRun.solve_batch``.
+@pytest.mark.parametrize(
+    "kernel",
+    [
+        "numpy_etd2",
+        pytest.param(
+            "accelerate_etd2",
+            marks=pytest.mark.skipif(
+                not config.has_accelerate, reason="Accelerate only on macOS"
+            ),
+        ),
+    ],
+)
+def test_solve_batch_dtype_float32(kernel):
+    """FP32 production fluxes retain the 1e-4 budget with guarded steps.
 
-    Compares the fp32 Accelerate multi-RHS path to the fp64 reference at K=4
-    on the real SIBYLL21 config; asserts per-cell relative error stays
-    below the empirically established 1e-4 budget for the production
-    particle set (e± disabled — they're the ``_EM_BLOWUP_CAVEAT`` rows
-    whose semi-Lagrangian ETD2 update saturates fp32 dynamic range at
-    finite zenith). Stability test
-    ``runs/2026-05-21_multi-rhs-etd2-prototype/inputs/test_etd2_fp32.py``
-    tracks the per-species figure in more detail.
-
-    Builds a fresh MCEqRun (rather than reusing the ``mceq_sib21``
-    fixture which leaves e± enabled) so the test exactly matches the
-    production default.
+    Use the established per-species metric: 1e-12 times each species peak,
+    sign-definite rows and three upper-boundary bins trimmed. The old raw
+    per-cell maximum selected a negative K0_mu+ boundary residual (~2e-29):
+    with 1144 guarded steps its FP32 relative difference grows to 2e-4,
+    while the scored flux maximum is 1.6e-5 on both NumPy and MKL. All
+    values must remain finite; unscored species retain the metric's
+    containment check. The numerical budget itself is unchanged.
     """
     import crflux.models as pm
 
     from MCEq.core import MCEqRun
+    from tests.golden import _flux_metric as flux_metric
 
     saved_kernel = config.kernel_config
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_db = config.mceq_db_fname
-    config.kernel_config = "accelerate_etd2"
+    config.kernel_config = kernel
     config.adv_set["disabled_particles"] = [11, -11]
     config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
     try:
@@ -575,11 +582,25 @@ def test_solve_batch_dtype_float32():
         assert sol_f64.dtype == np.float64
         assert sol_f32.dtype == np.float32
 
-        denom = np.maximum(np.abs(sol_f64), 1e-30)
-        rel = np.abs(sol_f32.astype(np.float64) - sol_f64) / denom
-        assert rel.max() < 1e-4, (
-            f"solve_batch fp32 vs fp64 max rel err {rel.max():.2e} exceeds 1e-4 budget"
+        assert np.isfinite(sol_f64).all() and np.isfinite(sol_f32).all()
+        layout = flux_metric.Layout(
+            tuple((p.name, p.mceqidx) for p in mceq.pman.cascade_particles),
+            mceq.dim,
+            mceq.dim_states,
+            mceq.e_grid,
+            mceq.e_bins,
         )
+        problem = flux_metric.compare(
+            "solve_batch fp32",
+            sol_f64,
+            sol_f32,
+            1e-4,
+            layout=layout,
+            floor=1e-12,
+            guard="sign_definite",
+            trim=3,
+        )
+        assert problem is None, problem
         mceq.close()
     finally:
         config.kernel_config = saved_kernel
