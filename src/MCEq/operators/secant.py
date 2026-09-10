@@ -76,6 +76,11 @@ def _readout_matrix(k_grid, theta, oversample_res=10, chunk=1000):
         e = np.zeros(n_k)
         e[i] = 1.0
         interp_cols[:, i] = interp1d(k_grid, e, kind="cubic")(k_ov)
+    # Trapezoidal integration holds several (kappa, theta, mode) arrays.
+    # Bound their combined workspace to 64 MiB instead of letting a fixed
+    # angle chunk allocate tens of GiB on production Hankel grids.
+    bytes_per_angle = 3 * pts * n_k * interp_cols.dtype.itemsize
+    chunk = min(chunk, max(1, (64 * 1024**2) // max(1, bytes_per_angle)))
     R = np.empty((len(theta), n_k))
     for lo in range(0, len(theta), chunk):
         hi = min(lo + chunk, len(theta))

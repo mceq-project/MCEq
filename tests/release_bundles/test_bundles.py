@@ -48,7 +48,7 @@ def test_inventory():
         ("2d", "FLUKA20251", None),
     ],
 )
-def test_solve(package, model, blend, monkeypatch):
+def test_solve(package, model, blend, monkeypatch, tmp_path):
     import crflux.models as pm
 
     from MCEq import config
@@ -56,6 +56,7 @@ def test_solve(package, model, blend, monkeypatch):
 
     for name, value in {
         "mceq_db_fname": str(bundle_path(package)),
+        "data_dir": tmp_path,
         "kernel_config": "numpy_etd2",
         "e_min": 10.0 if package == "2d" else 1.0,
         "e_max": 100.0 if package == "2d" else 1e5,
