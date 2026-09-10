@@ -199,7 +199,7 @@ def test_module_reads_no_config():
     """The seam rule of section 13.1, checked from the source text."""
     import ast
 
-    tree = ast.parse(pathlib.Path(em_tables.__file__).read_text())
+    tree = ast.parse(pathlib.Path(em_tables.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             assert node.module != "MCEq.config"

@@ -67,6 +67,18 @@ int gemm(int order, double alpha, int ia, int nrhs, double *B, int ldb, double *
         return -1;
     }
 
+    // Accelerate SpMM can crash on padded column-major rectangular operands
+    // (macOS 15). Each column is a contiguous vector, so use the supported
+    // GEMV path while preserving caller strides and accumulation semantics.
+    // The solver's row-major batched path still uses native SpMM below.
+    if (order == CblasColMajor)
+    {
+        for (int j = 0; j < nrhs; ++j)
+            if (gemv(alpha, ia, B + (size_t)j * ldb, C + (size_t)j * ldc) != 0)
+                return -1;
+        return 0;
+    }
+
     if (sparse_matrix_product_dense_double(
             (enum CBLAS_ORDER)order, CblasNoTrans, nrhs, alpha, mstore[ia],
             B, ldb, C, ldc) != SPARSE_SUCCESS)
@@ -107,6 +119,18 @@ int gemm_f32(int order, float alpha, int ia, int nrhs, float *B, int ldb, float 
         printf("Matrix with index %i not found.\n", ia);
         return -1;
     }
+    // Accelerate SpMM can crash on padded column-major rectangular operands
+    // (macOS 15). Each column is a contiguous vector, so use the supported
+    // GEMV path while preserving caller strides and accumulation semantics.
+    // The solver's row-major batched path still uses native SpMM below.
+    if (order == CblasColMajor)
+    {
+        for (int j = 0; j < nrhs; ++j)
+            if (gemv_f32(alpha, ia, B + (size_t)j * ldb, C + (size_t)j * ldc) != 0)
+                return -1;
+        return 0;
+    }
+
     if (sparse_matrix_product_dense_float(
             (enum CBLAS_ORDER)order, CblasNoTrans, nrhs, alpha,
             (sparse_matrix_float)mstore[ia],
