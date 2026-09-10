@@ -1,0 +1,263 @@
+# Layer contracts for the v2 layered architecture (refactoring plan, section 1).
+#
+# Target order, high layer first:
+#
+#     driver -> solvers -> operators -> species -> data -> config -> util
+#
+# with `environment` beside the stack (independent of data/species/operators,
+# reached only from the driver and, from Phase 3 on, from solvers.path through a
+# Protocol) and `models` beside `species`, imported only by the driver. No module
+# below the driver imports `MCEq.config`.
+#
+# Every flat module of today shares a layer with the package that will replace
+# it, so both keep passing while the compat shim exists. Forward-looking names
+# are parenthesised: in a layers contract a module named without parentheses that
+# does not exist aborts the entire run before any contract is checked, while
+# `(name)` marks the layer optional.
+#
+# THE FOUR LEDGERS -- C1 `exhaustive_ignores`, C1 `ignore_imports`, C2
+# `ignore_imports` and C5 `ignore_imports` -- record the debt the tree carries at
+# the Phase-0 commit, one entry per line, each naming the phase that deletes it.
+# (C2's opened in Phase 4: the `MCEq.misc` compat shim's deferred reach into
+# `MCEq.data` is a *chain* out of `environment`, not an edge of it.) The three
+# `ignore_imports` ledgers are ratchets: `unmatched_ignore_imports_alerting =
+# error` fails the run on an entry that no longer matches anything, so the phase
+# that removes an import must delete its line here in the same PR.
+# `exhaustive_ignores` only
+# ratchets upwards -- it fails on a module that appears, while a stale entry for
+# a module that is gone is silent, and the `structure` golden section is what
+# reports that.
+#
+# INI form (not the pyproject.toml TOML form) so contracts carry ids and
+# `lint-imports --contract C5` can run one of them.
+#
+# Run without building the package:  PYTHONPATH=src:. lint-imports
+
+[importlinter]
+root_packages =
+    MCEq
+    mceq_config
+
+# ---------------------------------------------------------------- C1: layering
+# `exhaustive` makes this the gate that new modules cannot slip past: every
+# direct child of MCEq must be a layer or an enumerated exhaustion-ledger entry,
+# so a module added by a later phase fails until it is placed in the stack.
+[importlinter:contract:C1]
+name = C1 layering: util -> config -> data -> species -> operators -> solvers -> driver
+type = layers
+containers =
+    MCEq
+layers =
+    core : driver
+    solvers
+    operators
+    species
+    data
+    config
+    misc : mkl_runtime : (util)
+exhaustive = True
+exhaustive_ignores =
+# environment; sits beside the stack, constrained by C2 and C3 instead.
+# `geometry` stays listed: the v2.0 cull deleted six of its module shims but
+# the census-kept ones (geometry, density_profiles) and
+# the C-extension re-export directories keep the package alive for user code.
+    environment
+    geometry
+# models, imported by the driver only (C4). §13.2 item 7 landed the move: the
+# code is `MCEq.models.ddm`; the flat `ddm`/`ddm_utils` re-export shims were
+# deleted at the v2.0 cull.
+    models
+# particlemanager: a compat shim since §13.2 item 6 split the species layer into
+# `species/`. Kept at 2.0 (public-usage census).
+    particlemanager
+# Leaves with no MCEq imports: the version string. (The kernel packages moved
+# under solvers/_kernels at M11/M12 and are constrained as solvers modules;
+# the v2.0 cull deleted the flat shims that used to sit here.)
+    version
+unmatched_ignore_imports_alerting = error
+ignore_imports =
+# misc.py's `_moved_to_data()` inverts util -> data: the D14 compat shim that
+# keeps `energy_grid`/`EnergyGrid`/`_eval_energy_cuts`/`gen_xmat`/`_xmat`
+# reachable on `MCEq.misc` after they moved to `MCEq.data.energy_grid`. Deferred
+# (it runs on attribute access, not at import), but grimp counts it either way.
+# Phase 7 deletes the misc shim and this line with it.
+    MCEq.misc -> MCEq.data.energy_grid
+# The same shim, second target: `normalize_hadronic_model_name` moved to
+# `MCEq.data.model_names`. One line per submodule because the ignores are
+# exact-module -- `MCEq.misc -> MCEq.data` matches nothing and would abort the
+# run. Phase 7 deletes the shim and both lines.
+    MCEq.misc -> MCEq.data.model_names
+
+# ------------------------------------------------------- C2/C3: environment
+# The environment layer knows about geometry and atmospheres, not about the
+# cascade. Two forbidden contracts rather than one independence contract: the
+# latter would also forbid data <-> species, which the target layering allows.
+#
+# `MCEq.driver` is listed: C1 puts `environment` in `exhaustive_ignores`, so
+# the layers contract does not constrain it at all and an environment ->
+# driver edge would otherwise pass every gate. (Since Phase 6 commit 6 the
+# driver code is a package, so the whole `MCEq.driver` subtree is named; the
+# former `MCEq.core` spelling only covered the shim. The `MCEq.download` flat
+# shim was deleted at the v2.0 cull.)
+[importlinter:contract:C2]
+name = C2 environment does not import data/species/operators/solvers/driver
+type = forbidden
+source_modules =
+    MCEq.environment
+    MCEq.geometry
+forbidden_modules =
+    MCEq.data
+    MCEq.particlemanager
+    MCEq.operators
+    MCEq.solvers
+    MCEq.core
+    MCEq.driver
+    MCEq.models
+    MCEq.species
+unmatched_ignore_imports_alerting = error
+ignore_imports =
+# Not an environment -> data edge but a two-hop chain through the `MCEq.misc`
+# compat shim: nine modules take `info` from `misc` -- eight under
+# `environment/` plus `geometry/density_profiles.py` -- and `misc`'s
+# `_moved_to_data()` reaches the `MCEq.data` submodules that own the moved names
+# on attribute access (see C1 above). `allow_indirect_imports` is left at False
+# so a real `environment -> data` chain still fails; only these two hops are cut.
+# Phase 7 deletes the misc shim and these lines with it.
+    MCEq.misc -> MCEq.data.energy_grid
+    MCEq.misc -> MCEq.data.model_names
+
+# The shim direction, which no other contract covers. C7's `acyclic_siblings`
+# takes `MCEq.environment` and `MCEq.geometry` as two SEPARATE ancestors, so it
+# looks for cycles inside each and never between them; C2 above has both as
+# sources but not as targets; C3's sources exclude `MCEq.environment`. Without
+# this, `environment.base` importing `MCEq.geometry.density_profiles` back --
+# a real cycle straddling the two packages -- passes every gate.
+#
+# Phase 7 deletes the shims and this contract with them.
+[importlinter:contract:C2b]
+name = C2b the shims import the environment package, never the reverse
+type = forbidden
+source_modules =
+    MCEq.environment
+forbidden_modules =
+    MCEq.geometry
+
+# Phase 3 gives solvers.path a DensityColumn Protocol; drop MCEq.solvers from
+# the sources in that PR, when it starts holding an environment object.
+[importlinter:contract:C3]
+name = C3 data/species/operators/solvers do not import environment
+type = forbidden
+source_modules =
+    MCEq.data
+    MCEq.particlemanager
+    MCEq.species
+    MCEq.models
+    MCEq.operators
+    MCEq.solvers
+    MCEq.misc
+    MCEq.config
+forbidden_modules =
+    MCEq.environment
+    MCEq.geometry
+
+# -------------------------------------------------------------- C4: models
+[importlinter:contract:C4]
+name = C4 models are imported only by the driver
+type = forbidden
+source_modules =
+    MCEq.data
+    MCEq.particlemanager
+    MCEq.species
+    MCEq.operators
+    MCEq.solvers
+    MCEq.misc
+    MCEq.config
+    MCEq.environment
+    MCEq.geometry
+forbidden_modules =
+    MCEq.models
+
+# ------------------------------------------------------------- C4b: models shim
+# The analogue of C2b for the models move (§13.2 item 7). C4 forbids the rest of
+# the tree reaching `MCEq.models`, but `MCEq.models` is not itself a C4 source,
+# so nothing there stops the moved code importing back through a flat
+# compatibility shim -- a cycle (models -> shim -> models) that every other
+# contract passes. The `MCEq.ddm` / `MCEq.ddm_utils` flat shims were deleted at
+# the v2.0 cull, so what this contract still guards is the species side:
+# `models` reaching `MCEq.particlemanager` instead of `MCEq.species`. Proven
+# non-vacuous by a planted probe import (a `from MCEq import particlemanager`
+# inside `models/ddm/ddm.py` turns C4b BROKEN), as C2b was.
+[importlinter:contract:C4b]
+name = C4b the models/species code does not reach back through a flat shim
+type = forbidden
+source_modules =
+    MCEq.models
+    MCEq.species
+forbidden_modules =
+    MCEq.particlemanager
+unmatched_ignore_imports_alerting = error
+
+# -------------------------------------------------------------- C5: config
+# The plan's rule "no module below the driver imports MCEq.config": the direct
+# edges today, one per line below. Indirect chains are reported too (the default
+# `allow_indirect_imports = False`), which costs nothing here because an ignored
+# import is cut from the graph globally, and which keeps catching a chain such as
+# solvers -> data -> config once the ledger has shrunk.
+[importlinter:contract:C5]
+name = C5 nothing below the driver imports MCEq.config
+type = forbidden
+source_modules =
+    MCEq.data
+    MCEq.particlemanager
+    MCEq.species
+    MCEq.models
+    MCEq.operators
+    MCEq.solvers
+    MCEq.misc
+    MCEq.environment
+    MCEq.geometry
+forbidden_modules =
+    MCEq.config
+unmatched_ignore_imports_alerting = error
+ignore_imports =
+# C5 ledger empty as of M4 (mkl dlopen moved to MCEq.mkl_runtime, a bottom
+# layer importable by both config and the MKL backend). Keep the key with an
+# empty value: unmatched_ignore_imports_alerting stays armed for re-adds.
+# (line removed, Phase 6 commit 12: ensure_db_available now takes its config
+# as a required argument -- the driver passes the run config, direct callers
+# pass the module. data/download.py imports no config at all, and the
+# MCEq.download shim is a pure re-export, so neither has the edge any more.)
+
+# ------------------------------------------------------- C6: legacy shim
+# `mceq_config` replaces itself in sys.modules with MCEq.config. It exists for
+# user code that predates the rename; MCEq itself never goes through it.
+[importlinter:contract:C6]
+name = C6 nothing imports the legacy mceq_config shim
+type = forbidden
+source_modules =
+    MCEq
+forbidden_modules =
+    mceq_config
+
+# ------------------------------------------------------------- C7: cycles
+# Needs import-linter >= 2.14; 2.5.2 (what uv resolves on Python 3.9) has no
+# acyclic_siblings contract.
+[importlinter:contract:C7]
+name = C7 no cycles among the split-package siblings
+type = acyclic_siblings
+ancestors =
+    MCEq.environment
+    MCEq.geometry
+    MCEq.species
+    MCEq.models
+# No ignores. Since §13.2 item 6 the ancestors also include `MCEq.species` and
+# `MCEq.models`: today nothing catches a manager<->particle or models<->shim
+# cycle but this contract and the structure golden's cycles array. Probes (a
+# `from MCEq.species import manager` in particle.py, a `from MCEq import
+# particlemanager` in manager.py) flip C7/C4b BROKEN respectively.
+# The one cycle this contract carried -- msis21_atmosphere
+# importing `EarthsAtmosphere` and `_KM3NET_DETECTORS` out of density_profiles
+# while density_profiles re-exported the MSIS21 names back through a PEP-562
+# `__getattr__` -- is gone: both backends now take their base from
+# environment/base.py and their site table from environment/parameters.py, and
+# the re-export lives only in the shim, pointing out of the package.

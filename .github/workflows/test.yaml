@@ -8,6 +8,7 @@ on:
     paths:
       - src/**
       - tests/**
+      - conftest.py
       - pyproject.toml
       - CMakeLists.txt
       - .github/workflows/test.yaml
@@ -24,8 +25,11 @@ concurrency:
 
 jobs:
   # Stage 1: one platform, one Python. A plain Python error, a broken import or
-  # a failing test shows up here after one job instead of after 46, most of them
+  # a failing test shows up here after one job instead of after 39, most of them
   # on the billing-multiplied macOS and Windows runners.
+  #
+  # Also the reference job for the host-pinned golden sections: it runs first,
+  # so golden drift blocks the matrix after one cheap job rather than after 39.
   quick:
     name: quick (ubuntu-latest, 3.12)
     uses: ./.github/workflows/_run_tests.yml
@@ -33,6 +37,7 @@ jobs:
     with:
       os: ubuntu-latest
       python-version: "3.12"
+      golden-host: true
 
   # Stage 2: everything else, only once the quick gate is green.
   test:
@@ -43,10 +48,8 @@ jobs:
         # macos-latest is macOS 26 arm64, so listing macos-26 as well only
         # duplicated it; macos-15 covers the previous arm64 image instead.
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15, macos-15-intel, macos-26-intel, windows-latest, windows-11-arm]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
-          - os: windows-11-arm
-            python-version: "3.9"
           - os: windows-11-arm
             python-version: "3.10"
           # Already covered by the quick gate.

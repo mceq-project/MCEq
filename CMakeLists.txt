@@ -16,26 +16,41 @@ else()
   set(INSTALL_DIR ${SKBUILD_PROJECT_NAME}) # Specify the installation directory
 endif()
 
+# Both loaders scan their own directory for `_lib*${EXT_SUFFIX}`, so the .so
+# has to land beside the __init__.py that loads it. These DESTINATIONs are the
+# only place the environment/_ext layout is written down (Phase 3, D26).
 python_add_library(
-  _libnrlmsise00 MODULE src/MCEq/geometry/nrlmsise00/nrlmsise-00_data.c
-  src/MCEq/geometry/nrlmsise00/nrlmsise-00.c WITH_SOABI)
-install(TARGETS _libnrlmsise00 DESTINATION ${INSTALL_DIR}/geometry/nrlmsise00)
+  _libnrlmsise00 MODULE src/MCEq/environment/_ext/nrlmsise00/nrlmsise-00_data.c
+  src/MCEq/environment/_ext/nrlmsise00/nrlmsise-00.c WITH_SOABI)
+install(TARGETS _libnrlmsise00
+        DESTINATION ${INSTALL_DIR}/environment/_ext/nrlmsise00)
 
 python_add_library(_libcorsikaatm MODULE
-                   src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
-install(TARGETS _libcorsikaatm DESTINATION ${INSTALL_DIR}/geometry/corsikaatm)
+                   src/MCEq/environment/_ext/corsikaatm/corsikaatm.c WITH_SOABI)
+install(TARGETS _libcorsikaatm
+        DESTINATION ${INSTALL_DIR}/environment/_ext/corsikaatm)
 
-# Platform-neutral fused ETD2 post-apply kernels — no sparse-backend deps,
-# builds on every platform. Used by the MKL multi-RHS path on Linux/Windows.
+# Platform-neutral fused ETD2 step stages — no sparse-backend deps, builds on
+# every platform. The host backend runs them on every route and precision.
 python_add_library(_libetd2_kernels MODULE
-                   src/MCEq/etd2_kernels/etd2_kernels.c WITH_SOABI)
-install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/etd2_kernels)
+                   src/MCEq/solvers/_kernels/etd2/etd2_kernels.c WITH_SOABI)
+# These must produce the same bits as the numpy lowering of the same formula
+# table (MCEq.solvers.numerics), which tests/test_solvers.py pins. Contracting
+# a * b + c into an FMA is a different rounding of the same association, so it
+# would break that wherever FMA is baseline — aarch64, or x86-64 built with
+# -march=native. It does not fire on baseline x86-64 only for want of an FMA
+# instruction, which is luck, not a guarantee.
+target_compile_options(
+  _libetd2_kernels PRIVATE
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang,IntelLLVM>:-ffp-contract=off>)
+install(TARGETS _libetd2_kernels DESTINATION ${INSTALL_DIR}/solvers/_kernels/etd2)
 
 if(APPLE)
   # –– declare and name the extension with the correct SOABI suffix
-  python_add_library(_libspacc MODULE src/MCEq/spacc/spacc.c WITH_SOABI)
+  python_add_library(_libspacc MODULE src/MCEq/solvers/_kernels/spacc/spacc.c WITH_SOABI)
+  target_link_libraries(_libspacc PRIVATE "-framework Accelerate")
 
-  # –– install into <INSTALL_DIR>/spacc (so in editable→gemm/spacc)
+  # Install beside the ctypes loader in the solvers kernel package.
   install(TARGETS _libspacc LIBRARY # on macOS, MODULE behaves like LIBRARY
-                                    DESTINATION ${INSTALL_DIR}/spacc)
+                                    DESTINATION ${INSTALL_DIR}/solvers/_kernels/spacc)
 endif()

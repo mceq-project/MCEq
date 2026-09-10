@@ -58,7 +58,7 @@ under `docs/` (Sphinx).
 - **Intermediate depths** — pass `int_grid` to `solve()` and read out with
   `get_solution(..., grid_idx=...)`.
 - **Tweak particle production** — `set_mod_pprod` for ad-hoc modifications;
-  the Data-Driven Model (`src/MCEq/ddm.py`) for spline-based, data-driven
+  the Data-Driven Model (`src/MCEq/models/ddm/ddm.py`) for spline-based, data-driven
   corrections.
 - **Config knobs** — `src/MCEq/config.py` holds module-level globals (energy
   range, solver kernel, debug level, database file). Set them *before*
@@ -87,10 +87,12 @@ under `docs/` (Sphinx).
 4. `src/MCEq/particlemanager.py` — `ParticleManager`/`MCEqParticle`: particle
    properties and matrix-index mapping (uses `particletools`).
 5. `src/MCEq/solvers.py` — ETD2 integration kernels (numpy/MKL/Accelerate/CUDA).
-6. `src/MCEq/geometry/` — `geometry.py` (spherical-Earth path lengths),
-   `density_profiles.py` (atmospheres), C extensions in `nrlmsise00/` and
-   `corsikaatm/` (built via CMake).
-7. `src/MCEq/ddm.py`, `ddm_utils.py` — Data-Driven Model.
+6. `src/MCEq/environment/` — atmospheres, columns, geomagnetic cutoffs;
+   `src/MCEq/geometry/` keeps the census-kept shims (`geometry.py`,
+   `density_profiles.py`, `geometry.py`, C-extension
+   re-exports under `nrlmsise00/`, `corsikaatm/`; built via CMake into
+   `environment/_ext/`).
+7. `src/MCEq/models/ddm/` — `ddm.py`, `ddm_utils.py`: Data-Driven Model.
 
 ## Build & test
 
@@ -105,7 +107,7 @@ ruff check . && ruff format --check .
 ```
 
 Tests: `tests/test_core.py` (integration), `tests/test_solvers.py` (toy-problem
-solver correctness), `tests/test_ddm.py`, `tests/test_charm_models.py`,
+solver correctness), `tests/test_ddm.py`,
 `tests/geometry/`. Session-scoped fixtures in `tests/conftest.py`.
 
 ## Contributing

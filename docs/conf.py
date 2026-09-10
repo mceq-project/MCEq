@@ -14,6 +14,7 @@ author = "Anatoli Fedynitch, Stefan Fröse"
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.coverage",
@@ -33,7 +34,12 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 
-source_suffix = ".rst"
+source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
+
+# The packaged version is 2.0.0-dev (D-6: release cut deferred); the last
+# published release is 1.4.1. State both, in one place, until the cut.
+version = "2.0.0-dev"
+release = version
 master_doc = "index"
 
 
@@ -67,7 +73,8 @@ html_theme_options = {
             "icon": "fa-brands fa-github",
         },
     ],
-    "announcement": "MCEq v1.4 is now available!",
+    "announcement": "Latest release v1.4.1. The 2.0 layout is in development — "
+    "see the v2 layout migration guide at the docs root.",
 }
 
 html_sidebars = {

@@ -35,7 +35,7 @@ corsika_expected = [
 
 # Test that all corsika atmospheres are tested
 def test_cka_atm_completeness():
-    from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
+    from MCEq.environment.parameters import list_available_corsika_atmospheres
 
     missing = []
     expected_entries = {(loc, season) for loc, season, _ in corsika_expected}
@@ -65,20 +65,25 @@ def test_corsika_atm(loc, season, expected):
     assert np.allclose([cka_obj.max_X, 1.0 / cka_obj.r_X2rho(100.0)], expected)
 
 
+#: ``(location, season, (max_X, rho(X=100)))``. Regenerated 2026-09-04 for the
+#: ``inp.lst`` fix: NRLMSISE-00 was evaluated at the *default* location's local
+#: solar time for every site, so only longitude 0 was right. ``SouthPole`` in
+#: either season is therefore unchanged -- it is at longitude 0 -- and every
+#: other row moved, max_X by -4.08e-03 (LynnLake) to +5.49e-04 (KSC) relative.
 msis00_expected = [
     ("SouthPole", "January", (1022.6914983678925, 0.00014380042112573175)),
-    ("Karlsruhe", "January", (1041.2180457811605, 0.00016046129606232836)),
-    ("Geneva", "January", (1044.6608866969684, 0.00016063221634835724)),
-    ("Tokyo", "January", (1046.427667371285, 0.00016041531186210874)),
-    ("GranSasso", "January", (1048.6505423154006, 0.00016107650347480857)),
-    ("TelAviv", "January", (1050.6431802896034, 0.00016342084740033518)),
-    ("KSC", "January", (1050.2145039327452, 0.00016375664772178006)),
-    ("SoudanMine", "January", (1033.3640270683418, 0.00015614485659072835)),
-    ("Tsukuba", "January", (1045.785578319159, 0.00015970449150213374)),
-    ("LynnLake", "January", (1019.9475650272982, 0.000153212909250962)),
-    ("PeaceRiver", "January", (1020.3640351872195, 0.00015221038616604717)),
-    ("FtSumner", "January", (1047.964376368261, 0.00016218804771381842)),
-    ("SouthPole", "July", (1022.1737895082897, 0.00017812023753792838)),
+    ("Karlsruhe", "January", (1041.218045767515, 0.0001604612960837351)),
+    ("Geneva", "January", (1044.6608866689137, 0.0001606322163926265)),
+    ("Tokyo", "January", (1046.4276670574097, 0.00016041531237161774)),
+    ("GranSasso", "January", (1048.6505422868527, 0.0001610765035203313)),
+    ("TelAviv", "January", (1050.6431803289418, 0.000163420847335507)),
+    ("KSC", "January", (1050.214504996504, 0.00016375664596106348)),
+    ("SoudanMine", "January", (1033.3640288662154, 0.00015614485380534737)),
+    ("Tsukuba", "January", (1045.785577930897, 0.00015970449212910075)),
+    ("LynnLake", "January", (1019.9475657778287, 0.00015321290810376884)),
+    ("PeaceRiver", "January", (1020.3640353111425, 0.00015221038597642512)),
+    ("FtSumner", "January", (1047.9643775296188, 0.00016218804581352803)),
+    ("SouthPole", "July", (1022.1737895082902, 0.00017812023753792844)),
 ]
 
 ids = [f"{loc}-{season or 'None'}" for loc, season, _ in msis00_expected]
@@ -537,7 +542,8 @@ def test_arca_site_coordinates():
 #   * interface conformance -- pure class introspection, no backend, so it
 #     runs everywhere including CI;
 #   * numerical parity -- needs the optional 'nrlmsis' package (MSIS21 is
-#     opt-in), so it skips where that is absent, including CI.
+#     opt-in), so it skips where that is absent; CI carries it in the test
+#     dependency group.
 # ---------------------------------------------------------------------------
 
 MSIS_TREE_PAIRS = [
@@ -584,13 +590,23 @@ def test_msis21_public_interface_matches_msis00(name00, name21):
             f"{params21[name].default!r}, but {name00} uses {p00.default!r}"
         )
 
+
 MSIS21_PAIRS = [
-    ("IceCube", lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
-     lambda: dp.MSIS21IceCubeCentered("SouthPole", "January")),
-    ("ARCA", lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January")),
-    ("ORCA", lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
-     lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January")),
+    (
+        "IceCube",
+        lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
+        lambda: dp.MSIS21IceCubeCentered("SouthPole", "January"),
+    ),
+    (
+        "ARCA",
+        lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January"),
+    ),
+    (
+        "ORCA",
+        lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
+        lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January"),
+    ),
 ]
 
 
@@ -633,8 +649,11 @@ def test_msis21_impact_point_matches_msis00(label, make00, make21):
 
 
 def test_msis21_shares_km3net_site_table():
-    """Site coordinates must come from one table, not a second copy."""
-    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    from MCEq.geometry import msis21_atmosphere
+    """Site coordinates must come from one table, not a second copy.
 
-    assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS
+    Pinned through the ``msis21_atmosphere`` shim until the v2.0 cull deleted
+    it; the same-object property now reads on the canonical module.
+    """
+    from MCEq.environment.parameters import KM3NET_DETECTORS
+
+    assert dp._KM3NET_DETECTORS is KM3NET_DETECTORS

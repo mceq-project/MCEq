@@ -1,0 +1,508 @@
+"""Build tiny, valid MCEq HDF5 databases for the decode tests.
+
+These are *synthetic* databases, small enough to build in a fraction of a
+second, so they are made into a tmp directory by the session-scoped
+``hdf5_fixture_dbs`` fixture in ``tests/conftest.py`` and never committed as
+``.h5``. What they buy is the two decode branches no shipped database
+reaches: a 2-column ``tuple_idcs`` and the malformed width that trips the
+``"Failed decoding parent-child relation."`` raise in
+``MCEq.data.HDF5Backend._gen_db_dictionary``.
+
+Layout
+------
+Written from what the reader actually requires (``HDF5Backend.__init__`` and
+``_gen_db_dictionary``), cross-checked against
+``src/MCEq/data/mceq_db_v140reduced_compact.h5`` (1D, v1.4.0) and
+``mceq_db_v2_fluka2d_rc7.h5`` (2D, 48 modes) with h5py:
+
+* ``/common`` carries the grid entirely in **attributes**, not datasets:
+  ``e_grid`` (n_e,), ``e_bins`` (n_e+1,), ``widths`` (n_e,), scalar
+  ``e_dim``; a 2D file adds scalar ``k_dim`` and ``k_grid`` (n_k,).
+  ``e_grid`` is the geometric centre of ``e_bins`` and ``widths`` is
+  ``diff(e_bins)`` (verified on the reduced database).
+* A channel pack is a ``(2, N)`` float dataset (float64 in every shipped
+  file and by default here; ``build_database(pack_dtype=...)`` writes another
+  dtype) -- row 0 CSR ``data``, row 1 CSR ``indices`` **stored in the pack
+  dtype, not as integers** (``_write_pack`` casts both rows) -- with attrs
+  ``tuple_idcs`` (n_ch, width) int64, ``len_data`` (n_ch,) int64 and an
+  optional ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
+  (n_ch, dim_full+1).
+* ``len_data[i]`` is the nnz of **one Hankel-mode block**, not of the whole
+  channel: on the rc7 2D file ``data.shape[1] == len_data.sum() * n_k``
+  (``decays/polarized``: 13721232 == 285859 * 48; ``decays/unpolarized``:
+  11822448 == 246301 * 48) and each channel's indptr rises by exactly
+  ``len_data[i]`` across every one of the 48 mode blocks. Both invariants
+  are asserted below, so a malformed fixture fails here rather than
+  decoding to a wrong-but-finite matrix.
+* ``/cross_sections/<medium>/<MODEL>`` is ``(n_e, n_parents)`` with a
+  ``parents`` attribute (:func:`cross_section_table`; a second such table is
+  written for ``build_database(low_energy_model=...)``, at a different scale
+  and with its ``parents`` reversed, see :func:`cross_section_parents`).
+  ``/continuous_losses/<medium>/{ionization,total}``
+  holds one ``(n_e,)`` dataset per PDG-as-string plus a ``(2, M)``
+  ``hadron`` dataset of ``(beta*gamma, dE/dX)``. Sign convention copied from
+  the reduced database: the per-lepton curves are **negative**, the two
+  ``hadron`` rows are **positive** (``Losses.load`` takes ``np.log`` of both
+  hadron rows, so a negative one produces a RuntimeWarning and a nan spline).
+
+Facts verified while building this, worth not rediscovering
+-----------------------------------------------------------
+* A decay pack that stops at ``pi/K -> mu nu`` cannot even reach particle
+  setup. ``MCEqRun`` on such a file raises ``Exception('Unstable particle
+  without decay distribution:', (-13, np.int64(0)), 'mu+')`` from
+  ``particlemanager.MCEqParticle.set_decay_channels``. Hence
+  ``mu+- -> e nu nu`` in :data:`DECAY_CHANNELS`. These fixtures are still not
+  ``MCEqRun``-able -- with the muon channels present the same probe gets one
+  step further and raises ``Exception('No nucleons in eqn system, primary
+  flux model can not be used.')``, the fixture having no nucleon channels in
+  its decay pack. Nothing here builds an ``MCEqRun``; the tests drive
+  ``HDF5Backend`` directly.
+* The 8-mode kappa grid is a **subsample** of the 48-value rc7 production
+  grid, not its head. A head truncation (``kappa = 0..7``) loads fine but
+  then fails ``MCEq.operators.secant.build_secant_kernel_ops`` with
+  ``RuntimeError: secant coupling: S_P eigenvalues not positive-real (min
+  real -1.384e+01, ...)`` -- whose text blames ``theta_cap_deg`` even though
+  the cap was the default 75. The subsample in :data:`K_GRID` builds
+  successfully (eig(S_P) in [1.00006, 1.0547] at cap 75; ~40 s, so no test
+  here does it).
+
+Usage (writes the four variants into a directory, for eyeballing with h5py)::
+
+    .venv/bin/python tests/data/make_hdf5_fixtures.py /tmp/fixtures
+"""
+
+import pathlib
+
+import h5py
+import numpy as np
+from scipy.sparse import block_diag, csr_matrix
+
+#: Energy grid: 20 bins at 10/decade starting at 1 GeV, so 1 -- 100 GeV.
+N_E = 20
+E_BINS = 10.0 ** (np.arange(N_E + 1) / 10.0)
+E_GRID = np.sqrt(E_BINS[:-1] * E_BINS[1:])
+WIDTHS = np.diff(E_BINS)
+
+#: The 48 kappa values of the production 2D database
+#: ``mceq_db_v2_fluka2d_rc7.h5`` (``/common`` attr ``k_grid``).
+# fmt: off
+K_GRID_PRODUCTION = np.array([
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28, 33, 38, 43,
+    50, 58, 67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422,
+    486, 560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000,
+], dtype=np.int64)
+# fmt: on
+N_K = 8
+#: Evenly spaced *subsample* of the production grid -- both endpoints kept.
+K_GRID = K_GRID_PRODUCTION[
+    np.linspace(0, len(K_GRID_PRODUCTION) - 1, N_K).round().astype(int)
+]
+
+MEDIUM = "air"
+#: A name ``_interaction_db_single`` can map to an equivalence table. SIBYLL21
+#: is chosen because its table contains ``-2212 -> 2212``, which is what the
+#: pinned ``available_parents`` defect needs to become visible.
+MODEL = "SIBYLL21"
+
+#: ``(parent_pdg, child_pdg)``, in file order. The antiproton rows come first
+#: so that the SIBYLL21 equivalence copy from the proton, which happens later
+#: in the loop, can overwrite them on the width-2 file.
+#:
+#: The trailing ``(-211, 3112)`` row exists as a positive control for the
+#: equivalence machinery. SIBYLL21 maps ``3112 -> 2212``; naming 3112 as a
+#: *child* puts it in ``model_particles`` (which is built from columns 0 and 2)
+#: without putting it in ``available_parents``, so it is the one equivalence
+#: replacement that actually fires on this fixture. Every other SIBYLL21
+#: parent mapping onto 2212 (3222, 3312, the anti-hyperons) is filtered out by
+#: the ``eqv_parent[0] not in model_particles`` guard, and 111 -> 211 likewise;
+#: without this row the only replacement candidate would be the antiproton,
+#: and a decode that never ran the copy loop at all would be indistinguishable
+#: from one whose ``available_parents`` guard worked.
+#: It is a ``-211`` parent on purpose: the proton's child list -- which the
+#: width-2 defect aliases onto the antiproton -- must stay unchanged.
+INTERACTION_CHANNELS = [
+    (-2212, -2212),
+    (-2212, 211),
+    (-2212, -211),
+    (2212, 2212),
+    (2212, 211),
+    (2212, -211),
+    (211, 211),
+    (-211, -211),
+    (-211, 3112),
+]
+
+#: The channels of the optional second ("low-energy") interaction model that
+#: :func:`build_database` writes when ``low_energy_model`` is given: the six
+#: nucleon-parent channels only, so ``pi+- -> ...`` are HE-only in a blend.
+#: The order is REVERSED on purpose: :func:`channel_block` scales with the
+#: channel index, so a channel shared by both packs is stored with different
+#: values in each and a blend is visible in the numbers, not just in the
+#: description string.
+LOW_ENERGY_CHANNELS = INTERACTION_CHANNELS[:6][::-1]
+
+#: Channel 4 and channel 7 have an ``e+-`` child, so the default
+#: ``disabled_particles = [11, -11]`` skips them -- which is what the
+#: flat-cursor tests use.
+DECAY_CHANNELS = [
+    (211, -13),
+    (211, 14),
+    (-211, 13),
+    (-211, -14),
+    (-13, -11),
+    (-13, 12),
+    (-13, -14),
+    (13, 11),
+    (13, -12),
+    (13, 14),
+]
+
+CS_PARENTS = [-2212, -211, 211, 2212]
+LOSS_PDGS = ["-15", "-13", "-11", "11", "13", "15"]
+
+#: Half-bandwidth of the nonzero pattern of a channel block.
+BAND = 3
+_ROWS, _COLS = np.nonzero(
+    np.triu(np.ones((N_E, N_E)), 0) - np.triu(np.ones((N_E, N_E)), BAND + 1)
+)
+
+#: name -> file name of the four variants :func:`build_all` writes.
+VARIANTS = {
+    "one_d_width4": "fixture_1d_w4.h5",
+    "one_d_width2": "fixture_1d_w2.h5",
+    "one_d_width3": "fixture_1d_w3.h5",
+    "two_d_width4": "fixture_2d_w4.h5",
+}
+
+#: Channels of the EM ``emca_mats`` pack: the minimal set a decode of a
+#: 2-column ``tuple_idcs`` pack (every real EM database uses width 2) can
+#: produce, with the parent set a ``cs`` table needs to accompany it.
+EM_CHANNELS = [
+    (11, 11),
+    (11, 22),
+    (22, 22),
+    (-11, -11),
+    (-11, 22),
+    (13, 13),
+    (-13, -13),
+]
+#: The ``projectiles`` attribute of the EM ``cs`` table.
+EM_CS_PARENTS = [11, -11, 22, 13, -13]
+
+
+def channel_block(channel_index, mode_index=0):
+    """The ``(N_E, N_E)`` matrix stored for one channel and Hankel mode.
+
+    Analytic rather than random so a test can assert the decoded matrix
+    element by element. Every entry of the band is strictly positive, so the
+    CSR pattern is the band and nnz does not depend on the indices.
+    """
+    values = (
+        (1.0 + channel_index)
+        * np.exp(-(_COLS - _ROWS) / 2.0)
+        / (1.0 + _ROWS)
+        / (1.0 + mode_index) ** 2
+    )
+    block = np.zeros((N_E, N_E))
+    block[_ROWS, _COLS] = values
+    return block
+
+
+def cross_section_parents(model_index=0):
+    """The ``parents`` attribute of one model's cross-section table, in file order.
+
+    ``model_index`` 0 is :data:`MODEL` and stores :data:`CS_PARENTS` as they
+    are (sorted); the optional low-energy model of :func:`build_database` is 1
+    and stores them REVERSED. A raw ``_cs_db_single`` read keeps the file
+    order while ``blend_cross_sections`` sorts, so requesting the LE model
+    itself returns something a blend of the table with itself could not.
+    """
+    return list(CS_PARENTS) if model_index == 0 else list(CS_PARENTS[::-1])
+
+
+def cross_section_table(model_index=0):
+    """The ``(N_E, len(CS_PARENTS))`` cross-section table stored for one model.
+
+    Column ``ip`` belongs to ``cross_section_parents(model_index)[ip]``.
+    ``model_index`` 0 is :data:`MODEL`; the optional low-energy model of
+    :func:`build_database` is 1 and is stored with a different scale, so a
+    ``cs_db`` blend of the two is visible in the numbers, not only in the
+    ``parents`` list.
+    """
+    return (
+        1e-3
+        * (1.0 + 2.0 * model_index)
+        * np.outer(1.0 + np.log10(E_GRID), 1 + np.arange(len(CS_PARENTS)))
+    )
+
+
+def em_cs_table(scale=1.0):
+    """The ``(len(EM_CS_PARENTS), N_E)`` cross-section table of one EM medium.
+
+    Transposed relative to :func:`cross_section_table`: ``_cs_db_single``
+    reads the EM table as ``em_cs[ip, self._cuts]``, so its parent axis is
+    the first one (the hadronic table is ``(n_e, n_parents)``). ``scale``
+    lets two media of one file carry distinguishable tables, so a test can
+    tell which medium a merged cross section came from.
+    """
+    return (
+        5e-4
+        * scale
+        * np.outer(1.0 + np.arange(len(EM_CS_PARENTS)), 1.0 + np.log10(E_GRID))
+    )
+
+
+def build_em_database(path, variants):
+    """Write a synthetic EM database and return its path.
+
+    ``variants`` maps a medium to a ``(channels, cs_scale)`` pair. Each
+    medium gets an ``electromagnetic/<medium>`` group holding an
+    ``emca_mats`` pack (2-column ``tuple_idcs``, no ``description``
+    attribute -- as the real EM databases store them) and a ``cs`` table
+    with a ``projectiles`` attribute carrying :data:`EM_CS_PARENTS`.
+    """
+    path = pathlib.Path(path)
+    with h5py.File(path, "w") as db:
+        for medium, (channels, cs_scale) in variants.items():
+            group = db.create_group(f"electromagnetic/{medium}")
+            _write_pack(group, "emca_mats", channels, 1, 2, None)
+            cs_dset = group.create_dataset("cs", data=em_cs_table(cs_scale))
+            cs_dset.attrs["projectiles"] = np.array(EM_CS_PARENTS, dtype=np.int64)
+    return path
+
+
+def pack_channels(channels, n_k, tuple_width):
+    """Pack channels the way a database stores them.
+
+    Returns ``(data, indptrs, len_data, tuple_idcs)``. In 2D each channel is
+    the block-diagonal matrix of its ``n_k`` mode blocks, exactly as the
+    production 2D database stores it.
+    """
+    dim_full = N_E * n_k
+    data_parts, index_parts, indptrs, len_data, tuples = [], [], [], [], []
+
+    for ich, (parent, child) in enumerate(channels):
+        blocks = [csr_matrix(channel_block(ich, ik)) for ik in range(n_k)]
+        nnz = {b.nnz for b in blocks}
+        assert len(nnz) == 1, (
+            f"channel {ich}: mode blocks have differing nnz {sorted(nnz)}; the "
+            "stored indptr encodes one stride per channel, so every mode block "
+            "must share the sparsity pattern"
+        )
+        full = csr_matrix(block_diag(blocks, format="csr"))
+        assert full.shape == (dim_full, dim_full)
+
+        len_data.append(nnz.pop())
+        data_parts.append(full.data)
+        # Row 1 of the pack is the CSR index array, as floats; `_write_pack`
+        # casts the whole pack (this row included) to its `pack_dtype`.
+        index_parts.append(full.indices.astype(np.float64))
+        indptrs.append(full.indptr.astype(np.int64))
+
+        if tuple_width == 4:
+            tuples.append((parent, 0, child, 0))
+        elif tuple_width == 2:
+            tuples.append((parent, child))
+        elif tuple_width == 3:
+            # Deliberately malformed: no decode branch accepts width 3.
+            tuples.append((parent, 0, child))
+        else:
+            raise ValueError(f"unsupported tuple_idcs width {tuple_width}")
+
+    data = np.vstack([np.concatenate(data_parts), np.concatenate(index_parts)])
+    indptrs = np.array(indptrs, dtype=np.int64)
+    len_data = np.array(len_data, dtype=np.int64)
+    tuple_idcs = np.array(tuples, dtype=np.int64)
+
+    _check_pack(data, indptrs, len_data, tuple_idcs, n_k)
+    return data, indptrs, len_data, tuple_idcs
+
+
+def _check_pack(data, indptrs, len_data, tuple_idcs, n_k):
+    """Fail loudly here rather than decode to a wrong-but-finite matrix."""
+    dim_full = N_E * n_k
+    n_ch = len(len_data)
+
+    assert data.shape == (2, int(len_data.sum()) * n_k), (
+        f"pack is {data.shape}, expected (2, {int(len_data.sum()) * n_k}): the "
+        "flat read length of a channel is n_k * len_data[i]"
+    )
+    assert indptrs.shape == (n_ch, dim_full + 1), (
+        f"indptrs are {indptrs.shape}, expected ({n_ch}, {dim_full + 1})"
+    )
+    assert tuple_idcs.shape[0] == n_ch
+    assert data[1].min() >= 0.0 and data[1].max() < dim_full, (
+        "CSR column indices leave the (dim_full, dim_full) matrix"
+    )
+
+    for i in range(n_ch):
+        indptr = indptrs[i]
+        assert indptr[0] == 0, f"channel {i}: indptr does not start at 0"
+        assert indptr[-1] == n_k * len_data[i], (
+            f"channel {i}: indptr ends at {indptr[-1]}, expected "
+            f"n_k * len_data[i] = {n_k * len_data[i]}"
+        )
+        for ik in range(n_k):
+            stride = indptr[(ik + 1) * N_E] - indptr[ik * N_E]
+            assert stride == len_data[i], (
+                f"channel {i}, mode {ik}: indptr stride {stride} disagrees "
+                f"with len_data[i] = {len_data[i]}"
+            )
+
+
+def _write_pack(
+    group,
+    name,
+    channels,
+    n_k,
+    tuple_width,
+    description,
+    layout=None,
+    pack_dtype=np.float64,
+):
+    data, indptrs, len_data, tuple_idcs = pack_channels(channels, n_k, tuple_width)
+    # The shipped databases store float64 packs; a float32 pack is what the
+    # dtype tests in tests/test_low_energy_blending.py read back.
+    dset = group.create_dataset(name, data=data.astype(pack_dtype))
+    dset.attrs["len_data"] = len_data
+    dset.attrs["tuple_idcs"] = tuple_idcs
+    if description is not None:
+        dset.attrs["description"] = description
+    if layout is not None:
+        dset.attrs["layout"] = layout
+    group.create_dataset(name + "_indptrs", data=indptrs)
+
+
+def build_database(
+    path,
+    *,
+    n_k=1,
+    tuple_width=4,
+    pack_dtype=np.float64,
+    low_energy_model=None,
+    medium=MEDIUM,
+):
+    """Write one synthetic database and return its path.
+
+    ``pack_dtype`` is the on-disk dtype of every channel pack (the shipped
+    databases are float64). ``low_energy_model``, when given, is the name of a
+    second interaction model written next to :data:`MODEL` with the
+    :data:`LOW_ENERGY_CHANNELS` and its own ``cross_sections`` table
+    (:func:`cross_section_table` and :func:`cross_section_parents` with
+    ``model_index=1``), so a backend built with that ``low_energy_model`` can
+    run both runtime HE/LE blends -- ``interaction_db`` and ``cs_db`` --
+    against this file. Without it (and with the default ``pack_dtype``) the
+    file's datasets and attributes are exactly what they were before these two
+    keywords existed, which the :func:`build_all` variants rely on.
+
+    ``medium`` is the medium subgroup written for interactions, cross
+    sections and continuous losses; the default keeps every file written by
+    :func:`build_all` byte-identical, while a pin that needs a non-air
+    medium (B4 in ``tests/test_data_bug_pins.py``) passes one.
+    """
+    path = pathlib.Path(path)
+    is_2d = n_k > 1
+    # The malformed-width file is also the one that omits the optional
+    # ``description`` attribute, so it reaches the reader's ``description =
+    # None`` fallback on its way to the decode raise.
+    described = tuple_width != 3
+
+    with h5py.File(path, "w") as db:
+        db.attrs["version"] = "0.0.0-fixture"
+
+        common = db.create_group("common")
+        common.attrs["e_grid"] = E_GRID
+        common.attrs["e_bins"] = E_BINS
+        common.attrs["widths"] = WIDTHS
+        common.attrs["e_dim"] = N_E
+        if is_2d:
+            # The only 2D marker the backend looks at.
+            common.attrs["k_dim"] = n_k
+            common.attrs["k_grid"] = K_GRID[:n_k]
+
+        interactions = db.create_group(f"hadronic_interactions/{medium}")
+        _write_pack(
+            interactions,
+            MODEL,
+            INTERACTION_CHANNELS,
+            n_k,
+            tuple_width,
+            f"synthetic {MODEL} yields" if described else None,
+            pack_dtype=pack_dtype,
+        )
+        if low_energy_model is not None:
+            _write_pack(
+                interactions,
+                low_energy_model,
+                LOW_ENERGY_CHANNELS,
+                n_k,
+                tuple_width,
+                f"synthetic {low_energy_model} yields",
+                pack_dtype=pack_dtype,
+            )
+
+        decays = db.create_group("decays")
+        for dset_name in ("polarized", "unpolarized"):
+            _write_pack(
+                decays,
+                dset_name,
+                DECAY_CHANNELS,
+                n_k,
+                tuple_width,
+                f"synthetic {dset_name} decays" if described else None,
+                # decay_db() refuses a 2D 'polarized' set without this.
+                layout="superset" if (is_2d and dset_name == "polarized") else None,
+                pack_dtype=pack_dtype,
+            )
+
+        cross_sections = db.create_group(f"cross_sections/{medium}")
+        cs_models = [MODEL] if low_energy_model is None else [MODEL, low_energy_model]
+        for model_index, name in enumerate(cs_models):
+            cs_dset = cross_sections.create_dataset(
+                name, data=cross_section_table(model_index)
+            )
+            cs_dset.attrs["parents"] = np.array(
+                cross_section_parents(model_index), dtype=np.int64
+            )
+
+        for loss_case in ("ionization", "total"):
+            group = db.create_group(f"continuous_losses/{medium}/{loss_case}")
+            for pdg in LOSS_PDGS:
+                # Negative, as in the shipped database.
+                group.create_dataset(pdg, data=-2e-3 * (1.0 + 0.1 * np.log(E_GRID)))
+            boost = np.logspace(-3, 1, 30)
+            group.create_dataset(
+                # Both rows positive: Losses.load takes np.log of each.
+                "hadron",
+                data=np.vstack([boost, 2e-3 * (1.0 + 1.0 / boost)]),
+            )
+
+    return path
+
+
+def build_all(directory):
+    """Write every variant into ``directory``; return ``{name: path}``."""
+    directory = pathlib.Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "one_d_width4": build_database(
+            directory / VARIANTS["one_d_width4"], n_k=1, tuple_width=4
+        ),
+        "one_d_width2": build_database(
+            directory / VARIANTS["one_d_width2"], n_k=1, tuple_width=2
+        ),
+        "one_d_width3": build_database(
+            directory / VARIANTS["one_d_width3"], n_k=1, tuple_width=3
+        ),
+        "two_d_width4": build_database(
+            directory / VARIANTS["two_d_width4"], n_k=N_K, tuple_width=4
+        ),
+    }
+
+
+if __name__ == "__main__":
+    import sys
+
+    target = sys.argv[1] if len(sys.argv) > 1 else "."
+    for name, written in build_all(target).items():
+        print(f"{name}: {written}")

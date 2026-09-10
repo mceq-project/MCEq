@@ -1,85 +1,162 @@
-from collections import namedtuple
+import sys
+from types import ModuleType
 
 import numpy as np
 
-from MCEq import config
+#: Settings views, resolved and cached on first use by :func:`_views`.
+#: ``info``/``print_in_rows``/``caller_name`` read the ``debug`` group,
+#: ``average_A_target`` the ``physics`` one. ``misc`` never imports
+#: ``MCEq.config`` statically -- util sits below config in the layering, and
+#: the C5 ledger line for this module dies with this mechanism. The lazy
+#: path goes through :func:`importlib.import_module`, mirroring the
+#: ``sys.modules`` indirection ``config/groups.py`` already uses.
+_DEBUG = None
+_PHYSICS = None
 
-#: Energy grid (centers, bind widths, dimension)
-energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 
-#: Matrix with x_lab=E_child/E_parent values
-_xmat = None
+def _views():
+    global _DEBUG, _PHYSICS
+    if _DEBUG is None:
+        from importlib import import_module
+
+        cfg = import_module("MCEq.config")
+        _DEBUG, _PHYSICS = cfg.debug, cfg.physics
+    return _DEBUG, _PHYSICS
+
+
+#: Compatibility names that moved into the :mod:`MCEq.data` package and stay
+#: reachable here, each mapped to the submodule that owns it now. `misc` is
+#: C1's bottom layer, so a top-of-file re-export would invert `util -> data`;
+#: the names are forwarded lazily instead, and C1's ledger carries the edges
+#: that creates.
+_MOVED_TO_DATA = {
+    "EnergyGrid": "MCEq.data.energy_grid",
+    "energy_grid": "MCEq.data.energy_grid",
+    "_eval_energy_cuts": "MCEq.data.energy_grid",
+    "gen_xmat": "MCEq.data.energy_grid",
+    "_xmat": "MCEq.data.energy_grid",
+    "normalize_hadronic_model_name": "MCEq.data.model_names",
+}
+
+
+#: Memo of the resolved submodules, so that only the FIRST access to a moved
+#: name executes an import. See :func:`_moved_to_data` on why `sys.modules` is
+#: not enough for this.
+_RESOLVED = {}
+
+
+def _moved_to_data(name):
+    """Resolve a moved name from its implementation module and retain the module.
+
+    Read out of `sys.modules` rather than bound by the import statements:
+    `from MCEq.data import energy_grid` resolves the *attribute* of the
+    package, which a later re-export of the namedtuple under its lowercase
+    name would silently turn into the tuple type. The statements are still
+    written out so that `grimp` -- and `tests/golden/gen_structure.py`,
+    which parses the same text -- sees the two `MCEq.misc -> MCEq.data.*`
+    edges.
+
+    Only the FIRST access imports; later ones come out of `_RESOLVED`. The
+    memo matters at interpreter shutdown, when an `import` can fail and
+    `sys.modules` itself is already cleared: with the memo warm, a late read
+    of a moved name succeeds. A *cold* first access during finalization
+    still raises, because the import genuinely has to run once; nothing
+    under `src/` does that, and `tests/test_exit.py` guards the warm path.
+    """
+    target = _MOVED_TO_DATA[name]
+    module = _RESOLVED.get(target)
+    if module is None:
+        import MCEq.data.energy_grid  # noqa: F401
+        import MCEq.data.model_names  # noqa: F401
+
+        module = _RESOLVED[target] = sys.modules[target]
+    return module
+
+
+class _MiscCompatModule(ModuleType):
+    """Forward reads, writes, deletes, and `dir()` for the names in `_MOVED_TO_DATA`.
+
+    Forwarding writes is necessary because `__getattr__` alone would let an
+    assignment such as `MCEq.misc._xmat = ...` put a real attribute in this
+    namespace that shadows the hook from then on, leaving two caches where
+    `gen_xmat` has one. Modules have no `__setattr__` hook, so the shim is
+    the pre-562 idiom PEP 562 itself names -- a `ModuleType` subclass
+    installed over this module -- and `misc._xmat` stays an alias of the live
+    object (`tests/test_data_bug_pins.py::clean_xmat_cache` sets and restores
+    it, and one pin asserts identity against the returned array). All four
+    hooks keep the shim invisible: `__delattr__` preserves the previously
+    legal `del MCEq.misc._xmat`, and `__dir__` keeps `dir()`,
+    `inspect.getmembers()`, `help()` and tab completion listing the moved
+    names.
+    """
+
+    def __getattr__(self, name):
+        if name in _MOVED_TO_DATA:
+            return getattr(_moved_to_data(name), name)
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        if name in _MOVED_TO_DATA:
+            setattr(_moved_to_data(name), name, value)
+            return
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name):
+        if name in _MOVED_TO_DATA:
+            delattr(_moved_to_data(name), name)
+            return
+        super().__delattr__(name)
+
+    def __dir__(self):
+        return sorted(set(super().__dir__()) | set(_MOVED_TO_DATA))
+
+
+sys.modules[__name__].__class__ = _MiscCompatModule
 
 _target_masses = {
-    # <A> = 14.6568 (source https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    "air": sum([f[0] * f[1] for f in [(0.78084, 14), (0.20946, 16), (0.00934, 40)]]),
+    # <A> must be the ATOM-number-weighted mean mass so that the
+    # interaction rate per grammage N_A/<A> * <sigma> (with <sigma> the
+    # per-atom air average) equals N_A * sum_i w_i/A_i * sigma_i.
+    # Dry-air volume fractions N2/O2/Ar = 0.78084/0.20946/0.00934
+    # (https://en.wikipedia.org/wiki/Atmosphere_of_Earth) contribute
+    # 2/2/1 atoms per molecule -> <A> = 14.5431, identical to CORSIKA's
+    # AVERAW.
+    "air": (
+        sum(
+            n * f * a
+            for f, a, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
+        )
+        / sum(
+            n * f
+            for f, _, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
+        )
+    ),
     "water": 1.0 / 3.0 * (2.0 + 16.0),
     "ice": 1.0 / 3.0 * (2.0 + 16.0),
     "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
     "rock": 22.0,
     "hydrogen": 1.0,
-    "iron": 26.0,
+    # Atomic mass of iron, not atomic number
+    "iron": 55.845,
 }
 
 
-def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
-    """Evaluate the energy cuts and return the corresponding indices and slice.
-
-    Args:
-        e_centers: numpy.ndarray
-            Array of energy grid centers.
-        e_min: float, optional
-            Minimum energy value. Default is None.
-        e_max: float, optional
-            Maximum energy value. Default is None.
-
-    Returns:
-        min_idx: int
-            Index corresponding to the minimum energy value.
-        max_idx: int
-            Index corresponding to the maximum energy value.
-        energy_slice: slice
-            Slice corresponding to the energy range.
-
-    """
-    min_idx, max_idx = 0, len(e_centers)
-    energy_slice = slice(None)
-    if e_min is not None:
-        min_idx = np.argmin(np.abs(e_centers - e_min))
-        energy_slice = slice(min_idx, None)
-    if e_max is not None:
-        max_idx = np.argmin(np.abs(e_centers - e_max)) + 1
-        energy_slice = slice(min_idx, max_idx)
-    return min_idx, max_idx, energy_slice
-
-
-def normalize_hadronic_model_name(name):
-    """Converts a hadronic model name into a standard form.
-
-    Args:
-        name: str
-            Hadronic model name.
-
-    Returns:
-        str
-            Normalized hadronic model name.
-
-    """
-    import re
-
-    return re.sub("[-.]", "", name).upper()
-
-
-def average_A_target(mat="auto"):
+def average_A_target(mat="auto", physics=None):
     """Average target mass number.
 
-    For air <A> = 14.6568 (using mass fractions from
-    https://en.wikipedia.org/wiki/Atmosphere_of_Earth)
-    Other media supported are co2, rock, ice, water, and hydrogen.
+    For air <A> = 14.5431: the atom-number-weighted mean mass of dry
+    air (N2/O2/Ar volume fractions with 2/2/1 atoms per molecule),
+    matching CORSIKA's AVERAW. Pair it with per-atom-averaged air
+    cross sections. Other media supported are co2, rock, ice, water,
+    hydrogen, and iron.
 
     Args:
         mat: str or float, optional
             Interaction medium or custom target mass number. Default is "auto".
+        physics: physics settings group, optional
+            Where ``mat="auto"`` reads ``A_target`` from. Pass a
+            ``RunConfig().physics`` snapshot for isolation; the default
+            reads the process setting.
 
     Returns:
         float
@@ -91,16 +168,19 @@ def average_A_target(mat="auto"):
 
     """
     if isinstance(mat, str) and mat.lower() == "auto":
-        return _target_masses[config.interaction_medium.lower()]
-    elif isinstance(mat, str) and mat.lower() in _target_masses:
+        if physics is None:
+            physics = _views()[1]
+        mat = physics.A_target
+        if isinstance(mat, str) and mat.lower() == "auto":
+            mat = physics.interaction_medium
+    if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
-    elif isinstance(mat, float) or isinstance(mat, int):
+    if isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
-    else:
-        raise ValueError(
-            "mceq_config.A_target is expected to be a "
-            + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
-        )
+    raise ValueError(
+        "mceq_config.A_target is expected to be a "
+        + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+    )
 
 
 def theta_deg(cos_theta):
@@ -108,23 +188,11 @@ def theta_deg(cos_theta):
     return np.rad2deg(np.arccos(cos_theta))
 
 
-def gen_xmat(energy_grid):
-    """Generates x_lab matrix for a given energy grid"""
-    global _xmat
-    dims = (energy_grid.d, energy_grid.d)
-    if _xmat is None or _xmat.shape != dims:
-        _xmat = np.zeros(dims)
-        for eidx in range(energy_grid.d):
-            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
-            _xmat[: eidx + 1, eidx] = xvec
-    return _xmat
-
-
 def print_in_rows(min_dbg_level, str_list, n_cols=5):
     """Prints contents of a list in rows `n_cols`
     entries per row.
     """
-    if min_dbg_level > config.debug_level:
+    if min_dbg_level > _views()[0].level:
         return
 
     ls = len(str_list)
@@ -149,7 +217,7 @@ def is_charm_pdgid(pdgid):
 
 
 def _get_closest(value, in_list):
-    """Returns the closes value to 'value' from given list."""
+    """Returns the index and value of the nearest element of ``in_list``."""
 
     minindex = np.argmin(np.abs(in_list - value * np.ones(len(in_list))))
     return minindex, in_list[minindex]
@@ -167,7 +235,7 @@ def getAZN(pdg_id):
     Args:
         pdgid (int): PDG ID of nucleus/mass group
     Returns:
-        (int,int,int): (Z,A) tuple
+        (int,int,int): (A, Z, N) tuple
     """
     Z, A = 1, 1
     if pdg_id < 2000:
@@ -177,8 +245,8 @@ def getAZN(pdg_id):
     if pdg_id == 2212:
         return 1, 1, 0
     if pdg_id > 1000000000:
-        A = pdg_id % 1000 / 10
-        Z = pdg_id % 1000000 / 10000
+        A = (pdg_id % 1000) // 10
+        Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
     return 1, 0, 0
 
@@ -190,7 +258,7 @@ def getAZN_corsika(corsikaid):
     Args:
         corsikaid (int): corsika id of nucleus/mass group
     Returns:
-        (int,int,int): (Z,A) tuple
+        (int,int,int): (A, Z, N) tuple
     """
     Z, A = 1, 1
 
@@ -237,47 +305,44 @@ def pdg2corsikaid(pdg_id):
 
 
 def caller_name(skip=2):
-    """Get a name of a caller in the format module.class.method
+    """Name of a caller as ``module.Class::method(): ``.
 
-    `skip` specifies how many levels of stack to skip while getting caller
-    name. skip=1 means "who calls me", skip=2 "who calls my caller" etc.
-    An empty string is returned if skipped levels exceed stack height.abs
+    `skip` counts stack levels above this function: skip=1 is "who calls me",
+    skip=2 "who calls my caller". An empty string is returned when the stack is
+    shallower than that.
+
+    The frame is fetched with :func:`sys._getframe` rather than
+    :func:`inspect.stack`, which materialises `FrameInfo` records with source
+    context for the whole stack: 0.08 us against 192 us on a typical stack, and
+    :func:`info` reaches this on every call while an override list is active.
 
     From https://gist.github.com/techtonik/2151727
     """
-    import inspect
+    import sys
 
-    stack = inspect.stack()
-    start = 0 + skip
-
-    if len(stack) < start + 1:
+    try:
+        frame = sys._getframe(skip)
+    except ValueError:  # stack shallower than `skip`
         return ""
-
-    parentframe = stack[start][0]
 
     name = []
 
-    if config.print_module:
-        module = inspect.getmodule(parentframe)
-        # `modname` can be None when frame is executed directly in console
-        if module:
-            name.append(module.__name__ + ".")
+    if _views()[0].print_module:
+        modname = frame.f_globals.get("__name__")
+        if modname:
+            name.append(modname + ".")
 
-    # detect classname
-    if "self" in parentframe.f_locals:
-        # I don't know any way to detect call from the object method
-        # there seems to be no way to detect static method call - it will
-        # be just a function call
+    # A frame with a local named `self` is a method call; there is no way to
+    # tell a static method from a plain function this way.
+    if "self" in frame.f_locals:
+        name.append(frame.f_locals["self"].__class__.__name__ + "::")
 
-        name.append(parentframe.f_locals["self"].__class__.__name__ + "::")
-
-    codename = parentframe.f_code.co_name
+    codename = frame.f_code.co_name
     if codename != "<module>":  # top level usually
         name.append(codename + "(): ")  # function or a method
     else:
         name.append(": ")  # If called from module scope
 
-    del parentframe
     return "".join(name)
 
 
@@ -302,14 +367,57 @@ def info(min_dbg_level, *message, **kwargs):
     condition = kwargs.pop("condition", True)
     blank_caller = kwargs.pop("blank_caller", False)
     no_caller = kwargs.pop("no_caller", False)
-    if config.override_debug_fcn and min_dbg_level < config.override_max_level:
+    dbg = _views()[0]
+    if dbg.override_fcn and min_dbg_level < dbg.override_max_level:
         fcn_name = caller_name(skip=2).split("::")[-1].split("():")[0]
-        if fcn_name in config.override_debug_fcn:
+        if fcn_name in dbg.override_fcn:
             min_dbg_level = 0
 
-    if condition and min_dbg_level <= config.debug_level:
+    if condition and min_dbg_level <= _views()[0].level:
         message = [str(m) for m in message]
         cname = caller_name() if not no_caller else ""
         if blank_caller:
             cname = len(cname) * " "
         print(cname + " ".join(message))
+
+
+def reset_plt(ticksize, fontsize):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib.pyplot as plt
+
+    plt.rcParams["xtick.labelsize"] = ticksize
+    plt.rcParams["ytick.labelsize"] = ticksize
+    plt.rcParams["font.size"] = fontsize
+    plt.rcParams["mathtext.fontset"] = "stix"
+    plt.rcParams["font.family"] = "STIXGeneral"
+    plt.rcParams["legend.facecolor"] = "white"
+    plt.rcParams["axes.formatter.limits"] = (-1, 3)
+    plt.rcParams["axes.linewidth"] = 2.25
+
+
+def put_ticks(this_fig, this_ax):
+    # Lazy-import: matplotlib is not a required dependency.
+    import matplotlib
+
+    this_ax.xaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="major", direction="in", width=2.5, length=12, zorder=1, right=True
+    )
+    this_ax.xaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, top=True
+    )
+    this_ax.yaxis.set_tick_params(
+        which="minor", direction="in", width=1.5, length=6, zorder=1, right=True
+    )
+    dx = -3 / 72
+    dy = -3 / 72
+    y_offset = matplotlib.transforms.ScaledTranslation(0, dy, this_fig.dpi_scale_trans)
+    x_offset = matplotlib.transforms.ScaledTranslation(dx, 0, this_fig.dpi_scale_trans)
+
+    for label in this_ax.xaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + y_offset)
+
+    for label in this_ax.yaxis.get_majorticklabels():
+        label.set_transform(label.get_transform() + x_offset)

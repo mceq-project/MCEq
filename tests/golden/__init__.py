@@ -1,0 +1,72 @@
+"""Golden regression harness for the v2 layered-architecture refactor.
+
+Each *section* is one `.npz` under `data/`, produced by a `gen_*.py` module that
+exposes `SECTION` and `build() -> (arrays, provenance)`, and compared by
+`test_goldens.py`. Every refactoring phase must keep them green, or state in
+its pull request which numbers changed and why.
+
+Each section carries its own provenance and is regenerated on its own, so there
+is no one commit they all belong to: `__provenance__["git_commit"]` is the HEAD
+`make_goldens` saw, section by section. That is the *parent* of the commit that
+ships the file — generation necessarily precedes the commit that contains it —
+so a section records the tree it was built from under the SHA before it.
+
+Regenerate with `python -m tests.golden.make_goldens [section ...]` or
+`pytest tests/golden --regenerate-goldens`.
+"""
+
+SECTIONS = (
+    "structure",
+    "paths",
+    "environment",
+    "solve1d",
+    "species",
+    "operators1d",
+    "solve2d",
+    "operators2d",
+    "emphoton",
+    "emrho",
+)
+
+#: Sections that need a database CI does not carry or cost minutes to build.
+SLOW_SECTIONS = frozenset({"solve2d", "operators2d", "emphoton"})
+
+#: Sections pinned bitwise to the numpy/BLAS build of the host that generated
+#: them, and therefore compared on one designated reference job instead of
+#: a freely changing numerical runtime. That job pins NumPy 2.5.2 / SciPy
+#: 1.18.0 and limits NumPy dispatch to x86-v3, matching the generating host;
+#: AVX-512 transcendental kernels can otherwise change low bits. The other
+#: platform jobs retain their native dispatch and supported package versions.
+#: These host sections are not compared
+#: across the platform matrix. The discriminator is the build, not the OS: on
+#: ubuntu-latest x86-64 with MKL these pass under numpy 2.5 / scipy 1.18 and
+#: fail by 1e-14 relative L2 under numpy 2.2 / scipy 1.15 and numpy 2.4 /
+#: scipy 1.17, and the sha256 digest keys are bitwise by construction.
+#: `structure` is deliberately absent: line counts are portable, so it stays the
+#: cheap guard that the harness is still wired up on every platform. `solve2d`
+#: is here as well as in SLOW_SECTIONS — the two marks are orthogonal. The two
+#: `operators*` sections are here for a stricter reason than the solve ones:
+#: their CSR keys are sha256 digests, which cannot be compared to a tolerance
+#: at all. `environment` is here for that same reason and no other: it is
+#: thread-invariant (rebuilt at 1, 2, 4 and 8 BLAS threads, all 2574 keys
+#: bitwise — FITPACK's band solve is serial Fortran and not a BLAS call, and the
+#: one BLAS-shaped operation in its builder is a 3x3 matvec), but its spline
+#: knots and coefficients are sha256 digests, and a quadratic interpolating
+#: spline through 2000 MSIS densities is no less sensitive to a numpy/scipy
+#: bump than a solve is. `emphoton` joins for the same reason the `operators*`
+#: sections do — three of its keys are sha256 digests — and its solve is host
+#: arithmetic on a real database on top. `emrho` is deliberately absent: its
+#: fixtures are synthetic and analytic-input, and its rel-L2 keys cleared
+#: bitwise across five builds in one process and three fresh processes.
+HOST_SECTIONS = frozenset(
+    {
+        "paths",
+        "environment",
+        "solve1d",
+        "species",
+        "operators1d",
+        "solve2d",
+        "operators2d",
+        "emphoton",
+    }
+)

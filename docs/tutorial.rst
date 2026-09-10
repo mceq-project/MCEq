@@ -43,7 +43,7 @@ The spectrum of each particle species at the surface can be retrieved as numpy a
 
     mceq.get_solution('mu+')
 
-List available particle species managed by :mod:`MCEq.particlemanager`::
+List available particle species managed by :mod:`MCEq.species`::
 
     mceq.pman.print_particle_tables(0)
 
@@ -102,7 +102,7 @@ Changing geometrical and atmospheric parameters
 
 To change the zenith angle ::
 
-    mceq.set_theta_deg(<zenith_angle_in_degrees>)
+    mceq.set_zenith_azimuth(<zenith_angle_in_degrees>)
 
 Most geometries support angles between 0 (vertical) and 90 degrees.
 
@@ -116,10 +116,11 @@ Available models are:
   pure-Python and vectorised. The default since v2.x; `_IC` is centered on
   IceCube at the South Pole (upgoing supported up to 180°) and `_KM3NeT`
   on ORCA / ARCA. Fork-safe — use `path_workers > 1` in :func:`MCEqRun.solve_fullsky`.
-- 'MSIS00' and 'MSIS00_IC' - the legacy NRLMSISE-00 backend (Fortran-via-C).
-  Kept for back-compat. Not fork-safe; `path_workers` must be 0.
+- 'MSIS00', 'MSIS00_IC' and 'MSIS00_KM3NeT' - the legacy NRLMSISE-00 backend
+  (Fortran-via-C), offering the same sites as the MSIS21 family. Kept for
+  back-compat. Also fork-safe.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
-  (see :func:`MCEq.geometry.density_profiles.CorsikaAtmosphere.init_parameters`).
+  (see :class:`MCEq.environment.corsika.CorsikaAtmosphere`).
 - 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
@@ -188,7 +189,7 @@ carousel (pipeline width ``carousel_K``, default ``min(K, 128)``), and
 batches whose conditions collapse onto a single path take a cheaper
 shared-path route that also supports ``int_grid`` snapshots. For large
 grids, ``path_workers=N`` forks a process pool for the path build
-(MSIS21 + CORSIKA only; MSIS00 is rejected as not fork-safe).
+(every atmosphere; a worker's paths are bitwise equal to the serial ones).
 
 For sky grids, ``solve_fullsky`` additionally applies the geomagnetic
 rigidity cutoff: when ``geomagnetic_cutoff`` is on (auto-detected for
