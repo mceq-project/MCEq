@@ -51,6 +51,8 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 #: density_model = ('MSIS00_IC', ('SouthPole', 'January'))
 #: density_model = ('MSIS21_IC', ('SouthPole', 'January'))     # detector-centered NRLMSIS 2.1
 #: density_model = ('MSIS21_KM3NeT', ('ORCA', 'January'))      # detector-centered NRLMSIS 2.1 at ORCA
+#: density_model = ('Tabulated', ('my_atmosphere.csv',))            # profile from a CSV table
+#: density_model = ('Tabulated_LC', ('era5_grid.csv', (16.1, 36.3), 3500.))  # gridded, impact-point sampled
 #: density_model = ('GeneralizedTarget', None)
 
 #: Definition of prompt (only for correct accounting). Leptons from parent particles
@@ -638,6 +640,18 @@ release_tag = "builds_on_azure/"
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v142.h5
 file_checksum = "247f40203436c69431db4d393316940636badb2c231f68d51870fb49bf476946"
 
+#: Databases no longer published in the release assets, for different
+#: reasons.  ``mceq_db_lext_dpm193_v140.h5`` simulated neutron projectiles as
+#: protons and was withdrawn for that bug; ``mceq_db_lext_dpm191.h5`` is the
+#: older DPMJET-19.1 database, superseded rather than withdrawn.  Either way
+#: the file was pulled, so a download of one now returns a 404 body.
+#: Selecting one is a mistake worth naming rather than a silent, repeating
+#: re-download.
+retired_db_fnames = (
+    "mceq_db_lext_dpm193_v140.h5",
+    "mceq_db_lext_dpm191.h5",
+)
+
 
 def ensure_db_available():
     """Download the MCEq database if not already present.
@@ -650,6 +664,17 @@ def ensure_db_available():
     files are accepted as-is if they exist.
     """
     import os
+
+    if mceq_db_fname in retired_db_fnames:
+        raise ValueError(
+            f"config.mceq_db_fname is set to '{mceq_db_fname}', which is no "
+            "longer published in the MCEq release assets and cannot be "
+            "downloaded: 'mceq_db_lext_dpm193_v140.h5' was withdrawn because "
+            "it simulated neutron projectiles as protons, and "
+            "'mceq_db_lext_dpm191.h5' is the older DPMJET-19.1 database, "
+            "superseded rather than withdrawn for that bug. Use the default "
+            "'mceq_db_lext_dpm193_v142.h5'."
+        )
 
     _url = base_url + release_tag + mceq_db_fname
     filepath = data_dir / mceq_db_fname
@@ -668,7 +693,7 @@ def ensure_db_available():
             print(_url)
         _download_file(_url, filepath)
 
-    for old_name in ("mceq_db_lext_dpm193_v140.h5", "mceq_db_lext_dpm191.h5"):
+    for old_name in retired_db_fnames:
         old_db = data_dir / old_name
         if old_db.exists():
             print(f"Removing previous database {old_db.name}.")
