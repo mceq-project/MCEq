@@ -34,8 +34,13 @@ jobs:
           gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles --pattern '*v2.0.0-rc1*'
           cd bundles
           sha256sum --check ./*.sha256
-      - name: Test installed candidate against release bundles
+      - name: Test installed candidate against 1D bundles
         env:
           MCEQ_RELEASE_BUNDLES: ${{ github.workspace }}/bundles
           OPENBLAS_NUM_THREADS: '1'
-        run: python -m pytest -q --confcutdir=tests/release_bundles tests/release_bundles
+        run: python -m pytest -q --confcutdir=tests/release_bundles tests/release_bundles -k 'not 2d'
+      - name: Test installed candidate against the 2D bundle
+        env:
+          MCEQ_RELEASE_BUNDLES: ${{ github.workspace }}/bundles
+          OPENBLAS_NUM_THREADS: '1'
+        run: python -m pytest -q --confcutdir=tests/release_bundles tests/release_bundles -k 2d

@@ -40,7 +40,7 @@ def test_b_session_config_undone_for_the_next_test():
 
     The expected values are the literals in ``src/MCEq/config/__init__.py``:
 
-        mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+        mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
         mkl_threads = min(16, os.cpu_count() or 1)
         muon_helicity_dependence = True
         "disabled_particles": [11, -11],  # inside adv_set
@@ -54,5 +54,5 @@ def test_b_session_config_undone_for_the_next_test():
     # are disabled_particles, mceq_db_fname and mkl_threads (the last one only
     # where MKL is present; without it the old conftest never set 2 either).
     assert config.muon_helicity_dependence is True
-    assert config.mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
+    assert config.mceq_db_fname == "mceq_db_lext_dpm193_v142.h5"
     assert config.mkl_threads == min(16, os.cpu_count() or 1)
