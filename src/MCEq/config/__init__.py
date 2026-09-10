@@ -28,7 +28,7 @@ print_module = False
 data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"

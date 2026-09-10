@@ -1227,7 +1227,7 @@ def mceq_sib21_full_db():
     saved_db = config.mceq_db_fname
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_mkl_threads = config.mkl_threads
-    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
     config.adv_set["disabled_particles"] = []
     try:
         if config.has_mkl:
@@ -1457,7 +1457,7 @@ def test_etd2_mkl_stable_at_high_zenith():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -1539,7 +1539,7 @@ def test_etd2_cuda_stable_at_high_zenith():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_lext_dpm193_v140.h5"
+    config.mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",

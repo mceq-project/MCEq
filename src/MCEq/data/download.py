@@ -14,8 +14,8 @@ import os
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
 # sha256 checksum of the default database file (config.mceq_db_fname),
-# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v140.h5
-file_checksum = "5da415e9bcf81926b1061d5792d75cb3aceb9de173beccb4695fd3909a0bfdd0"
+# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v142.h5
+file_checksum = "247f40203436c69431db4d393316940636badb2c231f68d51870fb49bf476946"
 
 
 class FileIntegrityCheck:
@@ -117,7 +117,7 @@ def ensure_db_available(cfg):
     if filepath.exists():
         is_complete = (
             FileIntegrityCheck(filepath, file_checksum).succeeded()
-            if mceq_db_fname == "mceq_db_lext_dpm193_v140.h5"
+            if mceq_db_fname == "mceq_db_lext_dpm193_v142.h5"
             else True
         )
     else:
@@ -129,7 +129,8 @@ def ensure_db_available(cfg):
             print(_url)
         _download_file(_url, filepath)
 
-    old_db = data_dir / "mceq_db_lext_dpm191.h5"
-    if old_db.exists():
-        print(f"Removing previous database {old_db.name}.")
-        os.unlink(old_db)
+    for old_name in ("mceq_db_lext_dpm193_v140.h5", "mceq_db_lext_dpm191.h5"):
+        old_db = data_dir / old_name
+        if old_db.exists():
+            print(f"Removing previous database {old_db.name}.")
+            os.unlink(old_db)
