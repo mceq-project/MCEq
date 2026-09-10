@@ -179,6 +179,28 @@ def test_isothermal_mass_overburden():
     assert np.all(overburden <= atm.X0)
 
 
+# ---------------------------------------------------------------------------
+# Observation level
+# ---------------------------------------------------------------------------
+
+
+def test_set_h_obs_after_a_vertical_angle_rebuilds_the_spline():
+    """Moving the detector must move the column, at zenith 0 like anywhere else.
+
+    A vertical angle is the ordinary case, not the absence of one, so the
+    stored profile cannot be left describing the old observation level.
+    """
+    moved = dp.CorsikaAtmosphere("USStd", None)
+    moved.set_theta(0.0)
+    moved.set_h_obs(4.0e5)
+
+    fresh = dp.CorsikaAtmosphere("USStd", None)
+    fresh.set_h_obs(4.0e5)
+    fresh.set_theta(0.0)
+
+    assert np.isclose(moved.max_X, fresh.max_X, rtol=1e-12)
+
+
 def test_msis_setters_and_cache_clear():
     atm = dp.MSIS00Atmosphere("SouthPole", "January")
     atm.theta_deg = 42
@@ -563,6 +585,37 @@ def test_tabulated_observation_level_follows_the_table():
     assert higher.max_X < atm.max_X < lower.max_X
 
 
+def test_tabulated_set_h_obs_extends_the_profile_below_the_table():
+    """Lowering the detector afterwards must equal building it there.
+
+    ``surface_elevation_m`` completes the column down to the level it is
+    given, and :func:`set_h_obs` is the same statement made later; without
+    that the profile keeps stopping at the table's lowest row and the column
+    below it reads nan.
+    """
+    moved = dp.TabulatedAtmosphere(TABLE_PATH)
+    moved.set_theta(30.0)
+    moved.set_h_obs(0.0)
+
+    fresh = dp.TabulatedAtmosphere(TABLE_PATH, surface_elevation_m=0.0)
+    fresh.set_theta(30.0)
+
+    assert np.isclose(moved.max_X, fresh.max_X, rtol=1e-12)
+    assert np.isclose(moved.get_density(0.0), fresh.get_density(0.0), rtol=1e-12)
+
+
+def test_tabulated_set_h_obs_back_up_restores_the_shorter_column():
+    """The extension is rebuilt from the table, not stacked on the last one."""
+    atm = dp.TabulatedAtmosphere(TABLE_PATH)
+    atm.set_theta(30.0)
+    at_table_level = atm.max_X
+
+    atm.set_h_obs(0.0)
+    atm.set_h_obs(float(np.min(atm.table.h_cm)))
+
+    assert np.isclose(atm.max_X, at_table_level, rtol=1e-12)
+
+
 def test_tabulated_negative_table_heights_clip_at_sea_level():
     """Reanalyses extrapolate below ground; h_obs must not go negative."""
     table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
@@ -924,6 +977,30 @@ def test_gzipped_table_reads_identically(tmp_path):
     assert np.array_equal(plain.lon_deg, zipped.lon_deg)
 
 
+def test_gridded_rows_may_arrive_in_any_order(tmp_path):
+    """The format promises row order is irrelevant, for grids too.
+
+    A converter that walks levels, or concatenates one file per pressure
+    level, emits the rows in an order no reader should depend on.
+    """
+    import random
+
+    lines = [
+        line
+        for line in pathlib.Path(GRID_TABLE_PATH).read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    header, body = lines[0], lines[1:]
+    random.Random(20260910).shuffle(body)
+
+    shuffled = dp.AtmosphereTable.load_from_csv(_write_table(tmp_path, [header, *body]))
+    plain = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    assert np.array_equal(shuffled.lat_deg, plain.lat_deg)
+    assert np.array_equal(shuffled.lon_deg, plain.lon_deg)
+    assert np.array_equal(shuffled.h_cm, plain.h_cm)
+    assert np.array_equal(shuffled.rho_gcm3, plain.rho_gcm3)
+
+
 def test_gridded_table_needs_a_coord():
     with pytest.raises(ValueError, match="coord"):
         dp.TabulatedAtmosphere(GRID_TABLE_PATH)
@@ -1016,6 +1093,80 @@ def test_tabulated_lc_impact_point_matches_msis00():
             )
             assert np.isclose(tab.thrad, msis.thrad, rtol=0, atol=1e-12)
             assert tab.geom.h_obs == msis.geom.h_obs
+
+
+# ---------------------------------------------------------------------------
+# Directions that leave a regional grid
+#
+# A regional table is the common case for a site study, and the coordinate
+# that leaves it is never the one the caller typed: they ask for a zenith and
+# an azimuth, and the table is read at the impact point derived from them.
+# ---------------------------------------------------------------------------
+
+
+def _regional_grid_atm(tmp_path, **kwargs):
+    """A crop covering lat -60..30, lon 0..135, with the detector inside it."""
+    path = _regional_table(
+        tmp_path, lambda lat, lon: -60.0 <= lat <= 30.0 and lon <= 135.0
+    )
+    kwargs.setdefault("detector_coord", (45.0, -60.0))
+    kwargs.setdefault("depth_m", 1948.0)
+    return dp.TabulatedLocationCentered(path, **kwargs)
+
+
+def test_set_theta_outside_a_regional_grid_names_the_impact_point(tmp_path):
+    """The direction is what the caller chose; the position is derived from it.
+
+    Reporting only the bare latitude sends the user looking for a coordinate
+    they never supplied, from a detector that sits well inside the table.
+    """
+    atm = _regional_grid_atm(tmp_path)
+    lat, lon = atm._impact_point(80.0, 180.0)
+
+    with pytest.raises(ValueError) as excinfo:
+        atm.set_theta(80.0, azimuth_deg=180.0)
+
+    message = str(excinfo.value)
+    assert "impact point" in message
+    assert "zenith 80" in message and "azimuth 180" in message
+    assert f"{lat:.3f}" in message and f"{lon:.3f}" in message
+    # The table's own complaint is kept, so the domain is still reported.
+    assert "outside the table" in str(excinfo.value.__cause__)
+
+
+def test_azimuth_averaged_set_theta_outside_a_regional_grid_names_the_ring(tmp_path):
+    """Without an azimuth the table is read at a whole ring of impact points."""
+    atm = _regional_grid_atm(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        atm.set_theta(80.0)
+
+    message = str(excinfo.value)
+    assert "impact point" in message
+    assert "zenith 80" in message
+    assert "azimuth" in message
+    assert "outside the table" in str(excinfo.value.__cause__)
+
+
+def test_upgoing_on_a_regional_grid_asks_for_a_global_table(tmp_path):
+    """An upgoing shower starts on the far side of the Earth, near the antipode."""
+    atm = _regional_grid_atm(tmp_path, detector_coord=(45.0, -30.0), max_theta=180.0)
+
+    with pytest.raises(ValueError) as excinfo:
+        atm.set_theta(180.0, azimuth_deg=0.0)
+
+    message = str(excinfo.value)
+    assert "impact point" in message
+    assert "global" in message
+
+
+def test_regional_grid_serves_the_directions_it_does_cover(tmp_path):
+    """The added context must not turn a covered direction into an error."""
+    atm = _regional_grid_atm(tmp_path, detector_coord=(45.0, -30.0))
+    atm.set_theta(70.0, azimuth_deg=180.0)
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+    atm.set_theta(70.0)
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
 
 
 # ---------------------------------------------------------------------------

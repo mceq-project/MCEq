@@ -245,7 +245,9 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         if not self._preserve_max_theta:
             self.max_theta = self.geom.theta_max_deg
 
-        if self.theta_deg:
+        # A zenith angle of 0 is an angle, not the absence of one; testing the
+        # float for truth would leave a vertical profile at the old level.
+        if self.theta_deg is not None:
             self.calculate_density_spline()
 
     def r_X2rho(self, X):
@@ -1685,6 +1687,9 @@ class TabulatedAtmosphere(EarthsAtmosphere):
 
     def _set_profile(self, column, h_obs_cm):
         """Installs *column* as the active profile, completed at both ends."""
+        # Kept unextended, so that a later set_h_obs completes the same column
+        # afresh instead of extending an already extended one.
+        self._column = column
         order = np.argsort(column.h_cm)
         # Copy: the profile is completed in place below, and a caller-supplied
         # table must not be modified by building an atmosphere from it.
@@ -1895,6 +1900,17 @@ class TabulatedAtmosphere(EarthsAtmosphere):
             self.pressure = np.hstack(
                 [self.pressure[:-1], np.full(h_extra.size, np.nan)]
             )
+
+    def set_h_obs(self, h_obs):
+        """Sets the observation level in cm, completing the column down to it.
+
+        The profile stops at the lowest tabulated row unless it is extended,
+        which the constructor does for *surface_elevation_m*.  Moving the
+        level afterwards is the same statement, so it rebuilds the profile the
+        same way -- from the table's own column, never from the extended one.
+        """
+        self._set_profile(self._column, h_obs)
+        super().set_h_obs(h_obs)
 
     # ------------------------------------------------------------------
     # Density, temperature and pressure
@@ -2118,6 +2134,43 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             azimuth_deg,
         )
 
+    def _column_at_impact(self, lon, lat, theta_deg, azimuth_deg):
+        """The table column at an impact point, or an error naming the direction.
+
+        The caller chooses a zenith and an azimuth; the position the table is
+        read at is derived from them and can be hundreds of km away from the
+        detector.  A regional table that does not reach it complains about a
+        latitude the caller never typed, so the direction it came from is
+        added here.
+        """
+        try:
+            return self.table.column(lon, lat)
+        except ValueError as exc:
+            where = (
+                f"zenith {theta_deg:g} deg"
+                if azimuth_deg is None
+                else f"zenith {theta_deg:g} deg, azimuth {azimuth_deg:g} deg"
+            )
+            ring = (
+                f", averaged over {self._n_azimuth} azimuths"
+                if azimuth_deg is None
+                else ""
+            )
+            hint = (
+                " An upgoing direction crosses the Earth and lands near the "
+                "antipode, so it needs a global table rather than a regional "
+                "crop."
+                if theta_deg > 90.0
+                else " The impact point moves further from the detector as "
+                "the zenith angle grows, so a regional crop has to reach "
+                "beyond the site itself."
+            )
+            raise ValueError(
+                f"{self.__class__.__name__}.set_theta(): {where}{ring} puts the "
+                f"shower impact point at lat={lat:.3f} deg, lon={lon:.3f} deg, "
+                f"which the table does not cover -- {exc}{hint}"
+            ) from exc
+
     @staticmethod
     def _ring_centre(coords):
         """Centre of a ring of ``(lat, lon)`` points, as ``(lon, lat)``.
@@ -2204,7 +2257,9 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             self._current_impact_longitude = lon
             self._azimuth_averaging = False
             self._azimuth_avg_coords = []
-            self._set_profile(self.table.column(lon, lat), h_obs_cm)
+            self._set_profile(
+                self._column_at_impact(lon, lat, theta_deg, azimuth_deg), h_obs_cm
+            )
             info(
                 2,
                 f"zenith={theta_deg:.1f}°, azimuth={azimuth_deg:.1f}°"
@@ -2245,7 +2300,10 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         azimuths arithmetically -- mass is additive, and it is what
         :class:`MSIS00LocationCentered` does, so the two stay comparable.
         """
-        columns = [self.table.column(lon, lat) for lat, lon in self._azimuth_avg_coords]
+        columns = [
+            self._column_at_impact(lon, lat, theta_deg, None)
+            for lat, lon in self._azimuth_avg_coords
+        ]
         h_lo = max([h_obs_cm, *(np.min(c.h_cm) for c in columns)])
         h_hi = min(np.max(c.h_cm) for c in columns)
         if not h_lo < h_hi:
