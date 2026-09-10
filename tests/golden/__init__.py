@@ -33,6 +33,11 @@ SLOW_SECTIONS = frozenset({"solve2d", "operators2d", "emphoton"})
 
 #: Sections pinned bitwise to the numpy/BLAS build of the host that generated
 #: them, and therefore compared on one designated reference job instead of
+#: a freely changing numerical runtime. That job pins NumPy 2.5.2 / SciPy
+#: 1.18.0 and limits NumPy dispatch to x86-v3, matching the generating host;
+#: AVX-512 transcendental kernels can otherwise change low bits. The other
+#: platform jobs retain their native dispatch and supported package versions.
+#: These host sections are not compared
 #: across the platform matrix. The discriminator is the build, not the OS: on
 #: ubuntu-latest x86-64 with MKL these pass under numpy 2.5 / scipy 1.18 and
 #: fail by 1e-14 relative L2 under numpy 2.2 / scipy 1.15 and numpy 2.4 /

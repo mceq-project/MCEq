@@ -30,6 +30,9 @@ jobs:
     runs-on: ${{ inputs.os }}
     env:
       UV_SYSTEM_PYTHON: "true"
+      # Host goldens were generated on x86-v3. Hosted runners can also
+      # expose AVX-512, whose NumPy transcendental loops round differently.
+      NPY_DISABLE_CPU_FEATURES: ${{ inputs.golden-host && 'X86_V4,AVX512_ICL,AVX512_SPR' || '' }}
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
@@ -45,7 +48,10 @@ jobs:
         python-version: ${{ inputs.python-version }}
         allow-prereleases: true
     - name: Install requirements
-      run: uv pip install -e . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }}
+      run: uv pip install -e . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }} ${{ inputs.golden-host && 'numpy==2.5.2 scipy==1.18.0' || '' }}
+    - name: Record reference numerical runtime
+      if: inputs.golden-host
+      run: python -c "import numpy; import scipy; print(numpy.__version__, scipy.__version__); numpy.show_runtime()"
     - name: Check MKL version
       if: runner.os != 'macOS' && runner.arch != 'ARM64'
       run: pip show mkl
