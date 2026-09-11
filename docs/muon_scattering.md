@@ -8,7 +8,7 @@ scattering tables, then set before constructing the run:
 from MCEq import config
 from MCEq.config.run import RunConfig
 
-config.paths.mceq_db_fname = "mceq_db_v2_fluka2d_muon_v2.h5"
+config.paths.mceq_db_fname = "mceq_2d_muon_scattering_v1.h5"
 config.physics.muon_multiple_scattering = True
 config.physics.muon_scattering_model = "screened-coulomb-plane-v1"
 settings = RunConfig.snapshot()
