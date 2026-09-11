@@ -121,15 +121,11 @@ class MCEqBatchResult:
         """
         n_selected = sum(x is not None for x in (k, pixel, zenith))
         if n_selected > 1:
-            raise ValueError(
-                "column_index: provide only one of k, pixel, or zenith"
-            )
+            raise ValueError("column_index: provide only one of k, pixel, or zenith")
         if k is not None:
             k = int(k)
             if not -self.K <= k < self.K:
-                raise IndexError(
-                    f"column_index: k={k} out of range for K={self.K}"
-                )
+                raise IndexError(f"column_index: k={k} out of range for K={self.K}")
             return k % self.K
 
         if pixel is not None or zenith is not None:
@@ -151,8 +147,7 @@ class MCEqBatchResult:
             match = np.flatnonzero(np.isclose(self.zenith_grid, zenith))
             if match.size == 0:
                 raise ValueError(
-                    f"column_index: zenith {zenith} not in grid "
-                    f"{self.zenith_grid}"
+                    f"column_index: zenith {zenith} not in grid {self.zenith_grid}"
                 )
             i_zen = int(match[0])
             if azimuth is None:
@@ -220,8 +215,7 @@ class MCEqBatchResult:
         else:
             if self.grid_sol is None or len(self.grid_sol) == 0:
                 raise Exception(
-                    "Solution has not been computed on a grid. "
-                    "Re-run with int_grid."
+                    "Solution has not been computed on a grid. Re-run with int_grid."
                 )
             if grid_idx >= len(self.grid_sol):
                 state = self.grid_sol[-1][:, col]
@@ -254,9 +248,7 @@ class MCEqBatchResult:
           (np.ndarray[n_zen, n_az]): flux map, kinetic-energy units.
         """
         if self.zenith_grid is None:
-            raise ValueError(
-                "skymap() is only available on solve_fullsky results"
-            )
+            raise ValueError("skymap() is only available on solve_fullsky results")
         e_grid = self._mceq.e_grid
         if not e_grid[0] <= kin_energy <= e_grid[-1]:
             raise ValueError(
@@ -291,9 +283,7 @@ class MCEqBatchResult:
     def __repr__(self):
         parts = [f"K={self.sol.shape[1]}"]
         if self.zenith_grid is not None:
-            parts.append(
-                f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}"
-            )
+            parts.append(f"sky_grid={self.zenith_grid.size}x{self.n_azimuth}")
         if self.grid_sol is not None and len(self.grid_sol):
             parts.append(f"n_snapshots={len(self.grid_sol)}")
         return f"MCEqBatchResult({', '.join(parts)})"
@@ -352,9 +342,7 @@ class MCEqRun:
         he_le_transition = kwargs.pop(
             "he_le_transition", le_config.get("he_le_transition", 80.0)
         )
-        he_le_trwidth = kwargs.pop(
-            "he_le_trwidth", le_config.get("he_le_trwidth", 0.3)
-        )
+        he_le_trwidth = kwargs.pop("he_le_trwidth", le_config.get("he_le_trwidth", 0.3))
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=self.medium,
             low_energy_model=low_energy_model,
@@ -1206,8 +1194,7 @@ class MCEqRun:
 
             # response matrix: one column per primary energy
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries],
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
                 axis=1,
             )
             res = mceq.solve_batch(phi0)
@@ -1290,6 +1277,8 @@ class MCEqRun:
         """
         import MCEq.geometry.density_profiles as dprof
 
+        previous_model = getattr(self, "density_model", None)
+
         # Check if string arguments or an instance of the density class is provided
         if not isinstance(
             density_model_or_config, (dprof.EarthsAtmosphere, dprof.GeneralizedTarget)
@@ -1354,6 +1343,15 @@ class MCEqRun:
             self.integration_path = None
         else:
             raise ValueError(f"Density model {self.density_model} not supported.")
+
+        # A different density model invalidates any path built for the previous
+        # one. :meth:`set_zenith_azimuth` above only clears the path when the
+        # angle changes, and the angle is cached on the model itself, so
+        # switching between two instances that both already carry this zenith
+        # would otherwise leave the old model's integration path in place and
+        # silently solve the new atmosphere along the old one.
+        if self.density_model is not previous_model:
+            self.integration_path = None
 
         # TODO: Make the pman aware of that density might have changed and
         # indices as well
@@ -1713,9 +1711,7 @@ class MCEqRun:
             or entry["int_m"] is not self.int_m
             or entry["dec_m"] is not self.dec_m
         ):
-            d_int, d_dec, int_off, dec_off = _etd_split_cache(
-                self.int_m, self.dec_m
-            )
+            d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
             device_id = int(getattr(config, "cuda_device_id", 0))
             ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
                 int_off,
@@ -1796,7 +1792,9 @@ class MCEqRun:
             grid_idcs,
         )
 
-    def _dispatch_shared_path_multirhs(self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype):
+    def _dispatch_shared_path_multirhs(
+        self, nsteps, dX, rho_inv, grid_idcs, phi0, dtype
+    ):
         """Route a shared-path multi-RHS solve to the ``kernel_config``
         backend.
 
@@ -1911,15 +1909,17 @@ class MCEqRun:
 
             # K single primaries (response matrix) at the current angle
             phi0 = np.stack(
-                [mceq.initial_state({"E": E, "pdg_id": 2212})
-                 for E in E_primaries], axis=1)
+                [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_primaries],
+                axis=1,
+            )
             res = mceq.solve_batch(phi0)
 
             # one spectrum through 12 months x 3 zeniths
             conditions = [
-                {"zenith_deg": z,
-                 "density_model": ("MSIS21", ("SouthPole", month))}
-                for month in months for z in (0.0, 30.0, 60.0)]
+                {"zenith_deg": z, "density_model": ("MSIS21", ("SouthPole", month))}
+                for month in months
+                for z in (0.0, 30.0, 60.0)
+            ]
             res = mceq.solve_batch(conditions=conditions)
             res.get_solution("conv_numu", k=5, mag=3)
 
@@ -1986,8 +1986,7 @@ class MCEqRun:
             n_cols = phi0_arr.shape[1]
         else:
             raise ValueError(
-                f"solve_batch: phi0 must be 1-D or 2-D, "
-                f"got shape {phi0_arr.shape}"
+                f"solve_batch: phi0 must be 1-D or 2-D, got shape {phi0_arr.shape}"
             )
 
         if conditions is not None:
@@ -2016,8 +2015,7 @@ class MCEqRun:
         if conditions is None:
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
                 raise Exception(
-                    "The X values in int_grid are required to be "
-                    "strictly increasing."
+                    "The X values in int_grid are required to be strictly increasing."
                 )
             self._calculate_integration_path(int_grid, grid_var, **path_kwargs)
             paths = [self.integration_path] * K
@@ -2079,7 +2077,7 @@ class MCEqRun:
             info(
                 2,
                 f"solve_batch: carousel route K={K} K_pipe={K_pipe} T={T} "
-                f"sum_nsteps={sum_ns} waste={waste*100:.2f}%",
+                f"sum_nsteps={sum_ns} waste={waste * 100:.2f}%",
             )
             sol = self._dispatch_carousel(
                 dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype
@@ -2451,11 +2449,19 @@ class MCEqRun:
                 )
                 device_id = int(getattr(config, "cuda_device_id", 0))
                 ctx = MCEq.solvers.CudaEtd2MultiRHSContext(
-                    int_off, dec_off, d_int, d_dec,
-                    K=K_pipe, device_id=device_id,
+                    int_off,
+                    dec_off,
+                    d_int,
+                    d_dec,
+                    K=K_pipe,
+                    device_id=device_id,
                     fp_precision=fp_precision,
                 )
-                cache[cache_key] = {"int_m": self.int_m, "dec_m": self.dec_m, "ctx": ctx}
+                cache[cache_key] = {
+                    "int_m": self.int_m,
+                    "dec_m": self.dec_m,
+                    "ctx": ctx,
+                }
                 entry = cache[cache_key]
             ctx = entry["ctx"]
             phi_init_typed = np.asarray(phi_initial, dtype=dtype)
@@ -2476,7 +2482,9 @@ class MCEqRun:
                 or cached["int_m"] is not self.int_m
                 or cached["dec_m"] is not self.dec_m
             ):
-                d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
                 new_cached = {
                     "int_m": self.int_m,
                     "dec_m": self.dec_m,
@@ -2498,8 +2506,15 @@ class MCEqRun:
                             old.close()
             c = getattr(self, cache_attr)
             sol = MCEq.solvers.solv_mkl_etd2_carousel(
-                c["mkl_int_off"], c["mkl_dec_off"], c["d_int"], c["d_dec"],
-                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+                c["mkl_int_off"],
+                c["mkl_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                dX_c,
+                rho_inv_c,
+                phi_initial,
+                schedule,
+                phi0_per_pixel,
             )
             return np.asarray(sol, dtype=np.dtype(dtype))
         if kc in ("accelerate_etd2", "spacc_etd2"):
@@ -2513,7 +2528,9 @@ class MCEqRun:
                 or cached["int_m"] is not self.int_m
                 or cached["dec_m"] is not self.dec_m
             ):
-                d_int, d_dec, int_off, dec_off = _etd_split_cache(self.int_m, self.dec_m)
+                d_int, d_dec, int_off, dec_off = _etd_split_cache(
+                    self.int_m, self.dec_m
+                )
                 new_cached = {
                     "int_m": self.int_m,
                     "dec_m": self.dec_m,
@@ -2529,8 +2546,15 @@ class MCEqRun:
                 setattr(self, cache_attr, new_cached)
             c = getattr(self, cache_attr)
             sol = MCEq.solvers.solv_spacc_etd2_carousel(
-                c["spacc_int_off"], c["spacc_dec_off"], c["d_int"], c["d_dec"],
-                dX_c, rho_inv_c, phi_initial, schedule, phi0_per_pixel,
+                c["spacc_int_off"],
+                c["spacc_dec_off"],
+                c["d_int"],
+                c["d_dec"],
+                dX_c,
+                rho_inv_c,
+                phi_initial,
+                schedule,
+                phi0_per_pixel,
             )
             return np.asarray(sol, dtype=np.dtype(dtype))
         raise NotImplementedError(
@@ -2696,11 +2720,11 @@ class MCEqRun:
             )
         if cutoff_flag and not phi0_is_2d:
             from MCEq.geometry.gtracr_cutoff import (
-                build_phi0_with_cutoff, get_cutoff_map,
+                build_phi0_with_cutoff,
+                get_cutoff_map,
             )
-            az_centres = (
-                azimuth_grid if azimuth_grid is not None else np.array([0.0])
-            )
+
+            az_centres = azimuth_grid if azimuth_grid is not None else np.array([0.0])
             primary = getattr(self, "pmodel", None)
             if primary is None:
                 info(
@@ -2711,7 +2735,10 @@ class MCEqRun:
             else:
                 ck = dict(cutoff_kwargs or {})
                 rc_grid = get_cutoff_map(
-                    self.density_model, zenith_grid, az_centres, **ck,
+                    self.density_model,
+                    zenith_grid,
+                    az_centres,
+                    **ck,
                 )
                 # Pixel order: (i_zen, i_az) flattened with az inner.
                 rc_flat = rc_grid.flatten(order="C")

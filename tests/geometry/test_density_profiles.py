@@ -954,6 +954,27 @@ def test_regional_table_raises_outside_its_longitudes(tmp_path):
     assert table.column(90.0, 0.0).h_cm.size == table.h_cm.shape[-1]
 
 
+def test_edge_node_survives_floating_point_slack(tmp_path):
+    """A point on the boundary node, a few ulp outside it, is still inside.
+
+    Regression test: the impact point of a vertical shower over a detector
+    standing on the southernmost node comes back at -89.0000000000001, and a
+    strict comparison rejected it with a message that read "latitude -89.000
+    is outside the table, which covers -89.000..".
+    """
+    path = _regional_table(tmp_path, lambda lat, lon: lat <= -30.0)
+    table = dp.AtmosphereTable.load_from_csv(path)
+    edge = float(table.lat_deg[0])
+    on_edge = table.column(0.0, edge).rho_gcm3
+    for outside in (edge - 1e-13, edge - table.EDGE_TOLERANCE_DEG / 2):
+        np.testing.assert_allclose(
+            table.column(0.0, outside).rho_gcm3, on_edge, rtol=0, atol=0
+        )
+    # Far enough out to be a real miss, and still refused.
+    with pytest.raises(ValueError, match="latitude .* outside the table"):
+        table.column(0.0, edge - 100 * table.EDGE_TOLERANCE_DEG)
+
+
 def test_table_spanning_the_prime_meridian_is_rejected(tmp_path):
     """Sorted into [0, 360) such a crop has a hole in the middle."""
     path = _regional_table(tmp_path, lambda lat, lon: lon in (0.0, 45.0, 315.0))

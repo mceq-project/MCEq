@@ -1399,6 +1399,15 @@ class AtmosphereTable:
             **{key: reshape(value) for key, value in optional.items()},
         )
 
+    # Slack on the domain check, in degrees. A direction that lands exactly on
+    # an edge node comes back a few ulp outside it -- a vertical shower over a
+    # detector sitting on the southernmost node is the ordinary case -- and
+    # refusing that would be absurd. 1e-6 deg is about 11 cm, orders of
+    # magnitude below any grid spacing, so it cannot hide a real miss. The
+    # bilinear weights are clipped anyway, so a point inside the slack is
+    # evaluated at the edge node itself.
+    EDGE_TOLERANCE_DEG = 1.0e-6
+
     def _raise_if_outside_region(self, lon, lat, periodic):
         """Raises if (*lon*, *lat*) falls outside a regional table's domain.
 
@@ -1406,7 +1415,8 @@ class AtmosphereTable:
         would answer some of them with a column from the wrong place and no
         indication that it had done so.
         """
-        if not (self.lat_deg[0] <= lat <= self.lat_deg[-1]):
+        tol = self.EDGE_TOLERANCE_DEG
+        if not (self.lat_deg[0] - tol <= lat <= self.lat_deg[-1] + tol):
             raise ValueError(
                 f"AtmosphereTable.column(): latitude {lat:.3f} deg is outside "
                 f"the table, which covers {self.lat_deg[0]:.3f}.."
@@ -1418,7 +1428,7 @@ class AtmosphereTable:
         # The loader rejects grids whose longitude axis is not contiguous and
         # ascending, so a plain range check is enough here.
         lo, hi = float(self.lon_deg[0]), float(self.lon_deg[-1])
-        if not (lo <= lon <= hi):
+        if not (lo - tol <= lon <= hi + tol):
             raise ValueError(
                 f"AtmosphereTable.column(): longitude {lon:.3f} deg is outside "
                 f"the table, which covers {lo:.3f}..{hi:.3f} deg. Use a table "
