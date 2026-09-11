@@ -122,6 +122,7 @@ GROUPS = {
         "generic_losses_all_charged": "generic_losses_all_charged",
         "muon_helicity_dependence": "muon_helicity_dependence",
         "muon_multiple_scattering": "muon_multiple_scattering",
+        "muon_scattering_model": "muon_scattering_model",
         "enable_default_tracking": "enable_default_tracking",
         "prompt_ctau": "prompt_ctau",
         "minimal_primary_energy": "minimal_primary_energy",

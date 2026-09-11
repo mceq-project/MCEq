@@ -1,0 +1,1 @@
+Add explicit selection of material-dependent muon Coulomb scattering tables in 2D transport. Tables are generated offline by mceq-EM and maintenance tools; legacy Gaussian scattering remains the default. Missing materials or incompatible grids fail explicitly.

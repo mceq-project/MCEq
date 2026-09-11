@@ -325,13 +325,19 @@ class MatrixBuilder:
         self._int_m_hadr = self._dEdx_band = self._assembly_key = None
 
     def _current_assembly_key(self):
-        """The two settings an assembly reads that the blocks do not carry: the
+        """The settings an assembly reads that the blocks do not carry: the
         CSR dtype (``np.dtype`` normalises the ``floatlen = None`` spelling of
-        fp64) and whether ``_csr_from_blocks`` finds muon damping to apply."""
+        fp64), whether muon damping applies, and the selected scattering model."""
         damping = self.is_2d and getattr(
             self._physics, "muon_multiple_scattering", False
         )
-        return np.dtype(self._grid.dtype), bool(damping)
+        return (
+            np.dtype(self._grid.dtype),
+            bool(damping),
+            getattr(self._physics, "muon_scattering_model", "gaussian")
+            if damping
+            else None,
+        )
 
     def _require_live_assembly(self, name):
         """Raise unless ``name`` would assemble into a part of the live ``int_m``."""
@@ -450,16 +456,11 @@ class MatrixBuilder:
         return np.zeros((self._pman.dim, self._pman.dim), dtype=self._grid.dtype)
 
     def _muon_scattering_damping(self):
-        """Per-energy Gaussian multiple-scattering damping data for muons.
+        """Return muon offsets and negative rates, shape (n_k, n_energy).
 
-        Returns ``(muon_lidcs, theta_s_sq)`` — the state-vector offsets of
-        all muon species present (PDG ±13, helicities 0, ±1) and the
-        squared scattering angle per unit depth — or ``None`` when muon
-        multiple scattering does not apply. Physics and formulas:
-        :mod:`MCEq.operators.scattering`. The per-mode diagonal
-        contribution is ``-kappa^2 * theta_s^2(E) / 4``; it sits on the
-        diagonal D so ETD2RK's ``e^{h*D}`` integrates it exactly, without
-        a per-step operator split.
+        The selected Gaussian or material-table generator enters the interaction
+        diagonal. ETD2 exponentiates the uncoupled diagonal; secant coupling is
+        applied by the existing solver and still requires step convergence.
         """
         if not (
             self.is_2d and getattr(self._physics, "muon_multiple_scattering", False)
@@ -474,7 +475,14 @@ class MatrixBuilder:
         muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
-        return muon_lidcs, theta_s_sq
+        model = getattr(self._physics, "muon_scattering_model", "gaussian")
+        if model == "gaussian":
+            damping = np.asarray(
+                [scattering.mode_damping(theta_s_sq, kappa) for kappa in self.k_grid]
+            )
+        else:
+            damping = -self._layout.muon_scattering_rate(model)
+        return muon_lidcs, damping
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
         """Assemble the per-channel blocks into the global CSR operator.
@@ -496,8 +504,8 @@ class MatrixBuilder:
 
         When ``apply_muon_scattering`` is True (the interaction-matrix
         path) and ``physics.muon_multiple_scattering`` is on, muon-row
-        diagonals receive the per-mode Gaussian multiple-scattering
-        damping ``-kappa^2 * theta_s^2(E) / 4`` (see
+        diagonals receive the selected per-mode multiple-scattering
+        generator (see
         :meth:`_muon_scattering_damping`), added as extra COO entries
         (duplicates are summed on CSR conversion).
 
@@ -533,8 +541,8 @@ class MatrixBuilder:
                     vals.append(slab[r, cc])
                 kappa = self.k_grid[k]
                 if mu_damp is not None and kappa != 0:
-                    muon_lidcs, theta_s_sq = mu_damp
-                    damping = scattering.mode_damping(theta_s_sq, kappa)
+                    muon_lidcs, all_damping = mu_damp
+                    damping = all_damping[k]
                     for lidx in muon_lidcs:
                         diag = np.arange(lidx, lidx + n_e)
                         rows.append(diag)
