@@ -43,3 +43,28 @@ def continuous_loss_rate(bands, secant_eigenvalues=None, upwind_rows=None):
             raise ValueError("Secant eigenvalues must be finite and positive")
         rate *= max(1.0, float(np.max(lam, initial=1.0)))
     return rate
+
+
+def elastic_rate(blocks, secant_eigenvalues=None):
+    """Conservative 2-norm bound of the complete added elastic operator.
+
+    Includes mode-dependent diagonal terms: secant mode coupling can make
+    them explicit. The zero elastic/identity case imposes no extra cap.
+    This is a step policy, not an a posteriori error estimate.
+    """
+    rows, cols = {}, {}
+    for (child, parent), block in blocks.items():
+        block = np.asarray(block, dtype=float)
+        if not np.isfinite(block).all():
+            raise ValueError("Nonfinite elastic operator")
+        rows[child] = rows.get(child, 0) + np.abs(block).sum(axis=-1)
+        cols[parent] = cols.get(parent, 0) + np.abs(block).sum(axis=-2)
+    row = max((float(np.max(a)) for a in rows.values()), default=0.0)
+    col = max((float(np.max(a)) for a in cols.values()), default=0.0)
+    rate = np.sqrt(row * col)
+    if secant_eigenvalues is not None:
+        lam = np.asarray(secant_eigenvalues)
+        if not np.isfinite(lam).all() or np.any(lam <= 0):
+            raise ValueError("Secant eigenvalues must be finite and positive")
+        rate *= max(1.0, float(np.max(lam, initial=1.0)))
+    return float(rate)

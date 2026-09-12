@@ -147,8 +147,17 @@ class CascadeSystem:
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         self._int_cs.load(interaction_model)
+        elastic = self._mceq_db.elastic_db(interaction_model)
+        if particle_list is not None:
+            elastic = elastic.restrict_parents(particle_list)
 
         if not update_particle_list and self._particle_list is not None:
+            elastic = elastic.restrict_parents(self._particle_list)
+            missing = set(elastic.particles) - set(self._particle_list)
+            if missing:
+                raise ValueError(
+                    f"Elastic daughters {sorted(missing)} require update_particle_list=True"
+                )
             info(10, "Re-using particle list.")
             self._interactions.load(interaction_model, parent_list=self._particle_list)
             self.pman.set_interaction_model(self._int_cs, self._interactions)
@@ -163,6 +172,9 @@ class CascadeSystem:
             else:
                 self._interactions.load(interaction_model, parent_list=particle_list)
 
+            self._interactions.particles = sorted(
+                set(self._interactions.particles) | set(elastic.particles)
+            )
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = strip_em_species(
                 self._interactions.particles + self._decays.particles, self._physics
@@ -193,6 +205,9 @@ class CascadeSystem:
                 self._interactions.load(interaction_model)
             else:
                 self._interactions.load(interaction_model, parent_list=particle_list)
+            self._interactions.particles = sorted(
+                set(self._interactions.particles) | set(elastic.particles)
+            )
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = strip_em_species(
                 self._interactions.particles + self._decays.particles, self._physics
@@ -207,6 +222,8 @@ class CascadeSystem:
 
         else:
             raise Exception("Should not happen in practice.")
+
+        self.matrix_builder.elastic = elastic
 
     def build_matrices(self, skip_decay_matrix=False):
         """Assemble ``int_m``/``dec_m`` from the current particle manager.

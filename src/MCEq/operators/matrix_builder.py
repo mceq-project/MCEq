@@ -76,7 +76,9 @@ class MatrixBuilder:
     driver -- there is no fallback to live config.
     """
 
-    def __init__(self, pman, layout, *, grid, losses, physics):
+    def __init__(self, pman, layout, *, grid, losses, physics, elastic=None):
+        self.elastic = elastic
+        self.elastic_blocks = {}
         self._grid = grid
         self._losses = losses
         self._physics = physics
@@ -177,6 +179,7 @@ class MatrixBuilder:
                             else:
                                 self.C_blocks[idx] += band
 
+        self._add_elastic()
         self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
         self._assembly_key = self._current_assembly_key()
         # -I + D
@@ -326,6 +329,38 @@ class MatrixBuilder:
             )
             self._adaptive_ops[n_rows] = cached
         return cached
+
+    def _add_elastic(self):
+        """Add independently normalized elastic gain and loss, once per build."""
+        from MCEq.species.constants import ATOMIC_MASS_UNIT_G
+
+        self.elastic_blocks = {}
+        if self.elastic is None:
+            return
+        for particle in self.elastic.particles:
+            if self._pman[particle].mceqidx < 0:
+                raise ValueError(
+                    f"Elastic particle {particle} must be propagated; remove it from force_resonance"
+                )
+        for (parent, child), production in self.elastic.production.items():
+            p, c = self._pman[parent], self._pman[child]
+            idx = (c.mceqidx, p.mceqidx)
+            self.elastic_blocks[idx] = production * (
+                1e-27 / (p.A_target * ATOMIC_MASS_UNIT_G)
+            )
+        for parent, sigma in self.elastic.cross_sections.items():
+            p = self._pman[parent]
+            idx = (p.mceqidx, p.mceqidx)
+            block = self.elastic_blocks.setdefault(idx, self._zero_mat())
+            rate = sigma * (1e-27 / (p.A_target * ATOMIC_MASS_UNIT_G))
+            ii = np.arange(self.dim)
+            block[..., ii, ii] -= rate
+            self.max_lint = max(self.max_lint, float(np.max(rate)))
+        for idx, block in self.elastic_blocks.items():
+            self.C_blocks.setdefault(idx, self._zero_mat())[:] += block
+            # The pre-loss stash is later used to assemble int_m_hadr.
+            if idx in self._preband_blocks:
+                self._preband_blocks[idx] += block
 
     # ----------------------------------------------------------------------
     # the int_m_hadr + dEdx_band split

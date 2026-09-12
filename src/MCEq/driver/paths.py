@@ -17,7 +17,11 @@ consumes it and passes the value down pure).
 import numpy as np
 
 from MCEq.misc import info
-from MCEq.operators.stiffness import LOSS_STEP_SAFETY, continuous_loss_rate
+from MCEq.operators.stiffness import (
+    LOSS_STEP_SAFETY,
+    continuous_loss_rate,
+    elastic_rate,
+)
 from MCEq.solvers.path import em_cascade_dx_cap as path_em_cascade_dx_cap
 from MCEq.solvers.path import etd2_nonuniform_path
 
@@ -48,6 +52,10 @@ def continuous_loss_dx_cap(run):
             bands.values(),
             None if sec is None else sec["lam"],
             [builder._contloss_upwind_rows[key] for key in bands],
+        )
+        rate += elastic_rate(
+            getattr(builder, "elastic_blocks", {}),
+            None if sec is None else sec["lam"],
         )
         cap = LOSS_STEP_SAFETY / rate if rate else np.inf
         run._loss_step_cache = (run.int_m, sec, cap)

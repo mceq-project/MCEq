@@ -38,6 +38,12 @@ class HDF5Backend:
     injected ``physics`` group at construction, not against config.
     """
 
+    def elastic_db(self, model):
+        """Optional elastic rates and redistribution, independent of inelastic."""
+        from MCEq.data.elastic import load_elastic
+
+        return load_elastic(self, model)
+
     @contextmanager
     def _read_session(self):
         """Scope hadronic and enabled EM reads to one handle per file."""
