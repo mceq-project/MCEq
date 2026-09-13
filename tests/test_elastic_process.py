@@ -109,7 +109,7 @@ def test_reader_model_weight_and_coverage(tmp_path, is_2d):
         filters={"disabled_particles": []},
         assume_nucleon_interactions_for_exotics=False,
     )
-    b._he_le_weight = lambda: np.array([0.0, 0.75])
+    b._he_le_weight = lambda model=None: np.array([0.0, 0.75])
     r = load_elastic(b, "SIBYLL23E")
     np.testing.assert_allclose(r.cross_sections[(2112, 0)], [10.0, 5.0])
     expected = np.array(matrices) if is_2d else kernel
@@ -121,7 +121,7 @@ def test_reader_model_weight_and_coverage(tmp_path, is_2d):
         f["elastic_scattering/air/FLUKA20251/coverage"][0, 0] = False
     with pytest.raises(ValueError, match="coverage missing"):
         load_elastic(b, "FLUKA20251")
-    b._he_le_weight = lambda: np.ones(2)
+    b._he_le_weight = lambda model=None: np.ones(2)
     assert np.all(load_elastic(b, "SIBYLL23E").cross_sections[(2112, 0)] == 0)
     b.low_energy_model = None
     assert not load_elastic(b, "SIBYLL23E").particles

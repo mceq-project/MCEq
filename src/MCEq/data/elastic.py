@@ -44,7 +44,7 @@ def load_elastic(backend, model):
     le = backend.low_energy_model
     selections = [(model, np.ones(backend._energy_grid.d))]
     if le is not None and le != model:
-        weight = backend._he_le_weight()
+        weight = backend._he_le_weight(model)
         selections = [(model, weight), (le, 1.0 - weight)]
     for name, weight in selections:
         path = f"elastic_scattering/{backend.medium}/{name}"

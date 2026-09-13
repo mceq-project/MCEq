@@ -127,3 +127,49 @@ def blend_cross_sections(he_index, le_index, he_name, le_name, w_he):
         he_cs = mapped_cross_section(he_index["index_d"], projectile, he_name)
         blended[projectile] = le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
     return {"parents": sorted(blended), "index_d": blended}
+
+
+def blend_collision_yields(
+    he_index, le_index, he_name, le_name, weight, he_rates, le_rates
+):
+    """Blend collision generators, retaining channels unique to either model.
+
+    The resulting conditional yield is (w sigma_h Y_h + (1-w) sigma_l Y_l)
+    divided by the separately blended inelastic cross section. Databases opt
+    into this policy with common/collision_rate_blending metadata.
+    """
+    rates = blend_cross_sections(he_rates, le_rates, he_name, le_name, weight)[
+        "index_d"
+    ]
+    he = he_index["index_d"]
+    le = le_index["index_d"]
+    values = {}
+    relations = defaultdict(list)
+    for key in sorted(set(he) | set(le)):
+        p, child = key
+        hs = mapped_cross_section(he_rates["index_d"], p[0], he_name)
+        ls = mapped_cross_section(le_rates["index_d"], p[0], le_name)
+        total = mapped_cross_section(rates, p[0], he_name)
+        if total is None:
+            raise ValueError(f"No collision rate for blended channel {key}")
+        if hs is None:
+            value = le[key].copy()
+        elif ls is None:
+            value = he[key].copy()
+        else:
+            shape = he[key].shape if key in he else le[key].shape
+            numerator = np.zeros(shape)
+            if key in he:
+                numerator += weight * hs * he[key]
+            if key in le:
+                numerator += (1.0 - weight) * ls * le[key]
+            value = np.divide(numerator, total, out=np.zeros(shape), where=total > 0)
+        values[key] = value
+        relations[p].append(child)
+    return dict(
+        parents=sorted(relations),
+        particles=sorted({p for key in values for p in key}),
+        relations=dict(relations),
+        index_d=values,
+        description=f"Collision-rate blend: {he_name} + {le_name}",
+    )

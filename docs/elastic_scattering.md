@@ -48,3 +48,18 @@ new elastic daughter would require resizing the state.
 The additional elastic operator contributes a conservative matrix-norm bound to
 the integration step ceiling, including secant amplification. This bound is a
 step-control policy, not a substitute for convergence and physical benchmarks.
+
+### Recovered database collision blending
+
+Recovered databases may opt into collision-operator blending using the boolean
+`common` attribute `collision_rate_blending`. Conditional inelastic yields are
+then `(w sigma_HE Y_HE + (1-w) sigma_LE Y_LE) / sigma_blended`, including channels
+unique to either model. The existing table format remains readable.
+
+An optional boolean energy vector `model_coverage/<medium>/<HE model>` sets the
+HE weight to zero at uncovered bins. Inelastic gains, inelastic losses and the
+separate elastic operator use that same weight. The recovered 1D build records
+coverage from the presence of positive original HE inelastic cross sections;
+it does not interpolate missing generator bins. This prevents dilution by empty
+HE tables in the transition. Coverage-aware fallback can change slope at its
+boundary; actual transition cross sections must still be inspected.

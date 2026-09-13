@@ -313,21 +313,44 @@ class HDF5Backend:
             self._paths, self._packages, mname, self.medium
         )
 
-    def _he_le_weight(self):
+    def _he_le_weight(self, model=None):
         """:func:`MCEq.data.blending.he_le_weight` on this backend's settings.
 
         Reads the dtype off the injected grid group; ``__init__`` always
         binds it, so there is no live-config fallback here.
         """
-        return he_le_weight(
+        weight = he_le_weight(
             self._energy_grid.c,
             self.he_le_transition,
             self.he_le_trwidth,
             self._grid.dtype,
         )
+        if model is not None:
+            path = f"model_coverage/{self.medium}/{model}"
+            if self._had.has(path):
+                covered = self._had.read_dataset(path)
+                if (
+                    covered.shape != (len(self._e_grid_full),)
+                    or covered.dtype.kind != "b"
+                ):
+                    raise ValueError(f"Invalid model coverage at {path}")
+                weight = np.where(covered[self._cuts], weight, 0.0)
+        return weight
 
     def _blend_interaction_dbs(self, he_index, le_index, he_name, le_name):
         """:func:`MCEq.data.blending.blend_yields` on this backend's settings."""
+        if self._had.attrs("common").get("collision_rate_blending", False):
+            from MCEq.data.blending import blend_collision_yields
+
+            return blend_collision_yields(
+                he_index,
+                le_index,
+                he_name,
+                le_name,
+                self._he_le_weight(he_name),
+                self._cs_db_single(he_name),
+                self._cs_db_single(le_name),
+            )
         return blend_yields(
             he_index,
             le_index,
@@ -490,7 +513,7 @@ class HDF5Backend:
             le_index,
             mname,
             self.low_energy_model,
-            self._he_le_weight(),
+            self._he_le_weight(mname),
         )
 
     def _cs_db_single(self, interaction_model_name):
