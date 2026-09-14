@@ -480,8 +480,8 @@ class MatrixBuilder:
         """Assemble the per-channel blocks into the global CSR operator.
 
         For 1D databases each block is a dense ``(dim, dim)`` channel
-        matrix placed at its (child, parent) offsets in a single
-        ``(dim_states, dim_states)`` sparse matrix.
+        matrix scattered at its (child, parent) offsets directly into COO/CSR,
+        without a dense global matrix.
 
         For 2D databases each block carries a leading ``n_k`` axis (one
         slab per Hankel mode, shape ``(n_k, dim, dim)``). The Hankel modes
@@ -508,74 +508,55 @@ class MatrixBuilder:
         """
         from scipy.sparse import coo_matrix, csr_matrix
 
-        if self.is_2d:
-            mu_damp = None
-            if apply_muon_scattering:
-                mu_damp = self._muon_scattering_damping()
-            n_e = self.dim
-            shape = (self.dim_states, self.dim_states)
-            per_mode_csr = []
-            for k in range(self.n_k):
-                rows, cols, vals = [], [], []
-                for (c, p), d in iter(blocks.items()):
-                    rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
-                    slab = d[k]
-                    if slab.shape != (rc.uidx - rc.lidx, rp.uidx - rp.lidx):
-                        _d = self.dim_states
-                        raise Exception(
-                            "Dimension mismatch: matrix "
-                            + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
-                            + f" c={rc.name}:({rc.lidx},{rc.uidx})"
-                        )
-                    r, cc = np.nonzero(slab)
-                    rows.append(r + rc.lidx)
-                    cols.append(cc + rp.lidx)
-                    vals.append(slab[r, cc])
-                kappa = self.k_grid[k]
-                if mu_damp is not None and kappa != 0:
-                    muon_lidcs, theta_s_sq = mu_damp
-                    damping = scattering.mode_damping(theta_s_sq, kappa)
-                    for lidx in muon_lidcs:
-                        diag = np.arange(lidx, lidx + n_e)
-                        rows.append(diag)
-                        cols.append(diag)
-                        vals.append(damping)
-                if rows:
-                    m = coo_matrix(
-                        (
-                            np.concatenate(vals).astype(self._grid.dtype),
-                            (np.concatenate(rows), np.concatenate(cols)),
-                        ),
-                        shape=shape,
-                    ).tocsr()
-                else:
-                    m = csr_matrix(shape, dtype=self._grid.dtype)
-                m.eliminate_zeros()
-                m.sort_indices()
-                per_mode_csr.append(m)
-            stitched = sp.block_diag(per_mode_csr, format="csr")
-            stitched.eliminate_zeros()
-            stitched.sort_indices()
-            return stitched
-
-        new_mat = np.zeros((self.dim_states, self.dim_states), dtype=self._grid.dtype)
-        for (c, p), d in iter(blocks.items()):
-            rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
-            try:
-                new_mat[rc.lidx : rc.uidx, rp.lidx : rp.uidx] = d
-            except ValueError:
-                _d = self.dim_states
-                _n = rp.name
-                _l = rp.lidx
-                _u = rp.uidx
-                _nc = rc.name
-                _lc = rc.lidx
-                _uc = rc.uidx
-                raise Exception(
-                    "Dimension mismatch: matrix "
-                    + f"{_d}x{_d}, p={_n}:({_l},{_u}), c={_nc}:({_lc},{_uc})"
-                )
-        return csr_matrix(new_mat)
+        mu_damp = None
+        if self.is_2d and apply_muon_scattering:
+            mu_damp = self._muon_scattering_damping()
+        n_e = self.dim
+        shape = (self.dim_states, self.dim_states)
+        per_mode_csr = []
+        for k in range(self.n_k if self.is_2d else 1):
+            rows, cols, vals = [], [], []
+            for (c, p), d in iter(blocks.items()):
+                rc, rp = self._pman.mceqidx2pref[c], self._pman.mceqidx2pref[p]
+                slab = d[k] if self.is_2d else d
+                if slab.shape != (rc.uidx - rc.lidx, rp.uidx - rp.lidx):
+                    _d = self.dim_states
+                    raise Exception(
+                        "Dimension mismatch: matrix "
+                        + f"{_d}x{_d}, p={rp.name}:({rp.lidx},{rp.uidx}),"
+                        + f" c={rc.name}:({rc.lidx},{rc.uidx})"
+                    )
+                r, cc = np.nonzero(slab)
+                rows.append(r + rc.lidx)
+                cols.append(cc + rp.lidx)
+                vals.append(slab[r, cc])
+            if mu_damp is not None and self.k_grid[k] != 0:
+                muon_lidcs, theta_s_sq = mu_damp
+                damping = scattering.mode_damping(theta_s_sq, self.k_grid[k])
+                for lidx in muon_lidcs:
+                    diag = np.arange(lidx, lidx + n_e)
+                    rows.append(diag)
+                    cols.append(diag)
+                    vals.append(damping)
+            if rows:
+                m = coo_matrix(
+                    (
+                        np.concatenate(vals).astype(self._grid.dtype),
+                        (np.concatenate(rows), np.concatenate(cols)),
+                    ),
+                    shape=shape,
+                ).tocsr()
+            else:
+                m = csr_matrix(shape, dtype=self._grid.dtype)
+            m.eliminate_zeros()
+            m.sort_indices()
+            per_mode_csr.append(m)
+        if not self.is_2d:
+            return per_mode_csr[0]
+        stitched = sp.block_diag(per_mode_csr, format="csr")
+        stitched.eliminate_zeros()
+        stitched.sort_indices()
+        return stitched
 
     def _follow_chains(self, p, pprod_mat, p_orig, propmat, reclev=0):
         """Recursively project ``p_orig``'s production through resonance

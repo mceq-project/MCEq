@@ -197,3 +197,31 @@ def test_construction_never_touches_the_file(tmp_path):
     assert store.fname == missing
     with pytest.raises(OSError):
         store.has("common")
+
+
+def test_session_reuses_handle_and_closes_after_nested_failure(
+    hdf5_fixture_dbs, monkeypatch
+):
+    """A failed batch releases its handle, and subsequent reads still work."""
+    store = HDF5Store(hdf5_fixture_dbs["one_d_width4"])
+    real_open = h5py.File
+    handles = []
+
+    def opened(*args, **kwargs):
+        handle = real_open(*args, **kwargs)
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(h5py, "File", opened)
+    with pytest.raises(KeyError):
+        with store.session():
+            data = store.read_dataset("cross_sections/air/SIBYLL21")
+            with store.session():
+                assert store.has("common")
+            assert handles[0].id.valid
+            store.read_dataset("missing")
+    assert len(handles) == 1
+    assert not handles[0].id.valid
+    assert np.array_equal(data, fixtures.cross_section_table(0))
+    assert store.has("common")
+    assert len(handles) == 2 and not handles[-1].id.valid

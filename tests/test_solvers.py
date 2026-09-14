@@ -1054,8 +1054,8 @@ def test_solve_etd2_numpy_second_order_convergence():
             primary_model=(pm.HillasGaisser2012, "H3a"),
         )
 
-        dX_max_0 = config.etd2_path["dX_max"]
-        eps_0 = config.etd2_path["eps"]
+        mceq._calculate_integration_path(None, "X", force=True)
+        _, eps_0, dX_max_0, _, _ = mceq._cached_etd2_path_params
         int_m = mceq.int_m.tocsr()
         dec_m = mceq.dec_m.tocsr()
 
@@ -1415,7 +1415,9 @@ def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
         path = _uniform_path_theta60(mceq, h=h)
         per_species = _per_species_max_rel(mceq, run(path, "mkl"), run(path, "cuda"))
         # nan (nothing above the floor) is unmeasurable, not inside the budget.
-        worst_em = max(per_species[name] for name in em)
+        # Hadronic-only database bundles may contain no electron channels.
+        # Keep the non-EM parity check active for those bundles.
+        worst_em = max((per_species[name] for name in em), default=np.nan)
         worst_other = max(
             v for name, v in per_species.items() if name not in em and np.isfinite(v)
         )
@@ -1426,7 +1428,7 @@ def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
         assert worst_other <= 1e-4, (
             f"h={h:g}: worst non-e+- species = {worst_other:.3e} (e+- {worst_em:.3e})"
         )
-        if h > 5.0:
+        if h > 5.0 and em:
             # Over-integrated, the e+- blocks are either past the budget or have
             # no bin above the floor at all -- either way the exclusion earns its
             # place. Spelled out rather than left to `not nan <= x`.
@@ -1691,7 +1693,8 @@ def test_etd2_solve_default_path(mceq_sib21):
 
     # Check the effective ceiling; step count depends on the grid and stencil.
     assert n_etd > 0
-    assert max(mceq_sib21.integration_path[1]) <= config.etd2_path["dX_max"]
+    effective_cap = mceq_sib21._cached_etd2_path_params[2]
+    assert max(mceq_sib21.integration_path[1]) <= effective_cap
     assert n_etd > 10, f"ETD2 path is suspiciously sparse: n_etd={n_etd}"
     assert np.all(np.isfinite(mu_etd)), "ETD2 default solve produced non-finite mu"
 
@@ -1933,6 +1936,7 @@ from MCEq.core import MCEqRun  # noqa: E402
 class _StubParticle:
     def __init__(self, is_em, lidx, uidx):
         self.is_em, self.lidx, self.uidx = is_em, lidx, uidx
+        self.pdg_id = (11 if is_em else 211, 0)
 
 
 class _StubPMan:
@@ -1960,6 +1964,7 @@ class _StubMCEq:
         self.int_m = sp.csr_matrix(m)
         from types import SimpleNamespace
 
+        self._mceq_db = SimpleNamespace(is_2d=False)
         self.matrix_builder = SimpleNamespace(_contloss_bands={})
         self._resolve_secant = lambda: None
         # M3: the path helpers now read settings through ``run.config``

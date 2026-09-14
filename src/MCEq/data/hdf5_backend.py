@@ -8,6 +8,7 @@ blending policy on top. Re-exported as ``MCEq.data.HDF5Backend``.
 """
 
 from collections import defaultdict
+from contextlib import ExitStack, contextmanager
 from os.path import isfile, join
 
 import numpy as np
@@ -36,6 +37,15 @@ class HDF5Backend:
     there is no fallback to live config. An omitted medium resolves from the
     injected ``physics`` group at construction, not against config.
     """
+
+    @contextmanager
+    def _read_session(self):
+        """Scope hadronic and enabled EM reads to one handle per file."""
+        with ExitStack() as stack:
+            stack.enter_context(self._had.session())
+            if self._physics.enable_em:
+                stack.enter_context(self._em_store.session())
+            yield
 
     def __init__(
         self,
@@ -74,59 +84,60 @@ class HDF5Backend:
         # (and must stay absent-constructible): HDF5Store never opens.
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
-        # In standalone EM mode (grid.em_standalone_grid), take the energy grid
-        # from the EM DB instead of the hadronic DB, so the EM cascade can run
-        # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
-        # hadronic interaction/decay matrices are then skipped and the e±
-        # ionization continuous-loss curve is interpolated onto the EM grid
-        # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
-        # Default off.
-        self._em_standalone = bool(grid.em_standalone_grid)
-        grid_fname = self.em_fname if self._em_standalone else self.had_fname
+        with self._read_session():
+            # In standalone EM mode (grid.em_standalone_grid), take the energy grid
+            # from the EM DB instead of the hadronic DB, so the EM cascade can run
+            # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
+            # hadronic interaction/decay matrices are then skipped and the e±
+            # ionization continuous-loss curve is interpolated onto the EM grid
+            # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
+            # Default off.
+            self._em_standalone = bool(grid.em_standalone_grid)
+            grid_store = self._em_store if self._em_standalone else self._had
 
-        self.version = self._had.attrs().get("version", "1.0.0")
+            self.version = self._had.attrs().get("version", "1.0.0")
 
-        ca = hdf5_store.HDF5Store(grid_fname).attrs("common")
-        self._e_grid_full = np.asarray(ca["e_grid"])
-        self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
-            ca["e_grid"], grid.e_min, grid.e_max
-        )
+            ca = grid_store.attrs("common")
+            self._e_grid_full = np.asarray(ca["e_grid"])
+            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
+                ca["e_grid"], grid.e_min, grid.e_max
+            )
 
-        self._energy_grid = EnergyGrid(
-            ca["e_grid"][self._cuts],
-            ca["e_bins"][self.min_idx : self.max_idx + 1],
-            ca["widths"][self._cuts],
-            int(self.max_idx - self.min_idx),
-        )
+            self._energy_grid = EnergyGrid(
+                ca["e_grid"][self._cuts],
+                ca["e_bins"][self.min_idx : self.max_idx + 1],
+                ca["widths"][self._cuts],
+                int(self.max_idx - self.min_idx),
+            )
 
-        # 2D databases are detected by the ``k_dim`` attribute on the
-        # ``common`` group; there is no config flag.
-        self.is_2d = "k_dim" in ca
-        if self.is_2d:
-            self.n_k = int(ca["k_dim"])
-            self.k_grid = np.asarray(ca["k_grid"])
-        else:
-            self.n_k = 1
-            self.k_grid = np.asarray([0])
+            # 2D databases are detected by the ``k_dim`` attribute on the
+            # ``common`` group; there is no config flag.
+            self.is_2d = "k_dim" in ca
+            if self.is_2d:
+                self.n_k = int(ca["k_dim"])
+                self.k_grid = np.asarray(ca["k_grid"])
+            else:
+                self.n_k = 1
+                self.k_grid = np.asarray([0])
 
-        # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
-        if self.is_2d:
-            self.dim_full = int(ca["e_dim"]) * self.n_k
-        else:
-            self.dim_full = int(ca["e_dim"])
+            # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
+            if self.is_2d:
+                self.dim_full = int(ca["e_dim"]) * self.n_k
+            else:
+                self.dim_full = int(ca["e_dim"])
 
-        self.medium = medium
-        self.low_energy_model = (
-            normalize_hadronic_model_name(low_energy_model)
-            if low_energy_model is not None
-            else None
-        )
-        self.he_le_transition = float(he_le_transition)
-        self.he_le_trwidth = float(he_le_trwidth)
-        if self.he_le_transition <= 0.0:
-            raise ValueError("he_le_transition must be positive")
-        if self.he_le_trwidth < 0.0:
-            raise ValueError("he_le_trwidth must be non-negative")
+            self.medium = medium
+            self.low_energy_model = (
+                normalize_hadronic_model_name(low_energy_model)
+                if low_energy_model is not None
+                else None
+            )
+            self.he_le_transition = float(he_le_transition)
+            self.he_le_trwidth = float(he_le_trwidth)
+            if self.he_le_transition <= 0.0:
+                raise ValueError("he_le_transition must be positive")
+            if self.he_le_trwidth < 0.0:
+                raise ValueError("he_le_trwidth must be non-negative")
 
     @property
     def energy_grid(self):
