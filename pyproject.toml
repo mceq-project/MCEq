@@ -56,6 +56,7 @@ lint = [
     "import-linter>=2.14",
 ]
 notebooks = [
+    "marimo>=0.24.0",
     # Executes docs/examples/ and examples/ as a pytest gate; see
     # .github/workflows/notebooks.yaml. nbmake already requires pytest and
     # ipykernel, but the gate forces `--nbmake-kernel=python3`, so the kernel
