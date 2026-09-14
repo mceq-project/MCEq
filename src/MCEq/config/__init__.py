@@ -157,12 +157,13 @@ mkl_threads = min(16, os.cpu_count() or 1)
 #: Each value can be overridden per-call via
 #: `MCEqRun.solve(..., eps=..., dX_max=...)`.
 etd2_path = {
-    #: Bound on the within-step variation of log inverse density. Smaller
-    #: values produce finer steps, especially in the upper atmosphere.
-    "eps": 0.01,
-    #: Accuracy ceiling in g/cm^2. The actual assembled loss stencil and
-    #: secant coupling may require a smaller step, especially at low energy.
-    "dX_max": 2.0,
+    #: Within-step log inverse-density variation. None selects .03 for
+    #: 1D hadronic/lepton transport and .01 for 2D or electron transport.
+    #: This is guidance for numerical accuracy, not a flux-error tolerance.
+    "eps": None,
+    #: Requested ceiling in g/cm^2: None selects 5 for 1D hadronic/lepton
+    #: transport, 2 for 2D or electron transport. Matrix guards still apply.
+    "dX_max": None,
     #: Floor on the step size. Prevents the controller from picking 0
     #: when |d ln rho_inv / dX| is very large (top of atmosphere).
     "dX_min": 0.01,

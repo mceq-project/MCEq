@@ -1,6 +1,7 @@
 """Materialized reads for one MCEq HDF5 file: the IO seam of the backend.
 
-Every method opens the file for the duration of the call and returns
+Methods reuse a handle inside a scoped read session and otherwise open
+the file for one call. Every read returns
 numpy arrays or plain containers; no live ``h5py`` node ever escapes.
 The module imports ``h5py``, ``numpy``, ``scipy.sparse`` and nothing from
 ``MCEq``.  Decoding policy -- the ``disabled_particles`` filter
@@ -9,6 +10,7 @@ choice -- stays with the backend, so :meth:`HDF5Store.read_channel_pack`
 returns the raw :class:`ChannelPack`, not a decoded channel index.
 """
 
+from contextlib import contextmanager
 from typing import NamedTuple
 
 import h5py
@@ -38,41 +40,63 @@ class HDF5Store:
 
     Construction opens nothing -- the EM database may be absent while
     ``enable_em`` is off, and the backend builds a store for it anyway.
-    Each read opens and closes its HDF5 file; this object does not cache
-    open file handles.
+    A read session keeps one handle until its context exits. Reads outside
+    a session open and close the file independently.
     """
 
     def __init__(self, fname):
         self.fname = fname
+        self._file = None
+
+    @contextmanager
+    def session(self):
+        """Reuse one read handle; nested sessions and exceptions close safely."""
+        if self._file is not None:
+            yield self
+            return
+        with h5py.File(self.fname, "r") as handle:
+            self._file = handle
+            try:
+                yield self
+            finally:
+                self._file = None
+
+    @contextmanager
+    def _open(self):
+        if self._file is not None:
+            yield self._file
+        else:
+            with h5py.File(self.fname, "r") as handle:
+                yield handle
 
     def attrs(self, path="/") -> dict:
         """Attributes of ``path`` as a plain dict (``dict(f[path].attrs)``)."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             return dict(f[path].attrs)
 
     def members(self, path="/") -> list[str]:
         """Child names of ``path``, in file order."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             return list(f[path])
 
     def has(self, path) -> bool:
         """``path in f``."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             return path in f
 
     def read_dataset(self, path) -> np.ndarray:
         """The dataset at ``path`` as ``np.asarray(f[path][()])``."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             return np.asarray(f[path][()])
 
     def read_table(self, path) -> tuple:
         """``(f[path][:], dict(f[path].attrs))`` of the table at ``path``."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             return f[path][:], dict(f[path].attrs)
 
     def read_channel_pack(self, group_path, name) -> ChannelPack:
         """The pack ``group_path/name`` with its ``_indptrs`` sibling."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             group = f[group_path]
             attrs = dict(group[name].attrs)
             return ChannelPack(
@@ -85,7 +109,7 @@ class HDF5Store:
 
     def read_group_datasets(self, path) -> dict:
         """``{k: np.asarray(group[k]) for k in group}`` for ``path``."""
-        with h5py.File(self.fname, "r") as f:
+        with self._open() as f:
             group = f[path]
             return {k: np.asarray(group[k]) for k in group}
 

@@ -24,7 +24,12 @@ it.
 | Implementation (Accelerate)  | `solv_spacc_sparse` (Euler via Apple Accelerate)                                                | `solv_spacc_etd2` (ETD2RK; pre-split int_off / dec_off for SpMV reuse)                                 |
 | Implementation (MKL / CUDA)  | `solv_MKL_sparse`, `solv_CUDA_sparse`                                                           | `solv_mkl_etd2` (Intel MKL sparse BLAS), `solv_cuda_etd2` (cuSPARSE via cupy)                          |
 | Reduced state-vector default | full (all species)                                                                              | `disabled_particles = [11]` (drop e±) — see EM-cascade caveat in §7                                    |
-| Headline wall-time speedup   | 1×                                                                                              | ≈ 9–11× across zenith range, sub-percent muon-flux agreement                                          |
+| Headline wall-time speedup   | 1×                                                                                              | Workload- and accuracy-dependent; historical benchmark in §6.3                                          |
+
+The step counts and Euler comparisons in this overview are historical.
+For current automatic settings and precision guidance, see the final
+sections below. Per-step cost alone does not establish a speedup: report
+steps, complete solve time, startup and required readout at checked accuracy.
 
 The first half of this document (sections 1–3) develops the maths; the
 second half (sections 4–6) presents the validation; sections 7–9
@@ -551,7 +556,7 @@ factor (native step count divided by `C`).
 | **20** | **1443** | 💥       | 💥               | **8687**     | **1.13 %**      |
 | 32     | 902      | 💥       | 💥               | 5446         | 💥              |
 
-**Headline numbers**:
+**Historical benchmark numbers (the physics and paths used in this section)**:
 
 * ETD2 at native grid is ~14× more accurate than Euler at native
   (vs converged truth at θ=0°), at 2× the per-step cost.
@@ -563,7 +568,12 @@ factor (native step count divided by `C`).
 * Hard cliff at `C ≈ 32`: explicit-stage stability bound (14) on the
   off-diagonal coupling.
 
-### 6.3 Production validation: atmospheric muon flux
+### 6.3 Historical validation: atmospheric muon flux
+
+This historical comparison predates the current databases, loss guards and
+automatic defaults. It does not establish a current speedup at matched
+accuracy; both versions would need to be rerun with the same physics and
+independently converged requested observables.
 
 Validated muon-flux agreement vs Euler@native, sub-percent across
 10 GeV – 100 TeV at all zenith angles, using the production
@@ -804,14 +814,14 @@ inside the loop. On the spacc kernel the per-step time dropped from
 
 ### 9.3 Configuration surface
 
-Defaults in `src/MCEq/config.py`:
+Defaults in `src/MCEq/config/__init__.py` (automatic path settings are resolved after matrix assembly):
 
 ```python
 kernel_config = "auto"       # auto → "accelerate_etd2" on macOS, else "numpy_etd2"
 
 etd2_path = {
-    "eps":     0.3,    # within-step | d ln ρ⁻¹/dX | tolerance
-    "dX_max":  20.0,   # cap (just below the off-diagonal stability cliff)
+    "eps":     None,   # automatic: .03 for 1D leptons, .01 for 2D/electrons
+    "dX_max":  None,   # automatic: 5 or 2 g/cm², further limited by matrices
     "dX_min":  0.01,   # floor (avoids 0-step at top of atmosphere)
     "fd_span": 0.01,   # forward-FD probe span for | d ln ρ⁻¹/dX |
 }
@@ -828,7 +838,7 @@ Each `etd2_path` value can be overridden per call:
 ```python
 mceq = MCEqRun(...)
 mceq.solve()                                  # uses defaults
-mceq.solve(eps=0.5, dX_max=15.0)              # coarser
+mceq.solve(eps=0.01, dX_max=1.0)              # tighter requested limits
 mceq.solve(int_grid=np.linspace(50, 2000, 10000))  # >=10k snapshots
 ```
 
@@ -1015,9 +1025,10 @@ Per-step structure:
   1. *Tier A (drop-in)* — call `solv_numpy_etd2` `n_k` times in a
      Python `for k in range(n_k):` loop. Each call inherits all of
      v2's path control, BSR conversion, and step-count reduction.
-     Expected speedup over PR #48 forward-Euler: **9–11×** at fixed
-     accuracy, just as in 1D (§6.3). This is the right first
-     milestone — minimal new code, big win.
+     The historical 1D speedup in §6.3 cannot be extrapolated to
+     2D at fixed accuracy. Check both spectra and angular readout
+     convergence, and report the full calculation time for the
+     selected coupling and number of right-hand sides.
   2. *Tier B (custom batched-SpMV kernel)* — store the off-diagonals
      as a single value array `int_off_vals` of shape `(nnz, n_k)`
      sharing one `(indptr, indices)` (the union of per-mode supports;
@@ -1463,9 +1474,14 @@ downstream work.
 
 ### Low-energy step safety
 
-ETD2 defaults are `eps=0.01` and `dX_max=2` g/cm². The density parameter
-controls changes of inverse atmospheric density; it is not an error estimate
-for the cascade. In addition, the path builder limits each step to
+ETD2 selects its default path settings from the assembled system. With
+`eps=None` and `dX_max=None` in `config.solver.etd2_path`, 1D hadronic/lepton
+transport uses `eps=0.03`, `dX_max=5` g/cm²; a 2D database or retained electron
+states uses `eps=0.01`, `dX_max=2`. An explicit number in the configuration
+or solve call overrides that choice. Standalone path construction, which has
+no particle system, uses the conservative `.01 / 2` fallback. The density
+parameter controls changes of inverse atmospheric density; it is not an
+estimated relative flux error. In addition, the path builder limits each step to
 `0.5 / rate`, where `rate` is the largest absolute off-diagonal row sum of
 an assembled continuous-loss band. In coupled 2D transport this rate is
 multiplied by the largest secant eigenvalue (at least one). The diagonal
@@ -1484,3 +1500,31 @@ Explicit solve overrides can tighten the safety ceiling but cannot relax it.
 A requested minimum step is clipped to the safety ceiling. Nonfinite loss
 coefficients and invalid path parameters raise an error; cache keys use
 resolved path settings and stiffness caches follow matrix rebuilds.
+
+### Accuracy guidance and CUDA FP32
+
+The automatic 1D settings are intended to give useful margin for roughly
+percent-level lepton flux work, not a certified global error tolerance. A
+recovered SIBYLL23E/QGSJETII04/EPOSLHC scan covers energy floors .1/1/10 GeV,
+zeniths 0/60/80 degrees, and H3a primary fluxes. Maximum lepton differences
+from refined paths were below 0.4% over retained bins above 1e-12 of each
+species peak; separate checks through 1 PeV were below 0.2%. These measure
+stepping convergence on a fixed database and grid. For a different observable or
+unusual setup, compare with smaller `eps` and an effective grammage ceiling
+halved from the first run. If a matrix guard already limits the steps,
+halving a larger requested ceiling alone may change nothing. Changing
+`e_min` changes the physical domain and is not a convergence check.
+
+`solve_batch(dtype=np.float32)` selects FP32 state and sparse operations,
+including for K=1. Exponential factors still use FP64. Low-energy CUDA FP32
+2D secant transport issues a `RuntimeWarning` and continues with the requested
+settings: angular precision errors can exceed 1%, and more steps can increase
+them. Compare FP32 with `dtype=np.float64` using identical path settings and
+angular outputs. A missing warning is not an accuracy certification for
+other configurations. The ordinary `solve()` method uses FP64.
+
+Construction reuses read-only HDF5 handles within scoped loading operations
+and closes them before returning, including on errors. Both 1D and 2D
+assemble channel blocks directly into sparse matrices. Reusing a run also
+reuses compiled operators and uploaded backend matrices; these changes do
+not introduce a persistent on-disk operator cache.

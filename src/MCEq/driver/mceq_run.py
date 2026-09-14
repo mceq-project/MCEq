@@ -377,16 +377,17 @@ class MCEqRun:
         if self._interactions.iam != interaction_model:
             self._interactions.clear_channel_overrides()
 
-        self._system.reload_for_model(
-            interaction_model, particle_list, update_particle_list
-        )
+        with self._mceq_db._read_session():
+            self._system.reload_for_model(
+                interaction_model, particle_list, update_particle_list
+            )
 
-        self._resize_vectors_and_restore()
+            self._resize_vectors_and_restore()
 
-        # initialize matrices
-        if not build_matrices:
-            return
-        self._system.build_matrices()
+            # initialize matrices
+            if not build_matrices:
+                return
+            self._system.build_matrices()
 
     def _resize_vectors_and_restore(self):
         """Update solution and grid vectors if the number of particle species
@@ -703,9 +704,12 @@ class MCEqRun:
             ETD2 path construction. ``None`` → ``config.X_start`` (= 0).
           eps (float | None): within-step ``rho_inv`` variation tolerance
             for the ETD2 non-uniform schedule. ``None`` →
-            ``config.etd2_path["eps"]``.
+            ``config.etd2_path["eps"]``; if that is also ``None``, use
+            .03 for 1D hadronic/lepton transport, .01 for 2D or electrons.
           dX_max (float | None): cap on step size (off-diagonal stability
-            cliff) for ETD2. ``None`` → ``config.etd2_path["dX_max"]``.
+            cliff) for ETD2. ``None`` → ``config.etd2_path["dX_max"]``;
+            if that is also ``None``, use 5 g/cm² for 1D hadronic/lepton
+            transport, 2 for 2D or electrons. Matrix safety caps still apply.
           dX_min (float | None): floor on step size for ETD2. ``None`` →
             ``config.etd2_path["dX_min"]``.
           fd_span (float | None): forward-FD probe span for the ETD2

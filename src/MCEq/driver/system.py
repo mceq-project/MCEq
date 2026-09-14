@@ -96,25 +96,26 @@ class CascadeSystem:
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
-        #: Interface to interaction tables of the HDF5 database
-        self._interactions = MCEq.data.Interactions(
-            mceq_hdf_db=self._mceq_db, physics=self._physics
-        )
+        with self._mceq_db._read_session():
+            #: Interface to interaction tables of the HDF5 database
+            self._interactions = MCEq.data.Interactions(
+                mceq_hdf_db=self._mceq_db, physics=self._physics
+            )
 
-        #: Cross-section data managed by :class:`MCEq.data.InteractionCrossSections`
-        self._int_cs = MCEq.data.InteractionCrossSections(
-            mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
-        )
+            #: Cross-section data managed by :class:`MCEq.data.InteractionCrossSections`
+            self._int_cs = MCEq.data.InteractionCrossSections(
+                mceq_hdf_db=self._mceq_db, interaction_model=interaction_model
+            )
 
-        #: Continuous-energy-loss data managed by :class:`MCEq.data.ContinuousLosses`
-        self._cont_losses = MCEq.data.ContinuousLosses(
-            mceq_hdf_db=self._mceq_db, physics=self._physics
-        )
+            #: Continuous-energy-loss data managed by :class:`MCEq.data.ContinuousLosses`
+            self._cont_losses = MCEq.data.ContinuousLosses(
+                mceq_hdf_db=self._mceq_db, physics=self._physics
+            )
 
-        #: Interface to decay tables of the HDF5 database
-        self._decays = MCEq.data.Decays(
-            mceq_hdf_db=self._mceq_db, physics=self._physics
-        )
+            #: Interface to decay tables of the HDF5 database
+            self._decays = MCEq.data.Decays(
+                mceq_hdf_db=self._mceq_db, physics=self._physics
+            )
 
         #: Particle manager (initialized/updated in reload_for_model)
         self.pman = None
