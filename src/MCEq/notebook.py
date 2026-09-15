@@ -233,6 +233,15 @@ def configuration_controls(defaults, database=None, medium="air", show=()):
             label="Interaction model", full_width=True,
         )
         slots["interaction_model"] = ["interaction_model"]
+    if "models_multi" in show:
+        default_models = defaults.get(
+            "models", [model for model in models if model in ("SIBYLL21", "QGSJETII04")][:2] or models[:1]
+        )
+        widgets["models"] = mo.ui.multiselect(
+            models, value=default_models, label="Interaction models",
+            full_width=True,
+        )
+        slots["models_multi"] = ["models"]
     if "primary" in show:
         widgets["primary"] = mo.ui.dropdown(
             PRIMARY_OPTIONS, value=_primary_label(defaults.get("primary", "H3a")),
