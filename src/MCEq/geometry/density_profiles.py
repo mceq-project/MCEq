@@ -236,7 +236,12 @@ class CorsikaAtmosphere(EarthsAtmosphere):
                 f"Available atmospheres: {available_atmospheres}"
             )
         EarthsAtmosphere.__init__(self)
-        import MCEq.geometry.corsikaatm as corsika_acc
+        import sys
+
+        if sys.platform == "emscripten":
+            from MCEq.geometry import corsika_numpy as corsika_acc
+        else:
+            import MCEq.geometry.corsikaatm as corsika_acc
 
         self.corsika_acc = corsika_acc
         self.init_parameters(location, season)

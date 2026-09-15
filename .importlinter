@@ -11,6 +11,7 @@ type = layers
 containers =
     MCEq
 layers =
+    notebook
     core
     batch
     solvers

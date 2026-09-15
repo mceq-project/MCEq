@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["marimo>=0.24.0", "MCEq>=2.0.0", "matplotlib>=3.10", "numpy", "crflux>1.0.5"]
+# dependencies = ["marimo==0.24.0", "nbformat", "MCEq>=2.0.0", "matplotlib>=3.10", "numpy", "crflux>1.0.5"]
 # ///
 
 import marimo
@@ -30,8 +30,9 @@ def _():
     from MCEq.config.detect import resolve_kernel
     from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
+    from MCEq.notebook import prepare_database
 
-    return MCEqRun, RunConfig, config, mo, np, plt, pm, resolve_kernel
+    return MCEqRun, RunConfig, config, mo, np, plt, pm, prepare_database, resolve_kernel
 
 
 @app.cell(hide_code=True)
@@ -47,7 +48,7 @@ def _(mo):
 @app.cell
 def _(pm):
     # Hadronic interactions
-    interaction_model = "SIBYLL2.3e"
+    interaction_model = "SIBYLL2.3e"  # browser: also "QGSJET-II-04"
     database = "mceq_db_lext_dpm193_v142.h5"
     low_energy_model = None        # None: no additional low-energy model
     he_le_transition = 80.0        # GeV; used when low_energy_model is set
@@ -63,7 +64,7 @@ def _(pm):
     e_max = 1.0e11
 
     # Solver: auto chooses a CPU backend; CUDA is opt-in
-    backend = "auto"              # numpy_etd2, mkl_etd2, accelerate_etd2, cuda_etd2
+    backend = "auto"              # browser: auto / numpy_etd2; native: also mkl_etd2, accelerate_etd2, cuda_etd2
 
     return (
         atmosphere,
@@ -89,7 +90,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     MCEqRun,
     RunConfig,
     atmosphere,
@@ -103,10 +104,11 @@ def _(
     he_le_trwidth,
     interaction_model,
     low_energy_model,
+    prepare_database,
     resolve_kernel,
     theta_deg,
 ):
-    config.mceq_db_fname = database
+    config.mceq_db_fname = await prepare_database(database)
     config.e_min, config.e_max = e_min, e_max
     config.kernel_config = resolve_kernel(backend)
     config.debug_level = 0
@@ -212,6 +214,14 @@ def _(cr_model, energy, fluxes, interaction_model, np, plt, theta_deg):
 
     fig
     return (fig,)
+
+
+@app.cell(hide_code=True)
+def export_notebook():
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="Basic_flux.ipynb")
+    return
 
 
 if __name__ == "__main__":
