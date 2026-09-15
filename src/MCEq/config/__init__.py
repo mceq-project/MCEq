@@ -318,6 +318,9 @@ muon_helicity_dependence = True
 #: against MC runs with scattering switched off.
 muon_multiple_scattering = True
 
+#: Muon angular model: legacy "gaussian" or a material table in the 2D DB.
+muon_scattering_model = "gaussian"
+
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
 #: over-predicting the wide-angle density of species in local
