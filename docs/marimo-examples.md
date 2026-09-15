@@ -74,7 +74,12 @@ exceptions), and fails if a committed `.ipynb` differs from a fresh export.
 - One compact configuration form, grouped by interactions, primary/solver,
   energy grid, and geometry/transition; units beside each control. Submit changes
   together. The Jupyter export materializes the applied values as assignments.
-- Construction and solving together so a configuration edit rebuilds the run.
+- Build the `MCEqRun` in one cell and solve in the next, wrapping each solve
+  in `solve_progress` (or a `loop_progress` bar for repeated solves), so
+  configuration edits rebuild the run while the bar shows live progress.
+  The driver calls a `progress(done, total)` callback on completed ETD2
+  steps; `MCEq.notebook` renders it as marimo's native widget inside a
+  marimo kernel and as a tqdm bar in Jupyter exports and plain Python.
 - Readout followed by a focused figure, with local `plt.rc_context` styling.
 - Static Markdown and ordinary Python for the calculation. Reserve
   `configuration_defaults`, `configuration_controls`, `selected_configuration`,

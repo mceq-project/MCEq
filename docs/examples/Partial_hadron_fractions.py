@@ -33,9 +33,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        solve_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        mo,
+        np,
+        plt,
+        solve_progress,
+    )
 
 
 @app.cell(hide_code=True)
@@ -149,8 +162,17 @@ def _(MCEqRun, apply_kernel_and_grid, backend, charm_groups, config, database,
             registered[track_prefix.rstrip("_")] = group
 
     mceq_run.regenerate_matrices()
-    mceq_run.solve()
     return (mceq_run, registered)
+
+
+@app.cell
+def _(interaction_model, mceq_run, solve_progress, theta_deg):
+    with solve_progress(
+        f"{interaction_model} · {theta_deg:g}° · charm decomposition"
+    ) as progress:
+        mceq_run.solve(progress=progress)
+    "solved"
+    return
 
 
 @app.cell(hide_code=True)

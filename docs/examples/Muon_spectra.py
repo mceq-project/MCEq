@@ -31,9 +31,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        loop_progress,
+        mo,
+        np,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -116,52 +129,61 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
     primaries = {"proton": {"pdg_id": 2212}, "iron": {"corsika_id": 5626}}
 
     spectra, height_grid = {}, {}
-    for experiment, site in experiments.items():
-        config.h_obs = site["h_obs"]
-        spectra[experiment] = {}
-        for interaction_model in models:
-            per_primary = spectra[experiment][interaction_model] = {}
-            for prim, ids in primaries.items():
-                run = MCEqRun(
-                    interaction_model,
-                    primary_model=(pm.HillasGaisser2012, "H3a"),
-                    theta_deg=site["theta_deg"],
-                )
-                run.set_density_model(site["atmosphere"])
-                run.set_single_primary_particle(site["E0"], **ids)
-                Xvec = np.arange(1, run.density_model.max_X, 20)
-                run.solve(int_grid=Xvec, grid_var="X")
-                if experiment not in height_grid:
-                    height_grid[experiment] = (
-                        Xvec,
-                        run.density_model.s_lX2h(np.log(Xvec)) / 1e2,
-                    )
 
-                store = per_primary[prim] = {"egrid": run.e_grid}
-                for component in ("total", "conv", "pr"):
-                    store["mu_" + component] = (
-                        run.get_solution(f"{component}_mu+", 0)
-                        + run.get_solution(f"{component}_mu-", 0)
+    def scan(advance):
+        for experiment, site in experiments.items():
+            config.h_obs = site["h_obs"]
+            spectra[experiment] = {}
+            for interaction_model in models:
+                per_primary = spectra[experiment][interaction_model] = {}
+                for prim, ids in primaries.items():
+                    advance(title=f"{experiment} · {interaction_model} · {prim}")
+                    run = MCEqRun(
+                        interaction_model,
+                        primary_model=(pm.HillasGaisser2012, "H3a"),
+                        theta_deg=site["theta_deg"],
                     )
-                store["mu_long"] = np.array([
-                    trapezoid(
-                        run.get_solution("total_mu+", 0, grid_idx=snap)
-                        + run.get_solution("total_mu-", 0, grid_idx=snap),
-                        run.e_grid,
-                    )
-                    for snap in range(len(run.grid_sol))
-                ])
-                if experiment == "icecube":
-                    for neutrino in ("numu", "nue", "nutau"):
-                        for component in ("total", "conv", "pr"):
-                            if neutrino == "nutau" and component != "total":
-                                continue
-                            store[f"{neutrino}_{component}"] = (
-                                run.get_solution(f"{component}_{neutrino}", 0)
-                                + run.get_solution(
-                                    f"{component}_anti{neutrino}", 0
+                    run.set_density_model(site["atmosphere"])
+                    run.set_single_primary_particle(site["E0"], **ids)
+                    Xvec = np.arange(1, run.density_model.max_X, 20)
+                    run.solve(int_grid=Xvec, grid_var="X")
+                    if experiment not in height_grid:
+                        height_grid[experiment] = (
+                            Xvec,
+                            run.density_model.s_lX2h(np.log(Xvec)) / 1e2,
+                        )
+
+                    store = per_primary[prim] = {"egrid": run.e_grid}
+                    for component in ("total", "conv", "pr"):
+                        store["mu_" + component] = (
+                            run.get_solution(f"{component}_mu+", 0)
+                            + run.get_solution(f"{component}_mu-", 0)
+                        )
+                    store["mu_long"] = np.array([
+                        trapezoid(
+                            run.get_solution("total_mu+", 0, grid_idx=snap)
+                            + run.get_solution("total_mu-", 0, grid_idx=snap),
+                            run.e_grid,
+                        )
+                        for snap in range(len(run.grid_sol))
+                    ])
+                    if experiment == "icecube":
+                        for neutrino in ("numu", "nue", "nutau"):
+                            for component in ("total", "conv", "pr"):
+                                if neutrino == "nutau" and component != "total":
+                                    continue
+                                store[f"{neutrino}_{component}"] = (
+                                    run.get_solution(f"{component}_{neutrino}", 0)
+                                    + run.get_solution(
+                                        f"{component}_anti{neutrino}", 0
+                                    )
                                 )
-                            )
+
+    with loop_progress(
+        len(experiments) * len(models) * len(primaries),
+        "detector x model x primary scans",
+    ) as advance:
+        scan(advance)
     return (height_grid, spectra)
 
 

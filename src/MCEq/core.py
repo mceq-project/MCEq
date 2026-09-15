@@ -545,6 +545,7 @@ class MCEqRun(BatchSolver):
         dX_min=None,
         fd_span=None,
         dtype=None,
+        progress=None,
     ):
         """Propagate the initial state with the kernel ``config.kernel_config``.
 
@@ -564,6 +565,9 @@ class MCEqRun(BatchSolver):
           dtype (np.float32 | np.float64 | None): state precision; ``None`` is
             float32 on CUDA with ``config.cuda_fp_precision = 32``, else
             float64. The solution is float64 either way.
+          progress (callable | None): ``callback(done, total)`` polled on
+            completed integration steps, e.g. for a progress bar; ``total``
+            is the step count of the integration path.
         """
         if int_grid is not None and np.any(np.diff(int_grid) < 0):
             raise Exception(
@@ -578,10 +582,12 @@ class MCEqRun(BatchSolver):
             dX_min=dX_min,
             fd_span=fd_span,
         )
-        self.solve_from_integration_path(*self.integration_path, dtype=dtype)
+        self.solve_from_integration_path(
+            *self.integration_path, dtype=dtype, progress=progress
+        )
 
     def solve_from_integration_path(
-        self, nsteps, dX, rho_inv, grid_idcs, *, dtype=None
+        self, nsteps, dX, rho_inv, grid_idcs, *, dtype=None, progress=None
     ):
         """Propagate the initial state along a given path, e.g. a stored
         ``self.integration_path`` (``nsteps, dX, rho_inv, grid_idcs``)."""
@@ -598,6 +604,7 @@ class MCEqRun(BatchSolver):
             grid_idcs,
             dtype=dtype,
             sec_ops=sec_ops,
+            progress=progress,
         )
         self._solution = np.asarray(sol, dtype=np.float64)
         self.grid_sol = np.asarray(grid_sol, dtype=np.float64)
@@ -1104,12 +1111,22 @@ class MCEqRun(BatchSolver):
         return be
 
     def _run_etd2(
-        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
+        self,
+        nsteps,
+        dX,
+        rho_inv,
+        phi0,
+        grid_idcs,
+        dtype=np.float64,
+        sec_ops=None,
+        progress=None,
     ):
         """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
-        sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
+        sol, grid_sol = solvers.etd2_driver(
+            nsteps, dX, rho_inv, be, phi0, grid_idcs, progress=progress
+        )
         if dtype != np.float64:
             sol = sol.astype(dtype)
             grid_sol = grid_sol.astype(dtype)
@@ -1124,6 +1141,7 @@ class MCEqRun(BatchSolver):
         phi0_per_pixel,
         dtype=np.float64,
         sec_ops=None,
+        progress=None,
     ):
         """Integrate K states along per-column paths with the LPT carousel;
         returns the ``(dim, K)`` final states in column order."""
@@ -1137,6 +1155,7 @@ class MCEqRun(BatchSolver):
             [],
             schedule=schedule,
             phi0_per_pixel=phi0_per_pixel,
+            progress=progress,
         )
         return np.asarray(sol, dtype=np.dtype(dtype))
 

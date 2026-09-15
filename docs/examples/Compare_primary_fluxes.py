@@ -31,9 +31,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        loop_progress,
+        mo,
+        np,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -47,7 +60,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_v140reduced_compact.h5",
+        "database": "mceq_db_lext_dpm193_v142.h5",
         "interaction_model": "SIBYLL21",
         "theta_deg": 0.0,
         "e_min": 1.0,
@@ -138,22 +151,30 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
     e_grid = mceq_run.e_grid
 
     p_spectrum_flux = []
-    for pmodel in primary_models:
-        mceq_run.set_primary_model(*pmodel)
-        flux = {frac: np.zeros_like(e_grid) for frac in prefix}
-        for theta in angles:
-            mceq_run.set_zenith_azimuth(theta)
-            mceq_run.solve()
-            for frac, (track, particles) in prefix.items():
-                flux[frac] += sum(
-                    mceq_run.get_solution(f"{track}_{particle}", mag)
-                    for particle in particles
-                )
-        p_spectrum_flux.append((
-            {frac: total / len(angles) for frac, total in flux.items()},
-            mceq_run.pmodel.sname,
-            mceq_run.pmodel.name,
-        ))
+
+    def scan(advance):
+        for pmodel in primary_models:
+            mceq_run.set_primary_model(*pmodel)
+            flux = {frac: np.zeros_like(e_grid) for frac in prefix}
+            for theta in angles:
+                mceq_run.set_zenith_azimuth(theta)
+                mceq_run.solve()
+                advance(title=f"{pmodel[0].__name__} {(pmodel[1] or '')}")
+                for frac, (track, particles) in prefix.items():
+                    flux[frac] += sum(
+                        mceq_run.get_solution(f"{track}_{particle}", mag)
+                        for particle in particles
+                    )
+            p_spectrum_flux.append((
+                {frac: total / len(angles) for frac, total in flux.items()},
+                mceq_run.pmodel.sname,
+                mceq_run.pmodel.name,
+            ))
+
+    with loop_progress(
+        len(primary_models) * len(angles), "zenith x primary scan"
+    ) as advance:
+        scan(advance)
     return (e_grid, mag, p_spectrum_flux)
 
 

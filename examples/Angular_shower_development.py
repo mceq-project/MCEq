@@ -219,12 +219,17 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database_2d, e_max,
 
 
 @app.cell
-def _(mceq_2d, mo, np, present, save_depths):
+def _(interaction_model, mceq_2d, mo, np, present, save_depths, theta_deg):
     def solve_2d():
         import time
 
+        from MCEq.notebook import solve_progress
+
         t0 = time.perf_counter()
-        mceq_2d.solve(int_grid=save_depths)
+        with solve_progress(
+            f"2D ETD2RK · {interaction_model} · {theta_deg:g}°"
+        ) as _progress:
+            mceq_2d.solve(int_grid=save_depths, progress=_progress)
         elapsed = time.perf_counter() - t0
         return (
             f"v2-2D ETD2RK solve: {elapsed:.1f} s, "

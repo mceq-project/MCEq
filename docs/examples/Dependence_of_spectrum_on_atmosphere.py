@@ -6,7 +6,10 @@
 import marimo
 
 __generated_with = "0.24.0"
-app = marimo.App(width="medium", app_title="Atmosphere dependence of lepton fluxes")
+app = marimo.App(
+    width="medium",
+    app_title="Atmosphere dependence of lepton fluxes",
+)
 
 
 @app.cell(hide_code=True)
@@ -31,9 +34,21 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        loop_progress,
+        mo,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -50,7 +65,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_v140reduced_compact.h5",
+        "database": "mceq_db_lext_dpm193_v142.h5",
         "interaction_model": "SIBYLL21",
         "primary": "HillasGaisser2012:H3a",
         "theta_deg": 0.0,
@@ -62,7 +77,7 @@ def configuration_defaults():
 
 
 @app.cell(hide_code=True)
-def configuration_controls(defaults, mo):
+def configuration_controls(defaults):
     from MCEq.notebook import configuration_controls as build_controls
 
     controls, _options = build_controls(
@@ -89,7 +104,12 @@ def selected_configuration(controls, defaults, mo):
         f"{e_min:g}–{e_max:g} GeV"
     )
     return (
-        backend, database, e_max, e_min, interaction_model, primary_model,
+        backend,
+        database,
+        e_max,
+        e_min,
+        interaction_model,
+        primary_model,
         settings,
     )
 
@@ -106,8 +126,17 @@ def _(mo):
 
 
 @app.cell
-def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      interaction_model, primary_model):
+def _(
+    MCEqRun,
+    apply_kernel_and_grid,
+    backend,
+    config,
+    database,
+    e_max,
+    e_min,
+    interaction_model,
+    primary_model,
+):
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 
@@ -127,19 +156,25 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
 
     mag = 3
     mu_flux, numu_flux = {}, {}
-    for atmosphere, color in atmospheres:
-        mceq_run.set_density_model(atmosphere)
-        for theta in [0.0, 90.0]:
-            mceq_run.set_zenith_azimuth(theta)
-            mceq_run.solve()
-            mu_flux[(theta, atmosphere, color)] = (
-                mceq_run.get_solution("total_mu+", mag)
-                + mceq_run.get_solution("total_mu-", mag)
-            )
-            numu_flux[(theta, atmosphere, color)] = (
-                mceq_run.get_solution("total_numu", mag)
-                + mceq_run.get_solution("total_antinumu", mag)
-            )
+
+    def scan(advance):
+        for atmosphere, color in atmospheres:
+            mceq_run.set_density_model(atmosphere)
+            for theta in [0.0, 90.0]:
+                mceq_run.set_zenith_azimuth(theta)
+                mceq_run.solve()
+                advance(title=atmosphere[0])
+                mu_flux[(theta, atmosphere, color)] = (
+                    mceq_run.get_solution("total_mu+", mag)
+                    + mceq_run.get_solution("total_mu-", mag)
+                )
+                numu_flux[(theta, atmosphere, color)] = (
+                    mceq_run.get_solution("total_numu", mag)
+                    + mceq_run.get_solution("total_antinumu", mag)
+                )
+
+    with loop_progress(2 * len(atmospheres), "atmosphere x zenith scan") as advance:
+        scan(advance)
     e_grid = mceq_run.e_grid
     return e_grid, mu_flux, numu_flux
 
@@ -173,7 +208,7 @@ def _(e_grid, mu_flux, numu_flux, plt):
                 continue
             ls = "-" if p_theta < 90.0 else "--"
             label = titles[p_profile] if p_theta < 90.0 else "_nolabel_"
-            axis.plot(
+            axis.semilogx(
                 e_grid,
                 flux[(p_theta, p_profile, p_color)]
                 / flux[(p_theta, baseline, "black")],
@@ -189,7 +224,8 @@ def _(e_grid, mu_flux, numu_flux, plt):
     axes[1].set_ylabel(r"$\Phi_{\nu_\mu}$(atm)$/\Phi_{\nu_\mu}$(USStd)")
     fig.tight_layout()
     fig
-    return (fig,)
+    return
+
 
 @app.cell(hide_code=True)
 def export_notebook(download_jupyter, settings):

@@ -1,10 +1,11 @@
-"""In-memory Jupyter downloads for marimo examples, including Pyodide.
+"""In-memory Jupyter downloads and notebook conveniences for the examples.
 
 Marimo's private conversion API is confined to this module and checked against
 the gallery's version. Importing MCEq does not require marimo.
 """
 
 import ast
+from contextlib import ExitStack, contextmanager
 
 
 def jupyter_bytes(app, configuration=None):
@@ -331,6 +332,113 @@ def apply_kernel_and_grid(backend, e_min, e_max, debug_level=0):
     config.kernel_config = resolve_kernel(backend)
     config.e_min, config.e_max = e_min, e_max
     config.debug_level = debug_level
+
+
+@contextmanager
+def solve_progress(title="Solving cascade", completion_title="Done"):
+    """Yield a ``progress`` callback for one ``solve(progress=...)`` call.
+
+    Inside a marimo kernel the callback drives the native progress widget,
+    created on the driver's first call (where the step total becomes known)
+    and appended to the enclosing cell. Anywhere else — Jupyter exports,
+    plain Python, CI — it drives a tqdm bar instead, so a clean export
+    needs no marimo. The bar is finalized when the block exits.
+
+    Example::
+
+        with solve_progress("SIBYLL23E · 60°") as progress:
+            mceq.solve(progress=progress)
+    """
+    try:
+        from marimo._runtime.context.utils import running_in_notebook
+
+        in_marimo = running_in_notebook()
+    except Exception:
+        in_marimo = False
+
+    stack = ExitStack()
+    state = {}
+
+    if in_marimo:
+        import marimo as mo
+
+        def progress(done, total):
+            if "bar" not in state:
+                state["bar"] = stack.enter_context(
+                    mo.status.progress_bar(
+                        total=total, title=title,
+                        completion_title=completion_title,
+                    )
+                )
+            bar = state["bar"]
+            if done != bar.current:
+                bar.update(increment=done - bar.current)
+    else:
+        from tqdm.auto import tqdm
+
+        def progress(done, total):
+            if "bar" not in state:
+                state["bar"] = stack.enter_context(tqdm(total=total, desc=title))
+            bar = state["bar"]
+            if done != bar.n:
+                bar.update(done - bar.n)
+
+    try:
+        yield progress
+    finally:
+        stack.close()
+
+
+@contextmanager
+def loop_progress(total, title="Solving cascade", completion_title="Done"):
+    """Yield an ``advance()`` callable for a loop that solves repeatedly.
+
+    One bar spans the whole loop (``advance()`` once per solved member),
+    instead of a bar per solve. Same marimo-widget/tqdm split as
+    :func:`solve_progress`.
+
+    Example::
+
+        with loop_progress(len(angles), "Zenith scan") as advance:
+            for theta in angles:
+                mceq.set_zenith_azimuth(theta)
+                mceq.solve()
+                advance()
+    """
+    try:
+        from marimo._runtime.context.utils import running_in_notebook
+
+        in_marimo = running_in_notebook()
+    except Exception:
+        in_marimo = False
+
+    stack = ExitStack()
+
+    if in_marimo:
+        import marimo as mo
+
+        bar = stack.enter_context(
+            mo.status.progress_bar(
+                total=total, title=title, completion_title=completion_title
+            )
+        )
+
+        def advance(n=1, title=None):
+            bar.update(increment=n, title=title)
+    else:
+        from tqdm.auto import tqdm
+
+        bar = stack.enter_context(tqdm(total=total, desc=title))
+
+        def advance(n=1, title=None):
+            bar.update(n)
+            if title is not None:
+                bar.set_description(title)
+
+    try:
+        yield advance
+    finally:
+        stack.close()
 
 
 def primary_model_from(primary):

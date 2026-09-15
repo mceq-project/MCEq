@@ -47,8 +47,21 @@ def _serial_dense_blas(be):
     return blas.limit(limits=1)
 
 
+#: Steps between progress polls when a callback is attached: frequent
+#: enough for a responsive bar, rare enough that the device sync is free.
+_PROGRESS_EVERY = 25
+
+
 def etd2_driver(
-    nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
+    nsteps,
+    dX,
+    rho_inv,
+    be,
+    phi,
+    grid_idcs,
+    schedule=None,
+    phi0_per_pixel=None,
+    progress=None,
 ):
     """ETD2RK step loop for every route and backend.
 
@@ -74,6 +87,10 @@ def etd2_driver(
         :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
         initial states ``(dim, K_total)``; requires per-lane paths and no
         snapshots.
+      progress: optional ``callback(done, total)``, called with
+        ``done == 0`` before the first step and every
+        :data:`_PROGRESS_EVERY` steps after a device sync, last at
+        ``done == total``. Exceptions from the callback propagate.
 
     Returns:
       ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
@@ -208,6 +225,8 @@ def etd2_driver(
     grid_sol = []
     grid_step = 0
     start = time()
+    if progress is not None:
+        progress(0, nsteps)
 
     # At extreme zenith the e+- rows can overflow to inf in F_phi / F_a; the
     # warnings are silenced, the lepton spectra are not checked for finiteness.
@@ -240,6 +259,12 @@ def etd2_driver(
             elif grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
                 grid_sol.append(phc.copy())
                 grid_step += 1
+
+            if progress is not None and (
+                (k + 1) % _PROGRESS_EVERY == 0 or k + 1 == nsteps
+            ):
+                be.synchronize()
+                progress(k + 1, nsteps)
 
     be.synchronize()
     elapsed = time() - start
@@ -295,6 +320,7 @@ def solve_etd2(
     dtype=np.float64,
     band=None,
     mode_mix=None,
+    progress=None,
 ):
     """Integrate ``dPhi/dX`` with :func:`etd2_driver` on one backend.
 
@@ -325,6 +351,7 @@ def solve_etd2(
         :func:`MCEq.operators.compiled.compile_operator`.
       dtype: float64 or float32, the state precision (the precision rule of
         :mod:`MCEq.solvers.backends.host`).
+      progress: ``callback(done, total)``, see :func:`etd2_driver`.
 
     Returns:
       ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.
@@ -341,6 +368,7 @@ def solve_etd2(
             grid_idcs,
             schedule=schedule,
             phi0_per_pixel=phi0_per_pixel,
+            progress=progress,
         )
     finally:
         be.close()

@@ -31,10 +31,14 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        solve_progress,
+    )
 
     mpl.rcParams["figure.dpi"] = 150
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, plt
 
 
 @app.cell(hide_code=True)
@@ -48,7 +52,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_v140reduced_compact.h5",
+        "database": "mceq_db_lext_dpm193_v142.h5",
         "interaction_model": "SIBYLL21",
         "primary": "HillasGaisser2012:H3a",
         "theta_deg": 60.0,
@@ -60,7 +64,7 @@ def configuration_defaults():
 
 
 @app.cell(hide_code=True)
-def configuration_controls(defaults, mo):
+def configuration_controls(defaults):
     from MCEq.notebook import configuration_controls as build_controls
 
     controls, _options = build_controls(
@@ -88,8 +92,14 @@ def selected_configuration(controls, defaults, mo):
         f"{theta_deg:g}° · {e_min:g}–{e_max:g} GeV"
     )
     return (
-        backend, database, e_max, e_min, interaction_model, primary_model,
-        settings, theta_deg,
+        backend,
+        database,
+        e_max,
+        e_min,
+        interaction_model,
+        primary_model,
+        settings,
+        theta_deg,
     )
 
 
@@ -106,8 +116,18 @@ def _(mo):
 
 
 @app.cell
-def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      interaction_model, primary_model, theta_deg):
+def _(
+    MCEqRun,
+    apply_kernel_and_grid,
+    backend,
+    config,
+    database,
+    e_max,
+    e_min,
+    interaction_model,
+    primary_model,
+    theta_deg,
+):
     from MCEq.models.ddm.ddm import DataDrivenModel
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
@@ -130,14 +150,28 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
 
     mceq_default.set_zenith_azimuth(theta_deg)
     mceq_ddm.set_zenith_azimuth(theta_deg)
-    mceq_default.solve()
-    mceq_ddm.solve()
     return ddm_summary, mceq_ddm, mceq_default
+
+
+@app.cell
+def _(interaction_model, mceq_ddm, mceq_default, solve_progress, theta_deg):
+    with solve_progress(
+        f"{interaction_model} · {theta_deg:g}° · default"
+    ) as progress:
+        mceq_default.solve(progress=progress)
+    with solve_progress(
+        f"{interaction_model} · {theta_deg:g}° · DDM 1.0"
+    ) as progress:
+        mceq_ddm.solve(progress=progress)
+    "both solved"
+    return
 
 
 @app.cell(hide_code=True)
 def configuration_summary(ddm_summary, mo):
-    mo.md(f"**Injected DDM table:** {ddm_summary}")
+    mo.md(f"""
+    **Injected DDM table:** {ddm_summary}
+    """)
     return
 
 
@@ -152,7 +186,7 @@ def _(mo):
 
 
 @app.cell
-def _(mceq_ddm, mceq_default, np, plt):
+def _(mceq_ddm, mceq_default, plt):
     mag = 3
     e_grid = mceq_default.e_grid
 
@@ -251,11 +285,11 @@ def _(mceq_ddm, mceq_default, np, plt):
         axes[1].set_xlabel(title)
         fig.tight_layout(h_pad=-0.5)
         ratio_figs.append(fig)
-    return e_grid, fig_mu, fig_nue, fig_numu, flux_base, flux_ddm, ratio_figs
+    return fig_mu, fig_nue, fig_numu, ratio_figs
 
 
 @app.cell
-def _(fig_mu, fig_numu, fig_nue):
+def _(fig_mu, fig_nue, fig_numu):
     [fig_mu, fig_numu, fig_nue]
     return
 

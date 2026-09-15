@@ -29,9 +29,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        loop_progress,
+        mo,
+        np,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -45,7 +58,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_v140reduced_compact.h5",
+        "database": "mceq_db_lext_dpm193_v142.h5",
         "interaction_model": "SIBYLL21",
         "primary": "HillasGaisser2012:H3a",
         "theta_deg": 60.0,
@@ -122,13 +135,15 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
     mceq.set_density_model(("MSIS00_IC", ("SouthPole", "January")))
     e_grid = mceq.e_grid
 
-    def compute_fluxes():
+    def compute_fluxes(advance=None):
         from collections import defaultdict
 
         flux = defaultdict(list)
         for theta in angles:
             mceq.set_zenith_azimuth(theta)
             mceq.solve()
+            if advance is not None:
+                advance()
             for key, components in {
                 "numu_pi": ["pi_numu", "pi_antinumu"],
                 "numu_k": ["k_numu", "k_antinumu", "K0_numu", "K0_antinumu"],
@@ -144,21 +159,26 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
                 )
         return dict(flux)
 
-    mceq.unset_mod_pprod()
-    mceq.matrix_builder.construct_matrices(skip_decay_matrix=True)
-    nominal = compute_fluxes()
+    def run_scan(advance):
+        mceq.unset_mod_pprod()
+        mceq.matrix_builder.construct_matrices(skip_decay_matrix=True)
+        nominal = compute_fluxes(advance)
 
-    mceq.set_mod_pprod(2212, 211, weight_fun, ("a", 0.15))
-    mceq.set_mod_pprod(2212, -211, weight_fun, ("a", 0.12))
-    mceq.regenerate_matrices(skip_decay_matrix=True)
-    piup = compute_fluxes()
-    mceq.unset_mod_pprod()
+        mceq.set_mod_pprod(2212, 211, weight_fun, ("a", 0.15))
+        mceq.set_mod_pprod(2212, -211, weight_fun, ("a", 0.12))
+        mceq.regenerate_matrices(skip_decay_matrix=True)
+        piup = compute_fluxes(advance)
+        mceq.unset_mod_pprod()
 
-    mceq.set_mod_pprod(2212, 321, weight_fun, ("a", 0.45))
-    mceq.set_mod_pprod(2212, -321, weight_fun, ("a", 0.55))
-    mceq.regenerate_matrices(skip_decay_matrix=True)
-    kdown = compute_fluxes()
-    mceq.unset_mod_pprod()
+        mceq.set_mod_pprod(2212, 321, weight_fun, ("a", 0.45))
+        mceq.set_mod_pprod(2212, -321, weight_fun, ("a", 0.55))
+        mceq.regenerate_matrices(skip_decay_matrix=True)
+        kdown = compute_fluxes(advance)
+        mceq.unset_mod_pprod()
+        return nominal, piup, kdown
+
+    with loop_progress(3 * len(angles), "K/pi charge-slope scan") as advance:
+        nominal, piup, kdown = run_scan(advance)
     return e_grid, kdown, nominal, piup
 
 @app.cell(hide_code=True)

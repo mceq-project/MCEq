@@ -30,9 +30,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        loop_progress,
+        mo,
+        np,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -49,7 +62,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_v140reduced_compact.h5",
+        "database": "mceq_db_lext_dpm193_v142.h5",
         "interaction_model": "SIBYLL21",
         "primary": "HillasGaisser2012:H3a",
         "e_min": 1.0,
@@ -141,20 +154,31 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
     e_grid = mceq_run.e_grid
 
     all_flux = {}
-    for season, atmosphere in [
-        ("summer", ("MSIS00_IC", ("SouthPole", "January"))),
-        ("winter", ("MSIS00_IC", ("SouthPole", "July"))),
-    ]:
-        mceq_run.set_density_model(atmosphere)
-        season_flux = {frac: [] for frac in tracks}
-        for theta in angles:
-            mceq_run.set_zenith_azimuth(theta)
-            mceq_run.solve()
-            for frac, (track, particles) in tracks.items():
-                season_flux[frac].append(
-                    sum(mceq_run.get_solution(f"{track}_{p}", mag) for p in particles)
-                )
-        all_flux[season] = season_flux
+
+    def scan(advance):
+        for season, atmosphere in [
+            ("summer", ("MSIS00_IC", ("SouthPole", "January"))),
+            ("winter", ("MSIS00_IC", ("SouthPole", "July"))),
+        ]:
+            mceq_run.set_density_model(atmosphere)
+            season_flux = {frac: [] for frac in tracks}
+            for theta in angles:
+                mceq_run.set_zenith_azimuth(theta)
+                mceq_run.solve()
+                advance(title=f"{season} · {theta:.0f} deg")
+                for frac, (track, particles) in tracks.items():
+                    season_flux[frac].append(
+                        sum(
+                            mceq_run.get_solution(f"{track}_{p}", mag)
+                            for p in particles
+                        )
+                    )
+            all_flux[season] = season_flux
+
+    with loop_progress(
+        2 * len(angles), "zenith distribution, both seasons"
+    ) as advance:
+        scan(advance)
     return (all_flux, cos_theta, e_grid, mag)
 
 

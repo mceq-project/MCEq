@@ -30,9 +30,20 @@ def _():
     from MCEq.config.detect import resolve_kernel
     from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
-    from MCEq.notebook import prepare_database
+    from MCEq.notebook import prepare_database, solve_progress
 
-    return MCEqRun, RunConfig, config, mo, np, plt, pm, prepare_database, resolve_kernel
+    return (
+        MCEqRun,
+        RunConfig,
+        config,
+        mo,
+        np,
+        plt,
+        pm,
+        prepare_database,
+        resolve_kernel,
+        solve_progress,
+    )
 
 
 @app.cell(hide_code=True)
@@ -222,7 +233,7 @@ async def _(
     config.kernel_config = resolve_kernel(backend)
     config.debug_level = 0
 
-    # Construct and solve together so configuration edits rebuild the cascade.
+    # Configuration edits rebuild the run; the next cell solves it.
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
         primary_model=cr_model,
@@ -233,8 +244,17 @@ async def _(
         he_le_trwidth=he_le_trwidth,
         config=RunConfig.snapshot(),
     )
-    mceq_run.solve()
     return (mceq_run,)
+
+
+@app.cell
+def _(interaction_model, mceq_run, solve_progress, theta_deg):
+    with solve_progress(
+        f"{interaction_model} · {theta_deg:g}° zenith"
+    ) as progress:
+        mceq_run.solve(progress=progress)
+    "solved"
+    return
 
 
 @app.cell(hide_code=True)

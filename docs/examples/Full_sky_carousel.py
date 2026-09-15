@@ -36,15 +36,19 @@ def _():
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
-    from tqdm.auto import tqdm
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        loop_progress,
+        solve_progress,
+    )
 
     return (
-        MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt,
-        time, tqdm,
+        MCEqRun, apply_kernel_and_grid, config, download_jupyter, loop_progress,
+        mo, np, plt, solve_progress, time,
     )
 
 
@@ -203,7 +207,7 @@ def _(mo):
 
 
 @app.cell
-def _(E_target_GeV, K, az_centres, mceq, np, tqdm, zen_centres):
+def _(E_target_GeV, K, az_centres, loop_progress, mceq, np, zen_centres):
     zen_sub = zen_centres[::3]
     az_sub = az_centres[::9] if az_centres.size >= 9 else az_centres
     K_sub = zen_sub.size * az_sub.size
@@ -213,18 +217,18 @@ def _(E_target_GeV, K, az_centres, mceq, np, tqdm, zen_centres):
     numu_sub = np.zeros((E_target_GeV.size, zen_sub.size, az_sub.size))
 
     t0s = time.time()
-    with tqdm(total=K_sub, desc="serial scan") as bar:
+    with loop_progress(K_sub, "serial pixel scan") as advance:
         for i_z, zen in enumerate(zen_sub):
             for i_a, az in enumerate(az_sub):
                 mceq.set_zenith_azimuth(float(zen), float(az))
                 mceq.solve()
+                advance()
                 flux = mceq.get_solution("total_numu", 0) + mceq.get_solution(
                     "total_antinumu", 0
                 )
                 numu_sub[:, i_z, i_a] = np.exp(
                     np.interp(log_targets, log_grid, np.log(np.maximum(flux, 1e-300)))
                 )
-                bar.update()
     t_serial = time.time() - t0s
     f"serial wall: {t_serial:.1f}s ({t_serial / K_sub * 1e3:.1f} ms / pixel)"
     return (K_sub, numu_sub, t_serial)
@@ -243,11 +247,13 @@ def _(mo):
 
 
 @app.cell
-def _(K, az_centres, mo, mceq, t_serial, zen_centres):
+def _(K, az_centres, mceq, solve_progress, t_serial, zen_centres):
     t0c = time.time()
-    res = mceq.solve_fullsky(
-        zen_centres, az_centres, geomagnetic_cutoff=False
-    )
+    with solve_progress(f"carousel full sky (K = {K})") as progress:
+        res = mceq.solve_fullsky(
+            zen_centres, az_centres, geomagnetic_cutoff=False,
+            progress=progress,
+        )
     t_carousel = time.time() - t0c
     (
         f"solve_fullsky (carousel): {t_carousel:.2f}s for K = {K} · "
@@ -324,13 +330,16 @@ def _(mo):
 
 
 @app.cell
-def _(K, az_centres, mceq, np, use_geomagnetic, zen_centres):
+def _(az_centres, mceq, np, solve_progress, use_geomagnetic, zen_centres):
     if use_geomagnetic:
         phi0_1d = mceq._phi0.copy()
         phi0_2d = np.broadcast_to(phi0_1d[:, None], (mceq.dim_states, K)).copy()
         upgoing = np.repeat(zen_centres[:, None] > 90.0, az_centres.size, axis=1)
         phi0_2d[:, upgoing.ravel()] = 0.0
-        sol_masked = mceq.solve_fullsky(zen_centres, az_centres, phi0=phi0_2d)
+        with solve_progress("masked carousel (up-going vetoed)") as _progress:
+            sol_masked = mceq.solve_fullsky(
+                zen_centres, az_centres, phi0=phi0_2d, progress=_progress
+            )
         masked_note = (
             f"masked solve sol shape = {sol_masked.sol.shape} (up-going "
             "hemisphere zeroed)"

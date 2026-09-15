@@ -32,9 +32,22 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import apply_kernel_and_grid, download_jupyter
+    from MCEq.notebook import (
+        apply_kernel_and_grid,
+        download_jupyter,
+        solve_progress,
+    )
 
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, np, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        download_jupyter,
+        mo,
+        np,
+        plt,
+        solve_progress,
+    )
 
 
 @app.cell(hide_code=True)
@@ -137,9 +150,16 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
             requested.append(prefix)
 
     mceq_run.regenerate_matrices()
-    mceq_run.solve()
     e_grid = mceq_run.e_grid
     return (e_grid, mceq_run, mother_groups, requested)
+
+
+@app.cell
+def _(interaction_model, mceq_run, solve_progress):
+    with solve_progress(f"{interaction_model} · hadron decomposition") as progress:
+        mceq_run.solve(progress=progress)
+    "solved"
+    return
 
 
 @app.cell
