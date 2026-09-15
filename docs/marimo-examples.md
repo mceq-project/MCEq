@@ -7,14 +7,17 @@ export. Both show the same configuration and three-panel flux figure.
 
 Open **Atmospheric lepton fluxes** in the browser gallery. The first launch
 installs Python packages and loads the model tables; the calculation runs on
-your device. Edit the configuration cell and press its Run button to recalculate.
+your device. Use the dropdowns and sliders in section 01, then press **Apply configuration**
+to recalculate. Changes are grouped so dragging a slider does not repeatedly solve
+the cascade. Energy sliders use log₁₀(E/GeV).
 The browser bundle includes **SIBYLL2.3e** and **QGSJET-II-04**, CORSIKA atmospheres,
-and the NumPy solver (`auto` or `numpy_etd2`). Leave `low_energy_model = None`
-unless the gallery has been built with an additional suitable model.
+and the NumPy solver (`auto` or `numpy_etd2`). Low-energy controls are disabled in this two-model browser bundle. Local Python
+also offers DPMJET-III-19.3 for the low-energy model and installed native backends.
 
 **Download Jupyter notebook**, below the figure, converts the current saved
-source in memory. It keeps your saved configuration edits and removes the download
-cell, marimo imports, and marimo metadata. It requires no subprocess or server.
+source in memory. It writes the last **applied** control values as a plain Python
+configuration cell and removes the widgets, download cell, marimo imports, and
+marimo metadata. Pending form edits are not exported until applied. It requires no subprocess or server.
 Marimo's standard Export menu remains available, but does not apply this cleanup.
 The downloaded notebook runs locally with this MCEq version, NumPy, Matplotlib,
 and crflux; marimo is not required. It uses the full public database, downloaded
@@ -65,12 +68,15 @@ This first port sits alongside the existing examples.
 ## Style for subsequent examples
 
 - A title and one sentence describing the observable.
-- One visible configuration cell, grouped by interactions, primary/atmosphere,
-  energy grid, and backend; units and alternatives beside assignments.
+- One compact configuration form, grouped by interactions, primary/solver,
+  energy grid, and geometry/transition; units beside each control. Submit changes
+  together. The Jupyter export materializes the applied values as assignments.
 - Construction and solving together so a configuration edit rebuilds the run.
 - Readout followed by a focused figure, with local `plt.rc_context` styling.
-- Static Markdown and ordinary Python; browser download controls only in the
-  cell named `export_notebook`, which the Jupyter conversion omits.
+- Static Markdown and ordinary Python for the calculation. Reserve
+  `configuration_defaults`, `configuration_controls`, `selected_configuration`,
+  and `export_notebook` for the shared form/export pattern. The converter reads
+  literal defaults for CLI export and applied settings for browser downloads.
 
 Keep the cascade grid wider than the plotted interval. Low-energy transition
 settings require valid overlap in the chosen model tables. The conversion uses

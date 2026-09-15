@@ -64,3 +64,41 @@ def test_basic_flux_export_is_current():
     source = Path(__file__).parents[1] / "docs/examples/Basic_flux.py"
     exported = json.loads(jupyter_bytes(InternalApp(load_app(source))))
     assert exported == json.loads(source.with_suffix(".ipynb").read_text())
+
+
+def test_selected_controls_export_as_plain_configuration():
+    source = Path(__file__).parents[1] / "docs/examples/Basic_flux.py"
+    selected = {
+        "interaction_model": "QGSJET-II-04",
+        "database": "mceq_db_lext_dpm193_v142.h5",
+        "low_energy_model": None,
+        "he_le_transition": 80.0,
+        "he_le_trwidth": 0.3,
+        "cr_model": "H4a",
+        "theta_deg": 30.0,
+        "e_min": 10.0,
+        "e_max": 1.0e9,
+        "backend": "numpy_etd2",
+    }
+    exported = json.loads(jupyter_bytes(InternalApp(load_app(source)), selected))
+    code = "\n".join(
+        "".join(c["source"]) for c in exported["cells"] if c["cell_type"] == "code"
+    )
+    assert "controls" not in code
+    assert "import marimo" not in code
+    assert "settings" not in code
+    cell = next(
+        c
+        for c in exported["cells"]
+        if "# Hadronic interactions" in "".join(c["source"])
+    )
+    assert not cell["metadata"].get("jupyter", {}).get("source_hidden")
+    assert "remove-input" not in cell["metadata"].get("tags", [])
+    import crflux.models as pm
+
+    namespace = {"pm": pm}
+    exec("".join(cell["source"]), namespace)  # noqa: S102 — execute the exported configuration
+    assert namespace["interaction_model"] == selected["interaction_model"]
+    assert namespace["cr_model"] == (pm.HillasGaisser2012, "H4a")
+    for key in ("e_min", "e_max", "theta_deg", "backend", "low_energy_model"):
+        assert namespace[key] == selected[key]

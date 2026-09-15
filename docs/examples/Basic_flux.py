@@ -40,44 +40,153 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    Edit this cell and run. Model choices require the corresponding database tables.
+    Interaction model, cosmic-ray flux, and cascade energy range.
     """)
     return
 
 
-@app.cell
-def _(pm):
-    # Hadronic interactions
-    interaction_model = "SIBYLL2.3e"  # browser: also "QGSJET-II-04"
-    database = "mceq_db_lext_dpm193_v142.h5"
-    low_energy_model = None        # None: no additional low-energy model
-    he_le_transition = 80.0        # GeV; used when low_energy_model is set
-    he_le_trwidth = 0.3            # log10(E/GeV) decades, 10–90% width; 0: hard switch
+@app.cell(hide_code=True)
+def configuration_defaults():
+    defaults = {
+        "interaction_model": "SIBYLL2.3e",
+        "database": "mceq_db_lext_dpm193_v142.h5",
+        "low_energy_model": None,
+        "he_le_transition": 80.0,
+        "he_le_trwidth": 0.3,
+        "cr_model": "H3a",
+        "theta_deg": 60.0,
+        "e_min": 1.0,
+        "e_max": 1.0e11,
+        "backend": "auto",
+    }
+    return (defaults,)
 
-    # Primary cosmic rays and atmosphere
-    cr_model = (pm.HillasGaisser2012, "H3a")  # also "H4a", or (pm.GaisserHonda, None)
-    theta_deg = 60.0               # zenith angle from vertical [deg]
+
+@app.cell(hide_code=True)
+def configuration_controls(defaults, mo):
+    import math
+    import sys
+
+    from MCEq.config.detect import available
+
+    browser = sys.platform == "emscripten"
+    backend_options = {"Automatic": "auto", "NumPy": "numpy_etd2"}
+    if not browser:
+        for label, capability in (("MKL", "mkl"), ("Accelerate", "accelerate"), ("CUDA", "cuda")):
+            if available("has_" + capability):
+                backend_options[label] = capability + "_etd2"
+
+    controls = mo.md("""
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:1.5rem 2rem">
+    <div>
+
+    <strong>Interactions</strong>
+
+    {interaction_model}
+
+    {low_energy_model}
+
+    </div><div>
+
+    <strong>Primary & solver</strong>
+
+    {cr_model}
+
+    {backend}
+
+    </div><div>
+
+    <strong>Energy grid</strong>
+
+    {log_e_min}
+
+    {log_e_max}
+
+    </div><div>
+
+    <strong>Geometry & transition</strong>
+
+    {theta_deg}
+
+    {he_le_transition}
+
+    {he_le_trwidth}
+
+    </div></div>
+    """).batch(
+        interaction_model=mo.ui.dropdown(
+            ["SIBYLL2.3e", "QGSJET-II-04"], value=defaults["interaction_model"],
+            label="Interaction model", full_width=True,
+        ),
+        low_energy_model=mo.ui.dropdown(
+            {"None": "none"} if browser else {"None": "none", "DPMJET-III-19.3": "DPMJETIII193"},
+            value="None", disabled=browser, full_width=True,
+            label="Low-energy model · not bundled" if browser else "Low-energy model",
+        ),
+        cr_model=mo.ui.dropdown(
+            ["H3a", "H4a", "Gaisser–Honda"], value=defaults["cr_model"],
+            label="Cosmic-ray model", full_width=True,
+        ),
+        backend=mo.ui.dropdown(
+            backend_options, value="Automatic", label="Backend", full_width=True,
+        ),
+        log_e_min=mo.ui.slider(
+            -1, 2, step=0.5, value=math.log10(defaults["e_min"]),
+            label="e_min · log₁₀(E/GeV)", show_value=True, full_width=True,
+        ),
+        log_e_max=mo.ui.slider(
+            7, 11, step=0.5, value=math.log10(defaults["e_max"]),
+            label="e_max · log₁₀(E/GeV)", show_value=True, full_width=True,
+        ),
+        theta_deg=mo.ui.slider(
+            0, 90, step=5, value=defaults["theta_deg"],
+            label="Zenith angle [°]", show_value=True, full_width=True,
+        ),
+        he_le_transition=mo.ui.slider(
+            10, 200, step=10, value=defaults["he_le_transition"], disabled=browser,
+            label="Low-energy transition [GeV]", show_value=True, full_width=True,
+        ),
+        he_le_trwidth=mo.ui.slider(
+            0, 1, step=0.1, value=defaults["he_le_trwidth"], disabled=browser,
+            label="Transition width [decades]", show_value=True, full_width=True,
+        ),
+    ).form(submit_button_label="Apply configuration", bordered=False)
+    controls
+    return (controls,)
+
+
+@app.cell(hide_code=True)
+def selected_configuration(controls, defaults, mo, pm):
+    settings = dict(defaults)
+    if controls.value is not None:
+        settings.update(controls.value)
+        settings["e_min"] = 10.0 ** settings.pop("log_e_min")
+        settings["e_max"] = 10.0 ** settings.pop("log_e_max")
+        settings["low_energy_model"] = (
+            None if settings["low_energy_model"] == "none" else settings["low_energy_model"]
+        )
+
+    interaction_model = settings["interaction_model"]
+    database = settings["database"]
+    low_energy_model = settings["low_energy_model"]
+    he_le_transition = settings["he_le_transition"]
+    he_le_trwidth = settings["he_le_trwidth"]
+    cr_model = (
+        (pm.GaisserHonda, None) if settings["cr_model"] == "Gaisser–Honda"
+        else (pm.HillasGaisser2012, settings["cr_model"])
+    )
+    theta_deg = settings["theta_deg"]
     atmosphere = ("CORSIKA", ("BK_USStd", None))
-
-    # Cascade energy grid [GeV]; keep a buffer around the plotted range
-    e_min = 1.0
-    e_max = 1.0e11
-
-    # Solver: auto chooses a CPU backend; CUDA is opt-in
-    backend = "auto"              # browser: auto / numpy_etd2; native: also mkl_etd2, accelerate_etd2, cuda_etd2
-
+    e_min, e_max = settings["e_min"], settings["e_max"]
+    backend = settings["backend"]
+    mo.md(
+        f"**Applied:** {interaction_model} · {settings['cr_model']} · "
+        f"{theta_deg:g}° · {e_min:g}–{e_max:g} GeV"
+    )
     return (
-        atmosphere,
-        backend,
-        cr_model,
-        database,
-        e_max,
-        e_min,
-        he_le_transition,
-        he_le_trwidth,
-        interaction_model,
-        low_energy_model,
-        theta_deg,
+        atmosphere, backend, cr_model, database, e_max, e_min,
+        he_le_transition, he_le_trwidth, interaction_model, low_energy_model,
+        settings, theta_deg,
     )
 
 
@@ -217,10 +326,10 @@ def _(cr_model, energy, fluxes, interaction_model, np, plt, theta_deg):
 
 
 @app.cell(hide_code=True)
-def export_notebook():
+def export_notebook(settings):
     from MCEq.notebook import download_jupyter
 
-    download_jupyter(filename="Basic_flux.ipynb")
+    download_jupyter(filename="Basic_flux.ipynb", configuration=settings)
     return
 
 

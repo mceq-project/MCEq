@@ -7,7 +7,7 @@ the gallery's version. Importing MCEq does not require marimo.
 import ast
 
 
-def jupyter_bytes(app):
+def jupyter_bytes(app, configuration=None):
     """Export current cell source without running the cascade or spawning a process."""
     import nbformat
     from marimo._convert.ipynb import convert_from_ir_to_ipynb
@@ -15,11 +15,25 @@ def jupyter_bytes(app):
     notebook = nbformat.reads(
         convert_from_ir_to_ipynb(app, sort_mode="top-down"), as_version=4
     )
+    for cell in notebook.cells:
+        if (
+            configuration is None
+            and cell.metadata.get("marimo", {}).get("name") == "configuration_defaults"
+        ):
+            assignment = ast.parse(cell.source).body[0]
+            configuration = ast.literal_eval(assignment.value)
     cells = []
     for cell in notebook.cells:
         metadata = cell.metadata.pop("marimo", {})
-        if metadata.get("name") == "export_notebook":
+        if metadata.get("name") in {
+            "export_notebook",
+            "configuration_defaults",
+            "configuration_controls",
+        }:
             continue
+        if metadata.get("name") == "selected_configuration":
+            cell.source = configuration_source(configuration)
+            cell.metadata = {}  # The plain configuration must be visible in Jupyter.
         if cell.cell_type == "code":
             cell.source = "\n".join(
                 line
@@ -48,7 +62,37 @@ def jupyter_bytes(app):
     return nbformat.writes(notebook).encode("utf-8")
 
 
-def download_jupyter(filename="notebook.ipynb"):
+def configuration_source(settings):
+    """Materialize the basic-flux controls as editable, ordinary Python assignments."""
+    primary = settings["cr_model"]
+    if primary not in {"H3a", "H4a", "Gaisser–Honda"}:
+        raise ValueError(f"Unsupported cosmic-ray model: {primary}")
+    primary_code = (
+        "(pm.GaisserHonda, None)"
+        if primary == "Gaisser–Honda"
+        else f"(pm.HillasGaisser2012, {primary!r})"
+    )
+    return f"""# Hadronic interactions
+interaction_model = {settings["interaction_model"]!r}
+database = {settings["database"]!r}
+low_energy_model = {settings["low_energy_model"]!r}
+he_le_transition = {settings["he_le_transition"]!r}  # GeV
+he_le_trwidth = {settings["he_le_trwidth"]!r}  # log10(E/GeV) decades; 10–90% width
+
+# Primary cosmic rays and atmosphere
+cr_model = {primary_code}
+theta_deg = {settings["theta_deg"]!r}  # degrees from vertical
+atmosphere = ("CORSIKA", ("BK_USStd", None))
+
+# Cascade energy grid [GeV]
+e_min = {settings["e_min"]!r}
+e_max = {settings["e_max"]!r}
+
+# Solver
+backend = {settings["backend"]!r}"""
+
+
+def download_jupyter(filename="notebook.ipynb", configuration=None):
     """Download the current saved source, read at click time (also in Pyodide's VFS)."""
     import marimo as mo
     from marimo._ast.app import InternalApp
@@ -64,7 +108,7 @@ def download_jupyter(filename="notebook.ipynb"):
         app = load_app(source)
         if app is None:
             raise ValueError("The source contains no notebook")
-        return jupyter_bytes(InternalApp(app))
+        return jupyter_bytes(InternalApp(app), configuration=configuration)
 
     return mo.download(
         data=export,
