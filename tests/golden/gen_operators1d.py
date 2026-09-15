@@ -7,8 +7,11 @@ dim_states 2232, ``int_m`` 169786 nonzeros and ``dec_m`` 54795.
 
 This section is NOT ``golden_slow``: CI carries this database, so the seven
 stencil families and the assembly path become real CI coverage rather than a
-host-only pin. It is ``golden_host`` — the CSR buffers are sha256 digests, and
-a digest is bitwise by construction.
+host-only pin. It is ``golden_host`` so the reference job pins the exact
+numpy/scipy build, but the float payloads are not host-bitwise: the ``int_m``
+data digest is an identity label, the gate is a 1/64 element-wise sample, and
+the reduction rows and dense ``op_matrix`` carry the libm drift budget — see
+:data:`._operator_sweep.tolerances` for the measured drift and the bound.
 
 Fifteen cells at 2.8 s: the 7 stencils x muon scattering on/off cross product,
 plus one ``average_loss_operator`` cell at the default stencil. Seven distinct
@@ -145,4 +148,5 @@ def build():
         adv_set_pins=ADV_SET_PINS,
         run_kwargs=RUN_KWARGS,
         note=NOTE,
+        numeric=True,
     )
