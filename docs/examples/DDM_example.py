@@ -267,7 +267,7 @@ def _(ratio_figs):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(filename="DDM_example.ipynb", configuration=settings)
     return
 

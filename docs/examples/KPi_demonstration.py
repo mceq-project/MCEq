@@ -213,7 +213,7 @@ def _(e_grid, kdown, nominal, plt):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(filename="KPi_demonstration.ipynb", configuration=settings)
     return
 

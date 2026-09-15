@@ -192,7 +192,7 @@ def _(e_grid, mu_flux, numu_flux, plt):
     return (fig,)
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Dependence_of_spectrum_on_atmosphere.ipynb",
         configuration=settings,

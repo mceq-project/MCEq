@@ -229,7 +229,7 @@ def _(mceq_run, np, plt, registered):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Partial_hadron_fractions.ipynb", configuration=settings
     )

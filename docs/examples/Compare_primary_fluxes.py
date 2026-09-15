@@ -237,7 +237,7 @@ def _(e_grid, np, p_spectrum_flux):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Compare_primary_fluxes.ipynb", configuration=settings
     )

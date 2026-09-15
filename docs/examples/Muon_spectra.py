@@ -336,7 +336,7 @@ def _(plt, spectra):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(filename="Muon_spectra.ipynb", configuration=settings)
     return
 

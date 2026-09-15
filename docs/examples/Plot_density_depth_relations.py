@@ -103,7 +103,7 @@ def _(built, np, plt):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Plot_density_depth_relations.ipynb", configuration=settings
     )

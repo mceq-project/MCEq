@@ -248,7 +248,7 @@ def _(all_flux, cos_theta, e_grid, mag, np, plt):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Zenith_distribution_IceCube.ipynb", configuration=settings
     )

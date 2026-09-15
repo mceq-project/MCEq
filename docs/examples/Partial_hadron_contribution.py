@@ -242,7 +242,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(
         filename="Partial_hadron_contribution.ipynb", configuration=settings
     )

@@ -345,7 +345,7 @@ def _(K, az_centres, mceq, np, use_geomagnetic, zen_centres):
 
 
 @app.cell(hide_code=True)
-def _(download_jupyter, settings):
+def export_notebook(download_jupyter, settings):
     download_jupyter(filename="Full_sky_carousel.ipynb", configuration=settings)
     return
 
