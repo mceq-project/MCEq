@@ -63,7 +63,10 @@ wheel is a deployment artifact, not a replacement for the normal MCEq package.
 hashes. Generated wheels, databases, and HTML stay outside version control.
 Read the Docs builds this gallery before Sphinx; Sphinx copies it under
 `browser/`. Notebook CI also saves a downloadable static-gallery artifact.
-This first port sits alongside the existing examples.
+This template now applies to all example notebooks under `docs/examples/` and
+`examples/`; the notebook CI checks every marimo source with
+`marimo check --strict`, executes the clean exports with nbmake (two DB-gated
+exceptions), and fails if a committed `.ipynb` differs from a fresh export.
 
 ## Style for subsequent examples
 
