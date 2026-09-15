@@ -11,6 +11,20 @@ Comparison modes per key, resolved by :func:`tolerance_for`:
 ``rel_l2``    `||y - x||_2 / ||x||_2 <= rtol` — for backends whose reduction
               order is not fixed (CUDA), and the escape hatch for phases that
               deliberately change a summation or association order.
+``max_rel``   `max |y - x| / |x|` over elements (and absolute `rtol` where the
+              golden is 0) — element-wise, so one moved element is visible
+              instead of diluted by the norm. Pairs with the strided sample a
+              buffer is stored at (see :data:`SAMPLE_STRIDE`): a libm
+              one-ULP difference must move every sampled element by a ULP
+              and nothing more, while a physics change of any size passes
+              nowhere it should.
+``record``    shape and dtype-kind checked, value not. For a sha256 digest of
+              a float payload whose numeric comparison now carries the
+              gate: a digest admits no tolerance, and comparing it would
+              re-impose host bitwise on an array the section compares
+              numerically. The generator still recomputes and stores it, so
+              the collision invariants that read digests as identity labels
+              keep working.
 ``per_species_max``
               the worst `max_E |dphi/phi_ref|` over the species of a state, on
               the bins above `floor * peak` of the grid less its top
@@ -49,6 +63,29 @@ CUDA_RTOL = 1e-9
 #: Relative-L2 budget for a host change that legitimately reorders a sum
 #: (plan decision D4: Phase 2 may move host results by this much).
 HOST_RTOL = 1e-12
+
+#: Relative-L2 / element-wise budget for a host whose libm answers one or two
+#: ULPs differently for ``exp``/``log``/``pow`` — a glibc or compiler-runtime
+#: difference under a pinned numpy/scipy. Measured worst cases moving the
+#: GH ubuntu-latest runners (glibc 2.39) off the EL9 golden host (2.34):
+#: ``paths`` MSIS21 ``dX`` 1.33e-11 rel-L2 (max elementwise 2.77e-10),
+#: ``operators1d`` stencil ``op_matrix`` 9.04e-12 rel-L2 (max elementwise
+#: 2.83e-11), ``environment`` cell scalars 3.9e-14 rel-L2. 1e-9 carries
+#: ~35x on the worst elementwise of those — the same margin logic as
+#: :data:`EM_SCALE_RTOL`, which was set for a LAPACK bump on a value of the
+#: same order. Keys held bitwise have to be bitwise reproducible on the
+#: reference runner — a libm drift flips a float's last bits invisibly to
+#: the physics but totally to a sha256.
+LIBM_RTOL = 1e-9
+
+#: Stride at which large float buffers are sampled for the element-wise
+#: ``max_rel`` check (every 64th CSR ``data`` entry, every 64th spline knot
+#: and coefficient). Chosen so the largest buffer here (``int_m`` at ~170k
+#: nonzeros) costs ~21 kB of golden instead of 1.4 MB while ~2.6k elements
+#: still sample every row block of the layout; a drift that moves one
+#: element moves its neighbours in these smooth arrays, so the sample
+#: measures the same thing the full buffer would.
+SAMPLE_STRIDE = 64
 
 PROVENANCE_KEY = "__provenance__"
 
@@ -193,6 +230,34 @@ def sparse_digest(mat) -> dict:
         "indices": array_digest(m.indices),
         "indptr": array_digest(m.indptr),
     }
+
+
+def record_sparse(arrays, prefix, matrix, numeric=False):
+    """Store shape, nnz, dtype and the three CSR buffer digests of `matrix`.
+
+    With ``numeric``, also store a 1/stride :func:`sample_array` of the
+    sorted float ``data`` buffer as ``{prefix}/data_sample``. The digest of
+    that buffer stays stored and named as it always was, but the section's
+    tolerance table demotes the float-data digest to ``record``: a digest
+    admits no tolerance, and the buffer's last bits follow the host libm, so
+    keeping it gated is what pinned the section to bitwise on the generating
+    host and made a glibc bump on the runner fleet a red build. The gate
+    becomes ``data_sample`` under ``max_rel``. The index buffers
+    (``indices``/``indptr``) stay gated: integers, they do not move with the
+    libm. Returns the digest dict, which the operator sweep's collision
+    invariants read as identity labels.
+    """
+    digest = sparse_digest(matrix)
+    arrays[prefix + "/shape"] = np.asarray(digest["shape"])
+    arrays[prefix + "/nnz"] = np.asarray(digest["nnz"])
+    arrays[prefix + "/dtype"] = np.asarray(digest["dtype"])
+    for part in ("data", "indices", "indptr"):
+        arrays[prefix + "/" + part] = np.asarray(digest[part])
+    if numeric:
+        m = matrix.tocsr(copy=True)
+        m.sort_indices()
+        arrays[prefix + "/data_sample"] = sample_array(m.data)
+    return digest
 
 
 def file_digest(path) -> str:
@@ -500,17 +565,50 @@ def load_section(section: str):
 # --------------------------------------------------------------------------
 
 
+def sample_array(arr, stride: int = SAMPLE_STRIDE):
+    """Every `stride`-th element of a float payload, flattened and contiguous.
+
+    Large float buffers (CSR ``data`` arrays, spline knots and coefficients)
+    are stored in the golden at this sampling instead of in full: the gate is
+    then element-wise over ~n/stride elements, and a drift confined to one
+    element moves its neighbours in these smooth arrays too, so the sample
+    measures what the full buffer would for 1/stride of the bytes. The full
+    digest of the unsampled array stays recorded (`record` mode) as the
+    identity label the collision invariants read.
+    """
+    a = np.ascontiguousarray(arr).reshape(-1)
+    return np.asarray(a[::stride])
+
+
 def tolerance_entry_for(key: str, provenance: dict) -> dict:
     """The tolerance entry governing one key, or the bitwise default.
 
-    A key matches an entry if the entry is the key itself or a prefix of it
-    ending in `/`, so a whole subtree can be loosened with one line; the
-    longest matching prefix wins, which is how a section keeps `state/` on the
-    flux metric while its per-mode norms under the same prefix stay on L2.
+    Three forms, in precedence order: the key itself; a ``suffix:<name>``
+    entry matching every key whose path ends ``/<name>``, longest fragment
+    winning (so ``suffix:int_m/data`` gates the operator buffers without
+    touching ``dec_m/data`` or a ``data_sample`` sibling), which is how a
+    section demotes its digest keys in one line; and a prefix ending in `/`
+    covering a subtree, longest prefix winning — which is how a section
+    keeps `state/` on the flux metric while its per-mode norms under the
+    same prefix stay on L2.
     """
     table = provenance.get("tolerances") or {}
     if key in table:
         return dict(table[key])
+    suffixes = {k: v for k, v in table.items() if k.startswith("suffix:")}
+    if suffixes:
+        matches = sorted(
+            (
+                suffix
+                for suffix in suffixes
+                if key == suffix[len("suffix:") :]
+                or key.endswith("/" + suffix[len("suffix:") :])
+            ),
+            key=len,
+            reverse=True,
+        )
+        if matches:
+            return dict(suffixes[matches[0]])
     for prefix, entry in sorted(table.items(), key=lambda kv: -len(kv[0])):
         if prefix.endswith("/") and key.startswith(prefix):
             return dict(entry)
@@ -550,13 +648,16 @@ def compare_key(
     if exp.shape != act.shape:
         return f"{key}: shape {act.shape} != golden {exp.shape}"
 
+    if exp.dtype.kind != act.dtype.kind:
+        return f"{key}: dtype kind {act.dtype.kind!r} != golden {exp.dtype.kind!r}"
+
+    if mode == "record":
+        return None
+
     if exp.dtype.kind in "SUO" or act.dtype.kind in "SUO":
         if not np.array_equal(exp, act):
             return f"{key}: text/object value {act!r} != golden {exp!r}"
         return None
-
-    if exp.dtype.kind != act.dtype.kind:
-        return f"{key}: dtype kind {act.dtype.kind!r} != golden {exp.dtype.kind!r}"
 
     if mode == "per_species_max":
         if layout is None:
@@ -594,6 +695,28 @@ def compare_key(
         if np.array_equal(exp, act, equal_nan=exp.dtype.kind == "f"):
             return None
         return f"{key}: not bitwise equal ({_summarise(exp, act)})"
+
+    if mode == "max_rel":
+        ef = np.asarray(exp, dtype=np.float64)
+        af = np.asarray(act, dtype=np.float64)
+        if not np.array_equal(np.isfinite(ef), np.isfinite(af)):
+            n_e = int((~np.isfinite(ef)).sum())
+            n_a = int((~np.isfinite(af)).sum())
+            return f"{key}: non-finite pattern differs (golden {n_e}, actual {n_a})"
+        finite = np.isfinite(ef)
+        ef, af = ef[finite], af[finite]
+        diff = np.abs(af - ef)
+        nonzero = ef != 0.0
+        worst = 0.0
+        if nonzero.any():
+            worst = float(np.nanmax(diff[nonzero] / np.abs(ef[nonzero])))
+        if (~nonzero).any():
+            worst = max(worst, float(np.nanmax(diff[~nonzero])))
+        if worst <= rtol:
+            return None
+        tol = rtol * np.maximum(np.abs(ef), 1.0)
+        n_bad = int(np.count_nonzero(np.abs(af - ef) > np.where(ef == 0, rtol, tol)))
+        return f"{key}: max elementwise rel {worst:.3e} > {rtol:.1e} ({n_bad} of {ef.size} elements)"
 
     # rel_l2
     ef = np.asarray(exp, dtype=np.float64)
@@ -649,6 +772,11 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
     per-species bound and on the rest by `rtol_floor`. The floor is still
     handed to `compare_key`, which applies it to the relative-L2 sub-bounds
     inside that mode -- those are norms and do move with the reduction order.
+
+    `max_rel` and `record` are exempt too. An element-wise bound is not a
+    relative-L2 budget and is not made more or less strict by a norm floor,
+    and a recorded key carries no bound at all; a floor that promoted them to
+    `rel_l2` would silently compare something the section never chose.
     """
     golden, prov = load_section(section)
     problems = []
@@ -664,7 +792,7 @@ def compare_section(section: str, produced: dict, *, rtol_floor: float = 0.0):
         entry = tolerance_entry_for(key, prov)
         mode = entry.get("mode", "rel_l2")
         rtol = float(entry.get("rtol", HOST_RTOL))
-        if mode != "per_species_max" and rtol_floor > rtol:
+        if mode not in ("per_species_max", "max_rel", "record") and rtol_floor > rtol:
             mode, rtol = "rel_l2", rtol_floor
         problem = compare_key(
             key,

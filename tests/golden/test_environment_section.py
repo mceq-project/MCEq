@@ -49,7 +49,7 @@ def test_the_section_is_registered_host_pinned_and_not_slow():
 
     Not `golden_slow`: it opens no database and forks nothing, so CI runs it
     wherever the reference job runs. `golden_host` because its knot and
-    coefficient keys are sha256 digests, which admit no tolerance.
+    coefficient digests are identity labels, gated through element-wise samples.
     """
     from .make_goldens import GENERATORS
 

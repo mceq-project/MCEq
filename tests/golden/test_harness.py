@@ -191,6 +191,31 @@ def test_dispatch_exact_entry_beats_a_matching_prefix():
     assert tolerance_for("state/single_mode_l2", prov) == ("rel_l2", 1e-11)
 
 
+def test_dispatch_suffix_entry_matches_by_path_fragment():
+    """`suffix:int_m/data` gates every operator buffer in one line."""
+    prov = {"tolerances": {"suffix:int_m/data": {"mode": "record"}}}
+    assert tolerance_for("cells/expfit/ms_on/int_m/data", prov) == ("record", HOST_RTOL)
+    assert tolerance_for("ddm/int_m/data", prov) == ("record", HOST_RTOL)
+    # The fragment must be a full path component: it must not reach dec_m,
+    # the sample sibling, or a key merely containing the string.
+    assert tolerance_for("cells/expfit/ms_on/dec_m/data", prov) == ("bitwise", 0.0)
+    assert tolerance_for("cells/x/int_m/data_sample", prov) == ("bitwise", 0.0)
+
+
+def test_dispatch_suffix_beats_prefix_and_exact_beats_suffix():
+    """Precedence: exact, then longest suffix, then longest prefix."""
+    prov = {
+        "tolerances": {
+            "cells/": {"mode": "rel_l2", "rtol": 1e-9},
+            "suffix:int_m/data": {"mode": "record"},
+            "a/int_m/data": {"mode": "bitwise"},
+        }
+    }
+    assert tolerance_for("cells/x/int_m/data", prov) == ("record", HOST_RTOL)
+    assert tolerance_for("a/int_m/data", prov) == ("bitwise", HOST_RTOL)
+    assert tolerance_for("cells/x/probe/X", prov) == ("rel_l2", 1e-9)
+
+
 # --------------------------------------------------------------------------
 # compare_key: structural checks, shared by every mode
 # --------------------------------------------------------------------------
@@ -275,6 +300,40 @@ def test_compare_key_rel_l2_drops_matching_non_finite():
 
 
 # --------------------------------------------------------------------------
+# compare_key: max_rel / record
+# --------------------------------------------------------------------------
+
+
+def test_compare_key_max_rel_sees_one_moved_element():
+    """One moved element is visible, where rel-L2 dilutes it by sqrt(n)."""
+    x = np.ones(10_000)
+    y = x.copy()
+    y[5] *= 1 + 1e-8
+    assert compare_key("k", x, y, "rel_l2", 1e-9) is None
+    problem = compare_key("k", x, y, "max_rel", 1e-9)
+    assert problem.startswith("k: max elementwise rel")
+    assert "1 of 10000 elements" in problem
+
+
+def test_compare_key_max_rel_ulp_drift_passes():
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    y = x * (1 + 1e-16)
+    assert compare_key("k", x, y, "max_rel", 1e-9) is None
+
+
+def test_compare_key_max_rel_zero_golden_is_absolute():
+    x = np.array([1.0, 0.0])
+    assert compare_key("k", x, x.copy(), "max_rel", 1e-9) is None
+    assert "max elementwise rel" in compare_key("k", x, [1.0, 1e-8], "max_rel", 1e-9)
+
+
+def test_compare_key_record_ignores_value():
+    """A recorded digest moves with the host libm; the gate is elsewhere."""
+    assert compare_key("k", "abcd", "beef", "record", 0.0) is None
+    assert "shape" in compare_key("k", np.zeros(3), np.zeros(4), "record", 0.0)
+
+
+# --------------------------------------------------------------------------
 # compare_section and the rtol_floor override
 # --------------------------------------------------------------------------
 
@@ -346,6 +405,20 @@ def test_compare_section_rtol_floor_does_not_tighten(unit_section):
     produced = dict(arrays)
     produced["state/x"] = arrays["state/x"] * (1.0 + 1e-8)
     assert compare_section("unit", produced, rtol_floor=1e-12) == []
+
+
+def test_compare_section_rtol_floor_spares_max_rel_and_record(unit_section):
+    """A floor that promoted element-wise or recorded keys to rel-L2 would
+    compare something the section never chose."""
+    arrays = unit_section(
+        {"state/x": {"mode": "max_rel", "rtol": 1e-16}, "count": {"mode": "record"}}
+    )
+    produced = dict(arrays)
+    produced["state/x"] = arrays["state/x"] * (1.0 + 1e-8)
+    produced["count"] = np.asarray(8)
+    assert "max elementwise" in str(compare_section("unit", produced))
+    assert "max elementwise" in str(compare_section("unit", produced, rtol_floor=1e-9))
+    assert compare_section("unit", {**arrays, "count": np.asarray(99)}) == []
 
 
 def test_compare_section_rtol_floor_spares_the_flux_metric(unit_section):

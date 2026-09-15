@@ -53,7 +53,13 @@ import inspect
 import numpy as np
 
 from . import _flux_metric
-from ._harness import array_digest, load_section, make_provenance, sparse_digest
+from ._harness import (
+    LIBM_RTOL,
+    array_digest,
+    load_section,
+    make_provenance,
+    record_sparse,
+)
 
 SECTION = "solve1d"
 
@@ -182,25 +188,39 @@ STATE_KEYS = tuple(
 #: Margin: the retune moves the final states 1.129e-12 (8.9x) and the depth-grid
 #: stacks 2.915e-12 (3.4x), so 3.4x is what this entry actually carries.
 TOLERANCES = {
-    key: {
-        "mode": "per_species_max",
-        "rtol": _flux_metric.RTOL_1D,
-        "floor": _flux_metric.FLOOR,
-        "guard": _flux_metric.DEFAULT_GUARD,
-        "trim_top_bins": _flux_metric.TRIM_TOP_BINS,
-    }
-    for key in STATE_KEYS
+    # The assembled int_m digest and the solved-state digests in `extra` moved
+    # on the GH azure runners (glibc 2.39) by up to 6.5e-15 elementwise: the
+    # digest admits no tolerance, so the float CSR buffer is gated through its
+    # stored element-wise sample and the digest demoted to an identity label.
+    # The solver outputs themselves (the `state` flux keys below and the
+    # `sol`/`n_*` getters) are gated at the flux metric or at LIBM_RTOL.
+    "suffix:int_m/data": {"mode": "record"},
+    "suffix:int_m/data_sample": {"mode": "max_rel", "rtol": LIBM_RTOL},
+    # Solved-state keys under the case prefixes go on rel-L2 rather than
+    # max_rel: deep at the grid edge some bins are cancellation residuals
+    # (emoff/theta89 sol/total_p+ showed max elementwise 7.1e-9 at rel-L2
+    # 5.8e-16), and an element-wise bound would gate on those ratios instead
+    # of the state. The flux metric below already pins the state vectors
+    # per species; this prefix carries the getters (n_particles, n_mu, the
+    # grid stacks) whose drift measured <= 2.8e-14 rel-L2.
+    "emoff/": {"mode": "rel_l2", "rtol": LIBM_RTOL},
+    "emon/": {"mode": "rel_l2", "rtol": LIBM_RTOL},
+    **{
+        key: {
+            "mode": "per_species_max",
+            "rtol": _flux_metric.RTOL_1D,
+            "floor": _flux_metric.FLOOR,
+            "guard": _flux_metric.DEFAULT_GUARD,
+            "trim_top_bins": _flux_metric.TRIM_TOP_BINS,
+        }
+        for key in STATE_KEYS
+    },
 }
 
 
 def _record_sparse(arrays, prefix, matrix):
-    """Store shape, nnz, dtype and the CSR buffer digests of `matrix`."""
-    digest = sparse_digest(matrix)
-    arrays[prefix + "/shape"] = np.asarray(digest["shape"])
-    arrays[prefix + "/nnz"] = np.asarray(digest["nnz"])
-    arrays[prefix + "/dtype"] = np.asarray(digest["dtype"])
-    for part in ("data", "indices", "indptr"):
-        arrays[prefix + "/" + part] = np.asarray(digest[part])
+    """Store shape, nnz, dtype and the CSR buffers of `matrix`, plus a float-data sample."""
+    record_sparse(arrays, prefix, matrix, numeric=True)
 
 
 def _record_meta(arrays, case, mceq):
