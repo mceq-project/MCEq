@@ -99,7 +99,13 @@ import os
 
 import numpy as np
 
-from ._harness import HOST_RTOL, array_digest, make_provenance, sparse_digest
+from ._harness import (
+    HOST_RTOL,
+    LIBM_RTOL,
+    array_digest,
+    make_provenance,
+    record_sparse,
+)
 
 SECTION = "species"
 
@@ -176,6 +182,22 @@ DDM_ENTRY = dict(projectile=2212, secondary=211, ebeam=158.0)
 TOLERANCES = {
     "ddm/zfactors": {"mode": "rel_l2", "rtol": HOST_RTOL},
     "ddm/zfactors_tuned": {"mode": "rel_l2", "rtol": HOST_RTOL},
+    # The assembled int_m float buffer and its per-species reductions move by
+    # a ULP or two between glibc builds (max elementwise 3.0e-13 on the GH
+    # azure runners against the EL9 golden host); the digest that used to gate
+    # the buffer admits no tolerance, so the gate is the stored element-wise
+    # sample and the reduction array itself. dec_m digests and the raw HDF5
+    # digests stay bitwise: table-driven payloads, not libm-sensitive math.
+    "suffix:int_m/data": {"mode": "record"},
+    "suffix:int_m/data_sample": {"mode": "max_rel", "rtol": LIBM_RTOL},
+    "suffix:int_m/row_sums_by_species": {"mode": "max_rel", "rtol": LIBM_RTOL},
+    # The f32 run reproduces bitwise on the runner fleet (it is not in the
+    # float64 libm drift class — its rounding step is ~1e-7, far above any
+    # drift a libm bump moves), so it is excluded from the suffix demotion:
+    # an exact key entry wins over the suffix, and the recorder is told not
+    # to sample it.
+    "f32/int_m/data": {"mode": "bitwise"},
+    "f32/int_m/row_sums_by_species": {"mode": "bitwise"},
 }
 
 
@@ -326,12 +348,8 @@ def _record_operator(arrays, prefix, matrix, n_species):
     row nonzero counts into ``(n_species, dim)`` blocks names the species a
     digest mismatch comes from.
     """
-    digest = sparse_digest(matrix)
-    arrays[prefix + "/shape"] = np.asarray(digest["shape"])
-    arrays[prefix + "/nnz"] = np.asarray(digest["nnz"])
-    arrays[prefix + "/dtype"] = np.asarray(digest["dtype"])
-    for part in ("data", "indices", "indptr"):
-        arrays[prefix + "/" + part] = np.asarray(digest[part])
+    numeric = prefix.endswith("int_m") and not prefix.startswith("f32")
+    record_sparse(arrays, prefix, matrix, numeric=numeric)
 
     csr = matrix.tocsr()
     row_sums = np.asarray(csr.sum(axis=1)).ravel()
