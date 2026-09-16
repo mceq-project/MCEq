@@ -1380,3 +1380,67 @@ def test_msis_tail_actually_differs_between_opposite_azimuths():
     # seam heights leave a ~5e-6 relative difference of their own.  The real
     # effect is ~9e-2, so require a margin that noise cannot reach.
     assert abs(antipodal / overhead - 1.0) > 1e-3
+
+
+def test_bracket_wraps_below_the_first_node():
+    """A cell-centred global axis starts above 0, so [0, axis[0]) is the wrap cell."""
+    axis = np.arange(22.5, 360.0, 45.0)
+    assert dp.AtmosphereTable._bracket(axis, 11.25, periodic=True) == (7, 0.75)
+    assert dp.AtmosphereTable._bracket(axis, 0.0, periodic=True) == (7, 0.5)
+    assert dp.AtmosphereTable._bracket(axis, 337.5, periodic=True) == (7, 0.0)
+    assert dp.AtmosphereTable._bracket(axis, 22.5, periodic=True) == (0, 0.0)
+
+
+def test_bracket_on_an_axis_that_starts_at_zero_is_unchanged():
+    axis = np.arange(0.0, 360.0, 45.0)
+    assert dp.AtmosphereTable._bracket(axis, 0.0, periodic=True) == (0, 0.0)
+    assert dp.AtmosphereTable._bracket(axis, 337.5, periodic=True) == (7, 0.5)
+
+
+def test_column_interpolates_across_the_seam_of_a_cell_centred_grid(tmp_path):
+    """The midpoint of the wrap cell is the mean of the nodes either side of it."""
+    lons = np.arange(22.5, 360.0, 45.0)
+    lines = ["# MCEq tabulated atmosphere v1", "lat_deg,lon_deg,h_cm,T_K,p_hPa"]
+    for lat in (-30.0, 30.0):
+        for lon in lons:
+            for h, p in ((0.0, 1000.0), (1.0e6, 265.0)):
+                # Temperature varies with longitude only, so the expected
+                # interpolant is arithmetic and easy to state.
+                lines.append(f"{lat},{lon},{h},{280.0 + lon / 45.0},{p}")
+    path = tmp_path / "cell_centred.csv"
+    path.write_text("\n".join(lines) + "\n")
+
+    grid = dp.AtmosphereTable.load_from_csv(path)
+    assert grid.is_global_in_lon
+    seam = grid.column(0.0, 0.0)  # midway between 337.5 and 22.5
+    node_lo = grid.column(337.5, 0.0)
+    node_hi = grid.column(22.5, 0.0)
+    assert seam.T_K[0] == pytest.approx(
+        0.5 * (node_lo.T_K[0] + node_hi.T_K[0]), rel=1e-12
+    )
+
+
+def test_ragged_grid_error_does_not_recommend_nan(tmp_path):
+    """The old remedy was self-defeating: a nan density is dropped on load.
+
+    Following it produced the very error it was printed under.
+    """
+    # 8 rows over a 2x2 grid, so the row count IS a whole number of columns
+    # (n_lev = 2) -- otherwise the loader stops at the earlier "not a whole
+    # number of columns" error and never reaches the one under test.  The
+    # levels are just distributed unevenly: 3, 1, 2, 2.
+    lines = ["# MCEq tabulated atmosphere v1", "lat_deg,lon_deg,h_cm,T_K,p_hPa"]
+    levels = {(-30.0, 0.0): 3, (-30.0, 90.0): 1, (30.0, 0.0): 2, (30.0, 90.0): 2}
+    for (lat, lon), n_lev in levels.items():
+        for k in range(n_lev):
+            lines.append(f"{lat},{lon},{k * 1.0e6},280.0,{1000.0 / (k + 1)}")
+    path = tmp_path / "ragged.csv"
+    path.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(ValueError) as excinfo:
+        dp.AtmosphereTable.load_from_csv(path)
+
+    message = str(excinfo.value)
+    assert "do not all have 2 levels" in message
+    assert "mark gaps with nan" not in message
+    assert "discarded on load" in message

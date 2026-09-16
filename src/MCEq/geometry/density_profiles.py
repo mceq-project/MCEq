@@ -1364,8 +1364,12 @@ class AtmosphereTable:
                 f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
                 f"columns do not all have {n_lev} levels -- the column at "
                 f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
-                f"has {counts[bad]}. Keep every level in every column (mark gaps "
-                "with nan in a data column rather than dropping the row)."
+                f"has {counts[bad]}. Keep every level in every column, with a "
+                "finite positive density on each -- either rho_gcm3, or T_K "
+                "and p_hPa together. A row whose density is missing or nan is "
+                "discarded on load and leaves the same hole, so fill the gap "
+                "(interpolate between the neighbouring levels) instead of "
+                "marking it."
             )
 
         steps = np.diff(lon_axis)
@@ -1489,8 +1493,18 @@ class AtmosphereTable:
         """Index of the node below *value* and the fractional weight above it."""
         if periodic:
             # The axis wraps, so the last cell spans axis[-1] -> axis[0] + 360.
+            # A cell-centred grid starts above 0, and everything below its first
+            # node lies in that wrap cell, a turn further along.
+            if value < axis[0]:
+                value = value + 360.0
             extended = np.concatenate([axis, [axis[0] + 360.0]])
-            idx = int(np.clip(np.searchsorted(extended, value) - 1, 0, len(axis) - 1))
+            idx = int(
+                np.clip(
+                    np.searchsorted(extended, value, side="right") - 1,
+                    0,
+                    len(axis) - 1,
+                )
+            )
             span = extended[idx + 1] - extended[idx]
         else:
             idx = int(np.clip(np.searchsorted(axis, value) - 1, 0, len(axis) - 2))
