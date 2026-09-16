@@ -1598,6 +1598,12 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         of the profile matters.  ``"none"`` leaves the profile short, so
         :func:`get_density` returns ``nan`` above the table and building the
         density spline raises.
+      msis_blend_bins (int): number of table levels below the seam the MSIS
+        blend ramps across (default 5).  Of the levels the loop touches, the
+        topmost is overwritten by the MSIS extension immediately afterwards
+        and the deepest is left at its table value, so the number of levels
+        actually blended is ``msis_blend_bins - 2``; values of 2 or less
+        blend nothing.
       location (str, optional): name of the site, for bookkeeping and for the
         ``"msis00"`` extension.
       season (str, optional): month name, for bookkeeping and for the
@@ -1806,8 +1812,20 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         :meth:`AtmosphereTable.column` accepts either branch, but both MSIS
         wrappers reject anything past 180.  This is a change of representation,
         not of position: 315 deg E and -45 deg E name one meridian.
+
+        The bound below mirrors :meth:`AtmosphereTable.column`'s: that method
+        validates *coord* on the gridded path, but :meth:`_select_column`
+        returns a non-gridded table unvalidated, so this is the only check a
+        single-column atmosphere's longitude ever passes through.
         """
-        return (float(lon) + 180.0) % 360.0 - 180.0
+        lon = float(lon)
+        if not -360.0 <= lon <= 360.0:
+            raise ValueError(
+                f"TabulatedAtmosphere._to_msis_longitude(): longitude "
+                f"{lon:.3f} deg is outside [-360, 360]. Pass degrees on either "
+                "the [-180, 180) or the [0, 360) branch."
+            )
+        return (lon + 180.0) % 360.0 - 180.0
 
     def _msis_extension_coord(self):
         """(longitude, latitude) to place the MSIS extension at, or None."""
@@ -1979,6 +1997,22 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
     *n_azimuth* equally-spaced directions, giving one representative column for
     the zenith angle.
 
+    .. note::
+       The azimuth-averaged MSIS tail is placed at a single coordinate: the
+       centre of the ring of impact points (see :meth:`_ring_centre`), not at
+       each azimuth's own impact point.  That centre is continuous in the
+       ring's angular radius everywhere except at exactly 90 deg, where a ring
+       has no well-defined centre and the point returned flips between the
+       detector's side and the antipode.  For a near-surface detector this
+       flip happens near a zenith angle of about 135 deg, and it shows up as a
+       small step in density above the seam at that angle -- confined to the
+       extrapolated column above the table, roughly 0.1 % of a vertical
+       column, so a zenith scan through that angle shows a small kink in the
+       tail rather than a discontinuity in the profile itself. This is
+       inherent to collapsing a ring to one point, not a bug: any such
+       collapse is discontinuous somewhere.  Placing the tail per-azimuth
+       instead, as :class:`MSIS00LocationCentered` does, would remove it.
+
     Args:
       table (str or AtmosphereTable): a gridded table, see
         :class:`TabulatedAtmosphere` for the format.
@@ -1992,6 +2026,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
       surface_elevation_m (float): elevation of the local surface above sea
         level in metres (default 0).
       top_extension (str): see :class:`TabulatedAtmosphere`.
+      msis_blend_bins (int): see :class:`TabulatedAtmosphere`.
       location (str, optional): name of the site, for bookkeeping.
       season (str, optional): month name, for bookkeeping.
       doy (int, optional): day of year for the MSIS extension, see

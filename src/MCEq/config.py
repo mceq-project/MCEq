@@ -640,10 +640,13 @@ release_tag = "builds_on_azure/"
 # https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v142.h5
 file_checksum = "247f40203436c69431db4d393316940636badb2c231f68d51870fb49bf476946"
 
-#: Databases withdrawn from the release assets.  The v1.4.0 and v1.4.1
-#: databases simulated neutron projectiles as protons, and the files were
-#: pulled afterwards, so a download of one now returns a 404 body.  Selecting
-#: one is a mistake worth naming rather than a silent, repeating re-download.
+#: Databases no longer published in the release assets, for different
+#: reasons.  ``mceq_db_lext_dpm193_v140.h5`` simulated neutron projectiles as
+#: protons and was withdrawn for that bug; ``mceq_db_lext_dpm191.h5`` is the
+#: older DPMJET-19.1 database, superseded rather than withdrawn.  Either way
+#: the file was pulled, so a download of one now returns a 404 body.
+#: Selecting one is a mistake worth naming rather than a silent, repeating
+#: re-download.
 retired_db_fnames = (
     "mceq_db_lext_dpm193_v140.h5",
     "mceq_db_lext_dpm191.h5",
@@ -664,10 +667,12 @@ def ensure_db_available():
 
     if mceq_db_fname in retired_db_fnames:
         raise ValueError(
-            f"config.mceq_db_fname is set to '{mceq_db_fname}', which was "
-            "withdrawn from the MCEq release assets: the v1.4.0 and v1.4.1 "
-            "databases simulated neutron projectiles as protons, and the files "
-            "no longer exist to download. Use the default "
+            f"config.mceq_db_fname is set to '{mceq_db_fname}', which is no "
+            "longer published in the MCEq release assets and cannot be "
+            "downloaded: 'mceq_db_lext_dpm193_v140.h5' was withdrawn because "
+            "it simulated neutron projectiles as protons, and "
+            "'mceq_db_lext_dpm191.h5' is the older DPMJET-19.1 database, "
+            "superseded rather than withdrawn for that bug. Use the default "
             "'mceq_db_lext_dpm193_v142.h5'."
         )
 
