@@ -53,6 +53,45 @@ def test_export_keeps_calculation_and_removes_controls(tmp_path):
     assert not any(c.get("outputs") for c in notebook["cells"])
 
 
+GATE_SOURCE = """import marimo
+app = marimo.App()
+@app.cell
+def _():
+    import marimo as mo
+    return (mo,)
+@app.cell
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve")
+    gate
+    return (gate,)
+@app.cell
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(interactive and not gate.value)
+    proceed = True
+    return (proceed,)
+@app.cell
+def _(mo, proceed):
+    _ = proceed
+    result = 42
+    return (result,)
+"""
+
+
+def test_export_strips_run_gate(tmp_path):
+    path = path = tmp_path / "gated.py"
+    path.write_text(GATE_SOURCE)
+    notebook = json.loads(jupyter_bytes(InternalApp(load_app(path))))
+    code = "\n".join(
+        "".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code"
+    )
+    for token in ("run_gate", "run_stop", "run_button", "mo.stop", "proceed"):
+        assert token not in code
+    namespace = {}
+    exec(code, namespace)  # noqa: S102 — execute our fixed fixture
+    assert namespace["result"] == 42
+
+
 def test_export_rejects_unconverted_widget(tmp_path):
     path = tmp_path / "example.py"
     path.write_text(SOURCE.replace("value = 42", "value = mo.ui.slider(1, 10)"))

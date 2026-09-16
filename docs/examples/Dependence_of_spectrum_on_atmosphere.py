@@ -115,6 +115,24 @@ def selected_configuration(controls, defaults, mo):
 
 
 @app.cell(hide_code=True)
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve", kind="success")
+    gate
+    return (gate,)
+
+
+@app.cell(hide_code=True)
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(
+        interactive and not gate.value,
+        mo.md("Adjust the settings above, then click **Build & solve**."),
+    )
+    proceed = True
+    return (proceed,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 02 · Compute fluxes for five atmospheres × two zeniths
@@ -136,7 +154,8 @@ def _(
     e_min,
     interaction_model,
     primary_model,
-):
+ proceed):
+    _ = proceed
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 

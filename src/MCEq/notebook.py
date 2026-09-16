@@ -5,6 +5,7 @@ the gallery's version. Importing MCEq does not require marimo.
 """
 
 import ast
+import re
 from contextlib import ExitStack, contextmanager
 
 
@@ -31,21 +32,40 @@ def jupyter_bytes(app, configuration=None):
             "configuration_defaults",
             "configuration_controls",
             "configuration_summary",
+            "run_gate",
+            "run_stop",
         }:
             continue
         if metadata.get("name") == "selected_configuration":
             settings = configuration
             if settings is None:
-                assignment = ast.parse(cell.source).body[0]
+                tree = ast.parse(cell.source)
+                assignment = next(
+                    node
+                    for node in tree.body
+                    if isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name)
+                        and target.id == "settings"
+                        for target in node.targets
+                    )
+                )
                 settings = ast.literal_eval(assignment.value)
             cell.source = configuration_source(settings)
             cell.metadata = {}  # The plain configuration must be visible in Jupyter.
         if cell.cell_type == "code":
-            cell.source = "\n".join(
+            source = "\n".join(
                 line
                 for line in cell.source.splitlines()
                 if line != "import marimo as mo"
+                and line.strip() != "_ = proceed"
             )
+            # The gate token is a marimo-only dependency; drop it from
+            # signatures so the exported notebook stands alone.
+            source = re.sub(r",\s*proceed(?=\s*\))", "", source)
+            source = re.sub(r"\(\s*proceed(?=\s*\))", "(", source)
+            source = re.sub(r"[ \t]*proceed(?=[ \t]*\))", "", source)
+            cell.source = source
             if any(
                 isinstance(node, ast.Name) and node.id in {"mo", "marimo"}
                 for node in ast.walk(ast.parse(cell.source))

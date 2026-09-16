@@ -120,6 +120,24 @@ def selected_configuration(charm_and_form, defaults, mo):
 
 
 @app.cell(hide_code=True)
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve", kind="success")
+    gate
+    return (gate,)
+
+
+@app.cell(hide_code=True)
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(
+        interactive and not gate.value,
+        mo.md("Adjust the settings above, then click **Build & solve**."),
+    )
+    proceed = True
+    return (proceed,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 02 · Register groups, solve once
@@ -129,7 +147,8 @@ def _(mo):
 
 @app.cell
 def _(MCEqRun, apply_kernel_and_grid, backend, charm_groups, config, database,
-      e_max, e_min, interaction_model, primary_model, theta_deg):
+      e_max, e_min, interaction_model, primary_model, theta_deg, proceed):
+    _ = proceed
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 

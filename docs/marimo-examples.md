@@ -74,6 +74,12 @@ exceptions), and fails if a committed `.ipynb` differs from a fresh export.
 - One compact configuration form, grouped by interactions, primary/solver,
   energy grid, and geometry/transition; units beside each control. Submit changes
   together. The Jupyter export materializes the applied values as assignments.
+- A `run_gate` + `run_stop` pair after the configuration: opening the
+  notebook renders settings only, and nothing heavy builds or solves until
+  **Build & solve** is clicked; the first compute cell consumes the `proceed`
+  token so marimo cancels the whole downstream chain while the gate is closed.
+  In script/CI/Jupyter contexts the gate is bypassed or stripped, so exports
+  and the notebook gate still execute everything top to bottom.
 - Build the `MCEqRun` in one cell and solve in the next, wrapping each solve
   in `solve_progress` (or a `loop_progress` bar for repeated solves), so
   configuration edits rebuild the run while the bar shows live progress.

@@ -103,6 +103,24 @@ def selected_configuration(controls, defaults, mo):
 
 
 @app.cell(hide_code=True)
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve", kind="success")
+    gate
+    return (gate,)
+
+
+@app.cell(hide_code=True)
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(
+        interactive and not gate.value,
+        mo.md("Adjust the settings above, then click **Build & solve**."),
+    )
+    proceed = True
+    return (proceed,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 02 · Solve per experiment, model, and composition
@@ -112,7 +130,8 @@ def _(mo):
 
 @app.cell
 def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      models, np):
+      models, np, proceed):
+    _ = proceed
     from scipy.integrate import trapezoid
 
     import crflux.models as pm

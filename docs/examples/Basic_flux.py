@@ -202,6 +202,24 @@ def selected_configuration(controls, defaults, mo, pm):
 
 
 @app.cell(hide_code=True)
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve", kind="success")
+    gate
+    return (gate,)
+
+
+@app.cell(hide_code=True)
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(
+        interactive and not gate.value,
+        mo.md("Adjust the settings above, then click **Build & solve**."),
+    )
+    proceed = True
+    return (proceed,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 02 · Solve the cascade
@@ -227,7 +245,8 @@ async def _(
     prepare_database,
     resolve_kernel,
     theta_deg,
-):
+ proceed):
+    _ = proceed
     config.mceq_db_fname = await prepare_database(database)
     config.e_min, config.e_max = e_min, e_max
     config.kernel_config = resolve_kernel(backend)

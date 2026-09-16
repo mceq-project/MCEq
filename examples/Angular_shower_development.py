@@ -164,6 +164,24 @@ def selected_configuration(controls, defaults, mo, present):
 
 
 @app.cell(hide_code=True)
+def run_gate(mo):
+    gate = mo.ui.run_button(label="Build & solve", kind="success")
+    gate
+    return (gate,)
+
+
+@app.cell(hide_code=True)
+def run_stop(gate, mo):
+    interactive = mo.app_meta().mode in ("edit", "run")
+    mo.stop(
+        interactive and not gate.value,
+        mo.md("Adjust the settings above, then click **Build & solve**."),
+    )
+    proceed = True
+    return (proceed,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 02 · Build the 2D run
@@ -176,7 +194,8 @@ def _(mo):
 
 @app.cell
 def _(MCEqRun, apply_kernel_and_grid, backend, config, database_2d, e_max,
-      e_min, interaction_model, np, present, theta_deg):
+      e_min, interaction_model, np, present, theta_deg, proceed):
+    _ = proceed
     if present:
         import crflux.models as pm
 
