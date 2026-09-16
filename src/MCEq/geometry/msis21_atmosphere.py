@@ -34,6 +34,7 @@ from MCEq.geometry.atmosphere_parameters import (
     MONTH_TO_DAY_OF_YEAR,
 )
 from MCEq.geometry.density_profiles import _KM3NET_DETECTORS, EarthsAtmosphere
+from MCEq.geometry.geometry import impact_point, local_zenith_deg, surface_dip_deg
 from MCEq.misc import info
 
 # Cached top-of-atmosphere constant in km (h_atm in geometry.py is 112.8 km).
@@ -372,48 +373,27 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
     # ------------------------------------------------------------------
 
     def _impact_point(self, zenith_deg, azimuth_deg):
-        """Project the detector + shower direction to the surface impact point.
+        """Geographic coordinates of the shower impact point.
 
-        Uses 3-D ECEF geometry, transparent-Earth convention for upgoing
-        zeniths (passes the antipodal-hemisphere crossing for theta > 90°).
-        Azimuth: 0° = North, 90° = East.  The surface sphere is taken at
-        the current observation level (``geom.r_obs``), so the detector may
-        sit below or above it.
+        Delegates to :func:`MCEq.geometry.geometry.impact_point`, the single
+        implementation shared with :class:`MSIS00LocationCentered` -- the two
+        class trees stay separate, the geometry does not.
+
+        Args:
+            zenith_deg (float): zenith angle at the detector [deg], 0-180
+            azimuth_deg (float): azimuth angle [deg], 0 = North, 90 = East
+
+        Returns:
+            tuple: ``(latitude_deg, longitude_deg)`` of the impact point
         """
-        r = self.geom.r_obs / 1e2  # cm → m
-        r_det = self.geom.r_E / 1e2 + self._surface_elevation_m - self._detector_depth_m
-
-        theta = np.deg2rad(zenith_deg)
-        alpha = np.deg2rad(azimuth_deg)
-        lat0 = np.deg2rad(self._detector_latitude)
-        lon0 = np.deg2rad(self._detector_longitude)
-
-        P_det = np.array([
-            r_det * np.cos(lat0) * np.cos(lon0),
-            r_det * np.cos(lat0) * np.sin(lon0),
-            r_det * np.sin(lat0),
-        ])
-        d_ENU = np.array([
-            np.sin(theta) * np.sin(alpha),  # East
-            np.sin(theta) * np.cos(alpha),  # North
-            np.cos(theta),                  # Up
-        ])
-        T = np.array([
-            [-np.sin(lon0), -np.sin(lat0) * np.cos(lon0), np.cos(lat0) * np.cos(lon0)],
-            [ np.cos(lon0), -np.sin(lat0) * np.sin(lon0), np.cos(lat0) * np.sin(lon0)],
-            [          0.0,                 np.cos(lat0),                np.sin(lat0)],
-        ])
-        d_ECEF = T @ d_ENU
-
-        # Larger root = surface crossing on the source side; valid for
-        # detectors below (r_det < r) and above (r_det > r) the sphere and
-        # for the full zenith range 0°–180°.
-        A = np.dot(d_ECEF, P_det)
-        x = -A + np.sqrt(A * A + (r**2 - r_det**2))
-        P_imp = P_det + x * d_ECEF
-        lat_imp = np.rad2deg(np.arcsin(np.clip(P_imp[2] / r, -1.0, 1.0)))
-        lon_imp = np.rad2deg(np.arctan2(P_imp[1], P_imp[0]))
-        return lat_imp, lon_imp
+        return impact_point(
+            self.geom.r_obs,
+            self.geom.r_E + (self._surface_elevation_m - self._detector_depth_m) * 1e2,
+            self._detector_longitude,
+            self._detector_latitude,
+            zenith_deg,
+            azimuth_deg,
+        )
 
     # ------------------------------------------------------------------
     # Density — single-azimuth or azimuth-averaged
@@ -532,7 +512,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
         r_E = self.geom.r_E  # cm
         elev_cm = self._surface_elevation_m * 1e2
         r_det = r_E + elev_cm - self._detector_depth_m * 1e2
-        dip_deg = np.rad2deg(np.arccos(min(r_det / (r_E + elev_cm), 1.0)))
+        dip_deg = surface_dip_deg(r_det, r_E + elev_cm)
         far_side = theta_deg > 90.0 + dip_deg
 
         # Near side: column ends at the local surface elevation.
@@ -543,10 +523,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
 
         # Local zenith angle of the shower axis at the surface crossing
         # (the impact parameter r*sin(theta) is conserved along the axis).
-        sin_loc = np.clip(
-            r_det / self.geom.r_obs * np.sin(np.deg2rad(theta_deg)), 0.0, 1.0
-        )
-        effective_theta = np.rad2deg(np.arcsin(sin_loc))
+        effective_theta = local_zenith_deg(r_det, self.geom.r_obs, theta_deg)
 
         if azimuth_deg is not None:
             lat, lon = self._impact_point(theta_deg, azimuth_deg)

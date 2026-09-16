@@ -172,6 +172,115 @@ class EarthGeometry:
         )
 
 
+def surface_dip_deg(r_det_cm, r_surf_cm):
+    r"""Angular dip of the local surface horizon seen from the detector.
+
+    A detector below the surface sees the horizon slightly *below* 90 deg:
+    rays with :math:`\theta \le 90^\circ + \mathrm{dip}` still leave through
+    the near-side surface, larger angles traverse the Earth.
+
+    Args:
+        r_det_cm (float): distance of the detector from the Earth's centre [cm]
+        r_surf_cm (float): radius of the local surface sphere [cm]
+
+    Returns:
+        float: dip angle in degrees, zero for a detector on the surface
+    """
+    return np.rad2deg(np.arccos(min(r_det_cm / r_surf_cm, 1.0)))
+
+
+def local_zenith_deg(r_det_cm, r_surf_cm, zenith_deg):
+    r"""Zenith angle of a straight shower axis where it crosses the surface.
+
+    The impact parameter :math:`r \sin\theta` is conserved along a straight
+    line, so the surface-frame angle follows from the detector-frame one as
+    :math:`\sin\theta_s = (r_{det}/r_{surf})\,\sin\theta`.  The correction is
+    negligible below ~80 deg but reaches ~1.4 deg at the horizon for a detector
+    2 km below the surface.
+
+    Args:
+        r_det_cm (float): distance of the detector from the Earth's centre [cm]
+        r_surf_cm (float): radius of the local surface sphere [cm]
+        zenith_deg (float): zenith angle at the detector [deg]
+
+    Returns:
+        float: local zenith angle at the surface crossing in degrees
+    """
+    sin_loc = np.clip(r_det_cm / r_surf_cm * np.sin(np.deg2rad(zenith_deg)), 0.0, 1.0)
+    return np.rad2deg(np.arcsin(sin_loc))
+
+
+def impact_point(
+    r_surf_cm, r_det_cm, det_lon_deg, det_lat_deg, zenith_deg, azimuth_deg
+):
+    """Geographic coordinates where a shower axis crosses the surface sphere.
+
+    Follows the shower axis from the detector toward the incoming source and
+    intersects it with the sphere of radius *r_surf_cm*, in full 3-D ECEF
+    (Earth-Centred, Earth-Fixed) Cartesian geometry.  That crossing is where the
+    atmospheric column the shower developed in stands.
+
+    Azimuth convention: 0 deg = geographic North, 90 deg = East (clockwise from
+    North).  The full zenith range [0, 180] deg is supported: for downgoing
+    showers the crossing is near the detector, for upgoing ones the ray
+    traverses the Earth and the crossing is on the far side.
+
+    Args:
+        r_surf_cm (float): radius of the surface sphere to intersect [cm]
+        r_det_cm (float): distance of the detector from the Earth's centre [cm]
+        det_lon_deg (float): detector longitude [deg]
+        det_lat_deg (float): detector latitude [deg]
+        zenith_deg (float): zenith angle at the detector [deg]
+        azimuth_deg (float): azimuth angle [deg], 0 = North, 90 = East
+
+    Returns:
+        tuple: ``(latitude_deg, longitude_deg)`` of the impact point
+    """
+    theta = np.deg2rad(zenith_deg)
+    alpha = np.deg2rad(azimuth_deg)
+    lat0 = np.deg2rad(det_lat_deg)
+    lon0 = np.deg2rad(det_lon_deg)
+
+    # Detector position in ECEF
+    p_det = np.array(
+        [
+            r_det_cm * np.cos(lat0) * np.cos(lon0),
+            r_det_cm * np.cos(lat0) * np.sin(lon0),
+            r_det_cm * np.sin(lat0),
+        ]
+    )
+
+    # Shower direction in the local ENU frame, pointing toward the source
+    d_enu = np.array(
+        [
+            np.sin(theta) * np.sin(alpha),  # East
+            np.sin(theta) * np.cos(alpha),  # North
+            np.cos(theta),  # Up
+        ]
+    )
+
+    # ENU -> ECEF rotation (columns: East, North, Up basis vectors)
+    rot = np.array(
+        [
+            [-np.sin(lon0), -np.sin(lat0) * np.cos(lon0), np.cos(lat0) * np.cos(lon0)],
+            [np.cos(lon0), -np.sin(lat0) * np.sin(lon0), np.cos(lat0) * np.sin(lon0)],
+            [0.0, np.cos(lat0), np.sin(lat0)],
+        ]
+    )
+    d_ecef = rot @ d_enu
+
+    # Crossing with |p_det + x * d_ecef|^2 = r_surf^2.  The larger root is the
+    # crossing on the source side; it is valid for detectors below and above
+    # the sphere and over the full zenith range.
+    a = np.dot(d_ecef, p_det)
+    x = -a + np.sqrt(a**2 + (r_surf_cm**2 - r_det_cm**2))
+
+    p_impact = p_det + x * d_ecef
+    lat_imp = np.rad2deg(np.arcsin(np.clip(p_impact[2] / r_surf_cm, -1.0, 1.0)))
+    lon_imp = np.rad2deg(np.arctan2(p_impact[1], p_impact[0]))
+    return lat_imp, lon_imp
+
+
 def chirkin_cos_theta_star(costheta):
     r""":math:`\cos(\theta^*)` parameterization.
 

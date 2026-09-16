@@ -8,6 +8,10 @@ import MCEq.geometry.density_profiles as dp
 
 #: Synthetic US-Standard profile above 2834 m, shipped next to this file.
 TABLE_PATH = str(pathlib.Path(__file__).parent / "atmosphere_table_example.csv")
+#: Synthetic global grid of columns, for the location-centred tests.
+GRID_TABLE_PATH = str(
+    pathlib.Path(__file__).parent / "atmosphere_table_grid_example.csv"
+)
 
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
@@ -545,7 +549,7 @@ def test_tabulated_observation_level_follows_the_table():
     """h_obs defaults to the lowest tabulated height."""
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
     table = dp.load_atmosphere_table(TABLE_PATH)
-    assert np.isclose(atm.geom.h_obs, table["h_cm"][0])
+    assert np.isclose(atm.geom.h_obs, table.h_cm[0])
 
     # An explicit level higher up sees a thinner column, lower down a thicker
     # one (the profile is extrapolated log-linearly below the table).
@@ -560,20 +564,24 @@ def test_tabulated_observation_level_follows_the_table():
 def test_tabulated_negative_table_heights_clip_at_sea_level():
     """Reanalyses extrapolate below ground; h_obs must not go negative."""
     table = dp.load_atmosphere_table(TABLE_PATH)
-    table["h_cm"] = table["h_cm"] - 4.0e5  # push the bottom below sea level
-    atm = dp.TabulatedAtmosphere(table)
+    sunk = dp.AtmosphereTable(
+        h_cm=table.h_cm - 4.0e5,  # push the bottom below sea level
+        rho_gcm3=table.rho_gcm3,
+        T_K=table.T_K,
+    )
+    atm = dp.TabulatedAtmosphere(sunk)
     assert atm.geom.h_obs == 0.0
 
 
 def test_tabulated_reproduces_the_table_rows():
     table = dp.load_atmosphere_table(TABLE_PATH)
     atm = dp.TabulatedAtmosphere(table)
-    assert np.allclose(atm.get_density(table["h_cm"]), table["rho_gcm3"], rtol=1e-12)
-    assert np.allclose(atm.get_temperature(table["h_cm"]), table["T_K"], rtol=1e-12)
+    assert np.allclose(atm.get_density(table.h_cm), table.rho_gcm3, rtol=1e-12)
+    assert np.allclose(atm.get_temperature(table.h_cm), table.T_K, rtol=1e-12)
     # Building an atmosphere must not modify the caller's table.
     fresh = dp.load_atmosphere_table(TABLE_PATH)
-    assert np.array_equal(table["h_cm"], fresh["h_cm"])
-    assert np.array_equal(table["rho_gcm3"], fresh["rho_gcm3"])
+    assert np.array_equal(table.h_cm, fresh.h_cm)
+    assert np.array_equal(table.rho_gcm3, fresh.rho_gcm3)
 
 
 def test_tabulated_density_column_matches_ideal_gas(tmp_path):
@@ -582,7 +590,7 @@ def test_tabulated_density_column_matches_ideal_gas(tmp_path):
     path = _write_table(
         tmp_path,
         ["h_cm,rho_gcm3"]
-        + [f"{h:.10e},{r:.10e}" for h, r in zip(table["h_cm"], table["rho_gcm3"])],
+        + [f"{h:.10e},{r:.10e}" for h, r in zip(table.h_cm, table.rho_gcm3)],
     )
     from_rho = dp.TabulatedAtmosphere(path)
     from_pt = dp.TabulatedAtmosphere(TABLE_PATH)
@@ -608,8 +616,8 @@ def test_tabulated_missing_values_and_row_order(tmp_path):
         ],
     )
     table = dp.load_atmosphere_table(path)
-    assert np.array_equal(table["h_cm"], [3.0e5, 5.0e5, 9.0e5])
-    assert np.all(np.diff(table["rho_gcm3"]) < 0.0)
+    assert np.array_equal(table.h_cm, [3.0e5, 5.0e5, 9.0e5])
+    assert np.all(np.diff(table.rho_gcm3) < 0.0)
 
 
 def test_tabulated_unknown_columns_are_ignored(tmp_path):
@@ -622,7 +630,9 @@ def test_tabulated_unknown_columns_are_ignored(tmp_path):
         ],
     )
     table = dp.load_atmosphere_table(path)
-    assert sorted(table) == ["T_K", "h_cm", "rho_gcm3"]
+    assert table.h_cm.size == 2
+    assert table.T_K is not None
+    assert not table.is_gridded
 
 
 @pytest.mark.parametrize(
@@ -645,8 +655,8 @@ def test_tabulated_isothermal_tail():
     """The default tail is exactly exponential and joins without a step."""
     table = dp.load_atmosphere_table(TABLE_PATH)
     atm = dp.TabulatedAtmosphere(TABLE_PATH)
-    h_top, rho_top = table["h_cm"][-1], table["rho_gcm3"][-1]
-    scale_h = (h_top - table["h_cm"][-2]) / np.log(table["rho_gcm3"][-2] / rho_top)
+    h_top, rho_top = table.h_cm[-1], table.rho_gcm3[-1]
+    scale_h = (h_top - table.h_cm[-2]) / np.log(table.rho_gcm3[-2] / rho_top)
 
     assert np.isclose(atm.get_density(h_top), rho_top, rtol=1e-12)
     for h in (5.0e6, 8.0e6, 1.1e7):
@@ -714,6 +724,161 @@ def test_tabulated_spline_matches_base_implementation():
         atm.X2h(500.0),
     )
     assert np.allclose(probe, reference, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Gridded tables and TabulatedLocationCentered
+#
+# The gridded fixture is a synthetic global 7x8 grid on 15 pressure levels with
+# a latitude/longitude temperature modulation, so every column differs and the
+# impact-point sampling has something to resolve.
+# ---------------------------------------------------------------------------
+
+#: Detector position used by the location-centred tests.  It sits exactly on a
+#: node of the fixture grid, so the vertical column is an exact table column.
+DET_LON, DET_LAT = 45.0, -30.0
+
+
+def _grid_atm(**kwargs):
+    # A detector *below* the surface is what makes the impact point move with
+    # direction: for one sitting on the surface the shower axis crosses the
+    # observation level at the detector itself, whatever the angle.
+    kwargs.setdefault("detector_coord", (DET_LON, DET_LAT))
+    kwargs.setdefault("depth_m", 1948.0)
+    return dp.TabulatedLocationCentered(GRID_TABLE_PATH, **kwargs)
+
+
+def test_gridded_table_loads_as_a_grid():
+    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    assert table.is_gridded
+    assert table.h_cm.shape == (7, 8, 15)
+    assert np.array_equal(table.lat_deg, [-90, -60, -30, 0, 30, 60, 90])
+    assert np.array_equal(table.lon_deg, [0, 45, 90, 135, 180, 225, 270, 315])
+    # every column ascends in height and falls in density
+    assert np.all(np.diff(table.h_cm, axis=-1) > 0)
+    assert np.all(np.diff(table.rho_gcm3, axis=-1) < 0)
+
+
+def test_gridded_column_at_a_node_is_exact():
+    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    for j, lat in enumerate(table.lat_deg):
+        for i, lon in enumerate(table.lon_deg):
+            column = table.column(lon, lat)
+            assert np.allclose(column.h_cm, table.h_cm[j, i], rtol=1e-12)
+            assert np.allclose(column.rho_gcm3, table.rho_gcm3[j, i], rtol=1e-12)
+            assert np.allclose(column.T_K, table.T_K[j, i], rtol=1e-12)
+
+
+def test_gridded_column_interpolates_between_nodes():
+    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    south, north = table.column(0.0, -30.0), table.column(0.0, 0.0)
+    middle = table.column(0.0, -15.0)
+    assert np.all(south.T_K < middle.T_K)
+    assert np.all(middle.T_K < north.T_K)
+    assert np.allclose(middle.T_K, 0.5 * (south.T_K + north.T_K))
+
+
+def test_gridded_column_wraps_in_longitude():
+    table = dp.load_atmosphere_table(GRID_TABLE_PATH)
+    assert np.allclose(table.column(-45.0, 0.0).T_K, table.column(315.0, 0.0).T_K)
+    # 337.5 deg falls in the cell that wraps across the 360/0 seam
+    seam = table.column(337.5, 0.0)
+    before, after = table.column(315.0, 0.0), table.column(0.0, 0.0)
+    assert np.allclose(seam.T_K, 0.5 * (before.T_K + after.T_K))
+
+
+def test_gridded_table_needs_a_coord():
+    with pytest.raises(ValueError, match="coord"):
+        dp.TabulatedAtmosphere(GRID_TABLE_PATH)
+
+
+def test_gridded_table_rejects_ragged_columns(tmp_path):
+    lines = [
+        line
+        for line in pathlib.Path(GRID_TABLE_PATH).read_text().splitlines()
+        if not line.startswith("#")
+    ]
+    del lines[3]  # drop one level from the first column
+    path = _write_table(tmp_path, lines)
+    with pytest.raises(ValueError, match="levels"):
+        dp.load_atmosphere_table(path)
+
+
+def test_tabulated_lc_needs_a_gridded_table():
+    with pytest.raises(ValueError, match="gridded"):
+        dp.TabulatedLocationCentered(TABLE_PATH, (DET_LON, DET_LAT), 0.0)
+
+
+def test_tabulated_lc_vertical_uses_the_detector_column():
+    atm = _grid_atm(depth_m=0.0)
+    atm.set_theta(0.0, azimuth_deg=0.0)
+    assert np.isclose(atm.current_impact_latitude, DET_LAT, atol=1e-6)
+    assert np.isclose(atm.current_impact_longitude % 360.0, DET_LON, atol=1e-6)
+
+    column = dp.load_atmosphere_table(GRID_TABLE_PATH).column(DET_LON, DET_LAT)
+    assert np.allclose(atm.get_density(column.h_cm), column.rho_gcm3, rtol=1e-12)
+
+
+def test_tabulated_lc_azimuth_selects_a_different_column():
+    """The whole point: at large zenith the shower is somewhere else."""
+    atm = _grid_atm()
+    atm.set_theta(80.0, azimuth_deg=0.0)  # toward the North pole
+    north_lat, north_X = atm.current_impact_latitude, atm.max_X
+    atm.set_theta(80.0, azimuth_deg=180.0)  # toward the South pole
+    assert atm.current_impact_latitude < DET_LAT < north_lat
+    assert not np.isclose(atm.max_X, north_X, rtol=1e-6)
+    assert atm.depends_on_azimuth
+
+
+def test_tabulated_lc_azimuth_averaging():
+    atm = _grid_atm()
+    atm.set_theta(60.0)
+    assert atm.current_impact_latitude is None
+    assert atm.current_impact_longitude is None
+    assert atm.max_X > 0.0
+    assert np.isfinite(atm.get_density(1.0e6))
+
+
+def test_tabulated_lc_upgoing_uses_the_far_side():
+    atm = _grid_atm(max_theta=180.0)
+    atm.set_theta(180.0, azimuth_deg=0.0)
+    # Straight down through the Earth exits at the antipode.
+    assert np.isclose(atm.current_impact_latitude, -DET_LAT, atol=1e-6)
+    assert np.isclose(
+        atm.current_impact_longitude % 360.0, (DET_LON + 180.0) % 360.0, atol=1e-6
+    )
+    assert atm.geom.h_obs == 0.0
+    assert atm.theta_deg == 180.0
+    with pytest.raises(ValueError, match="not in allowed range"):
+        _grid_atm().set_theta(180.0)  # max_theta stays 90 by default
+
+
+def test_tabulated_lc_impact_point_matches_msis00():
+    """The tabulated and MSIS00 trees must project identically.
+
+    Both call the same helper in MCEq.geometry.geometry, and this pins that
+    they stay wired to it -- including the local-zenith correction and the
+    near/far-side observation level.
+    """
+    tab = _grid_atm(max_theta=180.0)
+    msis = dp.MSIS00LocationCentered(
+        detector_coord=(DET_LON, DET_LAT),
+        depth_m=1948.0,
+        season="January",
+        max_theta=180.0,
+    )
+    for theta in (0.0, 30.0, 80.0, 89.0, 91.0, 140.0, 179.0):
+        for azimuth in (0.0, 90.0, 200.0):
+            tab.set_theta(theta, azimuth_deg=azimuth)
+            msis.set_theta(theta, azimuth_deg=azimuth)
+            assert np.isclose(
+                tab.current_impact_latitude, msis.current_impact_latitude, atol=1e-9
+            )
+            assert np.isclose(
+                tab.current_impact_longitude, msis.current_impact_longitude, atol=1e-9
+            )
+            assert np.isclose(tab.thrad, msis.thrad, rtol=0, atol=1e-12)
+            assert tab.geom.h_obs == msis.geom.h_obs
 
 
 # ---------------------------------------------------------------------------
