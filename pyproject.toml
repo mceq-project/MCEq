@@ -162,6 +162,29 @@ markers = [
     "slow: a solve costing many minutes on production-size databases (needs --run-slow)",
 ]
 
+[tool.marimo]
+# Project-scoped marimo UI (marimo >= 0.24; see docs/marimo-examples.md).
+# Merged over the user's ~/.config/marimo/marimo.toml, so anyone editing
+# these notebooks gets the same minimal frontend on any machine.
+ai.enabled = false
+
+[tool.marimo.display]
+custom_css = ["marimo/minimal.css"]
+default_width = "full"
+reference_highlighting = false
+
+[tool.marimo.experimental]
+debugger = false
+line_timing = false
+
+[tool.marimo.completion]
+copilot = false
+
+[tool.marimo.runtime]
+# Opening a notebook runs its cells immediately, so the configuration form
+# renders without a manual Run.
+auto_instantiate = true
+
 [tool.coverage.report]
 exclude_lines = [
     "if config.enable_em:",
