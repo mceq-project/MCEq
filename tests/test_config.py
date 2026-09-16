@@ -111,3 +111,41 @@ def test_no_error_when_old_db_absent(tmp_path, monkeypatch):
 
     with patch("MCEq.config._download_file"):
         cfg.ensure_db_available()  # must not raise
+
+
+@pytest.mark.parametrize("old_name", OLD_DBS)
+def test_selecting_a_retired_db_is_refused(tmp_path, monkeypatch, old_name):
+    """A withdrawn database is named as the problem, not downloaded and deleted.
+
+    The v1.4.0/v1.4.1 assets were pulled from the release page, so downloading
+    one returns a 404 body; the old code then unlinked whatever landed and left
+    MCEqRun to fail on an unreadable file, once per run, forever.
+    """
+    monkeypatch.setattr(cfg, "data_dir", tmp_path)
+    monkeypatch.setattr(cfg, "mceq_db_fname", old_name)
+
+    with patch("MCEq.config._download_file") as mock_dl:
+        with pytest.raises(ValueError, match="withdrawn"):
+            cfg.ensure_db_available()
+
+    mock_dl.assert_not_called()
+
+
+@pytest.mark.parametrize("old_name", OLD_DBS)
+def test_retired_db_is_refused_even_when_present(tmp_path, monkeypatch, old_name):
+    """Refusal does not depend on the file being absent, and does not delete it."""
+    stale = tmp_path / old_name
+    stale.write_bytes(b"old")
+    monkeypatch.setattr(cfg, "data_dir", tmp_path)
+    monkeypatch.setattr(cfg, "mceq_db_fname", old_name)
+
+    with pytest.raises(ValueError, match="withdrawn"):
+        cfg.ensure_db_available()
+
+    assert stale.exists()
+
+
+def test_retired_db_names_are_the_ones_the_cleanup_removes():
+    """One list, so a name can never be cleaned up but still selectable."""
+    assert cfg.retired_db_fnames == OLD_DBS
+    assert cfg.mceq_db_fname not in cfg.retired_db_fnames
