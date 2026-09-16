@@ -9,6 +9,7 @@ from MCEq import config
 
 # Import the new atmosphere data module
 from MCEq.geometry.atmosphere_parameters import (
+    MONTH_TO_DAY_OF_YEAR,
     get_atmosphere_parameters,
     list_available_corsika_atmospheres,
 )
@@ -1587,6 +1588,9 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         ``"msis00"`` extension.
       season (str, optional): month name, for bookkeeping and for the
         ``"msis00"`` extension.
+      doy (int, optional): day of year in [1, 365] for the MSIS extension.
+        Takes precedence over *season*; with neither, the extension is
+        evaluated mid-year, the default both MSIS wrappers start from.
     """
 
     def __init__(
@@ -1598,12 +1602,20 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         msis_blend_bins=5,
         location=None,
         season=None,
+        doy=None,
     ):
         if top_extension not in ("msis", "msis21", "msis00", "isothermal", "none"):
             raise ValueError(
                 f"{self.__class__.__name__}(): unknown top_extension "
                 f"'{top_extension}'. Choose 'msis', 'msis21', 'msis00', "
                 "'isothermal' or 'none'."
+            )
+
+        if doy is not None and not 1 <= int(doy) <= 365:
+            raise ValueError(
+                f"{self.__class__.__name__}(): doy={doy} is out of range. Pass "
+                "a day of year in [1, 365] -- the range both MSIS wrappers "
+                "accept."
             )
 
         # Base class first: it creates self.geom, which the height bookkeeping
@@ -1617,6 +1629,7 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         )
         self.location = location
         self.season = season
+        self.doy = doy
         self.top_extension = top_extension
         self.msis_blend_bins = msis_blend_bins
 
@@ -1696,6 +1709,26 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         if self.pressure is not None:
             self.pressure = np.hstack([self.pressure[0], self.pressure])
 
+    def _msis_extension_doy(self):
+        """Day of year the MSIS extension is evaluated at.
+
+        Resolved here rather than left to the wrappers: ``MSIS00Atmosphere``
+        ignores *doy* whenever *season* is also set, ``MSIS21Atmosphere`` lets
+        *doy* win, and with neither the MSISE-00 path passes ``None`` straight
+        into a range check and raises ``TypeError``.
+        """
+        if self.doy is not None:
+            return int(self.doy)
+        if self.season is not None:
+            if self.season not in MONTH_TO_DAY_OF_YEAR:
+                raise ValueError(
+                    f"{self.__class__.__name__}(): unknown season "
+                    f"'{self.season}'. Choose one of "
+                    f"{list(MONTH_TO_DAY_OF_YEAR)}, or pass doy=<1..365>."
+                )
+            return MONTH_TO_DAY_OF_YEAR[self.season]
+        return MONTH_TO_DAY_OF_YEAR["June"]
+
     def _msis_extension_model(self):
         """The MSIS atmosphere the profile is blended into at the top.
 
@@ -1719,12 +1752,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                 "top_extension='isothermal'."
             )
 
+        doy = self._msis_extension_doy()
+
         model = None
         if self.top_extension in ("msis", "msis21"):
             try:
                 from MCEq.geometry.msis21_atmosphere import MSIS21Atmosphere
 
-                model = MSIS21Atmosphere(seed, self.season)
+                model = MSIS21Atmosphere(seed, None, doy=doy)
             except ImportError:
                 if self.top_extension == "msis21":
                     raise ValueError(
@@ -1741,15 +1776,29 @@ class TabulatedAtmosphere(EarthsAtmosphere):
                     "extending with MSISE-00 instead of NRLMSIS 2.1.",
                 )
         if model is None:
-            model = MSIS00Atmosphere(seed, self.season)
+            model = MSIS00Atmosphere(seed, None, doy=doy)
         if coord is not None:
             model.set_location_coord(*coord)
         return model
 
+    @staticmethod
+    def _to_msis_longitude(lon):
+        """The same meridian, spelled on the MSIS wrappers' [-180, 180) branch.
+
+        Table longitudes are stored on [0, 360) and
+        :meth:`AtmosphereTable.column` accepts either branch, but both MSIS
+        wrappers reject anything past 180.  This is a change of representation,
+        not of position: 315 deg E and -45 deg E name one meridian.
+        """
+        return (float(lon) + 180.0) % 360.0 - 180.0
+
     def _msis_extension_coord(self):
         """(longitude, latitude) to place the MSIS extension at, or None."""
         if self._coord is not None:
-            return (float(self._coord[0]), float(self._coord[1]))
+            return (
+                self._to_msis_longitude(self._coord[0]),
+                float(self._coord[1]),
+            )
         return None
 
     def _extend_above(self, h_top):
@@ -1782,10 +1831,14 @@ class TabulatedAtmosphere(EarthsAtmosphere):
         msis_dens = np.array([msis.get_density(h) for h in h_extra])
         msis_temp = np.array([msis.get_temperature(h) for h in h_extra])
 
+        # i counts down from the seam, so the ramp has to start at pure MSIS
+        # (i = 0) and reach pure table at the bottom of the blend
+        # (i = n_blend - 1).  With one level there is nothing to ramp between,
+        # and both weights would come out zero.
         n_blend = min(self.msis_blend_bins, len(self.h) - 1)
-        for i in range(n_blend):
-            w_tab = 1.0 - np.exp(-n_blend + i + 1)
-            w_msis = 1.0 - np.exp(-i)
+        for i in range(n_blend if n_blend > 1 else 0):
+            w_tab = 1.0 - np.exp(-i)
+            w_msis = 1.0 - np.exp(-(n_blend - 1 - i))
             norm = 1.0 / (w_tab + w_msis)
             self.dens[-i - 1] = (
                 self.dens[-i - 1] * w_tab + msis.get_density(self.h[-i - 1]) * w_msis
@@ -1921,6 +1974,8 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
       top_extension (str): see :class:`TabulatedAtmosphere`.
       location (str, optional): name of the site, for bookkeeping.
       season (str, optional): month name, for bookkeeping.
+      doy (int, optional): day of year for the MSIS extension, see
+        :class:`TabulatedAtmosphere`.
     """
 
     #: Preserve max_theta across set_h_obs calls (see EarthsAtmosphere).
@@ -1942,6 +1997,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
         n_averaging_steps=500,
         location=None,
         season=None,
+        doy=None,
     ):
         longitude, latitude = detector_coord
         self._detector_longitude = longitude
@@ -1965,6 +2021,7 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             msis_blend_bins=msis_blend_bins,
             location=location or f"({longitude:.3f}°E, {latitude:.3f}°N)",
             season=season,
+            doy=doy,
         )
         if not self.table.is_gridded:
             raise ValueError(
@@ -2005,6 +2062,49 @@ class TabulatedLocationCentered(TabulatedAtmosphere):
             zenith_deg,
             azimuth_deg,
         )
+
+    @staticmethod
+    def _ring_centre(coords):
+        """Centre of a ring of ``(lat, lon)`` points, as ``(lon, lat)``.
+
+        The azimuth grid traces a small circle around the detector, so a plain
+        mean of the longitudes is meaningless across the 0/360 seam.  Averaging
+        the unit vectors and renormalising gives the circle's centre: the
+        detector for a near-side ring, the antipode for an upgoing one.
+        """
+        lat = np.deg2rad(np.array([c[0] for c in coords], dtype=np.float64))
+        lon = np.deg2rad(np.array([c[1] for c in coords], dtype=np.float64))
+        x = float(np.mean(np.cos(lat) * np.cos(lon)))
+        y = float(np.mean(np.cos(lat) * np.sin(lon)))
+        z = float(np.mean(np.sin(lat)))
+        norm = np.sqrt(x * x + y * y + z * z)
+        if norm < 1e-12:
+            # A ring of 90 deg angular radius has no centre on either side; any
+            # point on it is as representative as the mean would have been.
+            return (float(coords[0][1]), float(coords[0][0]))
+        return (
+            float(np.rad2deg(np.arctan2(y, x))),
+            float(np.rad2deg(np.arcsin(z / norm))),
+        )
+
+    def _msis_extension_coord(self):
+        """(longitude, latitude) the MSIS tail belongs over.
+
+        The profile is the table's column at the shower impact point, so the
+        tail above it belongs there too, not over the detector: at large zenith
+        angles the two are hundreds of km apart, and at 180 deg the impact point
+        is the antipode.  Before the first :meth:`set_theta` there is no
+        direction yet, and the detector is the right answer.
+        """
+        if self._current_impact_longitude is not None:
+            return (
+                self._to_msis_longitude(self._current_impact_longitude),
+                float(self._current_impact_latitude),
+            )
+        if self._azimuth_avg_coords:
+            lon, lat = self._ring_centre(self._azimuth_avg_coords)
+            return (self._to_msis_longitude(lon), lat)
+        return super()._msis_extension_coord()
 
     # ------------------------------------------------------------------
     # Direction

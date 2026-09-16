@@ -1,6 +1,7 @@
 import importlib.util
 import inspect
 import pathlib
+import warnings
 
 import numpy as np
 import pytest
@@ -1147,3 +1148,235 @@ def test_msis21_shares_km3net_site_table():
     from MCEq.geometry import msis21_atmosphere
 
     assert msis21_atmosphere._KM3NET_DETECTORS is dp._KM3NET_DETECTORS
+
+
+def _blend_fractions(atm, table, msis, n):
+    """Table share of the blended density at the n levels below the seam.
+
+    0 means the level came out as pure MSIS, 1 as pure table.  Returned in
+    ascending height, so the last entry is the seam itself.
+    """
+    return [
+        (float(atm.get_density(h)) - float(msis.get_density(h)))
+        / (float(np.interp(h, table.h_cm, table.rho_gcm3)) - float(msis.get_density(h)))
+        for h in table.h_cm[-n:]
+    ]
+
+
+def test_msis_blend_hands_over_to_the_table_going_down():
+    """Pure MSIS at the seam, pure table at the bottom of the blend.
+
+    Inverted weights put the step the blend exists to remove one level below
+    where the seam used to be.
+    """
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(
+        table,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        msis_blend_bins=5,
+    )
+    msis = dp.MSIS00Atmosphere("SouthPole", "January")
+
+    frac = _blend_fractions(atm, table, msis, 5)
+    assert frac == pytest.approx([1.0, 0.60052, 0.5, 0.39948, 0.0], abs=1e-4)
+
+
+def test_msis_blend_leaves_no_step_at_its_lower_edge():
+    """The level below the blend is pure table, and so is the last blended one."""
+    table = dp.AtmosphereTable.load_from_csv(TABLE_PATH)
+    atm = dp.TabulatedAtmosphere(
+        table,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        msis_blend_bins=5,
+    )
+    msis = dp.MSIS00Atmosphere("SouthPole", "January")
+
+    frac = _blend_fractions(atm, table, msis, 6)
+    # Ascending height: untouched table, then the ramp down to the seam.
+    assert frac[0] == pytest.approx(1.0, abs=1e-9)
+    assert frac[1] == pytest.approx(1.0, abs=1e-4)
+    assert all(a >= b for a, b in zip(frac, frac[1:]))
+
+
+def test_msis_blend_on_a_two_row_table_is_quiet_and_finite(tmp_path):
+    """n_blend clamps to 1, which has nothing to blend -- and must not warn."""
+    path = tmp_path / "two_rows.csv"
+    path.write_text(
+        "# MCEq tabulated atmosphere v1\nh_cm,T_K,p_hPa\n"
+        "4000000.0,262.25,1.62937\n4700000.0,270.65,1.10906\n"
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        atm = dp.TabulatedAtmosphere(
+            path, top_extension="msis00", location="SouthPole", season="January"
+        )
+    assert np.all(np.isfinite(atm.dens))
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+def test_msis_extension_without_a_season_uses_midyear():
+    """No season and no doy must still build, at the wrappers' own default."""
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole"
+    )
+    assert atm._msis_extension_doy() == 152  # June
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+def test_msis_extension_doy_beats_season():
+    """A table knows its date better than its month; doy wins, as in MSIS21."""
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH,
+        top_extension="msis00",
+        location="SouthPole",
+        season="January",
+        doy=200,
+    )
+    assert atm._msis_extension_doy() == 200
+
+
+def test_msis_extension_season_sets_the_doy():
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", season="March"
+    )
+    assert atm._msis_extension_doy() == 60
+
+
+def test_msis_extension_doy_changes_the_tail():
+    """The resolved day of year actually reaches MSIS."""
+    january = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", doy=15
+    )
+    july = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="msis00", location="SouthPole", doy=196
+    )
+    assert january.get_density(8.0e6) != july.get_density(8.0e6)
+
+
+@pytest.mark.parametrize("bad", [0, 366, -5])
+def test_tabulated_rejects_an_out_of_range_doy(bad):
+    with pytest.raises(ValueError, match=r"doy"):
+        dp.TabulatedAtmosphere(TABLE_PATH, doy=bad)
+
+
+def test_tabulated_rejects_an_unknown_season():
+    atm = dp.TabulatedAtmosphere(
+        TABLE_PATH, top_extension="isothermal", location="SouthPole", season="Smarch"
+    )
+    with pytest.raises(ValueError, match="unknown season"):
+        atm._msis_extension_doy()
+
+
+def test_location_centered_forwards_the_doy():
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    atm = dp.TabulatedLocationCentered(
+        grid, detector_coord=(20.0, -30.0), depth_m=1948.0, doy=200
+    )
+    assert atm.doy == 200
+    assert atm._msis_extension_doy() == 200
+
+
+def test_msis_extension_accepts_a_table_longitude_past_180():
+    """Table longitudes live on [0, 360); the MSIS wrappers only take [-180, 180].
+
+    315 deg E and -45 deg E are the same meridian -- AtmosphereTable.column
+    already treats them as one, see test_column_rejects_a_longitude_beyond_one_turn.
+    """
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    east = dp.TabulatedAtmosphere(
+        grid, coord=(315.0, -30.0), top_extension="msis00", season="January"
+    )
+    west = dp.TabulatedAtmosphere(
+        grid, coord=(-45.0, -30.0), top_extension="msis00", season="January"
+    )
+    assert np.isclose(east.max_X, west.max_X, rtol=1e-12)
+
+
+def test_location_centered_accepts_a_detector_longitude_past_180():
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    atm = dp.TabulatedLocationCentered(
+        grid,
+        detector_coord=(315.0, -30.0),
+        depth_m=1948.0,
+        top_extension="msis00",
+        season="January",
+    )
+    assert np.isfinite(atm.max_X) and atm.max_X > 0.0
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [(315.0, -45.0), (-45.0, -45.0), (0.0, 0.0), (180.0, -180.0), (359.9, -0.1)],
+)
+def test_to_msis_longitude_is_a_change_of_spelling(given, expected):
+    assert dp.TabulatedAtmosphere._to_msis_longitude(given) == pytest.approx(expected)
+
+
+def _lc_grid_atmosphere(**kwargs):
+    grid = dp.AtmosphereTable.load_from_csv(GRID_TABLE_PATH)
+    return dp.TabulatedLocationCentered(
+        grid,
+        detector_coord=(20.0, -30.0),
+        depth_m=1948.0,
+        max_theta=180.0,
+        **kwargs,
+    )
+
+
+def test_msis_tail_follows_the_impact_point_for_a_fixed_azimuth():
+    """The tail belongs above the column, and the column is at the impact point."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(80.0, azimuth_deg=90.0)
+
+    lon, lat = atm._msis_extension_coord()
+    assert lat == pytest.approx(atm.current_impact_latitude, abs=1e-9)
+    assert lon == pytest.approx(
+        dp.TabulatedAtmosphere._to_msis_longitude(atm.current_impact_longitude),
+        abs=1e-9,
+    )
+
+
+def test_msis_tail_for_an_upgoing_angle_is_at_the_antipode():
+    """theta=180 puts the column on the far side; the tail must go with it."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(180.0, azimuth_deg=0.0)
+
+    lon, lat = atm._msis_extension_coord()
+    assert lat == pytest.approx(30.0, abs=1e-3)
+    assert lon == pytest.approx(-160.0, abs=1e-3)
+
+
+def test_azimuth_averaged_msis_tail_sits_at_the_centre_of_the_ring():
+    """The averaged column is a ring around the detector -- or the antipode."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+
+    atm.set_theta(80.0)
+    lon, lat = atm._msis_extension_coord()
+    assert (lon, lat) == pytest.approx((20.0, -30.0), abs=1e-3)
+
+    atm.set_theta(180.0)
+    lon, lat = atm._msis_extension_coord()
+    assert (lon, lat) == pytest.approx((-160.0, 30.0), abs=1e-3)
+
+
+def test_msis_tail_before_set_theta_is_the_detector():
+    """The constructor builds a profile before any direction is chosen."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    assert atm._msis_extension_coord() == pytest.approx((20.0, -30.0), abs=1e-9)
+
+
+def test_msis_tail_actually_differs_between_opposite_azimuths():
+    """Not just the coordinate: the extended profile has to change with it."""
+    atm = _lc_grid_atmosphere(top_extension="msis00", season="January")
+    atm.set_theta(180.0, azimuth_deg=0.0)
+    antipodal = float(atm.get_density(9.0e6))
+    atm.set_theta(0.0, azimuth_deg=0.0)
+    overhead = float(atm.get_density(9.0e6))
+    # A bare `!=` would also pass with the detector coordinate: two different
+    # seam heights leave a ~5e-6 relative difference of their own.  The real
+    # effect is ~9e-2, so require a margin that noise cannot reach.
+    assert abs(antipodal / overhead - 1.0) > 1e-3
