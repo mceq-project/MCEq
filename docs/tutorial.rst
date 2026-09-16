@@ -132,7 +132,9 @@ Available models are:
   upgoing zenith angles up to 180° are supported. Without a grid the single
   column is used for every direction. See
   :class:`MCEq.geometry.density_profiles.TabulatedAtmosphere` for the format and
-  ``docs/examples/ERA5_density_spline.ipynb`` for converting ERA5 data to it.
+  ``docs/examples/ERA5_density_spline.ipynb`` for converting ERA5 data to it,
+  or ``docs/examples/AIRS_density_spline.ipynb`` for the AIRS satellite
+  retrieval.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
 

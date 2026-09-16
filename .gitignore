@@ -23,3 +23,7 @@ docs/examples/H3a_theta_60_sib23c.txt
 
 # gtracr geomagnetic-cutoff runtime caches (generated per installation)
 src/MCEq/data/gtracr_cutoffs/
+
+# Data the AIRS example notebook downloads and generates at runtime
+docs/examples/airs_cache/
+docs/examples/airs_tables/
