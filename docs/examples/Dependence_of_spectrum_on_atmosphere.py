@@ -154,7 +154,7 @@ def _(
     e_min,
     interaction_model,
     primary_model,
- proceed):
+    proceed):
     _ = proceed
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database

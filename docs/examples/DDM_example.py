@@ -145,7 +145,7 @@ def _(
     interaction_model,
     primary_model,
     theta_deg,
- proceed):
+    proceed):
     _ = proceed
     from MCEq.models.ddm.ddm import DataDrivenModel
 

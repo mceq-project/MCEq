@@ -245,7 +245,7 @@ async def _(
     prepare_database,
     resolve_kernel,
     theta_deg,
- proceed):
+    proceed):
     _ = proceed
     config.mceq_db_fname = await prepare_database(database)
     config.e_min, config.e_max = e_min, e_max
