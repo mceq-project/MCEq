@@ -32,7 +32,7 @@ def test_available_models_hands_out_a_copy():
     """The equality is true by construction; what is worth pinning is the copy.
 
     ``available_models()`` feeds both the user-facing error message and
-    ``tests/golden/gen_paths.py``. Returning the live table would let either
+    the paths reference generator. Returning the live table would let either
     of them corrupt the registry for the rest of the process.
     """
     names = registry.available_models()

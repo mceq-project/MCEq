@@ -25,11 +25,11 @@ from MCEq.misc import info
 
 #: ``get_solution``'s default ``return_as`` below captures the process
 #: default when this function is defined (v1 semantics, pinned by the
-#: solve1d golden's signature probe); pass ``None`` to resolve the
+#: reference signature probe); pass ``None`` to resolve the
 #: setting from the run. The module is fetched dynamically rather than
 #: with a static import: the driver may import config either way (C5
-#: exempts it), but the AST-based structure golden sees only static
-#: import statements, and the dynamic form keeps the golden's import
+#: exempts it), but the AST-based structure census sees only static
+#: import statements, and the dynamic form keeps that census's import
 #: graph the shape it was pinned with.
 config = import_module("MCEq.config")
 

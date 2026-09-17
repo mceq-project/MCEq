@@ -557,7 +557,7 @@ def test_solve_batch_dtype_float32(kernel):
     import crflux.models as pm
 
     from MCEq.core import MCEqRun
-    from tests.golden import _flux_metric as flux_metric
+    from tests.helpers import flux_metric
 
     saved_kernel = config.kernel_config
     saved_disabled = list(config.adv_set.get("disabled_particles", []))

@@ -7,7 +7,7 @@ receives ``HDF5Backend(paths, grid)`` rather than reaching into the
 They are **views, not snapshots**. A group reads the flat name from
 :mod:`MCEq.config` at attribute access, so a component that holds one still
 sees ``config.e_min = ...`` written after it was constructed — which is what
-the tests, the notebooks and the golden generators all rely on. That also means
+the tests, the notebooks and the reference generators all rely on. That also means
 a group costs nothing to build, and there is exactly one place a value lives.
 Reading a group does not rebuild objects already constructed from earlier
 values.

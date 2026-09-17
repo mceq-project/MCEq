@@ -17,22 +17,12 @@ on:
         required: false
         default: false
         type: boolean
-      # The golden sections in tests/golden/__init__.py HOST_SECTIONS are
-      # bitwise against the numpy/BLAS build that generated them, so exactly
-      # one caller sets this; everywhere else they skip.
-      golden-host:
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   test:
     runs-on: ${{ inputs.os }}
     env:
       UV_SYSTEM_PYTHON: "true"
-      # Host goldens were generated on x86-v3. Hosted runners can also
-      # expose AVX-512, whose NumPy transcendental loops round differently.
-      NPY_DISABLE_CPU_FEATURES: ${{ inputs.golden-host && 'X86_V4,AVX512_ICL,AVX512_SPR' || '' }}
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
@@ -48,19 +38,12 @@ jobs:
         python-version: ${{ inputs.python-version }}
         allow-prereleases: true
     - name: Install requirements
-      run: uv pip install -e . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }} ${{ inputs.golden-host && 'numpy==2.5.2 scipy==1.18.0' || '' }}
-    - name: Record reference numerical runtime
-      if: inputs.golden-host
-      run: python -c "import numpy; import scipy; print(numpy.__version__, scipy.__version__); numpy.show_runtime()"
+      run: uv pip install -e . --group test ${{ (runner.os != 'macOS' && runner.arch != 'ARM64') && 'mkl' || '' }}
     - name: Check MKL version
       if: runner.os != 'macOS' && runner.arch != 'ARM64'
       run: pip show mkl
-    # The CI data packages: the v2 release data cut to the 31-bin test window
-    # (891 GeV .. 891 TeV) and packaged like the release -- a base package
-    # (FLUKA20251 + SIBYLL23E + spine), an extra-models package and the CI
-    # manifest the loader resolves the other models through. The cache key
-    # carries the manifest digest, so a new CI set invalidates the cache and
-    # an unchanged one is a hit on every run (the "Report" step shows which).
+    # The v2 data cut to the 31-bin test window (891 GeV .. 891 TeV).
+    # Cache key carries the manifest digest, so a new set misses.
     - name: Cache CI data packages
       id: cache-db
       uses: actions/cache@v6
@@ -94,7 +77,7 @@ jobs:
                 sys.exit(1)
         PY
     - name: Run tests
-      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3 --dist loadgroup ${{ inputs.golden-host && '--run-golden-host' || '' }}
+      run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3 --dist loadgroup
     - name: Upload coverage reports to Codecov
       if: inputs.upload-coverage
       uses: codecov/codecov-action@v7

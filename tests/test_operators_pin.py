@@ -4,18 +4,19 @@ Phase 5 of the layered-architecture refactor lifts ``MatrixBuilder`` and
 ``MCEqRun._em_cascade_step_scale`` out of ``core.py`` into an ``operators/``
 package, extracts the loss stencils and the kappa^2 muon damping as pure
 functions, and splits ``int_m`` into ``int_m_hadr + dEdx_band``. The numbers
-are pinned by the ``operators1d`` / ``operators2d`` golden sections; what is
-pinned here is the *behaviour* around them, which no array value records:
+themselves are recorded in the reference set kept with the maintenance
+tools; what is pinned here is the *behaviour* around them, which no array
+value records:
 
 * which stencil names the builder accepts, and that it rejects the rest;
 * that ``op_matrix`` is built in ``MatrixBuilder.__init__`` and nowhere else,
   so ``regenerate_matrices()`` alone does not pick up a stencil change;
-* that every assembly path returns a *canonical* CSR — the one property the
-  golden digests cannot see, and the one MKL and cuSPARSE handles depend on;
-* that the golden sweep's construct-once shortcut is the same operator as a
+* that every assembly path returns a *canonical* CSR — the one property a
+  checksum cannot see, and the one MKL and cuSPARSE handles depend on;
+* that the sweep's construct-once shortcut is the same operator as a
   fresh ``MCEqRun``, which was measured and then left in a docstring;
 * the two-term invariant ``int_m == int_m_hadr + dEdx_band`` and the two
-  properties of the split the golden digests cannot see: that the band is
+  properties of the split a checksum cannot see: that the band is
   reused rather than recomputed, and that a settings change since the assembly
   is refused instead of answered with a mismatched half;
 * the identity, invalidation and release contract of the ``_compiled_operator``
@@ -42,13 +43,9 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.core import MatrixBuilder, MCEqRun
 from MCEq.operators import loss_stencil, scattering
-from tests.golden import gen_operators1d
-from tests.golden._harness import canonical_csr_problems, sparse_digest
-from tests.golden._operator_sweep import (
-    STENCILS,
-    build_cell_operators,
-    pinned_config,
-)
+from tests.helpers import operators as operator_helpers
+from tests.helpers.operators import STENCILS, build_cell_operators, pinned_config
+from tests.helpers.sparse import canonical_csr_problems, sparse_digest
 
 # ---------------------------------------------------------------------------
 # loss stencils: which names exist, and that each one is a different operator
@@ -95,7 +92,7 @@ def stencil_config(monkeypatch):
 
 
 def test_stencil_names_match_the_builders_own_error(stencil_config):
-    """The golden sweep's `STENCILS` is the set the stencil module accepts.
+    """`STENCILS` is the set the stencil module accepts.
 
     The names are read back out of the ``ValueError`` rather than restated, so
     a family added to the builder without a golden cell fails here instead of
@@ -163,7 +160,7 @@ def test_expfit_interior_rows_do_not_annihilate_a_constant(
 
 
 def test_the_seven_stencils_are_seven_different_operators(stencil_config):
-    """Pairwise distinct on one grid — what makes the golden sweep informative."""
+    """Pairwise distinct on one grid — what makes the sweep informative."""
     matrices = {method: _op_matrix(method) for method in STENCILS}
     for i, a in enumerate(STENCILS):
         for b in STENCILS[i + 1 :]:
@@ -542,7 +539,7 @@ def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# the golden sweep's construct-once shortcut == a fresh MCEqRun
+# the sweep's construct-once shortcut == a fresh MCEqRun
 # ---------------------------------------------------------------------------
 
 #: The two cells the equivalence is measured on. ``upwind`` takes the
@@ -565,8 +562,8 @@ def _reused_and_fresh_digests():
     which builds ``op_matrix`` in ``MatrixBuilder.__init__`` and the matrices
     from it, with no state carried in from another cell.
     """
-    with pinned_config(gen_operators1d.CONFIG_PINS, gen_operators1d.ADV_SET_PINS):
-        mceq = MCEqRun(**gen_operators1d.RUN_KWARGS)
+    with pinned_config(operator_helpers.CONFIG_PINS, operator_helpers.ADV_SET_PINS):
+        mceq = MCEqRun(**operator_helpers.RUN_KWARGS)
         try:
             reused = {
                 cell: _operator_digests(*build_cell_operators(mceq, *cell))
@@ -579,7 +576,7 @@ def _reused_and_fresh_digests():
         for stencil, scatter in EQUIVALENCE_CELLS:
             config.loss_stencil_method = stencil
             config.muon_multiple_scattering = scatter
-            run = MCEqRun(**gen_operators1d.RUN_KWARGS)
+            run = MCEqRun(**operator_helpers.RUN_KWARGS)
             try:
                 fresh[stencil, scatter] = _operator_digests(run.int_m, run.dec_m)
             finally:
