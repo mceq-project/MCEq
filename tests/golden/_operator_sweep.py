@@ -100,10 +100,11 @@ import time
 import numpy as np
 
 from ._harness import (
+    LIBM_RTOL,
     assert_canonical_csr,
     blas_threads,
     make_provenance,
-    sparse_digest,
+    record_sparse,
 )
 
 #: Every interior stencil ``MatrixBuilder._construct_differential_operator``
@@ -170,19 +171,38 @@ SWEEP_CELLS = tuple(cell for cell in CELLS if not cell[3])
 EM_SCALE_RTOL = 1e-9
 
 
-def tolerances(em_step_scale: bool = True) -> dict:
+def tolerances(em_step_scale: bool = True, numeric: bool = False) -> dict:
     """The section tolerance table: ``em_step_scale`` on rel-L2, rest bitwise.
 
     Empty for a section that records no ``em_step_scale``. An entry matching no
     key is worse than no entry: a reader credits the section with a 1e-9
     tolerance that :func:`._harness.tolerance_entry_for` never resolves.
+
+    ``numeric`` — paired with the ``numeric`` of :func:`build_section` — adds
+    the entries that carry the host portability: the ``int_m`` CSR-data
+    digest demoted to ``record`` (identity label for the invariants, no
+    gate), its stored sample gated element-wise, and the float buffer
+    ``op_matrix`` likewise element-wise, where the drift was measured
+    largest (2.8e-11 max elementwise on the GH azure runners). ``dec_m``
+    digests stay bitwise: the decay operator is table-driven and was not
+    observed to move.
     """
     if not em_step_scale:
         return {}
-    return {
+    table = {
         f"cells/{label}/em_step_scale": {"mode": "rel_l2", "rtol": EM_SCALE_RTOL}
         for label, *_ in CELLS
     }
+    if numeric:
+        table["suffix:int_m/data"] = {"mode": "record"}
+        table["suffix:int_m/data_sample"] = {"mode": "max_rel", "rtol": LIBM_RTOL}
+        table["suffix:int_m/row_sums_by_species"] = {
+            "mode": "max_rel",
+            "rtol": LIBM_RTOL,
+        }
+        table["suffix:int_m/row_sums_by_mode"] = {"mode": "max_rel", "rtol": LIBM_RTOL}
+        table["stencil/"] = {"mode": "max_rel", "rtol": LIBM_RTOL}
+    return table
 
 
 # --------------------------------------------------------------------------
@@ -249,15 +269,14 @@ def build_cell_operators(mceq, stencil, scattering, average=False):
 # --------------------------------------------------------------------------
 
 
-def _record_csr(arrays, prefix, matrix):
-    """Shape, nnz, dtype and the three CSR buffer digests of one operator."""
-    digest = sparse_digest(matrix)
-    arrays[prefix + "/shape"] = np.asarray(digest["shape"])
-    arrays[prefix + "/nnz"] = np.asarray(digest["nnz"])
-    arrays[prefix + "/dtype"] = np.asarray(digest["dtype"])
-    for part in ("data", "indices", "indptr"):
-        arrays[prefix + "/" + part] = np.asarray(digest[part])
-    return digest
+def _record_csr(arrays, prefix, matrix, numeric=False):
+    """Shape, nnz, dtype and the CSR buffers, via :func:`._harness.record_sparse`.
+
+    ``numeric`` delegates to the shared helper: the float-data digest stays
+    stored as an identity label, the gate moves to a 1/stride element-wise
+    sample, and the index digests stay bitwise. See :func:`tolerances`.
+    """
+    return record_sparse(arrays, prefix, matrix, numeric=numeric)
 
 
 def _record_reductions(arrays, prefix, matrix, n_k, n_species):
@@ -307,7 +326,16 @@ def _record_fixture(arrays, mceq):
 
 
 def _record_cell(
-    arrays, label, stencil, scattering, average, mceq, n_k, n_species, em_step_scale
+    arrays,
+    label,
+    stencil,
+    scattering,
+    average,
+    mceq,
+    n_k,
+    n_species,
+    em_step_scale,
+    numeric=False,
 ):
     """Assemble one cell and store the operators and the EM step scale.
 
@@ -334,15 +362,21 @@ def _record_cell(
     op_matrix = np.asarray(mb.op_matrix, dtype=np.float64)
     key = f"stencil/{stencil}/op_matrix"
     if key in arrays:
-        assert np.array_equal(arrays[key], op_matrix), (
+        stored = np.asarray(arrays[key], dtype=np.float64)
+        # Same tolerance as the gate: a host libm moves this matrix's last
+        # bits (measured 2.8e-11 max elementwise between glibc 2.34 and
+        # 2.39), so the identity the second cell of a pair asserts is the
+        # numerical one, not the bitwise one.
+        assert np.allclose(stored, op_matrix, rtol=LIBM_RTOL, atol=0.0), (
             f"{label}: muon_multiple_scattering or average_loss_operator moved "
-            f"op_matrix. The first reaches _csr_from_blocks and the second "
-            f"cont_loss_operator, never _construct_differential_operator."
+            f"op_matrix beyond {LIBM_RTOL:.0e} element-wise. The first reaches "
+            f"_csr_from_blocks and the second cont_loss_operator, never "
+            f"_construct_differential_operator."
         )
     else:
         arrays[key] = op_matrix
 
-    int_digest = _record_csr(arrays, f"cells/{label}/int_m", int_m)
+    int_digest = _record_csr(arrays, f"cells/{label}/int_m", int_m, numeric=numeric)
     _record_reductions(arrays, f"cells/{label}/int_m", int_m, n_k, n_species)
     dec_digest = _record_csr(arrays, f"cells/{label}/dec_m", dec_m)
 
@@ -454,12 +488,15 @@ def build_section(
     note,
     extra=None,
     em_step_scale=True,
+    numeric=False,
 ):
     """Produce ``(arrays, provenance)`` for one database's operator sweep.
 
     ``em_step_scale`` False drops the EM step scale and its tolerance entry,
     for a fixture on which the value carries nothing — see the module
-    docstring.
+    docstring. ``numeric`` compares float payloads element-wise against
+    stored 1/stride samples instead of gating their sha256 digests; see
+    :func:`tolerances`.
     """
     arrays = {}
     seconds = {}
@@ -488,6 +525,7 @@ def build_section(
                     n_k,
                     n_species,
                     em_step_scale,
+                    numeric,
                 )
             seconds["cells"] = time.perf_counter() - started
         finally:
@@ -499,7 +537,7 @@ def build_section(
         provenance = make_provenance(
             section,
             note=note,
-            tolerances=tolerances(em_step_scale),
+            tolerances=tolerances(em_step_scale, numeric),
             extra={
                 "stencils": list(STENCILS),
                 "scattering": [label for label, _ in SCATTERING],

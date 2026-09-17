@@ -8,11 +8,12 @@ blending policy on top. Re-exported as ``MCEq.data.HDF5Backend``.
 """
 
 from collections import defaultdict
+from contextlib import ExitStack, contextmanager
 from os.path import isfile, join
 
 import numpy as np
 
-from MCEq.data import em_tables, hdf5_store
+from MCEq.data import db_manifest, download, em_tables, hdf5_store
 from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 from MCEq.data.equivalences import (
@@ -36,6 +37,15 @@ class HDF5Backend:
     there is no fallback to live config. An omitted medium resolves from the
     injected ``physics`` group at construction, not against config.
     """
+
+    @contextmanager
+    def _read_session(self):
+        """Scope hadronic and enabled EM reads to one handle per file."""
+        with ExitStack() as stack:
+            stack.enter_context(self._had.session())
+            if self._physics.enable_em:
+                stack.enter_context(self._em_store.session())
+            yield
 
     def __init__(
         self,
@@ -63,6 +73,15 @@ class HDF5Backend:
                 f'MCEq DB file {paths.mceq_db_fname} not found in "data" directory.'
             )
         self._had = hdf5_store.HDF5Store(self.had_fname)
+        # A v2 release package (root attr ``mceq_db_manifest``, stamped by
+        # the packager) resolves models it lacks through the release
+        # manifest; a monolith is resolved against its own file only.
+        self._paths = paths
+        self._packages = (
+            db_manifest.ModelStoreCache(paths, self._had, download)
+            if "mceq_db_manifest" in self._had.attrs()
+            else None
+        )
 
         self.em_fname = join(paths.data_dir, paths.em_db_fname)
         if physics.enable_em and not isfile(self.em_fname):
@@ -74,59 +93,60 @@ class HDF5Backend:
         # (and must stay absent-constructible): HDF5Store never opens.
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
-        # In standalone EM mode (grid.em_standalone_grid), take the energy grid
-        # from the EM DB instead of the hadronic DB, so the EM cascade can run
-        # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
-        # hadronic interaction/decay matrices are then skipped and the e±
-        # ionization continuous-loss curve is interpolated onto the EM grid
-        # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
-        # Default off.
-        self._em_standalone = bool(grid.em_standalone_grid)
-        grid_fname = self.em_fname if self._em_standalone else self.had_fname
+        with self._read_session():
+            # In standalone EM mode (grid.em_standalone_grid), take the energy grid
+            # from the EM DB instead of the hadronic DB, so the EM cascade can run
+            # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
+            # hadronic interaction/decay matrices are then skipped and the e±
+            # ionization continuous-loss curve is interpolated onto the EM grid
+            # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
+            # Default off.
+            self._em_standalone = bool(grid.em_standalone_grid)
+            grid_store = self._em_store if self._em_standalone else self._had
 
-        self.version = self._had.attrs().get("version", "1.0.0")
+            self.version = self._had.attrs().get("version", "1.0.0")
 
-        ca = hdf5_store.HDF5Store(grid_fname).attrs("common")
-        self._e_grid_full = np.asarray(ca["e_grid"])
-        self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
-            ca["e_grid"], grid.e_min, grid.e_max
-        )
+            ca = grid_store.attrs("common")
+            self._e_grid_full = np.asarray(ca["e_grid"])
+            self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
+                ca["e_grid"], grid.e_min, grid.e_max
+            )
 
-        self._energy_grid = EnergyGrid(
-            ca["e_grid"][self._cuts],
-            ca["e_bins"][self.min_idx : self.max_idx + 1],
-            ca["widths"][self._cuts],
-            int(self.max_idx - self.min_idx),
-        )
+            self._energy_grid = EnergyGrid(
+                ca["e_grid"][self._cuts],
+                ca["e_bins"][self.min_idx : self.max_idx + 1],
+                ca["widths"][self._cuts],
+                int(self.max_idx - self.min_idx),
+            )
 
-        # 2D databases are detected by the ``k_dim`` attribute on the
-        # ``common`` group; there is no config flag.
-        self.is_2d = "k_dim" in ca
-        if self.is_2d:
-            self.n_k = int(ca["k_dim"])
-            self.k_grid = np.asarray(ca["k_grid"])
-        else:
-            self.n_k = 1
-            self.k_grid = np.asarray([0])
+            # 2D databases are detected by the ``k_dim`` attribute on the
+            # ``common`` group; there is no config flag.
+            self.is_2d = "k_dim" in ca
+            if self.is_2d:
+                self.n_k = int(ca["k_dim"])
+                self.k_grid = np.asarray(ca["k_grid"])
+            else:
+                self.n_k = 1
+                self.k_grid = np.asarray([0])
 
-        # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
-        if self.is_2d:
-            self.dim_full = int(ca["e_dim"]) * self.n_k
-        else:
-            self.dim_full = int(ca["e_dim"])
+            # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
+            if self.is_2d:
+                self.dim_full = int(ca["e_dim"]) * self.n_k
+            else:
+                self.dim_full = int(ca["e_dim"])
 
-        self.medium = medium
-        self.low_energy_model = (
-            normalize_hadronic_model_name(low_energy_model)
-            if low_energy_model is not None
-            else None
-        )
-        self.he_le_transition = float(he_le_transition)
-        self.he_le_trwidth = float(he_le_trwidth)
-        if self.he_le_transition <= 0.0:
-            raise ValueError("he_le_transition must be positive")
-        if self.he_le_trwidth < 0.0:
-            raise ValueError("he_le_trwidth must be non-negative")
+            self.medium = medium
+            self.low_energy_model = (
+                normalize_hadronic_model_name(low_energy_model)
+                if low_energy_model is not None
+                else None
+            )
+            self.he_le_transition = float(he_le_transition)
+            self.he_le_trwidth = float(he_le_trwidth)
+            if self.he_le_transition <= 0.0:
+                raise ValueError("he_le_transition must be positive")
+            if self.he_le_trwidth < 0.0:
+                raise ValueError("he_le_trwidth must be non-negative")
 
     @property
     def energy_grid(self):
@@ -232,6 +252,42 @@ class HDF5Backend:
             info(0, "Choose from:\n", "\n".join(available_models))
             raise Exception("Unknown selections.")
 
+    # -- model resolution across release packages -------------------------
+    #
+    # ``_model_store`` answers "which file holds tree/<medium>/<model>":
+    # the primary file first, then -- for release packages only -- the
+    # manifest-listed packages on the same grid (MCEq.data.db_manifest).
+
+    def _model_store(self, mname, medium, tree):
+        """Store holding ``tree/<medium>/<mname>``, or None."""
+        if self._had.has(f"{tree}/{medium}/{mname}"):
+            return self._had
+        if self._packages is not None:
+            return self._packages.get(mname, medium, tree)
+        return None
+
+    def _resolve_interaction_store(self, mname):
+        """``(store, medium)`` of the yield pack of ``mname`` in package mode,
+        with the monolith path's air fallback spanning primary and packages."""
+        had = "hadronic_interactions"
+        store = self._model_store(mname, self.medium, had)
+        if store is not None:
+            return store, self.medium
+        if self._physics.fallback_to_air_cs and self.medium != "air":
+            store = self._model_store(mname, "air", had)
+            if store is not None:
+                info(
+                    1,
+                    (
+                        f"Production matrices for {mname} in {self.medium} not found."
+                        + "Fall-back to air."
+                    ),
+                )
+                return store, "air"
+        raise db_manifest.missing_model_error(
+            self._paths, self._packages, mname, self.medium
+        )
+
     def _he_le_weight(self):
         """:func:`MCEq.data.blending.he_le_weight` on this backend's settings.
 
@@ -271,7 +327,15 @@ class HDF5Backend:
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, f"Generating interaction db. mname={mname}")
         had = "hadronic_interactions"
-        if (
+        store = self._had
+        if self._packages is not None:
+            if self._em_standalone:
+                # Hadronic packs are inert for a γ/e± cascade (skipped
+                # below); a package without the model must still construct.
+                medium = self.medium
+            else:
+                store, medium = self._resolve_interaction_store(mname)
+        elif (
             not self._had.has(f"{had}/{self.medium}")
             or not self._had.has(f"{had}/{self.medium}/{mname}")
         ) and self._physics.fallback_to_air_cs:
@@ -305,7 +369,7 @@ class HDF5Backend:
             }
         else:
             int_index = self._gen_db_dictionary(
-                self._had.read_channel_pack(f"{had}/{medium}", mname),
+                store.read_channel_pack(f"{had}/{medium}", mname),
                 equivalences=eqv,
             )
 
@@ -415,23 +479,17 @@ class HDF5Backend:
         # historical DPMJET fallback only for older files that do not.
         if "FLUKA" in mname:
             cs_root = "cross_sections"
-            direct_medium = medium if self._had.has(f"{cs_root}/{medium}") else None
-            direct = direct_medium is not None and self._had.has(
-                f"{cs_root}/{direct_medium}/{mname}"
-            )
+            direct = self._model_store(mname, medium, cs_root) is not None
             if (
                 not direct
                 and self._physics.fallback_to_air_cs
-                and self._had.has(f"{cs_root}/air")
+                and self._model_store(mname, "air", cs_root) is not None
             ):
-                if self._had.has(f"{cs_root}/air/{mname}"):
-                    medium = "air"
-                    direct = True
+                medium = "air"
+                direct = True
             if not direct:
                 for fallback in ("DPMJETIII191", "DPMJETIII193"):
-                    if direct_medium is not None and self._had.has(
-                        f"{cs_root}/{direct_medium}/{fallback}"
-                    ):
+                    if self._model_store(fallback, medium, cs_root) is not None:
                         info(5, f"{mname} cross sections replaced by {fallback}.")
                         mname = fallback
                         break
@@ -448,9 +506,18 @@ class HDF5Backend:
         index_d = {}
         parents = []
         if not self._em_standalone:
-            self._check_subgroup_exists(self._had, "cross_sections", medium)
-            self._check_subgroup_exists(self._had, f"cross_sections/{medium}", mname)
-            cs_data, cs_attrs = self._had.read_table(f"cross_sections/{medium}/{mname}")
+            cs_store = self._model_store(mname, medium, "cross_sections")
+            if cs_store is None:
+                if self._packages is not None:
+                    raise db_manifest.missing_model_error(
+                        self._paths, self._packages, mname, medium
+                    )
+                self._check_subgroup_exists(self._had, "cross_sections", medium)
+                self._check_subgroup_exists(
+                    self._had, f"cross_sections/{medium}", mname
+                )
+                raise Exception("Unknown selections.")
+            cs_data, cs_attrs = cs_store.read_table(f"cross_sections/{medium}/{mname}")
             if "parents" not in cs_attrs:
                 raise RuntimeError(
                     f"Cross-section table '{medium}/{mname}' in "
@@ -466,11 +533,18 @@ class HDF5Backend:
         if filters["replace_meson_cross_sections_with"] is not None:
             mname_mesons = filters["replace_meson_cross_sections_with"]
             info(1, "Meson cross sections forced to", mname_mesons)
-            self._check_subgroup_exists(self._had, "cross_sections", medium)
-            self._check_subgroup_exists(
-                self._had, f"cross_sections/{medium}", mname_mesons
-            )
-            mes_cs_data, mes_attrs = self._had.read_table(
+            mes_store = self._model_store(mname_mesons, medium, "cross_sections")
+            if mes_store is None:
+                if self._packages is not None:
+                    raise db_manifest.missing_model_error(
+                        self._paths, self._packages, mname_mesons, medium
+                    )
+                self._check_subgroup_exists(self._had, "cross_sections", medium)
+                self._check_subgroup_exists(
+                    self._had, f"cross_sections/{medium}", mname_mesons
+                )
+                raise Exception("Unknown selections.")
+            mes_cs_data, mes_attrs = mes_store.read_table(
                 f"cross_sections/{medium}/{mname_mesons}"
             )
             mes_parents = list(mes_attrs["parents"])

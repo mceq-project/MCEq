@@ -54,6 +54,7 @@ def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
         mceq_db_fname="mceq_db_v2_fluka2d_rc7.h5",
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         e_min=1e-1,
         e_max=1e4,
         muon_helicity_dependence=True,

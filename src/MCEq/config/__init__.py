@@ -33,6 +33,14 @@ mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 
+#: Data-release manifest (YAML): for every package file its energy grid,
+#: sha256 and the hadronic models it carries per medium. Read from
+#: ``data_dir`` (a copy ships with the package; edit it to register a
+#: single-model file of your own) and consulted only when ``mceq_db_fname``
+#: is a release package that lacks a requested model. A monolithic database
+#: never touches it.
+mceq_db_manifest = "mceq_db_manifest_v2.yaml"
+
 # =================================================================
 # Atmosphere and geometry settings
 # =================================================================
@@ -135,6 +143,7 @@ cuda_fp_precision = 64
 #: Floating point precision (is set automatically)
 floatlen = None
 
+
 #: BLAS thread limit, defaulting to ``min(16, os.cpu_count() or 1)``.
 #: Irrelevant for GPU integrators, but can affect initialization speed if
 #: numpy is linked to MKL. Sparse products and narrow dense products can be
@@ -145,7 +154,33 @@ floatlen = None
 #: contention. :func:`set_mkl_threads` applies the limit to supported, loaded
 #: BLAS libraries, OpenBLAS (what most numpy wheels link) included. Override
 #: after import for full control: ``MCEq.config.set_mkl_threads(n)``.
-mkl_threads = min(16, os.cpu_count() or 1)
+def _available_cpus():
+    """CPUs this process may run on (the affinity mask, else ``cpu_count``)."""
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return os.cpu_count() or 1
+
+
+def _default_threads():
+    """The process-wide BLAS thread budget, decided in this one place.
+
+    An explicit ``MKL_NUM_THREADS`` / ``OMP_NUM_THREADS`` /
+    ``OPENBLAS_NUM_THREADS`` in the environment wins -- that is how
+    schedulers, containers and test runners share a node (``tests/conftest.py``
+    divides the CPUs among pytest-xdist workers this way). Otherwise the
+    budget is ``min(16, cpus)`` over the CPUs the process may actually use
+    (affinity mask, not the host's core count): ETD2 scales near-linearly to
+    ~16 threads and plateaus beyond, and the skinny secant GEMMs only contend
+    on an all-cores fan-out.
+    """
+    for var in ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        value = os.environ.get(var, "")
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+    return min(16, _available_cpus())
+
+
+mkl_threads = _default_threads()
 
 # =========================================================================
 # Advanced settings
@@ -157,12 +192,13 @@ mkl_threads = min(16, os.cpu_count() or 1)
 #: Each value can be overridden per-call via
 #: `MCEqRun.solve(..., eps=..., dX_max=...)`.
 etd2_path = {
-    #: Bound on the within-step variation of log inverse density. Smaller
-    #: values produce finer steps, especially in the upper atmosphere.
-    "eps": 0.01,
-    #: Accuracy ceiling in g/cm^2. The actual assembled loss stencil and
-    #: secant coupling may require a smaller step, especially at low energy.
-    "dX_max": 2.0,
+    #: Within-step log inverse-density variation. None selects .03 for
+    #: 1D hadronic/lepton transport and .01 for 2D or electron transport.
+    #: This is guidance for numerical accuracy, not a flux-error tolerance.
+    "eps": None,
+    #: Requested ceiling in g/cm^2: None selects 5 for 1D hadronic/lepton
+    #: transport, 2 for 2D or electron transport. Matrix guards still apply.
+    "dX_max": None,
     #: Floor on the step size. Prevents the controller from picking 0
     #: when |d ln rho_inv / dX| is very large (top of atmosphere).
     "dX_min": 0.01,

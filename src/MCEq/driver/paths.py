@@ -72,6 +72,14 @@ def calculate_integration_path(
     X_start = solver.X_start if X_start is None else X_start
     eps = p["eps"] if eps is None else eps
     dX_max = p["dX_max"] if dX_max is None else dX_max
+    if eps is None or dX_max is None:
+        conservative = run._mceq_db.is_2d or any(
+            abs(particle.pdg_id[0]) == 11 for particle in run.pman.all_particles
+        )
+        if eps is None:
+            eps = 0.01 if conservative else 0.03
+        if dX_max is None:
+            dX_max = 2.0 if conservative else 5.0
     dX_min = p["dX_min"] if dX_min is None else dX_min
     fd_span = p["fd_span"] if fd_span is None else fd_span
     cap = min(

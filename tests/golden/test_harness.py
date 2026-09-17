@@ -191,6 +191,31 @@ def test_dispatch_exact_entry_beats_a_matching_prefix():
     assert tolerance_for("state/single_mode_l2", prov) == ("rel_l2", 1e-11)
 
 
+def test_dispatch_suffix_entry_matches_by_path_fragment():
+    """`suffix:int_m/data` gates every operator buffer in one line."""
+    prov = {"tolerances": {"suffix:int_m/data": {"mode": "record"}}}
+    assert tolerance_for("cells/expfit/ms_on/int_m/data", prov) == ("record", HOST_RTOL)
+    assert tolerance_for("ddm/int_m/data", prov) == ("record", HOST_RTOL)
+    # The fragment must be a full path component: it must not reach dec_m,
+    # the sample sibling, or a key merely containing the string.
+    assert tolerance_for("cells/expfit/ms_on/dec_m/data", prov) == ("bitwise", 0.0)
+    assert tolerance_for("cells/x/int_m/data_sample", prov) == ("bitwise", 0.0)
+
+
+def test_dispatch_suffix_beats_prefix_and_exact_beats_suffix():
+    """Precedence: exact, then longest suffix, then longest prefix."""
+    prov = {
+        "tolerances": {
+            "cells/": {"mode": "rel_l2", "rtol": 1e-9},
+            "suffix:int_m/data": {"mode": "record"},
+            "a/int_m/data": {"mode": "bitwise"},
+        }
+    }
+    assert tolerance_for("cells/x/int_m/data", prov) == ("record", HOST_RTOL)
+    assert tolerance_for("a/int_m/data", prov) == ("bitwise", HOST_RTOL)
+    assert tolerance_for("cells/x/probe/X", prov) == ("rel_l2", 1e-9)
+
+
 # --------------------------------------------------------------------------
 # compare_key: structural checks, shared by every mode
 # --------------------------------------------------------------------------
@@ -275,6 +300,40 @@ def test_compare_key_rel_l2_drops_matching_non_finite():
 
 
 # --------------------------------------------------------------------------
+# compare_key: max_rel / record
+# --------------------------------------------------------------------------
+
+
+def test_compare_key_max_rel_sees_one_moved_element():
+    """One moved element is visible, where rel-L2 dilutes it by sqrt(n)."""
+    x = np.ones(10_000)
+    y = x.copy()
+    y[5] *= 1 + 1e-8
+    assert compare_key("k", x, y, "rel_l2", 1e-9) is None
+    problem = compare_key("k", x, y, "max_rel", 1e-9)
+    assert problem.startswith("k: max elementwise rel")
+    assert "1 of 10000 elements" in problem
+
+
+def test_compare_key_max_rel_ulp_drift_passes():
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    y = x * (1 + 1e-16)
+    assert compare_key("k", x, y, "max_rel", 1e-9) is None
+
+
+def test_compare_key_max_rel_zero_golden_is_absolute():
+    x = np.array([1.0, 0.0])
+    assert compare_key("k", x, x.copy(), "max_rel", 1e-9) is None
+    assert "max elementwise rel" in compare_key("k", x, [1.0, 1e-8], "max_rel", 1e-9)
+
+
+def test_compare_key_record_ignores_value():
+    """A recorded digest moves with the host libm; the gate is elsewhere."""
+    assert compare_key("k", "abcd", "beef", "record", 0.0) is None
+    assert "shape" in compare_key("k", np.zeros(3), np.zeros(4), "record", 0.0)
+
+
+# --------------------------------------------------------------------------
 # compare_section and the rtol_floor override
 # --------------------------------------------------------------------------
 
@@ -346,6 +405,20 @@ def test_compare_section_rtol_floor_does_not_tighten(unit_section):
     produced = dict(arrays)
     produced["state/x"] = arrays["state/x"] * (1.0 + 1e-8)
     assert compare_section("unit", produced, rtol_floor=1e-12) == []
+
+
+def test_compare_section_rtol_floor_spares_max_rel_and_record(unit_section):
+    """A floor that promoted element-wise or recorded keys to rel-L2 would
+    compare something the section never chose."""
+    arrays = unit_section(
+        {"state/x": {"mode": "max_rel", "rtol": 1e-16}, "count": {"mode": "record"}}
+    )
+    produced = dict(arrays)
+    produced["state/x"] = arrays["state/x"] * (1.0 + 1e-8)
+    produced["count"] = np.asarray(8)
+    assert "max elementwise" in str(compare_section("unit", produced))
+    assert "max elementwise" in str(compare_section("unit", produced, rtol_floor=1e-9))
+    assert compare_section("unit", {**arrays, "count": np.asarray(99)}) == []
 
 
 def test_compare_section_rtol_floor_spares_the_flux_metric(unit_section):
@@ -765,19 +838,36 @@ def test_containment_respects_the_cuda_rtol_floor(unit_section):
 def test_containment_bounds_a_rejected_species_of_the_1d_golden(solve1d_golden):
     """The regression this closes, on the section that shipped it.
 
-    `emon/theta0/state` admits 68 of its 74 entries; the six the guard rejects
-    are `e+-` and their helicities -- the cancellation residuals the sign test
-    exists to keep out of the flux bound. A move confined to one of them is
-    what the per-species maximum cannot see and containment must.
+    On the v1.4 CI database the rejected entries of `emon/theta0/state` were
+    `e+-` and their helicities; the v2 tables carry no e+-, and the species the
+    sign test now keeps out of the flux bound are the thirteen hadrons of the
+    near-horizontal `emoff/theta89/state` -- cancellation residuals on the
+    891 GeV floor. A move confined to one of them is what the per-species
+    maximum cannot see and containment must (probed on K_L0: pi0's block is
+    ~1e-99 of the state and falls under the containment floor).
     """
-    key = "emon/theta0/state"
+    key = "emoff/theta89/state"
     layout = _flux_metric.layout_for(key, solve1d_golden)
-    index = dict(layout.table)["e+_l"]
+    index = dict(layout.table)["K_L0"]
 
     reference = solve1d_golden[key]
     entries = _flux_metric.evaluate_key(reference, reference, layout)
     rejected = [entry.species for entry in entries if not _flux_metric.covered(entry)]
-    assert rejected == ["e+_l", "e+", "e+_r", "e-_l", "e-", "e-_r"]
+    assert rejected == [
+        "pi0",
+        "K_L0",
+        "pi-",
+        "pi+",
+        "K_S0",
+        "K-",
+        "K+",
+        "nbar0",
+        "n0",
+        "pbar-",
+        "p+",
+        "Lambdabar0",
+        "Lambda0",
+    ]
 
     produced = np.array(reference)
     produced[index * layout.dim : (index + 1) * layout.dim] *= 1 + 1e-3
@@ -797,7 +887,7 @@ def test_containment_bounds_a_rejected_species_of_the_1d_golden(solve1d_golden):
         fallback_rtol=_flux_metric.RTOL_1D,
     )
     assert "containment rel-L2" in problem
-    assert "e+_l" in problem
+    assert "K_L0" in problem
     assert "per-species max" not in problem
 
 
@@ -1115,14 +1205,20 @@ def solve1d_golden():
 
 
 def test_solve1d_layout_resolves_per_case(solve1d_golden):
-    """Each case has its own species table; `emon` adds the six e+/e- rows."""
+    """Each case resolves its own species table from its own meta keys.
+
+    On the v1.4 CI database `emon` added the six e+/e- rows (72 / 2232 vs
+    66 / 2046); the v2 tables carry no e+-, so both cases now resolve to the
+    same 66-species layout -- still read per case, which is what this pins.
+    """
     emoff = _flux_metric.layout_for("emoff/theta89/state", solve1d_golden)
     emon = _flux_metric.layout_for("emon/theta0/state", solve1d_golden)
     assert (emoff.dim, emoff.dim_states, len(emoff.table)) == (31, 2046, 66)
-    assert (emon.dim, emon.dim_states, len(emon.table)) == (31, 2232, 72)
+    assert (emon.dim, emon.dim_states, len(emon.table)) == (31, 2046, 66)
     assert emoff.dim * len(emoff.table) == emoff.dim_states
     assert dict(emoff.table)["antinue"] == 0
-    assert "e+_l" in dict(emon.table)
+    assert "e+_l" not in dict(emon.table)
+    assert "mu+_l" in dict(emon.table)
     assert "e+_l" not in dict(emoff.table)
 
 
@@ -1448,7 +1544,7 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
     # test to put on a spectrum
     for key, dip in (
         ("spectrum/single_total_mu+", -1.360e-2),
-        ("spectrum/single_total_numu", -3.032e-6),
+        ("spectrum/single_total_numu", -2.976e-6),
     ):
         row = arrays[key]
         assert not _flux_metric.sign_definite(row)
@@ -1467,8 +1563,11 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
             row[: _flux_metric.n_retained(row.size, trim)]
         )
     # the artefact deepens with zenith: -1.06% of the peak at 0 deg, -13.0% at 72
+    # (re-measured 2026-09-17 on the golden regenerated after the loss-stencil
+    # step guard: 249 -> 6467 steps moved the numu dip by 2% and the 72 deg
+    # lane by 4e-4; the bins the artefact occupies did not move)
     assert carousel[0].min() / carousel[0].max() == pytest.approx(-0.0106, abs=1e-4)
-    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1299, abs=1e-4)
+    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1303, abs=1e-4)
 
 
 def test_solve2d_trim_does_not_make_the_guard_a_no_op():

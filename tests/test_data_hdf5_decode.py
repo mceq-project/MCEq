@@ -55,6 +55,7 @@ def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
     paths = SimpleNamespace(
         data_dir=path.parent,
         mceq_db_fname=path.name,
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         # No EM database exists for these fixtures; enable_em is False, so the
         # backend never looks for it.
         em_db_fname="no_such_em_db.h5",
@@ -89,7 +90,7 @@ def decode_decays(path, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "db_fname", ["mceq_db_v140reduced_compact.h5", "mceq_db_v2_fluka2d_rc7.h5"]
+    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_db_v2_fluka2d_rc7.h5"]
 )
 def test_shipped_databases_are_four_column(db_fname):
     """Justifies the fixtures: no real file reaches the 2-column branch.
@@ -151,9 +152,9 @@ def test_fixture_pack_matches_the_shipped_pack_layout(hdf5_fixture_dbs):
     """
     from MCEq import config
 
-    real = pathlib.Path(config.data_dir) / "mceq_db_v140reduced_compact.h5"
+    real = pathlib.Path(config.data_dir) / "mceq_ci_base_air_1d_v2.h5"
     if not real.exists():
-        pytest.skip("mceq_db_v140reduced_compact.h5 not available")
+        pytest.skip("mceq_ci_base_air_1d_v2.h5 not available")
 
     rules = (
         "attrs",
@@ -513,7 +514,7 @@ def test_equivalence_aliasing_on_the_shipped_reduced_database():
 
     from MCEq import config
 
-    path = pathlib.Path(config.data_dir) / "mceq_db_v140reduced_compact.h5"
+    path = pathlib.Path(config.data_dir) / "mceq_ci_base_air_1d_v2.h5"
     if not path.exists():
         pytest.skip("reduced database not available; symlink it into src/MCEq/data/")
 

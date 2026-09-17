@@ -166,18 +166,45 @@ def test_em_step_scale_is_recorded_only_where_it_has_content(section, is_2d):
     arrays, prov = load_section(section)
     expected = {f"cells/{label}/em_step_scale" for label, *_ in CELLS}
     found = {key for key in arrays if key.endswith("/em_step_scale")}
+    em_species = list(arrays["fixture/em_species"])
     if is_2d:
         assert found == set()
-        assert list(arrays["fixture/em_species"]) == ["gamma"]
+        assert em_species == ["gamma"]
     else:
         assert found == expected
-        assert np.any([float(arrays[key]) != 0.0 for key in found])
+        # The v2 CI tables carry no e+-, so gamma is the only ``is_em`` species
+        # in 1D too and every cell's value is exactly 0.0; with e+- present
+        # (v1.4 data, or enable_em) at least one cell must be nonzero.
+        values = [float(arrays[key]) != 0.0 for key in found]
+        assert np.any(values) is not (em_species == ["gamma"])
 
     table = prov.get("tolerances") or {}
-    assert set(table) == found, (
-        f"{section}: the tolerance table and the em_step_scale keys disagree; "
-        f"an entry matching no key is a bound the harness never resolves"
-    )
+    # Every em_step_scale key has an entry and every entry resolves to at
+    # least one key — the same contract the harness's docstring states, now
+    # spelled across the three entry forms (exact, suffix:, prefix/) that the
+    # numeric comparison of the 1D section added.
+    if not is_2d:
+        assert expected <= set(table), sorted(expected - set(table))
+    else:
+        assert table == {}, sorted(table)
+    from ._harness import tolerance_entry_for
+
+    for entry_key in table:
+        if entry_key in arrays:
+            continue
+        if entry_key.startswith("suffix:"):
+            name = entry_key[len("suffix:") :]
+            assert any(k == name or k.endswith("/" + name) for k in arrays), entry_key
+        elif entry_key.endswith("/"):
+            assert any(k.startswith(entry_key) for k in arrays), entry_key
+        else:
+            pytest.fail(f"unresolvable tolerance entry {entry_key!r}")
+    resolved = {
+        k
+        for k in arrays
+        if tolerance_entry_for(k, prov) != {"mode": "bitwise", "rtol": 0.0}
+    }
+    assert found <= resolved
 
 
 @pytest.mark.parametrize("section,is_2d", OPERATOR_SECTIONS)

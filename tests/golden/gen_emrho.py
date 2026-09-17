@@ -12,7 +12,7 @@ solved states below provide the portable regression checks.
 
 What executes is the full chain — HDF5 -> ``MCEq.data.em_tables`` rho-slice
 selection -> species setup -> operator assembly -> ETD2 solve — with the slice
-choice observable in the result, so it complements the host-only ``emphoton``
+choice observable in the result, so it complements the (since removed, EM being outside v2) ``emphoton``
 section (real PPM EM database) with a file no external payload is needed for.
 Neither slow nor host-pinned: nothing here is a sha256 of a spline or a solve
 on a payload CI lacks.

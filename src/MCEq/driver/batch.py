@@ -10,12 +10,35 @@ keeps method overrides effective. ``solve_fullsky``'s 2-D-phi0
 cutoff warning uses ``stacklevel=2`` so it points at the caller's frame.
 """
 
+import warnings
 from time import time
 
 import numpy as np
 
 from MCEq.driver.results import MCEqBatchResult
 from MCEq.misc import info
+
+
+def _warn_low_energy_cuda_fp32(run, dtype, sec_ops):
+    """Warn for the low-energy CUDA/secant precision regime, without changing it."""
+    if (
+        dtype != np.dtype(np.float32)
+        or run.config.backend.kernel_config.lower() not in ("cuda", "cuda_etd2")
+        or not run._mceq_db.is_2d
+        or sec_ops is None
+        or run.e_bins[0] > 0.1 * (1.0 + 1e-12)
+    ):
+        return
+    warnings.warn(
+        "CUDA FP32 with low-energy 2D secant transport can accumulate "
+        "precision error in angular distributions. Tests with e_min=0.1 GeV "
+        "exceeded 1% angular error; smaller steps increased the error. "
+        "Compare against dtype=np.float64 on the same integration path "
+        "before relying on percent-level angular accuracy. "
+        "The requested precision and step settings are unchanged.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
 
 
 def solve_batch(
@@ -105,8 +128,9 @@ def solve_batch(
         buffers, on every backend and every route. The diagonal-factor
         pipeline (``exp(h·D)``, φ₁, φ₂) is always computed in fp64
         (fp32 φ-functions suffer catastrophic cancellation) and cast
-        once on the way out, so relative error vs fp64 is ≤ 1e-4 for
-        the production particle set on all fp32 routes. See
+        once on the way out. Accuracy remains workload dependent;
+        low-energy 2D secant transport can accumulate angular errors
+        above 1% in FP32. Compare with FP64 when accuracy matters. See
         ``MCEq.solvers.backends.base._PRECISION_CONTRACT``.
       carousel_K (int | None): pipeline width for the LPT scheduler
         (heterogeneous batches only). ``None`` → ``min(K, 128)``.
@@ -128,6 +152,7 @@ def solve_batch(
         raise ValueError(f"solve_batch: dtype must be float32 or float64, got {dtype}")
 
     sec_ops = run._resolve_secant()
+    _warn_low_energy_cuda_fp32(run, dtype, sec_ops)
 
     # --- resolve phi0 ------------------------------------------------
     if phi0 is None:

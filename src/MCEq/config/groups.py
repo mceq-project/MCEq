@@ -107,6 +107,7 @@ GROUPS = {
         "data_dir": "data_dir",
         "mceq_db_fname": "mceq_db_fname",
         "em_db_fname": "em_db_fname",
+        "mceq_db_manifest": "mceq_db_manifest",
     },
     "grid": {
         "e_min": "e_min",

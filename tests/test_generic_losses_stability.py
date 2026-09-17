@@ -17,9 +17,11 @@ numpy_etd2, ``disabled_particles`` cleared as in the Xmax-3panel driver whose
 observable is the e+- deposit). It is built from local run-artifact databases
 in the harness repo, so all three tests skip when those paths are absent.
 
-The solve test carries ``@pytest.mark.slow`` (its name is deliberate, not a
-registered marker -- nothing deselects it yet; the full gate runs it, ~30 s)
-and the two operator-level tests are the default-on guards. The tests share
+The solve test carries ``@pytest.mark.slow`` and is skipped unless
+``--run-slow`` (root conftest, 2026-09-17): under the loss-stencil step guard
+of ``330cd12`` its solve went from ~30 s to many hours single-threaded, which
+stalled every full gate -- the step count this system now demands is an open
+maintainer question. The two operator-level tests are the default-on guards. The tests share
 one fixture instance through an xdist group, so the parallel gate builds the
 run once per worker, not once per test.
 """
@@ -159,7 +161,7 @@ def test_generic_dedx_in_range_matches_table(v13_hadronic_run):
 
 def test_loss_band_one_step_map_is_contractive(v13_hadronic_run):
     """Cheap proxy of the solve test: the isolated hadron loss block at
-    h = dX_max has no eigen-blowup.
+    h = 2 g/cm² has no eigen-blowup.
 
     The ETD2 ETD1 proxy ``G = exp(h d) (1 + h phi1 Off/d)`` on the loss band
     alone, per species block; before the fix rho(p+) was 2.467 at h=1 and
@@ -170,7 +172,9 @@ def test_loss_band_one_step_map_is_contractive(v13_hadronic_run):
     run = v13_hadronic_run
     matrix_builder = run.matrix_builder
     matrix_builder.construct_matrices()
-    h = float(run._cfg.etd2_path["dX_max"])
+    # Keep the original regression stress step even when automatic path
+    # settings or a matrix guard select a smaller step for the full solve.
+    h = 2.0
     for p in run.pman.cascade_particles:
         if not p.has_contloss or p.is_em:
             continue

@@ -13,8 +13,6 @@ MCEq fixture and must see the pristine module defaults. Test B fails on the
 old conftest, where it inherits test A's config.
 """
 
-import os
-
 import pytest
 
 from MCEq import config
@@ -28,7 +26,7 @@ def test_a_session_config_applied_while_fixture_is_held(mceq_sib21):
     global _A_RAN
     assert config.adv_set["disabled_particles"] == []
     assert config.muon_helicity_dependence is True
-    assert config.mceq_db_fname == "mceq_db_v140reduced_compact.h5"
+    assert config.mceq_db_fname == "mceq_ci_base_air_1d_v2.h5"
     if config.has_mkl:
         assert config.mkl_threads == 2
     _A_RAN = True
@@ -41,7 +39,7 @@ def test_b_session_config_undone_for_the_next_test():
     The expected values are the literals in ``src/MCEq/config/__init__.py``:
 
         mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
-        mkl_threads = min(16, os.cpu_count() or 1)
+        mkl_threads = config._default_threads()
         muon_helicity_dependence = True
         "disabled_particles": [11, -11],  # inside adv_set
     """
@@ -55,4 +53,4 @@ def test_b_session_config_undone_for_the_next_test():
     # where MKL is present; without it the old conftest never set 2 either).
     assert config.muon_helicity_dependence is True
     assert config.mceq_db_fname == "mceq_db_lext_dpm193_v142.h5"
-    assert config.mkl_threads == min(16, os.cpu_count() or 1)
+    assert config.mkl_threads == config._default_threads()

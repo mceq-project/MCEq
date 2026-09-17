@@ -100,9 +100,9 @@ def etd2_nonuniform_path(
         X_start = step.X_start
     p = step.etd2_path
     if eps is None:
-        eps = p["eps"]
+        eps = 0.01 if p["eps"] is None else p["eps"]
     if dX_max is None:
-        dX_max = p["dX_max"]
+        dX_max = 2.0 if p["dX_max"] is None else p["dX_max"]
     if dX_min is None:
         dX_min = p["dX_min"]
     if fd_span is None:

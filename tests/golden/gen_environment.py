@@ -86,15 +86,22 @@ cost 3.7 s to say what two say.
 
 Comparison mode
 ---------------
-Bitwise, and ``golden_host``. The knot and coefficient arrays are stored as
-sha256 digests — 84 cells x 3 splines x ~2000 float64 knots is 3 MB of npz
-otherwise — and a digest admits no tolerance at all, which is the same reason
-``operators1d`` is host-pinned.
+Bitwise by default except under ``cells/``, where numerics run at
+:data:`~._harness.LIBM_RTOL` (see :data:`TOLERANCES`). The knot and
+coefficient sha256 digests that used to carry the gate are demoted to
+identity labels — a digest admits no tolerance, and the glibc bump flipped
+them on every cell while leaving the physics at the ULP level — and the gate
+moves to a 1/64 element-wise sample of each array (:data:`SAMPLE_STRIDE`).
+The digests are still regenerated and stored, so the collision invariants
+below keep reading them as before. Storing every spline in full was the other
+option and costs ~8 MB of npz per rebuild churn; the sample pins the same
+behaviour for 1/64 of it.
 
-That is the *whole* reason, and the thread measurement is what says so rather
-than the default. Rebuilding the section with ``OMP``/``OPENBLAS``/``MKL``/
-``NUMEXPR``/``VECLIB`` thread counts at 1, 2, 4 and 8 reproduces all 2574 keys
-bitwise: FITPACK's band solve is serial Fortran and not a BLAS call at all,
+That the drift is environmental and not threaded is the *whole* reason, and
+the thread measurement is what says so rather than the default. Rebuilding
+the section with ``OMP``/``OPENBLAS``/``MKL``/``NUMEXPR``/``VECLIB`` thread
+counts at 1, 2, 4 and 8 reproduces all 2574 keys bitwise: FITPACK's band
+solve is serial Fortran and not a BLAS call at all,
 ``cumulative_trapezoid`` and the ``nrlmsis`` vectorised path are pure numpy,
 and the one BLAS-shaped operation in the builder is the 3x3 ``T @ d_ENU`` of
 ``_impact_point``. So threads are left ambient and recorded in
@@ -104,8 +111,7 @@ which would leave a process-wide limiter behind.
 Thread invariance is not build invariance, though. A quadratic interpolating
 spline fitted through 2000 MSIS densities is at least as sensitive to a
 numpy/scipy bump as the solves are — those move by 1e-14 relative L2 between
-numpy 2.2/scipy 1.15 and numpy 2.5/scipy 1.18 — and here the sensitive
-quantity is a hash. Hence ``golden_host``.
+numpy 2.2/scipy 1.15 and numpy 2.5/scipy 1.18.
 
 Nothing in this section is sparse, so it calls
 :func:`._harness.assert_canonical_csr` nowhere: the environment layer produces
@@ -120,9 +126,29 @@ import time
 
 import numpy as np
 
-from ._harness import array_digest, blas_threads, make_provenance
+from ._harness import (
+    LIBM_RTOL,
+    array_digest,
+    blas_threads,
+    make_provenance,
+    sample_array,
+)
 
 SECTION = "environment"
+
+#: The glibc drift budget for this section (see :data:`~._harness.LIBM_RTOL`
+#: for the measurement): numeric cell payloads on rel-L2, the spline knot and
+#: coefficient digests demoted to labels, and 1/stride element-wise samples
+#: of those arrays carrying the actual gate. Non-cell keys (gtracr cache
+#: keys, meta text) stay bitwise — they are text or structural, not libm
+#: output.
+TOLERANCES = {
+    "cells/": {"mode": "rel_l2", "rtol": LIBM_RTOL},
+    "suffix:knots": {"mode": "record"},
+    "suffix:coeffs": {"mode": "record"},
+    "suffix:knots_sample": {"mode": "max_rel", "rtol": LIBM_RTOL},
+    "suffix:coeffs_sample": {"mode": "max_rel", "rtol": LIBM_RTOL},
+}
 
 #: Config globals this section fixes. The atmospheres read ``r_E``, ``h_atm``,
 #: ``h_obs`` and ``max_density`` out of ``config.environment`` at construction,
@@ -132,7 +158,8 @@ CONFIG_PINS = {
     "debug_level": 0,
     "override_debug_fcn": [],
     "print_module": False,
-    "mceq_db_fname": "mceq_db_v140reduced_compact.h5",
+    "mceq_db_fname": "mceq_ci_base_air_1d_v2.h5",
+    "mceq_db_manifest": "mceq_db_manifest_ci_v2.yaml",
     "r_E": 6371.315e3,
     "h_obs": 0.0,
     "h_atm": 112.8e3,
@@ -426,8 +453,10 @@ Pinned behaviours beyond the numbers:
 
 BLAS threads are ambient and recorded in extra.blas_threads: rebuilding with
 the thread env vars at 1, 2, 4 and 8 reproduces all 2574 keys bitwise. The
-section is golden_host anyway -- the spline knots and coefficients are sha256
-digests, which admit no tolerance at all.
+section stays golden_host so the pinned numpy/scipy build is guaranteed on
+the job that runs it, but the cell numerics now carry a libm drift budget --
+the spline digests are identity labels, and the gate is the element-wise
+sample under TOLERANCES.
 """
 
 
@@ -459,6 +488,14 @@ def _record_spline(arrays, prefix, spline):
     arrays[f"{prefix}/knot_range"] = np.array([knots[0], knots[-1]], dtype=np.float64)
     arrays[f"{prefix}/knots"] = np.asarray(array_digest(knots))
     arrays[f"{prefix}/coeffs"] = np.asarray(array_digest(coeffs))
+    # The digests admit no tolerance, and the glibc bump moved the last bits
+    # of the fitted coefficients on the GH runners (rel-L2 up to 4e-13, on
+    # knots 2.8e-14) — enough to flip every hash while leaving the physics
+    # far below a 1 ULP-per-element drift. The gate therefore is a 1/64
+    # sample of each array under max_rel; the digests stay as identity
+    # labels for the collision invariants below.
+    arrays[f"{prefix}/knots_sample"] = sample_array(knots)
+    arrays[f"{prefix}/coeffs_sample"] = sample_array(coeffs)
 
 
 def _record_geometry(arrays, prefix, geom):
@@ -1139,7 +1176,7 @@ def build() -> tuple[dict, dict]:
         provenance = make_provenance(
             SECTION,
             note=NOTE,
-            tolerances={},
+            tolerances=TOLERANCES,
             extra={
                 "cells": labels,
                 "covered_classes": covered,

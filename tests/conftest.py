@@ -14,6 +14,7 @@ from MCEq.core import MCEqRun
 _SNAPSHOT_KEYS = (
     "kernel_config",
     "mceq_db_fname",
+    "mceq_db_manifest",
     "X_start",
     "em_adaptive_step",
     "em_step_safety",
@@ -75,7 +76,8 @@ def _apply_session_config():
     """
     config.debug_level = 2
     config.cuda_gpu_id = 0
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
+    config.mceq_db_manifest = "mceq_db_manifest_ci_v2.yaml"
     config.adv_set["disabled_particles"] = []
     config.muon_helicity_dependence = True
     if config.has_mkl:

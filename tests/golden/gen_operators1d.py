@@ -1,14 +1,19 @@
-"""Golden section ``operators1d``: the operator sweep on the 1D reduced DB.
+"""Golden section ``operators1d``: the operator sweep on the 1D CI base package.
 
-Fixture: SIBYLL21 on ``mceq_db_v140reduced_compact.h5`` with the conftest
+Fixture: SIBYLL21 on ``mceq_ci_base_air_1d_v2.h5`` with the conftest
 ``mceq_sib21`` config — ``disabled_particles = []`` so the EM cascade is in the
-system, muon helicity dependence on. 72 cascade species, n_k 1, dim 31,
-dim_states 2232, ``int_m`` 169786 nonzeros and ``dec_m`` 54795.
+system, muon helicity dependence on. 66 cascade species, n_k 1, dim 31,
+dim_states 2046, ``int_m`` 153351 nonzeros (centered cell) and ``dec_m`` 45100.
+SIBYLL21 is served from the CI extra-models package through the CI manifest;
+the v2 tables carry no e+-, so the EM switch does not change the species set.
 
 This section is NOT ``golden_slow``: CI carries this database, so the seven
 stencil families and the assembly path become real CI coverage rather than a
-host-only pin. It is ``golden_host`` — the CSR buffers are sha256 digests, and
-a digest is bitwise by construction.
+host-only pin. It is ``golden_host`` so the reference job pins the exact
+numpy/scipy build, but the float payloads are not host-bitwise: the ``int_m``
+data digest is an identity label, the gate is a 1/64 element-wise sample, and
+the reduction rows and dense ``op_matrix`` carry the libm drift budget — see
+:data:`._operator_sweep.tolerances` for the measured drift and the bound.
 
 Fifteen cells at 2.8 s: the 7 stencils x muon scattering on/off cross product,
 plus one ``average_loss_operator`` cell at the default stencil. Seven distinct
@@ -50,7 +55,8 @@ CONFIG_PINS = {
     "debug_level": 0,
     "override_debug_fcn": [],
     "print_module": False,
-    "mceq_db_fname": "mceq_db_v140reduced_compact.h5",
+    "mceq_db_fname": "mceq_ci_base_air_1d_v2.h5",
+    "mceq_db_manifest": "mceq_db_manifest_ci_v2.yaml",
     "e_min": 0.1,
     "e_max": 1e11,
     "floatlen": None,
@@ -145,4 +151,5 @@ def build():
         adv_set_pins=ADV_SET_PINS,
         run_kwargs=RUN_KWARGS,
         note=NOTE,
+        numeric=True,
     )
