@@ -210,7 +210,7 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
     assert (13, 0) in mu_children(inter)
     # particles: the bug -- the mu- survives, and the count is unchanged.
     assert (-13, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 20
+    assert len(inter.particles) == len(baseline.particles) == 18
 
 
 def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
@@ -225,7 +225,7 @@ def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
     inter = _load_interactions([13])
 
     assert not [p for p in inter.particles if abs(p[0]) == 13]
-    assert len(inter.particles) == len(baseline.particles) - 2 == 18
+    assert len(inter.particles) == len(baseline.particles) - 2 == 16
 
 
 # B6 -- InteractionCrossSections.get_cs unknown-family fall-through
@@ -531,7 +531,6 @@ def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
         (-3122, 0),
         (-321, 0),
         (-211, 0),
-        (111, 0),
         (130, 0),
         (211, 0),
         (310, 0),
@@ -543,7 +542,7 @@ def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
     assert set(inter.relations) == set(inter.parents)
     # Parent-list filter only: the proton survives as a secondary.
     assert (2212, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 20
+    assert len(inter.particles) == len(baseline.particles) == 18
 
 
 def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():

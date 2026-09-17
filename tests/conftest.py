@@ -67,21 +67,37 @@ def _restore_config(saved):
 def _apply_session_config():
     """The config the shared ``MCEqRun`` fixtures are built and used with.
 
-    Tests are calibrated with the EM cascade (e±, helicity variants) in the
-    system; the production default disables electrons because of the ETD2 EM
-    caveat. Re-enable here so the matrix shapes, particle counts, and
-    reference values stay consistent with what the tests expect. The helicity
-    pin is defensive: it must stay True (matches the config default; the
-    unpolarized decay dataset carries a K_mu2-halving defect in DBs <= v150).
+    The helicity pin is defensive: it must stay True (matches the config
+    default; the unpolarized decay dataset carries a K_mu2-halving defect in
+    DBs <= v150).
     """
     config.debug_level = 2
     config.cuda_gpu_id = 0
-    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
-    config.mceq_db_manifest = "mceq_db_manifest_ci_v2.yaml"
+    config.mceq_db_fname = CI_DATABASE
     config.adv_set["disabled_particles"] = []
     config.muon_helicity_dependence = True
     if config.has_mkl:
         config.set_mkl_threads(2)
+
+
+#: The database the whole suite runs on: the release data cut to the 31-bin
+#: test window, small enough to ship and to cache. The shipped default is a
+#: release package that has to be downloaded, which no test may depend on.
+CI_DATABASE = "mceq_ci_base_air_1d_v2.h5"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ci_database():
+    """Point every test at the CI database before anything else runs.
+
+    Session-scoped autouse fixtures are set up before function-scoped ones,
+    so this lands before `_restore_global_config_state` takes its snapshot
+    and therefore becomes the state every test is restored to. Tests that
+    build their own `MCEqRun` get it without asking; a test that wants the
+    shipped default sets it itself.
+    """
+    config.mceq_db_fname = CI_DATABASE
+    yield
 
 
 @pytest.fixture(autouse=True)

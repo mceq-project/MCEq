@@ -4,8 +4,8 @@
 ``_restore_global_config_state`` undoes it afterwards. Before this pin the
 autouse fixture took its snapshot *after* the session fixture had mutated
 ``config``, so its restore preserved the mutation for every later test in the
-same xdist worker (``disabled_particles = []``, ``mkl_threads = 2`` where MKL
-is present, the reduced database, ...).
+same xdist worker (``debug_level = 2``, ``mkl_threads = 2`` where MKL is
+present, ...).
 
 Both tests run on one worker in file order (``xdist_group`` + ``--dist
 loadgroup``): test A takes the fixture and leaves a flag, test B takes no
@@ -24,7 +24,7 @@ _A_RAN = False
 def test_a_session_config_applied_while_fixture_is_held(mceq_sib21):
     """While ``mceq_sib21`` is held the shared-run config is in force."""
     global _A_RAN
-    assert config.adv_set["disabled_particles"] == []
+    assert config.debug_level == 2
     assert config.muon_helicity_dependence is True
     assert config.mceq_db_fname == "mceq_ci_base_air_1d_v2.h5"
     if config.has_mkl:
@@ -34,23 +34,18 @@ def test_a_session_config_applied_while_fixture_is_held(mceq_sib21):
 
 @pytest.mark.xdist_group("conftest_isolation")
 def test_b_session_config_undone_for_the_next_test():
-    """The test after one that held ``mceq_sib21`` sees the module defaults.
+    """The test after one that held ``mceq_sib21`` sees the session baseline.
 
-    The expected values are the literals in ``src/MCEq/config/__init__.py``:
-
-        mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
-        mkl_threads = config._default_threads()
-        muon_helicity_dependence = True
-        "disabled_particles": [11, -11],  # inside adv_set
+    That baseline is the module defaults with one change: the session-scoped
+    ``_ci_database`` fixture points ``mceq_db_fname`` at the test database
+    before any snapshot is taken, so it is what a restore returns to. The
+    values the shared-run config writes on top -- ``debug_level = 2`` and,
+    with MKL, ``mkl_threads = 2`` -- are what must be gone here.
     """
     assert _A_RAN, (
         "ordering assumption broken: both tests must run on one worker in file order"
     )
-    assert config.adv_set["disabled_particles"] == [11, -11]
-    # Pins the module default only: `_apply_session_config` writes the same
-    # True, so this line cannot detect the leak. The discriminating assertions
-    # are disabled_particles, mceq_db_fname and mkl_threads (the last one only
-    # where MKL is present; without it the old conftest never set 2 either).
+    assert config.debug_level == 1
     assert config.muon_helicity_dependence is True
-    assert config.mceq_db_fname == "mceq_db_lext_dpm193_v142.h5"
+    assert config.mceq_db_fname == "mceq_ci_base_air_1d_v2.h5"
     assert config.mkl_threads == config._default_threads()

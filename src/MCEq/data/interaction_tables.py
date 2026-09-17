@@ -9,6 +9,7 @@ namespace, so this module has no import-time edge back to ``data/__init__``.
 import numpy as np
 
 from MCEq.data.model_names import normalize_hadronic_model_name
+from MCEq.misc import disabled_particles as misc_disabled_particles
 from MCEq.misc import info
 
 
@@ -104,7 +105,7 @@ class Interactions:
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
         filters = self._physics.filters
-        disabled_particles = filters["disabled_particles"]
+        disabled_particles = misc_disabled_particles(self._physics)
         self.parents = [p for p in index["parents"] if p[0] not in disabled_particles]
         self.relations = index["relations"]
         self.index_d = index["index_d"]

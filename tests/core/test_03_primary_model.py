@@ -18,7 +18,7 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
 @pytest.mark.parametrize(
     ["particle_list", "projectiles"],
     [
-        [None, 13],
+        [None, 12],
         [[(2212, 0)], 1],
     ],
     ids=["None", "proton"],

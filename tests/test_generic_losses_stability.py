@@ -79,7 +79,6 @@ def v13_hadronic_run():
             "generic_losses_all_charged",
             "muon_helicity_dependence",
             "average_loss_operator",
-            "loss_stencil_method",
         )
     }
     saved_adv = dict(config.adv_set)
@@ -91,7 +90,6 @@ def v13_hadronic_run():
         config.e_min = 1e-3
         config.e_max = 1.1e14
         config.enable_default_tracking = False
-        config.loss_stencil_method = "expfit_low_upwind2"
         config.muon_helicity_dependence = False
         config.average_loss_operator = False
         config.generic_losses_all_charged = True

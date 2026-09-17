@@ -37,8 +37,8 @@ def test_set_theta_deg(mceq_sib21, theta, nmu):
 # (six e+- helicity species and their two tracking children are gone), so
 # 48/52 on the v1.4 CI database became 40/44.
 testdata_model = [
-    ["QGSJETII04", 40],
-    ["SIBYLL21", 44],
+    ["QGSJETII04", 36],
+    ["SIBYLL21", 40],
 ]
 ids_model = [f"{model[0]}" for model in testdata_model]
 
@@ -59,7 +59,7 @@ def test_set_interaction_model_update_particle_list(mceq_sib21):
 
     mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=True)
     n_particles = len(mceq_sib21._particle_list)
-    assert n_particles == 40
+    assert n_particles == 36
 
     mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
     n_particles_s = len(mceq_sib21._particle_list)

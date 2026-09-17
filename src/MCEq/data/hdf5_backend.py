@@ -22,7 +22,7 @@ from MCEq.data.equivalences import (
     reverse_equivalences,
 )
 from MCEq.data.model_names import family_of, normalize_hadronic_model_name
-from MCEq.misc import info
+from MCEq.misc import disabled_particles, info
 
 
 class HDF5Backend:
@@ -89,12 +89,12 @@ class HDF5Backend:
             raise Exception(
                 f'Electromagnetic DB file {_n} not found in "data" directory.'
             )
-        # Constructed unconditionally even though the EM file may be absent
-        # (and must stay absent-constructible): HDF5Store never opens.
+        # The store is created without opening the file, so an absent EM
+        # database is fine.
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
         with self._read_session():
-            # Handle custom grid for standalone EM calculations.
+            # A pure electromagnetic database may use its own energy grid.
             self._em_standalone = bool(grid.em_standalone_grid)
             grid_store = self._em_store if self._em_standalone else self._had
 
@@ -162,7 +162,7 @@ class HDF5Backend:
         else:
             model_particles = sorted(list(set(tuple_idcs.flatten().tolist())))
 
-        exclude = self._physics.filters["disabled_particles"]
+        exclude = disabled_particles(self._physics)
         read_idx = 0
         available_parents = [(pdg, parity) for (pdg, parity) in (tuple_idcs[:, :2])]
         available_parents = sorted(list(set(available_parents)))
@@ -324,8 +324,8 @@ class HDF5Backend:
         store = self._had
         if self._packages is not None:
             if self._em_standalone:
-                # Hadronic packs are inert for a γ/e± cascade (skipped
-                # below); a package without the model must still construct.
+                # A photon/electron cascade uses no hadronic interactions,
+                # so a database without the model must still load.
                 medium = self.medium
             else:
                 store, medium = self._resolve_interaction_store(mname)

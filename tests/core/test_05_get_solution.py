@@ -79,8 +79,8 @@ def test_get_solution_return_as(mceq_sib21, return_as, integrate):
 
 
 def test_get_solution_dont_sum_helicities(mceq_sib21):
-    # Helicity states are exercised on mu-: the v2 hadronic tables carry no
-    # e+- (EM sector in mceq-EM), which this test used before the CI data moved.
+    # Helicity states are exercised on mu-. This test used e+- before, but
+    # electrons are only in the system when config.enable_em is set.
     mceq_sib21.solve()
 
     # Get solution with summed helicities (default)
