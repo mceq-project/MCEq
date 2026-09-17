@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._harness import make_provenance
+from ._harness import LIBM_RTOL, make_provenance
 
 SECTION = "paths"
 
@@ -210,7 +210,12 @@ def build() -> tuple[dict, dict]:
         provenance = make_provenance(
             SECTION,
             note=NOTE,
-            tolerances={},
+            # The MSIS21 path integrals move by up to 1.3e-11 rel-L2 (max
+            # elementwise 2.8e-10, on cancellation bins of dX at theta85)
+            # between the golden host's glibc 2.34 and the GH runners' 2.39.
+            # CORSIKA and MSIS00 stay bitwise: they reproduce on the runner
+            # fleet and the MSIS00 ctypes tail compiles the same source.
+            tolerances={"MSIS21/": {"mode": "rel_l2", "rtol": LIBM_RTOL}},
             extra={
                 "density_model_specs": [
                     {"name": name, "class": cls_name, "config": model_config}

@@ -179,10 +179,32 @@ def test_em_step_scale_is_recorded_only_where_it_has_content(section, is_2d):
         assert np.any(values) is not (em_species == ["gamma"])
 
     table = prov.get("tolerances") or {}
-    assert set(table) == found, (
-        f"{section}: the tolerance table and the em_step_scale keys disagree; "
-        f"an entry matching no key is a bound the harness never resolves"
-    )
+    # Every em_step_scale key has an entry and every entry resolves to at
+    # least one key — the same contract the harness's docstring states, now
+    # spelled across the three entry forms (exact, suffix:, prefix/) that the
+    # numeric comparison of the 1D section added.
+    if not is_2d:
+        assert expected <= set(table), sorted(expected - set(table))
+    else:
+        assert table == {}, sorted(table)
+    from ._harness import tolerance_entry_for
+
+    for entry_key in table:
+        if entry_key in arrays:
+            continue
+        if entry_key.startswith("suffix:"):
+            name = entry_key[len("suffix:") :]
+            assert any(k == name or k.endswith("/" + name) for k in arrays), entry_key
+        elif entry_key.endswith("/"):
+            assert any(k.startswith(entry_key) for k in arrays), entry_key
+        else:
+            pytest.fail(f"unresolvable tolerance entry {entry_key!r}")
+    resolved = {
+        k
+        for k in arrays
+        if tolerance_entry_for(k, prov) != {"mode": "bitwise", "rtol": 0.0}
+    }
+    assert found <= resolved
 
 
 @pytest.mark.parametrize("section,is_2d", OPERATOR_SECTIONS)
