@@ -3,8 +3,8 @@ channel packs, assembled operators and the DDM goldens.
 
 Fixture: the 1D SIBYLL21 reduced database under the ``mceq_sib21`` config of
 tests/conftest.py — EM cascade enabled (``disabled_particles = []``), muon
-helicity dependence on. 72 cascade species, 0 resonances, dim 31,
-dim_states 2232.
+helicity dependence on. 66 cascade species, 0 resonances, dim 31,
+dim_states 2046.
 
 Plan section 8.1 asks for the ``[(name, mceqidx)]`` species table, the
 ``mod_pprod`` keys for primaries 2212/2112 and the DDM goldens; the Phase 4
@@ -33,7 +33,7 @@ covers them in four layers, so a Phase 4 failure localises to one of them:
 
 ``operators/``
     int_m and dec_m as CSR buffer digests plus per-species reductions. The
-    matrices are 2232x2232 here and 176256x176256 with 2.1e7 nonzeros in 2D,
+    matrices are 2046x2046 here and 176256x176256 with 2.1e7 nonzeros in 2D,
     so they are digested, never stored; the row-block sums and nonzero counts
     make a digest mismatch localisable to a species instead of a bare boolean.
 
@@ -45,8 +45,9 @@ covers them in four layers, so a Phase 4 failure localises to one of them:
 Config sensitivity: the species table depends on two knobs the conftest
 fixture moves away from the production default, so each variant carries its
 own digest under ``sweep/``. Measured on this database and model:
-``disabled_particles=[]`` gives 72 species / dim_states 2232, ``[11,-11]``
-gives 66 / 2046, and ``muon_helicity_dependence=False`` gives 54 / 1674 and
+``disabled_particles=[]`` and ``[11,-11]`` both give 66 species / dim_states
+2046 (the v2 tables carry no e+-; the sweep still pins that the switch is a
+no-op on them), and ``muon_helicity_dependence=False`` gives 52 / 1612 and
 switches the decay dataset to ``unpolarized``. ``config.floatlen =
 np.float32`` leaves the table identical but propagates to index_d and to the
 int_m/dec_m dtype; since the digests carry ``dtype.str``, that sweep gets its
@@ -111,7 +112,8 @@ CONFIG_PINS = {
     "debug_level": 0,
     "override_debug_fcn": [],
     "print_module": False,
-    "mceq_db_fname": "mceq_db_v140reduced_compact.h5",
+    "mceq_db_fname": "mceq_ci_base_air_1d_v2.h5",
+    "mceq_db_manifest": "mceq_db_manifest_ci_v2.yaml",
     "e_min": 0.1,
     "e_max": 1e11,
     "floatlen": None,
@@ -557,10 +559,18 @@ def build():
             _record_fixture(arrays, mceq)
             _record_species(arrays, mceq)
             _record_sweep(arrays, "sweep/em_on", mceq)
+            # The yield pack may live in a release package other than the
+            # primary (the CI base resolves SIBYLL21 through the manifest):
+            # ask the backend which file serves it.
+            interactions_path = mceq._mceq_db._model_store(
+                mceq._interactions.iam,
+                mceq._mceq_db.medium,
+                "hadronic_interactions",
+            ).fname
             _record_raw_pack(
                 arrays,
                 "raw/interactions",
-                db_path,
+                interactions_path,
                 f"hadronic_interactions/{mceq._mceq_db.medium}",
                 mceq._interactions.iam,
             )

@@ -26,21 +26,43 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install candidate
         run: uv pip install --system . pytest
+      # ~1 GB of draft assets; keyed by the packaged manifest's digest, so a
+      # new data release invalidates the cache and an unchanged one is a hit.
+      - name: Cache release packages
+        id: cache-bundles
+        uses: actions/cache@v6
+        with:
+          path: bundles
+          key: mceq-release-packages-9f12d4a5-${{ runner.os }}
       - name: Download draft bundles
+        if: steps.cache-bundles.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p bundles
-          gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles --pattern '*v2.0.0-rc2*'
+          # The manifest-described v2 data packages (see docs/data_installation.md).
+          # The SIBYLL23E 2D model file (1.1 GB) is fetched by the loader itself
+          # inside the 2D test, exercising the manifest resolution end to end.
+          gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles \
+            --pattern 'mceq_db_manifest_v2.yaml' \
+            --pattern 'mceq_base_air_1d_v2.h5*' \
+            --pattern 'mceq_extra_models_air_1d_v2.h5*' \
+            --pattern 'mceq_base_air_2d_v2.h5*' \
+            --pattern 'mceq_base_air_2d_rc7_v2.h5*'
           cd bundles
           sha256sum --check ./*.sha256
-      - name: Test installed candidate against 1D bundles
+      - name: Report cache state and verify digests
+        run: |
+          echo "cache-hit=${{ steps.cache-bundles.outputs.cache-hit }}"
+          cd bundles && ls -l && sha256sum --check ./*.sha256
+      - name: Test installed candidate against the 1D packages
         env:
           MCEQ_RELEASE_BUNDLES: ${{ github.workspace }}/bundles
           OPENBLAS_NUM_THREADS: '1'
         run: python -m pytest -q --confcutdir=tests/release_bundles tests/release_bundles -k 'not 2d'
-      - name: Test installed candidate against the 2D bundle
+      - name: Test installed candidate against the 2D packages
         env:
           MCEQ_RELEASE_BUNDLES: ${{ github.workspace }}/bundles
+          GH_TOKEN: ${{ github.token }}
           OPENBLAS_NUM_THREADS: '1'
         run: python -m pytest -q --confcutdir=tests/release_bundles tests/release_bundles -k 2d

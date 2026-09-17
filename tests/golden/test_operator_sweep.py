@@ -166,12 +166,17 @@ def test_em_step_scale_is_recorded_only_where_it_has_content(section, is_2d):
     arrays, prov = load_section(section)
     expected = {f"cells/{label}/em_step_scale" for label, *_ in CELLS}
     found = {key for key in arrays if key.endswith("/em_step_scale")}
+    em_species = list(arrays["fixture/em_species"])
     if is_2d:
         assert found == set()
-        assert list(arrays["fixture/em_species"]) == ["gamma"]
+        assert em_species == ["gamma"]
     else:
         assert found == expected
-        assert np.any([float(arrays[key]) != 0.0 for key in found])
+        # The v2 CI tables carry no e+-, so gamma is the only ``is_em`` species
+        # in 1D too and every cell's value is exactly 0.0; with e+- present
+        # (v1.4 data, or enable_em) at least one cell must be nonzero.
+        values = [float(arrays[key]) != 0.0 for key in found]
+        assert np.any(values) is not (em_species == ["gamma"])
 
     table = prov.get("tolerances") or {}
     assert set(table) == found, (

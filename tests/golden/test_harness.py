@@ -765,19 +765,36 @@ def test_containment_respects_the_cuda_rtol_floor(unit_section):
 def test_containment_bounds_a_rejected_species_of_the_1d_golden(solve1d_golden):
     """The regression this closes, on the section that shipped it.
 
-    `emon/theta0/state` admits 68 of its 74 entries; the six the guard rejects
-    are `e+-` and their helicities -- the cancellation residuals the sign test
-    exists to keep out of the flux bound. A move confined to one of them is
-    what the per-species maximum cannot see and containment must.
+    On the v1.4 CI database the rejected entries of `emon/theta0/state` were
+    `e+-` and their helicities; the v2 tables carry no e+-, and the species the
+    sign test now keeps out of the flux bound are the thirteen hadrons of the
+    near-horizontal `emoff/theta89/state` -- cancellation residuals on the
+    891 GeV floor. A move confined to one of them is what the per-species
+    maximum cannot see and containment must (probed on K_L0: pi0's block is
+    ~1e-99 of the state and falls under the containment floor).
     """
-    key = "emon/theta0/state"
+    key = "emoff/theta89/state"
     layout = _flux_metric.layout_for(key, solve1d_golden)
-    index = dict(layout.table)["e+_l"]
+    index = dict(layout.table)["K_L0"]
 
     reference = solve1d_golden[key]
     entries = _flux_metric.evaluate_key(reference, reference, layout)
     rejected = [entry.species for entry in entries if not _flux_metric.covered(entry)]
-    assert rejected == ["e+_l", "e+", "e+_r", "e-_l", "e-", "e-_r"]
+    assert rejected == [
+        "pi0",
+        "K_L0",
+        "pi-",
+        "pi+",
+        "K_S0",
+        "K-",
+        "K+",
+        "nbar0",
+        "n0",
+        "pbar-",
+        "p+",
+        "Lambdabar0",
+        "Lambda0",
+    ]
 
     produced = np.array(reference)
     produced[index * layout.dim : (index + 1) * layout.dim] *= 1 + 1e-3
@@ -797,7 +814,7 @@ def test_containment_bounds_a_rejected_species_of_the_1d_golden(solve1d_golden):
         fallback_rtol=_flux_metric.RTOL_1D,
     )
     assert "containment rel-L2" in problem
-    assert "e+_l" in problem
+    assert "K_L0" in problem
     assert "per-species max" not in problem
 
 
@@ -1115,14 +1132,20 @@ def solve1d_golden():
 
 
 def test_solve1d_layout_resolves_per_case(solve1d_golden):
-    """Each case has its own species table; `emon` adds the six e+/e- rows."""
+    """Each case resolves its own species table from its own meta keys.
+
+    On the v1.4 CI database `emon` added the six e+/e- rows (72 / 2232 vs
+    66 / 2046); the v2 tables carry no e+-, so both cases now resolve to the
+    same 66-species layout -- still read per case, which is what this pins.
+    """
     emoff = _flux_metric.layout_for("emoff/theta89/state", solve1d_golden)
     emon = _flux_metric.layout_for("emon/theta0/state", solve1d_golden)
     assert (emoff.dim, emoff.dim_states, len(emoff.table)) == (31, 2046, 66)
-    assert (emon.dim, emon.dim_states, len(emon.table)) == (31, 2232, 72)
+    assert (emon.dim, emon.dim_states, len(emon.table)) == (31, 2046, 66)
     assert emoff.dim * len(emoff.table) == emoff.dim_states
     assert dict(emoff.table)["antinue"] == 0
-    assert "e+_l" in dict(emon.table)
+    assert "e+_l" not in dict(emon.table)
+    assert "mu+_l" in dict(emon.table)
     assert "e+_l" not in dict(emoff.table)
 
 

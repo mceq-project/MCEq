@@ -564,7 +564,7 @@ def test_solve_batch_dtype_float32(kernel):
     saved_db = config.mceq_db_fname
     config.kernel_config = kernel
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -944,7 +944,7 @@ def test_etd2_numpy_stable_at_high_zenith():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -1040,7 +1040,7 @@ def test_solve_etd2_numpy_second_order_convergence():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         import crflux.models as pm
 
@@ -1605,7 +1605,7 @@ def test_solve_etd2_numpy_generalized_target_convergence():
     saved_db = config.mceq_db_fname
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
 
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disabled_particles"] = [11, -11]
     try:
         target = GeneralizedTarget(len_target=1000.0, env_density=1.0, env_name="water")

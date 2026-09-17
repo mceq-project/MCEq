@@ -85,6 +85,7 @@ def fixture_backend(path, *, low_energy_model=None):
     paths = SimpleNamespace(
         data_dir=path.parent,
         mceq_db_fname=path.name,
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         em_db_fname="no_such_em_db.h5",
     )
     grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)

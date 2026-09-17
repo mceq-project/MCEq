@@ -121,7 +121,7 @@ def mceq_sib21_ci_db():
     from MCEq.core import MCEqRun
 
     saved = config.mceq_db_fname
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         yield MCEqRun(
             interaction_model="QGSJET-II-04",

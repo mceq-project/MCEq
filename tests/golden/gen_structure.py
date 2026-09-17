@@ -52,7 +52,10 @@ DEFERRED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 #: host had configured when the section was generated, so the section fails
 #: after any test that changes the global. Pin the reduced database the other
 #: sections use.
-CONFIG_PINS = {"mceq_db_fname": "mceq_db_v140reduced_compact.h5"}
+CONFIG_PINS = {
+    "mceq_db_fname": "mceq_ci_base_air_1d_v2.h5",
+    "mceq_db_manifest": "mceq_db_manifest_ci_v2.yaml",
+}
 
 
 def module_name(path: Path) -> str:

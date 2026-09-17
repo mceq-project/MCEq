@@ -1,30 +1,109 @@
-"""Installed-package smoke checks for the separately staged release databases."""
+"""Installed-package smoke checks against the staged v2 data packages.
 
-import json
+Staged by the release-bundle workflow into ``MCEQ_RELEASE_BUNDLES`` (the
+manifest, the 1D packages, the 2D bases). The SIBYLL23E 2D model file is
+deliberately *not* staged: its test makes the loader resolve it through the
+manifest and fetch it. The draft release needs an authenticated download,
+which the loader's ``_download_file`` does not do, so the ``gh_fetch`` fixture
+routes that one fetch through ``gh release download``; the loader still
+verifies the manifest sha256 and publishes the file atomically.
+"""
+
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+import yaml
 
 BUNDLES = os.environ.get("MCEQ_RELEASE_BUNDLES")
+MANIFEST = "mceq_db_manifest_v2.yaml"
+EXTRA = "mceq_extra_models_air_1d_v2.h5"
+SIBYLL_2D = "mceq_model_SIBYLL23E_air_2d_v2.h5"
+RC7 = "mceq_base_air_2d_rc7_v2.h5"
 pytestmark = pytest.mark.skipif(not BUNDLES, reason="release bundles not staged")
 
 
-def bundle_path(package):
-    root = Path(BUNDLES)
-    manifest = json.loads((root / "bundle_manifest_v2.0.0-rc2.json").read_text())
-    return root / manifest["packages"][package]["file"]
+def manifest():
+    return yaml.safe_load((Path(BUNDLES) / MANIFEST).read_text())
+
+
+def package(kind):
+    """Default package of a grid family (``1d``/``2d``) or a file name, staged."""
+    m = manifest()
+    return Path(BUNDLES) / m["defaults"].get(kind, kind)
+
+
+@pytest.fixture
+def gh_fetch(monkeypatch):
+    """Serve loader fetches from the (draft) release through ``gh``."""
+    from MCEq.data import download
+
+    def fetch(url, outfile, checksum=None):
+        name = url.rsplit("/", 1)[-1]
+        staged = Path(BUNDLES) / name
+        if not staged.is_file():
+            repo = os.environ.get("GITHUB_REPOSITORY", "mceq-project/MCEq")
+            subprocess.run(
+                [
+                    "gh",
+                    "release",
+                    "download",
+                    manifest()["release"],
+                    "--repo",
+                    repo,
+                    "--dir",
+                    BUNDLES,
+                    "--pattern",
+                    name,
+                ],
+                check=True,
+            )
+        digest = download.FileIntegrityCheck(staged).get_file_checksum()
+        if checksum is not None and digest != checksum:
+            raise OSError(f"{name}: sha256 {digest} != manifest {checksum}")
+        if staged.resolve() != Path(outfile).resolve():
+            shutil.copy(staged, outfile)
+
+    monkeypatch.setattr(download, "_download_file", fetch)
+
+
+def _configure(monkeypatch, primary, data_dir, **extra):
+    from MCEq import config
+
+    settings = {
+        "mceq_db_fname": str(primary),
+        "data_dir": Path(data_dir),
+        "mceq_db_manifest": MANIFEST,
+        "kernel_config": "numpy_etd2",
+        "enable_em": False,
+        "enable_default_tracking": False,
+        "density_model": ("CORSIKA", ("USStd", None)),
+        "debug_level": 0,
+    }
+    settings.update(extra)
+    for name, value in settings.items():
+        monkeypatch.setattr(config, name, value)
+
+
+def _finite_positive(run, species):
+    for s in species:
+        flux = run.get_solution(s)
+        assert np.isfinite(flux).all()
+        assert np.any(flux > 0)
 
 
 def test_inventory():
-    with (
-        h5py.File(bundle_path("base")) as base,
-        h5py.File(bundle_path("extra_models")) as extra,
-    ):
-        assert "DPMJETIII193" in base["hadronic_interactions/air"]
-        assert "FLUKA20251" in base["hadronic_interactions/air"]
+    m = manifest()
+    assert m["schema"] == 1
+    base_1d, extra = package("1d"), Path(BUNDLES) / EXTRA
+    entry = m["files"][base_1d.name]
+    assert entry["spine"] and entry["models"]["air"] == ["FLUKA20251", "SIBYLL23E"]
+    with h5py.File(base_1d) as base, h5py.File(extra) as ext:
+        assert base.attrs["mceq_db_manifest"] == MANIFEST
         fluka = base["cross_sections/air/FLUKA20251"]
         parents = list(fluka.attrs["parents"])
         assert {2212, -2212, 2112, -2112, 211, -211, 321, -321, 130, 310} <= set(
@@ -34,47 +113,43 @@ def test_inventory():
             assert not np.array_equal(
                 fluka[:, parents.index(positive)], fluka[:, parents.index(-positive)]
             )
-        for suffix in ("RHO", "BAR", "MIXED", "STRANGE"):
-            name = "SIBYLL23ESTAR" + suffix
+        for name in m["files"][EXTRA]["models"]["air"]:
             assert name not in base["hadronic_interactions/air"]
-            assert name in extra["hadronic_interactions/air"]
+            assert name in ext["hadronic_interactions/air"]
         for medium in base["continuous_losses"]:
             for kind in ("ionization", "total"):
                 for particle, ds in base[f"continuous_losses/{medium}/{kind}"].items():
                     np.testing.assert_array_equal(
-                        ds[:], extra[f"continuous_losses/{medium}/{kind}/{particle}"][:]
+                        ds[:], ext[f"continuous_losses/{medium}/{kind}/{particle}"][:]
                     )
+    # every model of the 1D grid is in exactly one 1D package
+    grid = entry["grid"]
+    owner = {}
+    for name, e in m["files"].items():
+        if e["grid"] == grid:
+            for model in e["models"]["air"]:
+                assert model not in owner, (model, owner[model], name)
+                owner[model] = name
+    assert len(owner) == 15
 
 
 @pytest.mark.parametrize(
-    "package,model,blend",
+    "model,blend",
     [
-        ("base", "SIBYLL23E", None),
-        ("base", "SIBYLL23E", "FLUKA20251"),
-        ("base", "SIBYLL23E", "DPMJETIII193"),
-        ("extra_models", "SIBYLL23ESTARRHO", None),
-        ("extra_models", "SIBYLL21", None),
-        ("2d", "FLUKA20251", None),
+        ("SIBYLL23E", None),
+        ("SIBYLL23E", "FLUKA20251"),
+        ("FLUKA20251", None),
+        ("SIBYLL23ESTARRHO", "FLUKA20251"),  # resolved through the manifest
+        ("DPMJETIII193", None),  # resolved through the manifest
+        ("SIBYLL21", None),
     ],
 )
-def test_solve(package, model, blend, monkeypatch, tmp_path):
+def test_solve_1d(model, blend, monkeypatch):
     import crflux.models as pm
 
-    from MCEq import config
     from MCEq.core import MCEqRun
 
-    for name, value in {
-        "mceq_db_fname": str(bundle_path(package)),
-        "data_dir": tmp_path,
-        "kernel_config": "numpy_etd2",
-        "e_min": 10.0 if package == "2d" else 1.0,
-        "e_max": 100.0 if package == "2d" else 1e5,
-        "enable_em": False,
-        "enable_default_tracking": False,
-        "density_model": ("CORSIKA", ("USStd", None)),
-        "debug_level": 0,
-    }.items():
-        monkeypatch.setattr(config, name, value)
+    _configure(monkeypatch, package("1d"), BUNDLES, e_min=1.0, e_max=1e5)
     run = MCEqRun(
         interaction_model=model,
         low_energy_model=blend,
@@ -82,10 +157,66 @@ def test_solve(package, model, blend, monkeypatch, tmp_path):
         theta_deg=0.0,
     )
     run.solve()
-    for species in ("total_mu+", "total_mu-", "total_numu", "total_antinumu"):
-        flux = run.get_solution(species)
-        assert np.isfinite(flux).all()
-        assert np.any(flux > 0)
+    _finite_positive(run, ("total_mu+", "total_mu-", "total_numu", "total_antinumu"))
+
+
+def test_extra_package_loads_standalone(monkeypatch):
+    """The extra-models package carries the spine and loads as a primary."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    _configure(monkeypatch, Path(BUNDLES) / EXTRA, BUNDLES, e_min=1.0, e_max=1e5)
+    run = MCEqRun(
+        interaction_model="QGSJETIII",
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+        theta_deg=0.0,
+    )
+    run.solve()
+    _finite_positive(run, ("total_numu",))
+
+
+def test_missing_model_error_names_manifest(monkeypatch):
+    from MCEq.core import MCEqRun
+
+    _configure(monkeypatch, package("1d"), BUNDLES, e_min=1.0, e_max=1e5)
+    with pytest.raises(Exception, match=MANIFEST):
+        MCEqRun(interaction_model="NOSUCHMODEL", primary_model=None, theta_deg=0.0)
+
+
+@pytest.mark.parametrize("primary", ["2d", RC7])
+def test_solve_2d_fluka(primary, monkeypatch, tmp_path):
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    _configure(monkeypatch, package(primary), tmp_path, e_min=10.0, e_max=100.0)
+    run = MCEqRun(
+        interaction_model="FLUKA20251",
+        low_energy_model=None,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+        theta_deg=0.0,
+    )
+    run.solve()
+    _finite_positive(run, ("total_mu+", "total_mu-", "total_numu", "total_antinumu"))
+
+
+def test_solve_2d_sibyll_via_model_file(gh_fetch, monkeypatch):
+    """SIBYLL23E 2D lives in a model file the loader has to fetch."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+
+    _configure(monkeypatch, package("2d"), BUNDLES, e_min=10.0, e_max=100.0)
+    run = MCEqRun(
+        interaction_model="SIBYLL23E",
+        low_energy_model="FLUKA20251",
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+        theta_deg=0.0,
+    )
+    assert (Path(BUNDLES) / SIBYLL_2D).is_file()
+    run.solve()
+    _finite_positive(run, ("total_mu+", "total_numu"))
 
 
 def test_2d_low_energy_convergence(monkeypatch, tmp_path):
@@ -94,7 +225,7 @@ def test_2d_low_energy_convergence(monkeypatch, tmp_path):
     from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
 
-    monkeypatch.setattr(config.paths, "mceq_db_fname", str(bundle_path("2d")))
+    monkeypatch.setattr(config.paths, "mceq_db_fname", str(package("2d")))
     monkeypatch.setattr(config.paths, "data_dir", tmp_path)
     monkeypatch.setattr(config.debug, "level", 0)
     run = MCEqRun(

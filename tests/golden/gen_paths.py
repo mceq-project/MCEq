@@ -162,7 +162,7 @@ def build() -> tuple[dict, dict]:
     # verified anywhere else.
     saved = {k: getattr(config, k) for k in ("debug_level", "mceq_db_fname")}
     config.debug_level = 0
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         atmospheres = {
             name: getattr(dprof, cls_name)(*model_config)

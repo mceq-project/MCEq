@@ -64,7 +64,8 @@ CONFIG_PINS = {
     "debug_level": 0,
     "override_debug_fcn": [],
     "print_module": False,
-    "mceq_db_fname": "mceq_db_v140reduced_compact.h5",
+    "mceq_db_fname": "mceq_ci_base_air_1d_v2.h5",
+    "mceq_db_manifest": "mceq_db_manifest_ci_v2.yaml",
     "return_as": "kinetic energy",
     "excpt_on_missing_particle": True,
     "density_model": ("CORSIKA", ("BK_USStd", None)),
@@ -266,7 +267,9 @@ def _record_solve(arrays, case, mceq, theta, with_e):
     arrays[tag + "/n_mu_cut1e3"] = np.asarray(mceq.n_mu(min_energy_cutoff=1e3))
     for label in ("total_mu+", "total_numu"):
         arrays[tag + "/n_particles/" + label] = np.asarray(mceq.n_particles(label))
-    if with_e:
+    # The v2 hadronic tables carry no e+- (the EM sector lives in mceq-EM),
+    # so ``n_e`` exists only when the system actually holds electrons.
+    if with_e and any(p.name == "e+" for p in mceq.pman.all_particles):
         arrays[tag + "/n_e"] = np.asarray(mceq.n_e())
 
 
