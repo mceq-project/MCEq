@@ -1,0 +1,117 @@
+schema: 1
+release: v2.0.0
+url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
+created: '2026-09-16T14:33:00'
+defaults:
+  1d: mceq_base_air_1d_v2.h5
+  2d: mceq_base_air_2d_v2.h5
+grids:
+  1d-150:
+    e_dim: 150
+    k_dim: null
+    e_grid_sha256: 2473ed6abf350b53072cd34fa4e0047d3c74d8e1aa689ac77c495c0726b3d158
+  2d-150x48:
+    e_dim: 150
+    k_dim: 48
+    e_grid_sha256: 2473ed6abf350b53072cd34fa4e0047d3c74d8e1aa689ac77c495c0726b3d158
+    k_grid_sha256: 2793167bb263e92ef15e631be8ee769fe8b80c56d0410533a5f568fcb11f8a14
+  2d-80x48:
+    e_dim: 80
+    k_dim: 48
+    e_grid_sha256: e94b80d31d0a503a8b5d0012af0cc233b9e44fb0b4316e8bec78eee4ec2a495b
+    k_grid_sha256: 2793167bb263e92ef15e631be8ee769fe8b80c56d0410533a5f568fcb11f8a14
+files:
+  mceq_base_air_1d_v2.h5:
+    sha256: 82f8554eeb64487e20863316f53637b756e2f578782789e07523bb0a4e4b7447
+    size: 65502881
+    grid: 1d-150
+    spine: true
+    models:
+      air:
+      - FLUKA20251
+      - SIBYLL23E
+      hydrogen:
+      - SIBYLL23E
+    source:
+      key: 1d
+      file: mceq_db_v2_rc4_eposfresh_1d.h5
+      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-23_epos-sigma-regen/outputs/mceq_db_v2_rc4_eposfresh_1d.h5
+      sha256: e023e4e30e837e68d24f711c48d339f9f8cc6af097378fecd84ca32b421d3ff7
+      verbatim: false
+    note: default 1D package; models used for the paper's 1D figures
+  mceq_extra_models_air_1d_v2.h5:
+    sha256: 0724770c77dc538054cc255d5f2398839e0043469e4e37c1575086929bc51e9d
+    size: 233662295
+    grid: 1d-150
+    spine: true
+    models:
+      air:
+      - DPMJETIII193
+      - EPOSLHC
+      - EPOSLHCR
+      - PYTHIA8ANGANTYR
+      - PYTHIA8CASCADE
+      - QGSJETII04
+      - QGSJETIII
+      - SIBYLL21
+      - SIBYLL23D
+      - SIBYLL23ESTARBAR
+      - SIBYLL23ESTARMIXED
+      - SIBYLL23ESTARRHO
+      - SIBYLL23ESTARSTRANGE
+    source:
+      key: 1d
+      file: mceq_db_v2_rc4_eposfresh_1d.h5
+      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-23_epos-sigma-regen/outputs/mceq_db_v2_rc4_eposfresh_1d.h5
+      sha256: e023e4e30e837e68d24f711c48d339f9f8cc6af097378fecd84ca32b421d3ff7
+      verbatim: false
+    note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
+      SIBYLL21/23D/23ESTAR*)
+  mceq_base_air_2d_v2.h5:
+    sha256: 1ba5e4748891cafdce094141ea3291ed800f6d84a2d3a96d64caca4323581a68
+    size: 359214861
+    grid: 2d-150x48
+    spine: true
+    models:
+      air:
+      - FLUKA20251
+    source:
+      key: 2d
+      file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
+      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-22_abar-consistency-fix/outputs/mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
+      sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
+      verbatim: false
+    note: default 2D package on the unified 150-bin lattice (FLUKA qe_fwd yields re-compacted
+      with the 150-bin 2D decay cubes)
+  mceq_model_SIBYLL23E_air_2d_v2.h5:
+    sha256: 5e163266d7963c2d2c1d80517801d64117b9ba3aa46bdb44c02b45e756589ff4
+    size: 1087834155
+    grid: 2d-150x48
+    spine: false
+    models:
+      air:
+      - SIBYLL23E
+    source:
+      key: 2d
+      file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
+      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-22_abar-consistency-fix/outputs/mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
+      sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
+      verbatim: false
+    note: SIBYLL 2.3e 48-mode Hankel yields (m2m SIBYLL23E_hankel_fwd_fullgrid); needs
+      mceq_base_air_2d_v2.h5
+  mceq_base_air_2d_rc7_v2.h5:
+    sha256: 6868b9438c445d890e49be78a9f9cd0a9b7630ff6ce9d436674a693e5bee7f3a
+    size: 329138161
+    grid: 2d-80x48
+    spine: true
+    models:
+      air:
+      - FLUKA20251
+    source:
+      key: 2d_rc7
+      file: mceq_db_v2_fluka2d_rc7.h5
+      path: /home/anatoli/MCEq-db/fluka/mceq_db_v2_fluka2d_rc7.h5
+      sha256: 6868b9438c445d890e49be78a9f9cd0a9b7630ff6ce9d436674a693e5bee7f3a
+      verbatim: true
+    note: byte copy of mceq_db_v2_fluka2d_rc7.h5, the 2D database behind the paper's
+      CORSIKA-7 2D validation figures

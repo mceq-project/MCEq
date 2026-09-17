@@ -33,6 +33,14 @@ mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 
+#: Data-release manifest (YAML): for every package file its energy grid,
+#: sha256 and the hadronic models it carries per medium. Read from
+#: ``data_dir`` (a copy ships with the package; edit it to register a
+#: single-model file of your own) and consulted only when ``mceq_db_fname``
+#: is a release package that lacks a requested model. A monolithic database
+#: never touches it.
+mceq_db_manifest = "mceq_db_manifest_v2.yaml"
+
 # =================================================================
 # Atmosphere and geometry settings
 # =================================================================

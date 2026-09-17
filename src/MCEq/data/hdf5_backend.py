@@ -13,7 +13,7 @@ from os.path import isfile, join
 
 import numpy as np
 
-from MCEq.data import em_tables, hdf5_store
+from MCEq.data import db_manifest, download, em_tables, hdf5_store
 from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 from MCEq.data.equivalences import (
@@ -73,6 +73,15 @@ class HDF5Backend:
                 f'MCEq DB file {paths.mceq_db_fname} not found in "data" directory.'
             )
         self._had = hdf5_store.HDF5Store(self.had_fname)
+        # A v2 release package (root attr ``mceq_db_manifest``, stamped by
+        # the packager) resolves models it lacks through the release
+        # manifest; a monolith is resolved against its own file only.
+        self._paths = paths
+        self._packages = (
+            db_manifest.ModelStoreCache(paths, self._had, download)
+            if "mceq_db_manifest" in self._had.attrs()
+            else None
+        )
 
         self.em_fname = join(paths.data_dir, paths.em_db_fname)
         if physics.enable_em and not isfile(self.em_fname):
@@ -243,6 +252,42 @@ class HDF5Backend:
             info(0, "Choose from:\n", "\n".join(available_models))
             raise Exception("Unknown selections.")
 
+    # -- model resolution across release packages -------------------------
+    #
+    # ``_model_store`` answers "which file holds tree/<medium>/<model>":
+    # the primary file first, then -- for release packages only -- the
+    # manifest-listed packages on the same grid (MCEq.data.db_manifest).
+
+    def _model_store(self, mname, medium, tree):
+        """Store holding ``tree/<medium>/<mname>``, or None."""
+        if self._had.has(f"{tree}/{medium}/{mname}"):
+            return self._had
+        if self._packages is not None:
+            return self._packages.get(mname, medium, tree)
+        return None
+
+    def _resolve_interaction_store(self, mname):
+        """``(store, medium)`` of the yield pack of ``mname`` in package mode,
+        with the monolith path's air fallback spanning primary and packages."""
+        had = "hadronic_interactions"
+        store = self._model_store(mname, self.medium, had)
+        if store is not None:
+            return store, self.medium
+        if self._physics.fallback_to_air_cs and self.medium != "air":
+            store = self._model_store(mname, "air", had)
+            if store is not None:
+                info(
+                    1,
+                    (
+                        f"Production matrices for {mname} in {self.medium} not found."
+                        + "Fall-back to air."
+                    ),
+                )
+                return store, "air"
+        raise db_manifest.missing_model_error(
+            self._paths, self._packages, mname, self.medium
+        )
+
     def _he_le_weight(self):
         """:func:`MCEq.data.blending.he_le_weight` on this backend's settings.
 
@@ -282,7 +327,15 @@ class HDF5Backend:
         mname = normalize_hadronic_model_name(interaction_model_name)
         info(10, f"Generating interaction db. mname={mname}")
         had = "hadronic_interactions"
-        if (
+        store = self._had
+        if self._packages is not None:
+            if self._em_standalone:
+                # Hadronic packs are inert for a γ/e± cascade (skipped
+                # below); a package without the model must still construct.
+                medium = self.medium
+            else:
+                store, medium = self._resolve_interaction_store(mname)
+        elif (
             not self._had.has(f"{had}/{self.medium}")
             or not self._had.has(f"{had}/{self.medium}/{mname}")
         ) and self._physics.fallback_to_air_cs:
@@ -316,7 +369,7 @@ class HDF5Backend:
             }
         else:
             int_index = self._gen_db_dictionary(
-                self._had.read_channel_pack(f"{had}/{medium}", mname),
+                store.read_channel_pack(f"{had}/{medium}", mname),
                 equivalences=eqv,
             )
 
@@ -426,23 +479,17 @@ class HDF5Backend:
         # historical DPMJET fallback only for older files that do not.
         if "FLUKA" in mname:
             cs_root = "cross_sections"
-            direct_medium = medium if self._had.has(f"{cs_root}/{medium}") else None
-            direct = direct_medium is not None and self._had.has(
-                f"{cs_root}/{direct_medium}/{mname}"
-            )
+            direct = self._model_store(mname, medium, cs_root) is not None
             if (
                 not direct
                 and self._physics.fallback_to_air_cs
-                and self._had.has(f"{cs_root}/air")
+                and self._model_store(mname, "air", cs_root) is not None
             ):
-                if self._had.has(f"{cs_root}/air/{mname}"):
-                    medium = "air"
-                    direct = True
+                medium = "air"
+                direct = True
             if not direct:
                 for fallback in ("DPMJETIII191", "DPMJETIII193"):
-                    if direct_medium is not None and self._had.has(
-                        f"{cs_root}/{direct_medium}/{fallback}"
-                    ):
+                    if self._model_store(fallback, medium, cs_root) is not None:
                         info(5, f"{mname} cross sections replaced by {fallback}.")
                         mname = fallback
                         break
@@ -459,9 +506,18 @@ class HDF5Backend:
         index_d = {}
         parents = []
         if not self._em_standalone:
-            self._check_subgroup_exists(self._had, "cross_sections", medium)
-            self._check_subgroup_exists(self._had, f"cross_sections/{medium}", mname)
-            cs_data, cs_attrs = self._had.read_table(f"cross_sections/{medium}/{mname}")
+            cs_store = self._model_store(mname, medium, "cross_sections")
+            if cs_store is None:
+                if self._packages is not None:
+                    raise db_manifest.missing_model_error(
+                        self._paths, self._packages, mname, medium
+                    )
+                self._check_subgroup_exists(self._had, "cross_sections", medium)
+                self._check_subgroup_exists(
+                    self._had, f"cross_sections/{medium}", mname
+                )
+                raise Exception("Unknown selections.")
+            cs_data, cs_attrs = cs_store.read_table(f"cross_sections/{medium}/{mname}")
             if "parents" not in cs_attrs:
                 raise RuntimeError(
                     f"Cross-section table '{medium}/{mname}' in "
@@ -477,11 +533,18 @@ class HDF5Backend:
         if filters["replace_meson_cross_sections_with"] is not None:
             mname_mesons = filters["replace_meson_cross_sections_with"]
             info(1, "Meson cross sections forced to", mname_mesons)
-            self._check_subgroup_exists(self._had, "cross_sections", medium)
-            self._check_subgroup_exists(
-                self._had, f"cross_sections/{medium}", mname_mesons
-            )
-            mes_cs_data, mes_attrs = self._had.read_table(
+            mes_store = self._model_store(mname_mesons, medium, "cross_sections")
+            if mes_store is None:
+                if self._packages is not None:
+                    raise db_manifest.missing_model_error(
+                        self._paths, self._packages, mname_mesons, medium
+                    )
+                self._check_subgroup_exists(self._had, "cross_sections", medium)
+                self._check_subgroup_exists(
+                    self._had, f"cross_sections/{medium}", mname_mesons
+                )
+                raise Exception("Unknown selections.")
+            mes_cs_data, mes_attrs = mes_store.read_table(
                 f"cross_sections/{medium}/{mname_mesons}"
             )
             mes_parents = list(mes_attrs["parents"])
