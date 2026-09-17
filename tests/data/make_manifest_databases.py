@@ -1,21 +1,19 @@
-"""Build a release-package fixture (monolith + base + model file + manifest).
+"""Build small test databases: a monolith, a base file, a single-model
+file and the manifest that ties them together.
 
-Source: the CI extra-models package ``mceq_ci_extra_models_air_1d_v2.h5`` (a
-spine package: grid, decays, losses and thirteen 1D models on the 31-bin CI
-window). It is cut the way the release packager (mceq-maintenance-tools
-step 6) cuts the production databases:
+They are cut from the CI extra-models database, which holds the grid,
+decays, continuous losses and thirteen hadronic models on the 31-bin test
+window:
 
-* ``mceq_monolith_test.h5`` -- the source without its ``mceq_db_*`` root
-  attributes, i.e. a plain monolithic database the loader resolves against
-  itself only;
-* ``mceq_base_test.h5`` -- spine + QGSJETII04;
-* ``mceq_model_SIBYLL21_air_test.h5`` -- SIBYLL21 with a ``common`` mirror;
-* ``mceq_db_manifest_test.yaml`` -- schema-1 manifest listing both on one grid.
+* ``mceq_monolith_test.h5`` -- the source with its package attributes
+  removed, so it behaves as a plain single-file database;
+* ``mceq_base_test.h5`` -- grid, decays, losses and QGSJETII04;
+* ``mceq_model_SIBYLL21_air_test.h5`` -- SIBYLL21 alone;
+* ``mceq_db_manifest_test.yaml`` -- the manifest listing both files on one
+  energy grid.
 
-Dataset values, dtypes, shapes and attributes are copied unchanged, so the
-loader tests pin bitwise equality against the monolith without a binary
-fixture in the repository. Imported by path from
-``tests/test_data_db_manifest.py`` (``tests/data`` is not a package).
+Matrices are copied unchanged, so a run reading the split files must return
+exactly what the monolith returns. Built on demand, never committed.
 """
 
 from __future__ import annotations

@@ -1,15 +1,15 @@
 name: Release bundle validation
 
+# Downloads ~1 GB of release data, so it runs only on the way to PyPI:
+# the release tag, or by hand. Never on pull requests.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/release_bundles.yaml
-      - tests/release_bundles/**
+  push:
+    tags:
+      - 'v*.*.*'
 
 jobs:
   bundles:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Draft releases require repository push access. The token is exposed only
@@ -26,8 +26,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install candidate
         run: uv pip install --system . pytest
-      # ~1 GB of draft assets; keyed by the packaged manifest's digest, so a
-      # new data release invalidates the cache and an unchanged one is a hit.
+      # Keyed by the manifest digest: a new data release misses, an
+      # unchanged one hits.
       - name: Cache release packages
         id: cache-bundles
         uses: actions/cache@v6
@@ -40,9 +40,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p bundles
-          # The manifest-described v2 data packages (see docs/data_installation.md).
-          # The SIBYLL23E 2D model file (1.1 GB) is fetched by the loader itself
-          # inside the 2D test, exercising the manifest resolution end to end.
+          # The SIBYLL23E 2D model file is left out on purpose: the 2D test
+          # lets the loader fetch it, which exercises the manifest lookup.
           gh release download v2.0.0 --repo "$GITHUB_REPOSITORY" --dir bundles \
             --pattern 'mceq_db_manifest_v2.yaml' \
             --pattern 'mceq_base_air_1d_v2.h5*' \

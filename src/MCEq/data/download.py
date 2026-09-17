@@ -1,18 +1,11 @@
 """Fetching and verifying the MCEq database files.
 
-`MCEqRun.__init__` calls :func:`ensure_db_available` so the download happens
-when a database is actually needed, which lets a caller point
-``config.mceq_db_fname`` somewhere else first.
-
-Two channels: the legacy monolith release (``base_url`` + ``release_tag``,
-one file, checksum pinned here for the default name) and the v2 data release
-described by a YAML manifest (:mod:`MCEq.data.db_manifest`) -- packages are
-fetched by name with the sha256 the manifest records. Package fetches are
-race-safe for cluster jobs that start together: a ``<file>.lock`` sentinel
-taken with ``O_CREAT | O_EXCL`` lets exactly one process download while the
-others fail fast with the pre-fetch CLI (``python -m MCEq.data.download``)
-in the message, and :func:`_download_file` publishes only a complete,
-checksum-verified file via an atomic rename.
+`MCEqRun.__init__` downloads the database when it is first needed, so a
+caller can point ``config.mceq_db_fname`` elsewhere beforehand. Files are
+fetched by name and checked against the checksum the manifest records.
+Concurrent jobs are safe: one process downloads while the others are told to
+pre-fetch with ``python -m MCEq.data.download``, and only a complete,
+verified file is put in place.
 """
 
 from __future__ import annotations
@@ -145,11 +138,8 @@ def ensure_db_available(cfg):
         config.mceq_db_fname = "my_db.h5"
         ensure_db_available(config)
 
-    The integrity check only applies to the default database; non-default
-    files are accepted as-is if they exist. A missing file that the local
-    data manifest lists (a v2 release package) is fetched from the data
-    release with the manifest's sha256; every other missing name goes to the
-    legacy monolith release.
+    A missing file listed in the manifest is fetched from the data release;
+    any other missing name is looked for in the legacy single-file release.
     """
     data_dir = cfg.data_dir
     mceq_db_fname = cfg.mceq_db_fname
@@ -204,11 +194,9 @@ DEFAULT_MANIFEST = "mceq_db_manifest_v2.yaml"
 
 
 class PackageFetchError(Exception):
-    """A package fetch was attempted and could not be completed safely.
-
-    Concurrent-download collision (another process holds ``<file>.lock``),
-    transport failure, a name the manifest does not list, or a sha256
-    mismatch. The message says how to pre-fetch with the CLI.
+    """A database file could not be downloaded safely: another process is
+    already fetching it, the transfer failed, the name is not in the
+    manifest, or the checksum did not match.
     """
 
 

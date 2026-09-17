@@ -127,64 +127,18 @@ jobs:
           sys.exit(bad != 0)
           PY
 
-      # `--nbmake-kernel=python3` runs the gate on a kernel that always
-      # exists. Every notebook now declares `python3` itself (M15), so the
-      # flag is belt-and-braces: it keeps a freshly-added notebook honest even
-      # if its metadata claims a private kernel name, as several did before
-      # the v2 refresh (python2, mceq_dev_396).
+      # Notebooks that want the cached data set `config.mceq_db_fname`
+      # themselves; without it MCEq downloads the default database.
       #
-      # A notebook that wants the data cached above has to set
-      # `config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"` itself (the CI
-      # manifest is then found through the package's own declaration; models
-      # outside the base resolve to the cached extra-models package). The
-      # default is the 289 MB mceq_db_lext_dpm193_v142.h5, MCEq downloads it
-      # on first use, and there is no environment override -- so a rewrite
-      # that forgets this line costs CI a 289 MB fetch.
-      #
-      # Why the four remaining notebooks are ignored (honest per-notebook
-      # reason; M15 re-measured all four against every database MCEq ships
-      # or downloads -- the CI packages carry the fifteen v2 models on a
-      # 31-bin window, the 289 MB lext DB the v1.4 set, and nothing carries
-      # SIBYLL23C or the old DPMJet/QGSJet generations):
-      #
-      #   Muon spectra                          6 of its 8 models (both
-      #                                         DPMJet-III variants,
-      #                                         QGSJet-II-03, QGSJet-01c,
-      #                                         SIBYLL-2.3c; EPOS-LHC is
-      #                                         only in the lext DB) are in
-      #                                         no shipped DB. The Python-2
-      #                                         prints and kernelspec that
-      #                                         also blocked it are fixed;
-      #                                         a DB reissue is the way
-      #                                         this one comes back.
-      #   Partial_hadron_contribution           imports CRFluxModels
-      #                                         (pre-crflux, pip-absent) and
-      #                                         decomposes per hadron via
-      #                                         MCEqRun.set_obs_particles,
-      #                                         which the v2 API cull
-      #                                         removed; also needs
-      #                                         SIBYLL2.3c + low-energy
-      #                                         extension (no shipped DB).
-      #   Full_sky_carousel                     SIBYLL23D — not in the CI DB
-      #                                         and the point of the notebook
-      #                                         is the 2D-capable DB +
-      #                                         MSIS21/geomagnetic cutoffs;
-      #                                         swapping models guts the
-      #                                         demo. Verified runnable to
-      #                                         the cutoff cell on the lext
-      #                                         DB, where gtracr 2.0.0's API
-      #                                         breaks the cutoff adapter
-      #                                         (src-side; see the ORCA cell
-      #                                         note in the notebook).
-      #   Angular_shower_development            needs the 2D URQMD-150GeV
-      #                                         FLUKA DB (the D25 2D asset:
-      #                                         not in CI, not redistribut-
-      #                                         able; the host copy M15
-      #                                         probed is legacy `projectiles`
-      #                                         layout that the v2 backend
-      #                                         rejects), and its `particle`
-      #                                         import is not in the
-      #                                         notebooks group
+      # The four ignored notebooks below need models or data CI does not
+      # carry:
+      #   Muon spectra                 6 of its 8 models are in no shipped DB
+      #   Partial_hadron_contribution  needs CRFluxModels and set_obs_particles,
+      #                                both removed in v2
+      #   Full_sky_carousel            SIBYLL23D, and gtracr 2.0.0 breaks the
+      #                                geomagnetic cutoff adapter
+      #   Angular_shower_development   needs the 2D URQMD FLUKA DB, which is
+      #                                not redistributable
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \

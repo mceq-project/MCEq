@@ -1,20 +1,17 @@
-"""Manifest-described data packages: resolution, fetch safety, equality.
+"""Reading a hadronic model out of a split database set.
 
-Runs on the fixture of ``tests/data/make_manifest_fixtures.py`` -- the CI
-extra-models package cut into a plain monolith, a spine package (QGSJETII04),
-a model file (SIBYLL21) and a schema-1 manifest. Pins:
+Uses the small databases built by ``tests/data/make_manifest_databases.py``:
+one monolith, a base file with QGSJETII04, a single-model file with SIBYLL21
+and the manifest listing them. Checks that
 
-* a model served from a package decodes and solves bitwise equal to the
-  monolith;
-* the monolith itself never consults the manifest;
-* a model no package on the grid provides fails with an error naming the
-  model, the manifest and the models the release does offer -- no network;
-* a listed-but-absent package is fetched once, atomically, with its
-  manifest sha256; a held lock fails fast with the CLI hint; a wrong payload
-  leaves nothing behind;
-* a package whose ``common/e_grid`` differs from the primary is refused;
-* ``ensure_db_available`` fetches a manifest-listed primary from the data
-  release and leaves legacy names on the legacy channel.
+* a model read from the split set gives exactly the same matrices and
+  solution as the same model read from the monolith;
+* a monolith is resolved against itself and never reads the manifest;
+* asking for a model no file provides fails with a message naming the model
+  and the models that are available, without touching the network;
+* a listed but missing file is downloaded once, verified against its
+  checksum, and leaves nothing behind if the download is corrupt;
+* a file whose energy grid differs from the primary one is refused.
 """
 
 import importlib.util
@@ -33,8 +30,8 @@ from MCEq.data import db_manifest, download
 from MCEq.data.hdf5_backend import HDF5Backend
 
 _SPEC = importlib.util.spec_from_file_location(
-    "make_manifest_fixtures",
-    pathlib.Path(__file__).parent / "data" / "make_manifest_fixtures.py",
+    "make_manifest_databases",
+    pathlib.Path(__file__).parent / "data" / "make_manifest_databases.py",
 )
 fixtures = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(fixtures)

@@ -1,42 +1,19 @@
-"""Data-release manifest: which package file carries which hadronic model.
+"""Data-release manifest: which database file carries which hadronic model.
 
-The v2 data release is a set of HDF5 packages plus one YAML manifest
-(``config.mceq_db_manifest``). Every package entry records the energy grid
-(dims and byte digests of ``e_grid``/``k_grid``), sha256, size and the models
-it carries per medium::
+The data release is a set of HDF5 files plus a YAML manifest
+(``config.mceq_db_manifest``) recording, for each file, its energy grid,
+checksum and the models it holds per medium::
 
-    schema: 1
-    release: v2.0.0
-    url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
-    defaults: {1d: mceq_base_air_1d_v2.h5, 2d: mceq_base_air_2d_v2.h5}
-    grids:
-      1d-150: {e_dim: 150, k_dim: null, e_grid_sha256: ...}
     files:
       mceq_base_air_1d_v2.h5:
-        sha256: ...
-        size: ...
         grid: 1d-150
-        spine: true          # carries common/decays/continuous_losses
         models: {air: [FLUKA20251, SIBYLL23E], hydrogen: [SIBYLL23E]}
-      mceq_extra_models_air_1d_v2.h5:
-        grid: 1d-150
-        spine: true
-        models: {air: [DPMJETIII193, EPOSLHC, ...]}
 
-``config.mceq_db_fname`` names the *primary* file: it supplies the grid,
-decays and continuous losses (so it must be a ``spine`` package) and whatever
-models it holds. When a run asks for a model the primary lacks, the backend
-comes here: :class:`ModelStoreCache` picks the manifest entry on the **same
-grid** that lists the model for the medium, fetches the file once if it is
-missing (:mod:`MCEq.data.download`, sha256 from the manifest, race-safe),
-checks that its ``common/e_grid`` is byte-identical to the primary's, and
-hands back the store. Registering a new model is one manifest entry pointing
-at a single-model file; nothing here knows file names.
-
-Only release packages take this path: the packager stamps the root attribute
-``mceq_db_manifest`` on every package, and the backend consults this module
-only when the primary file carries it. A monolithic database is resolved
-against its own file exactly as before.
+``config.mceq_db_fname`` names the primary file, which supplies the grid,
+decays and continuous losses. When a run requests a model the primary does
+not hold, :class:`ModelStoreCache` finds a file on the same grid that does,
+downloads it if needed, verifies that the energy grids match, and returns
+that store. Registering a further model means adding a manifest entry.
 """
 
 from __future__ import annotations
