@@ -143,6 +143,7 @@ cuda_fp_precision = 64
 #: Floating point precision (is set automatically)
 floatlen = None
 
+
 #: BLAS thread limit, defaulting to ``min(16, os.cpu_count() or 1)``.
 #: Irrelevant for GPU integrators, but can affect initialization speed if
 #: numpy is linked to MKL. Sparse products and narrow dense products can be
@@ -153,7 +154,33 @@ floatlen = None
 #: contention. :func:`set_mkl_threads` applies the limit to supported, loaded
 #: BLAS libraries, OpenBLAS (what most numpy wheels link) included. Override
 #: after import for full control: ``MCEq.config.set_mkl_threads(n)``.
-mkl_threads = min(16, os.cpu_count() or 1)
+def _available_cpus():
+    """CPUs this process may run on (the affinity mask, else ``cpu_count``)."""
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return os.cpu_count() or 1
+
+
+def _default_threads():
+    """The process-wide BLAS thread budget, decided in this one place.
+
+    An explicit ``MKL_NUM_THREADS`` / ``OMP_NUM_THREADS`` /
+    ``OPENBLAS_NUM_THREADS`` in the environment wins -- that is how
+    schedulers, containers and test runners share a node (``tests/conftest.py``
+    divides the CPUs among pytest-xdist workers this way). Otherwise the
+    budget is ``min(16, cpus)`` over the CPUs the process may actually use
+    (affinity mask, not the host's core count): ETD2 scales near-linearly to
+    ~16 threads and plateaus beyond, and the skinny secant GEMMs only contend
+    on an all-cores fan-out.
+    """
+    for var in ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        value = os.environ.get(var, "")
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+    return min(16, _available_cpus())
+
+
+mkl_threads = _default_threads()
 
 # =========================================================================
 # Advanced settings

@@ -17,9 +17,11 @@ numpy_etd2, ``disabled_particles`` cleared as in the Xmax-3panel driver whose
 observable is the e+- deposit). It is built from local run-artifact databases
 in the harness repo, so all three tests skip when those paths are absent.
 
-The solve test carries ``@pytest.mark.slow`` (its name is deliberate, not a
-registered marker -- nothing deselects it yet; the full gate runs it, ~30 s)
-and the two operator-level tests are the default-on guards. The tests share
+The solve test carries ``@pytest.mark.slow`` and is skipped unless
+``--run-slow`` (root conftest, 2026-09-17): under the loss-stencil step guard
+of ``330cd12`` its solve went from ~30 s to many hours single-threaded, which
+stalled every full gate -- the step count this system now demands is an open
+maintainer question. The two operator-level tests are the default-on guards. The tests share
 one fixture instance through an xdist group, so the parallel gate builds the
 run once per worker, not once per test.
 """

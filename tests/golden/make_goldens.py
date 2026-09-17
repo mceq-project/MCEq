@@ -30,7 +30,6 @@ GENERATORS = {
     "operators1d": "gen_operators1d",
     "solve2d": "gen_solve2d",
     "operators2d": "gen_operators2d",
-    "emphoton": "gen_emphoton",
     "emrho": "gen_emrho",
 }
 

@@ -1471,7 +1471,7 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
     # test to put on a spectrum
     for key, dip in (
         ("spectrum/single_total_mu+", -1.360e-2),
-        ("spectrum/single_total_numu", -3.032e-6),
+        ("spectrum/single_total_numu", -2.976e-6),
     ):
         row = arrays[key]
         assert not _flux_metric.sign_definite(row)
@@ -1490,8 +1490,11 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
             row[: _flux_metric.n_retained(row.size, trim)]
         )
     # the artefact deepens with zenith: -1.06% of the peak at 0 deg, -13.0% at 72
+    # (re-measured 2026-09-17 on the golden regenerated after the loss-stencil
+    # step guard: 249 -> 6467 steps moved the numu dip by 2% and the 72 deg
+    # lane by 4e-4; the bins the artefact occupies did not move)
     assert carousel[0].min() / carousel[0].max() == pytest.approx(-0.0106, abs=1e-4)
-    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1299, abs=1e-4)
+    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1303, abs=1e-4)
 
 
 def test_solve2d_trim_does_not_make_the_guard_a_no_op():
