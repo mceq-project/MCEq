@@ -8,14 +8,28 @@ the fixture file is well-formed and loadable so that
 ``test_2d_baseline_validation.py`` can rely on its presence and structure.
 """
 
+import importlib.util
 import pathlib
 
 import numpy as np
+import pytest
 
-FIXTURE = pathlib.Path(__file__).parent / "data" / "2d_baseline_solution.npz"
+_spec = importlib.util.spec_from_file_location(
+    "baseline_asset", pathlib.Path(__file__).parent / "data" / "baseline_asset.py"
+)
+baseline_asset = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(baseline_asset)
 
 
-def test_baseline_fixture_loads():
+@pytest.fixture(scope="module")
+def FIXTURE():
+    path = baseline_asset.ensure()
+    if path is None:
+        pytest.skip("stored 2D solution is not available and could not be fetched")
+    return path
+
+
+def test_baseline_fixture_loads(FIXTURE):
     d = np.load(FIXTURE, allow_pickle=True)
     assert "phi_hankel" in d.files
     assert "f_theta" in d.files
@@ -28,7 +42,7 @@ def test_baseline_fixture_loads():
     assert d["f_theta"].size > 0
 
 
-def test_baseline_fixture_shapes_consistent():
+def test_baseline_fixture_shapes_consistent(FIXTURE):
     """Cross-check that the saved arrays' shapes line up with each other."""
     d = np.load(FIXTURE, allow_pickle=True)
     n_depths = d["save_depths"].shape[0]
@@ -56,7 +70,7 @@ def test_baseline_fixture_shapes_consistent():
         assert d[key].shape == (n_depths, n_e, n_theta), key
 
 
-def test_baseline_fixture_metadata():
+def test_baseline_fixture_metadata(FIXTURE):
     """The provenance baked into the fixture pins the production 2D setup."""
     d = np.load(FIXTURE, allow_pickle=True)
     assert str(d["db_fname"]) == "mceq_db_v2_fluka2d_rc7.h5"

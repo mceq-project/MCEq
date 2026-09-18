@@ -17,6 +17,7 @@ intentional change to the 2D transport requires regenerating the fixture
 and documenting why.
 """
 
+import importlib.util
 import os
 import pathlib
 
@@ -26,7 +27,11 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
-FIXTURE = pathlib.Path(__file__).parent / "data" / "2d_baseline_solution.npz"
+_spec = importlib.util.spec_from_file_location(
+    "baseline_asset", pathlib.Path(__file__).parent / "data" / "baseline_asset.py"
+)
+baseline_asset = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(baseline_asset)
 
 # Per-mode rel-L2 regression bounds. The re-run reproduces the fixture
 # solve exactly up to floating-point differences in the BLAS/LAPACK builds
@@ -48,11 +53,13 @@ _CONFIG_KEYS = (
 
 @pytest.fixture(scope="module")
 def baseline():
-    if not FIXTURE.exists():
+    path = baseline_asset.ensure()
+    if path is None:
         pytest.skip(
-            "baseline fixture missing — run tests/data/make_2d_baseline_fixture.py"
+            "stored 2D solution is not available and could not be fetched; "
+            "regenerate it with tests/data/make_2d_baseline_fixture.py"
         )
-    return np.load(FIXTURE, allow_pickle=True)
+    return np.load(path, allow_pickle=True)
 
 
 @pytest.fixture(scope="module")

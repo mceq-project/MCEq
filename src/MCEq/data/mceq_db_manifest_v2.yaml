@@ -35,7 +35,6 @@ files:
     source:
       key: 1d
       file: mceq_db_v2_rc4_eposfresh_1d.h5
-      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-23_epos-sigma-regen/outputs/mceq_db_v2_rc4_eposfresh_1d.h5
       sha256: e023e4e30e837e68d24f711c48d339f9f8cc6af097378fecd84ca32b421d3ff7
       verbatim: false
     note: default 1D package; models used for the paper's 1D figures
@@ -62,7 +61,6 @@ files:
     source:
       key: 1d
       file: mceq_db_v2_rc4_eposfresh_1d.h5
-      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-23_epos-sigma-regen/outputs/mceq_db_v2_rc4_eposfresh_1d.h5
       sha256: e023e4e30e837e68d24f711c48d339f9f8cc6af097378fecd84ca32b421d3ff7
       verbatim: false
     note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
@@ -78,7 +76,6 @@ files:
     source:
       key: 2d
       file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
-      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-22_abar-consistency-fix/outputs/mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
       sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
       verbatim: false
     note: default 2D package on the unified 150-bin lattice (FLUKA qe_fwd yields re-compacted
@@ -94,7 +91,6 @@ files:
     source:
       key: 2d
       file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
-      path: /ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration/runs/2026-08-22_abar-consistency-fix/outputs/mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
       sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
       verbatim: false
     note: SIBYLL 2.3e 48-mode Hankel yields (m2m SIBYLL23E_hankel_fwd_fullgrid); needs
@@ -110,7 +106,6 @@ files:
     source:
       key: 2d_rc7
       file: mceq_db_v2_fluka2d_rc7.h5
-      path: /home/anatoli/MCEq-db/fluka/mceq_db_v2_fluka2d_rc7.h5
       sha256: 6868b9438c445d890e49be78a9f9cd0a9b7630ff6ce9d436674a693e5bee7f3a
       verbatim: true
     note: byte copy of mceq_db_v2_fluka2d_rc7.h5, the 2D database behind the paper's

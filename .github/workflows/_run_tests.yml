@@ -49,10 +49,11 @@ jobs:
       uses: actions/cache@v6
       with:
         path: |
+          tests/data/2d_baseline_solution.npz
           src/MCEq/data/mceq_db_manifest_ci_v2.yaml
           src/MCEq/data/mceq_ci_base_air_1d_v2.h5
           src/MCEq/data/mceq_ci_extra_models_air_1d_v2.h5
-        key: mceq-ci-data-v2-f13deaa1-${{ runner.os }}
+        key: mceq-ci-data-v2-b9d462dd-${{ runner.os }}
 
     - name: Download CI data packages if not cached
       if: steps.cache-db.outputs.cache-hit != 'true'
@@ -61,6 +62,9 @@ jobs:
         for f in mceq_db_manifest_ci_v2.yaml mceq_ci_base_air_1d_v2.h5 mceq_ci_extra_models_air_1d_v2.h5; do
           curl -fsSL "https://github.com/mceq-project/MCEq/releases/download/ci-assets/$f" -o "src/MCEq/data/$f"
         done
+        # The stored 2D solution, too big for the repository.
+        curl -fsSL "https://github.com/mceq-project/MCEq/releases/download/ci-assets/2d_baseline_solution.npz" \
+          -o tests/data/2d_baseline_solution.npz
 
     - name: Report CI data cache state and verify digests
       shell: bash
