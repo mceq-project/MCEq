@@ -116,3 +116,42 @@ Changelog uses **towncrier**: add a fragment `changes/<issue>.<type>.md` with
 type one of `feat`, `bugfix`, `api`, `chore`, `docs`. Don't commit planning
 documents, scratch analyses, or dev TODOs to this repo — it is the public,
 user-facing package.
+
+### Commit messages
+
+Write the subject line so that it stands on its own — a reader should get the
+point from it alone. Keep it under 50 characters, in the imperative mood, with
+no trailing period. State what the commit changes, plainly; don't hint at
+detail that only the diff shows.
+
+Most commits need no body. Add one only when the subject line alone is not
+understandable, wrap it at 72 characters, and keep it to at most two
+paragraphs of four lines — a ceiling, not a target. Two changes in one commit
+are not by themselves a reason for two paragraphs; name the lesser one in a
+sentence, or leave it to the diff.
+
+Never put test results, lint or check output, timings, statistics, or a report
+of other work done during the session into a commit message. Trailers are
+exempt from these limits.
+
+### Mark your work as AI-generated
+
+End every commit you author with a trailer naming your harness and model:
+
+```
+Assisted-by: <harness>:<model>
+```
+
+Skip it only if your harness already adds an equivalent trailer of its own —
+Claude Code, for example, appends
+`Co-Authored-By: Claude <model> <noreply@anthropic.com>`. Never add both.
+
+Mark text you generate for issues, pull-request descriptions, and review
+comments with
+
+```
+:robot: _AI text below_ :robot:
+```
+
+or another unmistakable marker, such as a `<details>` block. This does not
+apply to source code, docstrings, or comments in the code you write.
