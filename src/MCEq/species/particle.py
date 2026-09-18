@@ -207,7 +207,12 @@ class MCEqParticle:
         clearing: tracking-particle copies share these dict objects
         until the first re-wire).
         """
-        refs = [pmanager[key] for key in child_keys if key in pmanager]
+        refs = []
+        for key in child_keys:
+            try:
+                refs.append(pmanager[key])
+            except KeyError:
+                continue  # a child this system does not propagate
         if keep_tracking:
             refs += [ref for ref in self.hadr_secondaries if ref.is_tracking]
         yields = {}
