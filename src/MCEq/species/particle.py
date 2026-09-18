@@ -197,12 +197,17 @@ class MCEqParticle:
         particles, so collapsing the guards would change behaviour —
         the shared part is this remap-and-fetch body.
 
+        A child the manager does not carry is skipped. The databases hold
+        every channel; which species the system propagates is decided when
+        the particle list is built (``MCEq.misc.strip_em_species``), so a
+        table may name a child that is not tracked.
+
         Returns ``(refs, yields)`` so the callers rebind their own
         secondaries/children list and yield dict (rebinding, not
         clearing: tracking-particle copies share these dict objects
         until the first re-wire).
         """
-        refs = [pmanager[key] for key in child_keys]
+        refs = [pmanager[key] for key in child_keys if key in pmanager]
         if keep_tracking:
             refs += [ref for ref in self.hadr_secondaries if ref.is_tracking]
         yields = {}

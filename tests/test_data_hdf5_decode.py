@@ -42,7 +42,7 @@ _SPEC.loader.exec_module(fixtures)
 #: Index into ``fixtures.DECAY_CHANNELS``. Channel 4 is ``mu+ -> e+``, which
 #: the default ``disabled_particles`` skips; channel 5 is ``mu+ -> nu_e``,
 #: the one immediately behind it in the flat pack.
-SKIPPED_CH, NEXT_CH = 0, 1
+SKIPPED_CH, NEXT_CH = 4, 5
 
 
 def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
@@ -299,10 +299,8 @@ def test_a_skipped_channel_still_advances_the_flat_cursor(hdf5_fixture_dbs):
     skipped_parent, skipped_child = fixtures.DECAY_CHANNELS[SKIPPED_CH]
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
 
-    # abs() matching in the backend, hence 13 covers mu+ as well (ledger B2).
-    # The probe is a muon channel, not an e+- one: photons and electrons are
-    # dropped whenever enable_em is off, so they are never in the full decode.
-    partial = decode_decays(path, disabled=[13])["index_d"]
+    # abs() matching in the backend, hence 11 covers e+ as well (ledger B2).
+    partial = decode_decays(path, disabled=[11])["index_d"]
     full = decode_decays(path)["index_d"]
 
     assert ((skipped_parent, 0), (skipped_child, 0)) in full
@@ -326,7 +324,7 @@ def test_a_skipped_2d_channel_advances_the_cursor_by_n_k_times_len_data(
     skipped_parent, skipped_child = fixtures.DECAY_CHANNELS[SKIPPED_CH]
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
 
-    partial = backend(path, disabled=[13]).decay_db("polarized")["index_d"]
+    partial = backend(path, disabled=[11]).decay_db("polarized")["index_d"]
     full = backend(path).decay_db("polarized")["index_d"]
 
     # Without this pair the test says nothing about the skip path: if the
@@ -503,9 +501,9 @@ def test_equivalence_aliasing_on_the_shipped_reduced_database():
     """The alias counts on real data, measured: 40 matrix groups, 2 lists.
 
     The fixture test above reaches one stand-in with three channels. This one
-    records the scale on the reduced 1D database with SIBYLL21 and the
-    electromagnetic species excluded: 36 groups of channel matrices that
-    share one object (54 keys beyond the first of each group), and exactly two
+    records the scale on the reduced 1D database with SIBYLL21 and the default
+    ``disabled_particles = [11, -11]``: 40 groups of channel matrices that
+    share one object (60 keys beyond the first of each group), and exactly two
     shared ``relations`` lists -- 310 sharing 130's, and both 3122 and -3122
     sharing 2112's.
 
@@ -529,8 +527,8 @@ def test_equivalence_aliasing_on_the_shipped_reduced_database():
         return [keys for keys in by_id.values() if len(keys) > 1]
 
     matrix_groups = groups(index["index_d"])
-    assert len(matrix_groups) == 36
-    assert sum(len(keys) - 1 for keys in matrix_groups) == 54
+    assert len(matrix_groups) == 40
+    assert sum(len(keys) - 1 for keys in matrix_groups) == 60
 
     relation_groups = groups(index["relations"])
     assert sorted(sorted(int(pdg) for pdg, _ in keys) for keys in relation_groups) == [

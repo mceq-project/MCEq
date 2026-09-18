@@ -208,24 +208,23 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     print(print_str.strip()[:-1])
 
 
-#: Photons and electrons, the species the electromagnetic cascade
-#: transports, and pi0, whose only decay is into photons.
+#: Photons, electrons and pi0 -- the species that exist only as part of the
+#: electromagnetic cascade. pi0 decays into photons and nothing else.
 EM_PDG_IDS = (22, 11, -11, 111)
 
 
-def disabled_particles(physics):
-    """Particle IDs to leave out of the system.
+def strip_em_species(particle_list, physics):
+    """Leave the electromagnetic species out unless the cascade is on.
 
-    The explicitly disabled ones, plus the electromagnetic species
-    whenever the cascade is off: without EM interactions photons and
-    electrons have no transport, and pi0 decays into nothing else. Energy
-    reaching them leaves the cascade at the point of production, which is
-    where it left before. Enabling ``enable_em`` brings them back.
+    Without EM interactions photons and electrons have no transport, and pi0
+    has nothing to decay into. Energy reaching them leaves the cascade where
+    it is produced, which is where it left before they were dropped. The
+    databases carry the channels either way; this decides only what the
+    solver propagates.
     """
-    disabled = list(physics.filters["disabled_particles"])
-    if not physics.enable_em:
-        disabled += [pdg for pdg in EM_PDG_IDS if pdg not in disabled]
-    return disabled
+    if physics.enable_em:
+        return particle_list
+    return [p for p in particle_list if p[0] not in EM_PDG_IDS]
 
 
 def is_charm_pdgid(pdgid):

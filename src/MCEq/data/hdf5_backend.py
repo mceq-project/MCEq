@@ -22,7 +22,7 @@ from MCEq.data.equivalences import (
     reverse_equivalences,
 )
 from MCEq.data.model_names import family_of, normalize_hadronic_model_name
-from MCEq.misc import disabled_particles, info
+from MCEq.misc import info
 
 
 class HDF5Backend:
@@ -162,7 +162,7 @@ class HDF5Backend:
         else:
             model_particles = sorted(list(set(tuple_idcs.flatten().tolist())))
 
-        exclude = disabled_particles(self._physics)
+        exclude = self._physics.filters["disabled_particles"]
         read_idx = 0
         available_parents = [(pdg, parity) for (pdg, parity) in (tuple_idcs[:, :2])]
         available_parents = sorted(list(set(available_parents)))
