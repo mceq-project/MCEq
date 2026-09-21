@@ -94,7 +94,7 @@ def calculate_integration_path(
 
     if (
         run.integration_path
-        and np.all(int_grid == run.int_grid)
+        and np.array_equal(int_grid, run.int_grid)
         and np.all(run.grid_var == grid_var)
         and cached_etd2_params == etd2_params
         and not force
