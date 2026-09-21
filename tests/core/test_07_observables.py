@@ -100,6 +100,88 @@ def test_n_e_energy_cutoff_and_grid(mceq_sib21):
     assert nhigh < n1
 
 
+def test_depth_profile_requires_grid(mceq_sib21):
+    mceq_sib21.solve()
+    with pytest.raises(RuntimeError, match="int_grid"):
+        mceq_sib21.muon_depth_profile()
+    with pytest.raises(RuntimeError, match="int_grid"):
+        mceq_sib21.muon_xmax()
+
+
+def test_depth_profile_is_the_particle_count_per_depth(mceq_sib21):
+    X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 50)
+    mceq_sib21.solve(int_grid=X_grid)
+
+    X, n = mceq_sib21.muon_depth_profile()
+    np.testing.assert_allclose(X, X_grid)
+    expected = [mceq_sib21.n_mu(grid_idx=i) for i in range(len(X_grid))]
+    np.testing.assert_allclose(n, expected)
+    assert n[0] == 0  # no muons at the top of the atmosphere
+    assert np.all(n[1:] > 0)
+
+    _, spectrum = mceq_sib21.depth_profile("total_mu+", per_energy=True)
+    assert spectrum.shape == (len(X), mceq_sib21.dim)
+    np.testing.assert_allclose(
+        spectrum[-1], mceq_sib21.get_solution("total_mu+", grid_idx=len(X) - 1)
+    )
+
+
+def test_depth_profile_sums_names_and_prefixes(mceq_sib21):
+    X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 20)
+    mceq_sib21.solve(int_grid=X_grid)
+
+    _, total = mceq_sib21.muon_depth_profile()
+    _, plus = mceq_sib21.depth_profile("total_mu+")
+    _, minus = mceq_sib21.depth_profile("total_mu-")
+    np.testing.assert_allclose(plus + minus, total)
+    _, conv = mceq_sib21.muon_depth_profile(prefix="conv_")
+    _, prompt = mceq_sib21.muon_depth_profile(prefix="pr_")
+    np.testing.assert_allclose(conv + prompt, total, rtol=1e-10, atol=0)
+
+
+def test_depth_profile_energy_cuts(mceq_sib21):
+    X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 20)
+    mceq_sib21.solve(int_grid=X_grid)
+
+    _, total = mceq_sib21.muon_depth_profile()
+    _, low = mceq_sib21.muon_depth_profile(max_energy_cutoff=1e4)
+    _, high = mceq_sib21.muon_depth_profile(min_energy_cutoff=1e4)
+    np.testing.assert_allclose(low + high, total)
+    assert np.all(low <= total) and np.any(low < total)
+    with pytest.raises(ValueError, match="No energy bin"):
+        mceq_sib21.muon_depth_profile(min_energy_cutoff=1e9)
+
+
+def test_muon_xmax_locates_the_profile_maximum(mceq_sib21):
+    """Above the reduced database's ~900 GeV threshold muons survive to the
+    ground, so their number peaks deep in the atmosphere, where energy loss
+    below the threshold starts to outweigh the dwindling production."""
+    X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 300)
+    mceq_sib21.solve(int_grid=X_grid)
+
+    X, n = mceq_sib21.muon_depth_profile()
+    X_peak = X[np.argmax(n)]
+
+    xmax = mceq_sib21.muon_xmax()
+    assert mceq_sib21.muon_xmax(refine=False) == X_peak
+    assert abs(xmax - X_peak) <= X[1] - X[0]
+    assert 500.0 < xmax < X_grid[-1]
+    assert mceq_sib21.xmax(["total_mu+", "total_mu-"]) == xmax
+
+
+def test_xmax_on_the_grid_edge(mceq_sib21):
+    """A two-point grid cannot bracket a peak: the edge depth comes back
+    unrefined."""
+    mceq_sib21.solve([0, 1])
+    assert mceq_sib21.muon_xmax() == 1.0
+
+
+def test_xmax_of_an_empty_profile(mceq_sib21):
+    """There are no muons at the top of the atmosphere."""
+    mceq_sib21.solve([0])
+    assert np.isnan(mceq_sib21.muon_xmax())
+
+
 @pytest.mark.parametrize(
     ["definition", "use_cs_scaling"],
     [

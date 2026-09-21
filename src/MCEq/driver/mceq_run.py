@@ -841,22 +841,21 @@ class MCEqRun:
         loc = getattr(dm, "location", None)
         return isinstance(loc, str) and loc in LOCATIONS
 
-    # Batch functions bound as methods; their parameter documentation lives on
-    # the functions in driver/batch.py. The first parameter of each function is
-    # named ``run`` precisely so that this binding reads as the method.
+    # Functions of driver/batch.py, driver/results.py and driver/observables.py
+    # bound as methods; their contracts live there. The first parameter of each
+    # is named ``run`` precisely so that this binding reads as the method.
     solve_batch = batch.solve_batch
     solve_fullsky = batch.solve_fullsky
     _build_condition_paths = paths.build_condition_paths
-    # Result-extraction and observable functions bound as methods; their
-    # contracts live in driver/results.py and driver/observables.py.
     get_solution = results.get_solution
     _get_solution_from_state = results._get_solution_from_state
     convert_to_theta_space = results.convert_to_theta_space
-    n_particles = observables.n_particles
-    n_mu = observables.n_mu
-    n_e = observables.n_e
-    z_factor = observables.z_factor
-    decay_z_factor = observables.decay_z_factor
+    n_particles, n_mu, n_e = observables.n_particles, observables.n_mu, observables.n_e
+    depth_profile = observables.depth_profile
+    xmax = observables.xmax
+    muon_depth_profile = observables.muon_depth_profile
+    muon_xmax = observables.muon_xmax
+    z_factor, decay_z_factor = observables.z_factor, observables.decay_z_factor
 
     def _resolve_secant(self):
         """The sec(theta) operator set for a solve, or ``None`` for the

@@ -94,6 +94,29 @@ energy cutoff (larger than the minimal grid energy :attr:`mceq_config.e_min`)::
     # Number of protons above minimal grid energy
     n_p = np.sum(mceq.get_solution('p+', integrate=True))
 
+The intermediate solutions also give longitudinal profiles and their maxima.
+:func:`MCEq.driver.observables.depth_profile` returns the particle number
+along the depth grid and :func:`MCEq.driver.observables.xmax` locates its
+maximum. For muons::
+
+    X_grid = np.linspace(0, mceq.density_model.max_X, 300)
+    mceq.solve(int_grid=X_grid)
+
+    # Number of muons above 1 GeV along the path, and the depth of its maximum
+    X, n_mu = mceq.muon_depth_profile(min_energy_cutoff=1.0)
+    xmax = mceq.muon_xmax(min_energy_cutoff=1.0)
+
+    # Restricted to muons between 10 and 100 GeV, or to a parent category
+    xmax_10_100 = mceq.muon_xmax(min_energy_cutoff=10., max_energy_cutoff=100.)
+    xmax_pi = mceq.muon_xmax(min_energy_cutoff=1.0, prefix='pi_')
+
+The peak is refined with a parabola through the three grid points around the
+maximum, so the grid resolution sets the accuracy. A maximum on the first or
+last grid point is returned as is and reported at debug level 1. The muon
+number of an inclusive flux peaks in the upper troposphere at GeV energies
+and moves toward the ground with rising energy; see the example notebook
+``Muon_depth_profiles``.
+
 All particles listed by :func:`MCEq.ParticleManager.print_particle_tables(0)` are
 available to :func:`MCEq.core.get_solution`.
 
