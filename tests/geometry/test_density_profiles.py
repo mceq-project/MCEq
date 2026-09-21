@@ -1027,13 +1027,19 @@ def test_gridded_table_needs_a_coord():
         dp.TabulatedAtmosphere(GRID_TABLE_PATH)
 
 
-def test_gridded_table_rejects_ragged_columns(tmp_path):
+def test_gridded_table_rejects_an_interior_level_gap(tmp_path):
+    """A column may stop above the ground, but not lose a level in the middle.
+
+    The bottom of a column is where the terrain is; a hole above it is missing
+    data, and interpolating across one silently is what a measured atmosphere
+    must not do.
+    """
     lines = [
         line
         for line in pathlib.Path(GRID_TABLE_PATH).read_text().splitlines()
         if not line.startswith("#")
     ]
-    del lines[3]  # drop one level from the first column
+    del lines[3]  # 700 hPa, between the 850 and 500 hPa rows of the first column
     path = _write_table(tmp_path, lines)
     with pytest.raises(ValueError, match="levels"):
         dp.AtmosphereTable.load_from_csv(path)
@@ -1614,29 +1620,218 @@ def test_column_interpolates_across_the_seam_of_a_cell_centred_grid(tmp_path):
 
 
 def test_ragged_grid_error_does_not_recommend_nan(tmp_path):
-    """The old remedy was self-defeating: a nan density is dropped on load.
+    """Missing levels at the *top* of a column are still an error.
 
-    Following it produced the very error it was printed under.
+    The old message answered every uneven table with "fill the gap, a nan row
+    is discarded on load". For a column the ground cuts short there is nothing
+    to fill, and the remedy it recommended produced the very error it was
+    printed under. Levels below the terrain are now accepted; a level missing
+    above the bottom of a column is not, and the message has to say which case
+    it is complaining about.
     """
-    # 8 rows over a 2x2 grid, so the row count IS a whole number of columns
-    # (n_lev = 2) -- otherwise the loader stops at the earlier "not a whole
-    # number of columns" error and never reaches the one under test.  The
-    # levels are just distributed unevenly: 3, 1, 2, 2.
+    # Levels 1000, 500 and 333 hPa. The second column keeps only the deepest
+    # two, so it is short at the *top* -- not the terrain's doing.
     lines = ["# MCEq tabulated atmosphere v1", "lat_deg,lon_deg,h_cm,T_K,p_hPa"]
-    levels = {(-30.0, 0.0): 3, (-30.0, 90.0): 1, (30.0, 0.0): 2, (30.0, 90.0): 2}
+    levels = {
+        (-30.0, 0.0): 3,
+        (-30.0, 90.0): 2,
+        (30.0, 0.0): 3,
+        (30.0, 90.0): 3,
+    }
     for (lat, lon), n_lev in levels.items():
         for k in range(n_lev):
             lines.append(f"{lat},{lon},{k * 1.0e6},280.0,{1000.0 / (k + 1)}")
-    path = tmp_path / "ragged.csv"
-    path.write_text("\n".join(lines) + "\n")
+    path = _write_table(tmp_path, lines, name="top_gap.csv")
 
     with pytest.raises(ValueError) as excinfo:
         dp.AtmosphereTable.load_from_csv(path)
 
     message = str(excinfo.value)
-    assert "do not all have 2 levels" in message
+    assert "only at the bottom" in message
     assert "mark gaps with nan" not in message
-    assert "discarded on load" in message
+    assert "discarded on load" not in message
+
+
+# ---------------------------------------------------------------------------
+# Ragged grids: columns that stop where the ground is.
+#
+# A standard pressure level below the terrain, or below the sea surface in a
+# deep low, does not exist, and a converter that reports one is inventing
+# weather. Such columns simply start higher up.
+# ---------------------------------------------------------------------------
+
+#: Pressure levels of the ragged fixture, descending as height ascends.
+RAGGED_LEVELS = (1000.0, 850.0, 700.0, 500.0, 300.0, 200.0)
+
+#: Levels the two southern nodes at longitude 0 are missing at the bottom,
+#: keyed by (latitude, longitude): a plateau and its coastal neighbour.
+RAGGED_MISSING = {(-30.0, 0.0): 2, (-30.0, 45.0): 1}
+
+
+def _ragged_lines(missing=None, fill_with_nan=False):
+    """A 2x2 ragged grid on six pressure levels, in long format.
+
+    Heights follow the hypsometric equation at a constant 260 K, so every
+    column rises with falling pressure and the levels sit at the same heights
+    in all of them -- what a column lacks is only the bottom of it.
+    """
+    missing = RAGGED_MISSING if missing is None else missing
+    scale_cm = 287.06 * 260.0 / 9.80665 * 1e2
+    lines = ["# MCEq tabulated atmosphere v1", "lat_deg,lon_deg,h_cm,T_K,p_hPa"]
+    for lat in (-30.0, 30.0):
+        for lon in (0.0, 45.0):
+            skip = missing.get((lat, lon), 0)
+            for k, pressure in enumerate(RAGGED_LEVELS):
+                height = scale_cm * np.log(RAGGED_LEVELS[0] / pressure)
+                temperature = 260.0 + lon / 45.0
+                if k < skip:
+                    if not fill_with_nan:
+                        continue
+                    lines.append(f"{lat},{lon},nan,nan,{pressure}")
+                else:
+                    lines.append(f"{lat},{lon},{height:.6e},{temperature},{pressure}")
+    return lines
+
+
+def _ragged_table(tmp_path, **kwargs):
+    return dp.AtmosphereTable.load_from_csv(
+        _write_table(tmp_path, _ragged_lines(**kwargs), name="ragged.csv")
+    )
+
+
+def test_ragged_grid_loads_with_the_short_columns_padded(tmp_path):
+    table = _ragged_table(tmp_path)
+    assert table.is_gridded
+    assert table.is_ragged
+    assert table.h_cm.shape == (2, 2, len(RAGGED_LEVELS))
+    # lat -30 is the ragged row: 4 and 5 levels against 6 in the north.
+    assert table.levels_per_column.tolist() == [[4, 5], [6, 6]]
+    # The padding sits at the bottom, and only there.
+    assert np.all(np.isnan(table.rho_gcm3[0, 0, :2]))
+    assert np.all(np.isfinite(table.rho_gcm3[0, 0, 2:]))
+    assert np.all(np.isfinite(table.rho_gcm3[1]))
+    # Pressure alignment: the same slot is the same level in every column.
+    for j in range(2):
+        for i in range(2):
+            present = np.isfinite(table.rho_gcm3[j, i])
+            assert np.array_equal(
+                table.p_hPa[j, i][present], np.array(RAGGED_LEVELS)[present]
+            )
+
+
+def test_ragged_nan_rows_load_like_omitted_rows(tmp_path):
+    """The two ways of saying "this level is not there" agree."""
+    omitted = _ragged_table(tmp_path)
+    spelled = dp.AtmosphereTable.load_from_csv(
+        _write_table(tmp_path, _ragged_lines(fill_with_nan=True), name="ragged_nan.csv")
+    )
+    assert spelled.levels_per_column.tolist() == omitted.levels_per_column.tolist()
+    for left, right in (
+        (spelled.h_cm, omitted.h_cm),
+        (spelled.rho_gcm3, omitted.rho_gcm3),
+        (spelled.T_K, omitted.T_K),
+    ):
+        assert np.array_equal(left, right, equal_nan=True)
+
+
+def test_ragged_column_at_a_node_keeps_that_node_depth(tmp_path):
+    """A column exactly on a node is that node's own, padding stripped.
+
+    The three nodes it does not lean on are dropped rather than carried at
+    weight zero, so a deep column next to a shallow one is not truncated to
+    its neighbour's depth.
+    """
+    table = _ragged_table(tmp_path)
+    for j, lat in enumerate(table.lat_deg):
+        for i, lon in enumerate(table.lon_deg):
+            column = table.column(lon, lat)
+            present = np.isfinite(table.rho_gcm3[j, i])
+            assert column.h_cm.size == present.sum()
+            assert np.all(np.isfinite(column.rho_gcm3))
+            assert np.allclose(column.h_cm, table.h_cm[j, i][present], rtol=1e-12)
+            assert np.allclose(column.p_hPa, table.p_hPa[j, i][present], rtol=1e-12)
+
+
+def test_ragged_column_between_nodes_starts_at_the_shared_level(tmp_path):
+    """The blend can only start where every node it blends reaches."""
+    table = _ragged_table(tmp_path)
+    # Between the 4-level and the 5-level column: 4 levels, i.e. from 700 hPa.
+    middle = table.column(22.5, -30.0)
+    assert middle.p_hPa[0] == pytest.approx(700.0)
+    assert middle.h_cm.size == 4
+    assert np.all(np.isfinite(middle.rho_gcm3))
+    # Between the ragged row and the full one: still the ragged node's bottom.
+    across = table.column(0.0, 0.0)
+    assert across.p_hPa[0] == pytest.approx(700.0)
+    assert across.T_K[0] == pytest.approx(
+        0.5 * (table.T_K[0, 0, 2] + table.T_K[1, 0, 2]), rel=1e-12
+    )
+
+
+def test_ragged_grid_needs_a_pressure_column(tmp_path):
+    """Without p_hPa there is nothing to align the levels on."""
+    lines = [
+        ",".join(field for n, field in enumerate(line.split(",")) if n != 4)
+        if not line.startswith("#")
+        else line
+        for line in _ragged_lines()
+    ]
+    # Drop T_K as well, or the density can no longer be derived.
+    lines = [
+        line if line.startswith("#") else line.replace(",nan", "") for line in lines
+    ]
+    lines[1] = "lat_deg,lon_deg,h_cm,rho_gcm3"
+    rows = [lines[0], lines[1]]
+    for line in lines[2:]:
+        lat, lon, height, temperature = line.split(",")
+        rows.append(f"{lat},{lon},{height},{1.0e-3 * float(temperature) / 260.0}")
+    path = _write_table(tmp_path, rows, name="ragged_no_pressure.csv")
+    with pytest.raises(ValueError, match="p_hPa"):
+        dp.AtmosphereTable.load_from_csv(path)
+
+
+def test_ragged_grid_rejects_a_column_with_one_level(tmp_path):
+    path = _write_table(
+        tmp_path,
+        _ragged_lines(missing={(-30.0, 0.0): 5}),
+        name="ragged_thin.csv",
+    )
+    with pytest.raises(ValueError, match="at least 2"):
+        dp.AtmosphereTable.load_from_csv(path)
+
+
+def test_ragged_grid_rejects_a_column_that_does_not_rise(tmp_path):
+    """A pressure-aligned column has to be hydrostatic."""
+    lines = _ragged_lines()
+    # Push one level of the full northern column below the one beneath it.
+    for n, line in enumerate(lines):
+        if line.startswith("30.0,0.0,") and line.endswith(",700.0"):
+            lat, lon, _, temperature, pressure = line.split(",")
+            lines[n] = f"{lat},{lon},0.0,{temperature},{pressure}"
+    path = _write_table(tmp_path, lines, name="ragged_sinking.csv")
+    with pytest.raises(ValueError, match="hydrostatic"):
+        dp.AtmosphereTable.load_from_csv(path)
+
+
+def test_ragged_grid_drives_an_atmosphere_down_to_the_surface(tmp_path):
+    """The levels the ground cut off are the integrator's business, not the table's.
+
+    ``_extend_below`` continues the column log-linearly to the observation
+    level, so a ragged table still yields a finite, monotonic column depth.
+    """
+    table = _ragged_table(tmp_path)
+    atm = dp.TabulatedAtmosphere(table, coord=(0.0, -30.0), surface_elevation_m=0.0)
+    atm.set_theta(0.0)
+    assert atm.h[0] == pytest.approx(0.0)
+    assert np.isfinite(atm.max_X)
+    assert atm.max_X > 0.0
+    assert np.all(np.diff(atm.h) > 0.0)
+    assert np.all(np.isfinite(atm.dens))
+    # The table's own lowest level is reproduced, not smoothed over.
+    lowest = np.flatnonzero(np.isfinite(table.rho_gcm3[0, 0]))[0]
+    assert atm.get_density(table.h_cm[0, 0, lowest]) == pytest.approx(
+        table.rho_gcm3[0, 0, lowest], rel=1e-6
+    )
 
 
 def test_pressure_stays_consistent_with_density_and_temperature():

@@ -1,6 +1,7 @@
 import gzip
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 from six import with_metaclass
@@ -1184,7 +1185,10 @@ class AtmosphereTable:
 
     Attributes:
       h_cm (numpy.ndarray): heights above sea level in cm, shaped ``(n_lev,)``
-        for a single column and ``(n_lat, n_lon, n_lev)`` for a grid.
+        for a single column and ``(n_lat, n_lon, n_lev)`` for a grid.  A grid
+        whose columns stop at different depths -- pressure levels below the
+        terrain or below the sea surface do not exist -- is padded with ``nan``
+        at the bottom of the short columns; see :attr:`is_ragged`.
       rho_gcm3 (numpy.ndarray): densities in g/cm**3, same shape.
       T_K (numpy.ndarray or None): temperatures in K, same shape.
       p_hPa (numpy.ndarray or None): pressures in hPa, same shape.
@@ -1204,6 +1208,37 @@ class AtmosphereTable:
     def is_gridded(self):
         """True if the table holds a longitude/latitude grid of columns."""
         return self.lat_deg is not None
+
+    @cached_property
+    def lowest_level(self):
+        """Index of the deepest real level of each column of a gridded table.
+
+        Shaped ``(n_lat, n_lon)``, and zero everywhere unless the grid is
+        ragged.  ``None`` for a single column, which has no padding: the loader
+        drops its missing rows outright.  Cached, because :meth:`column` needs
+        it once per direction and scanning a global grid for it every time
+        would cost more than the interpolation itself.
+        """
+        if not self.is_gridded:
+            return None
+        return np.argmax(np.isfinite(self.rho_gcm3), axis=-1)
+
+    @property
+    def levels_per_column(self):
+        """Number of real levels in each column of a gridded table.
+
+        Shaped ``(n_lat, n_lon)``.  ``None`` for a single column.
+        """
+        if not self.is_gridded:
+            return None
+        return self.h_cm.shape[-1] - self.lowest_level
+
+    @cached_property
+    def is_ragged(self):
+        """True if the grid's columns do not all reach the same lowest level."""
+        if not self.is_gridded:
+            return False
+        return bool(self.lowest_level.any())
 
     @property
     def is_global_in_lon(self):
@@ -1228,8 +1263,11 @@ class AtmosphereTable:
     def __repr__(self):
         if self.is_gridded:
             n_lat, n_lon, n_lev = self.h_cm.shape
+            levels = f"{n_lev} levels"
+            if self.is_ragged:
+                levels = f"{self.levels_per_column.min()}..{n_lev} levels"
             return (
-                f"AtmosphereTable(grid {n_lat}x{n_lon}, {n_lev} levels, "
+                f"AtmosphereTable(grid {n_lat}x{n_lon}, {levels}, "
                 f"lat {self.lat_deg[0]:.2f}..{self.lat_deg[-1]:.2f}, "
                 f"lon {self.lon_deg[0]:.2f}..{self.lon_deg[-1]:.2f})"
             )
@@ -1342,38 +1380,139 @@ class AtmosphereTable:
         lat_axis = np.unique(lat)
         lon_axis = np.unique(lon)
         n_lat, n_lon = lat_axis.size, lon_axis.size
-        n_rows = h_cm.size
-
-        if n_rows % (n_lat * n_lon) != 0:
-            raise ValueError(
-                f"AtmosphereTable.load_from_csv(): {filename} has {n_rows} usable rows, "
-                f"which is not a whole number of columns for the {n_lat} latitudes "
-                f"x {n_lon} longitudes it names. Gridded tables must be a regular "
-                "grid with the same number of levels in every column."
-            )
-        n_lev = n_rows // (n_lat * n_lon)
 
         j = np.searchsorted(lat_axis, lat)
         i = np.searchsorted(lon_axis, lon)
+        counts = np.bincount(j * n_lon + i, minlength=n_lat * n_lon)
+
+        cls._raise_if_longitude_axis_is_broken(filename, lon_axis)
+
+        if counts.min() == counts.max():
+            return cls._rectangular_grid(
+                lat_axis, lon_axis, j, i, int(counts[0]), h_cm, dens, optional
+            )
+        return cls._ragged_grid(
+            filename, lat_axis, lon_axis, j, i, counts, h_cm, dens, optional
+        )
+
+    @staticmethod
+    def _rectangular_grid(lat_axis, lon_axis, j, i, n_lev, h_cm, dens, optional):
+        """Reshapes rows into a grid whose columns all carry the same levels."""
+        n_lon = lon_axis.size
         # Sort by (lat, lon, height) so every column lands contiguously, ascending.
         order = np.lexsort((h_cm, i, j))
-        j, i = j[order], i[order]
 
-        counts = np.bincount(j * n_lon + i, minlength=n_lat * n_lon)
-        if not np.all(counts == n_lev):
-            bad = int(np.argmin(counts))
+        def reshape(values):
+            return values[order].reshape(lat_axis.size, n_lon, n_lev)
+
+        return AtmosphereTable(
+            h_cm=reshape(h_cm),
+            rho_gcm3=reshape(dens),
+            lat_deg=lat_axis,
+            lon_deg=lon_axis,
+            **{key: reshape(value) for key, value in optional.items()},
+        )
+
+    @staticmethod
+    def _ragged_grid(filename, lat_axis, lon_axis, j, i, counts, h_cm, dens, optional):
+        """Reshapes rows into a grid whose columns stop at different depths.
+
+        Data on standard pressure levels is ragged wherever the ground is: a
+        level below the terrain, or below the sea surface in a deep low, does
+        not exist and no honest converter can report one.  Such a column simply
+        starts higher up.  The levels are therefore aligned **by pressure**, not
+        by row count, and the levels a column does not have are stored as
+        ``nan`` at the bottom of it -- :meth:`column` drops them again, and
+        :meth:`TabulatedAtmosphere._extend_below` carries the profile down to
+        the observation level.
+        """
+        n_lat, n_lon = lat_axis.size, lon_axis.size
+        pressure = optional.get("p_hPa")
+        if pressure is None:
             raise ValueError(
                 f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
-                f"columns do not all have {n_lev} levels -- the column at "
-                f"lat={lat_axis[bad // n_lon]:.3f}, lon={lon_axis[bad % n_lon]:.3f} "
-                f"has {counts[bad]}. Keep every level in every column, with a "
-                "finite positive density on each -- either rho_gcm3, or T_K "
-                "and p_hPa together. A row whose density is missing or nan is "
-                "discarded on load and leaves the same hole, so fill the gap "
-                "(interpolate between the neighbouring levels) instead of "
-                "marking it."
+                f"columns carry between {counts.min()} and {counts.max()} levels. Such a "
+                "table is aligned by pressure, so it must also provide a 'p_hPa' column. "
+                "Add it, or keep the same number of levels in every column."
             )
 
+        # Ascending pressure is descending height, so the deepest level of a
+        # column is slot 0 and the last axis ascends in height as it does for a
+        # rectangular grid.
+        p_axis = np.unique(pressure)
+        n_lev = p_axis.size
+        slot = n_lev - 1 - np.searchsorted(p_axis, pressure)
+
+        flat = (j * n_lon + i) * n_lev + slot
+        if np.unique(flat).size != flat.size:
+            duplicate = np.bincount(flat, minlength=n_lat * n_lon * n_lev).argmax()
+            cell, level = divmod(int(duplicate), n_lev)
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} names the pressure level "
+                f"{p_axis[n_lev - 1 - level]:g} hPa more than once in the column at "
+                f"lat={lat_axis[cell // n_lon]:.3f}, lon={lon_axis[cell % n_lon]:.3f}. "
+                "Each (node, level) pair must appear in exactly one row."
+            )
+
+        def scatter(values):
+            out = np.full(n_lat * n_lon * n_lev, np.nan)
+            out[flat] = values
+            return out.reshape(n_lat, n_lon, n_lev)
+
+        grid_h, grid_dens = scatter(h_cm), scatter(dens)
+        present = np.isfinite(grid_dens)
+        n_valid = present.sum(axis=-1)
+        lowest = np.argmax(present, axis=-1)
+
+        # A column may stop above the ground; a hole in the middle of one, or a
+        # missing level at the top, is a gap in the data and not a terrain
+        # effect, and interpolating across it silently is the one thing a
+        # measured atmosphere should not do.
+        broken = n_valid + lowest != n_lev
+        if broken.any():
+            bad = np.argwhere(broken)[0]
+            missing = p_axis[n_lev - 1 - np.flatnonzero(~present[tuple(bad)])]
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
+                f"column at lat={lat_axis[bad[0]]:.3f}, lon={lon_axis[bad[1]]:.3f} is "
+                f"missing the levels {np.array2string(missing, precision=4)} hPa above "
+                "its lowest one, so it has fewer levels than the table's "
+                f"{n_lev}. Levels may be absent only at the bottom of a column, where "
+                "the ground cuts it off. Fill an interior or top gap (interpolate "
+                "between the neighbouring levels) instead of leaving it out."
+            )
+        if n_valid.min() < 2:
+            bad = np.argwhere(n_valid == n_valid.min())[0]
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
+                f"column at lat={lat_axis[bad[0]]:.3f}, lon={lon_axis[bad[1]]:.3f} has "
+                f"{n_valid.min()} level(s). Every column needs at least 2 to be "
+                "interpolated."
+            )
+
+        rising = np.diff(grid_h, axis=-1)
+        ok = (rising > 0.0) | ~np.isfinite(rising)
+        if not ok.all():
+            bad = np.argwhere(~ok.all(axis=-1))[0]
+            raise ValueError(
+                f"AtmosphereTable.load_from_csv(): {filename} is a gridded table whose "
+                f"column at lat={lat_axis[bad[0]]:.3f}, lon={lon_axis[bad[1]]:.3f} does "
+                "not rise in height as its pressure falls. A pressure-aligned table "
+                "must be hydrostatic: h_cm has to increase strictly as p_hPa decreases."
+            )
+
+        return AtmosphereTable(
+            h_cm=grid_h,
+            rho_gcm3=grid_dens,
+            lat_deg=lat_axis,
+            lon_deg=lon_axis,
+            **{key: scatter(value) for key, value in optional.items()},
+        )
+
+    @staticmethod
+    def _raise_if_longitude_axis_is_broken(filename, lon_axis):
+        """Raises if the longitude axis cannot be interpolated across."""
+        n_lon = lon_axis.size
         steps = np.diff(lon_axis)
         if n_lon > 2 and steps.max() > steps.min() * 1.5:
             seam = lon_axis[0] + 360.0 - lon_axis[-1]
@@ -1387,17 +1526,6 @@ class AtmosphereTable:
                     "region onto a continuous longitude range, or supply a global "
                     "grid."
                 )
-
-        def reshape(values):
-            return values[order].reshape(n_lat, n_lon, n_lev)
-
-        return AtmosphereTable(
-            h_cm=reshape(h_cm),
-            rho_gcm3=reshape(dens),
-            lat_deg=lat_axis,
-            lon_deg=lon_axis,
-            **{key: reshape(value) for key, value in optional.items()},
-        )
 
     # Slack on the domain check, in degrees. A direction that lands exactly on
     # an edge node comes back a few ulp outside it -- a vertical shower over a
@@ -1473,13 +1601,22 @@ class AtmosphereTable:
         i, wi = self._bracket(self.lon_deg, lon, periodic=periodic)
         i_next = (i + 1) % len(self.lon_deg) if periodic else i + 1
 
-        # Bilinear weights of the four surrounding nodes.
-        corners = (
-            (j, i, (1 - wj) * (1 - wi)),
-            (j, i_next, (1 - wj) * wi),
-            (j + 1, i, wj * (1 - wi)),
-            (j + 1, i_next, wj * wi),
-        )
+        # Bilinear weights of the four surrounding nodes.  A node the point
+        # does not actually lean on is dropped rather than carried at weight
+        # zero: on a ragged grid its padding is nan, and 0 * nan is nan, so a
+        # column exactly on a node would otherwise inherit its neighbours'
+        # depth.
+        corners = [
+            (jj, ii, weight)
+            for jj, ii, weight in (
+                (j, i, (1 - wj) * (1 - wi)),
+                (j, i_next, (1 - wj) * wi),
+                (j + 1, i, wj * (1 - wi)),
+                (j + 1, i_next, wj * wi),
+            )
+            if weight > 0.0
+        ]
+        bottom = self._common_bottom(corners, lon, lat)
 
         def blend(values, logarithmic=False):
             if values is None:
@@ -1488,7 +1625,12 @@ class AtmosphereTable:
             # this runs once per direction, and on a global table the grid is
             # five orders of magnitude larger than the columns being used.
             out = sum(
-                weight * (np.log(values[jj, ii]) if logarithmic else values[jj, ii])
+                weight
+                * (
+                    np.log(values[jj, ii, bottom:])
+                    if logarithmic
+                    else values[jj, ii, bottom:]
+                )
                 for jj, ii, weight in corners
             )
             return np.exp(out) if logarithmic else out
@@ -1499,6 +1641,31 @@ class AtmosphereTable:
             T_K=blend(self.T_K),
             p_hPa=blend(self.p_hPa),
         )
+
+    def _common_bottom(self, corners, lon, lat):
+        """Lowest level all of *corners* have, as an index into the last axis.
+
+        Zero unless the grid is ragged.  Where it is, the interpolated column
+        can only start where every node it blends does: a point just off the
+        coast leans on an ocean column that runs to 1000 hPa and on a plateau
+        column that starts at 600, and the pair of them constrain the blend to
+        600 hPa upwards.  The rest of the way down to the observation level is
+        :meth:`TabulatedAtmosphere._extend_below`'s business, which continues
+        the profile log-linearly instead of inventing levels here.
+        """
+        if not self.is_ragged:
+            return 0
+        bottom = max(int(self.lowest_level[jj, ii]) for jj, ii, _ in corners)
+        n_lev = self.h_cm.shape[-1]
+        if n_lev - bottom < 2:
+            raise ValueError(
+                f"AtmosphereTable.column(): the columns around longitude "
+                f"{lon:.3f}, latitude {lat:.3f} deg share only "
+                f"{n_lev - bottom} level(s), too few to interpolate. The "
+                "table's columns stop at very different depths there; supply "
+                "one whose neighbouring columns overlap."
+            )
+        return bottom
 
     @staticmethod
     def _bracket(axis, value, periodic):
@@ -1566,7 +1733,13 @@ class TabulatedAtmosphere(EarthsAtmosphere):
     * ``lat_deg`` and ``lon_deg`` (optional, but both together) turn the table
       into a **grid of columns**: one column per grid node, in long format, one
       row per (node, level).  The nodes must form a regular longitude/latitude
-      grid and every column must carry the same number of levels.  A gridded
+      grid.  Columns normally carry the same levels; where the ground cuts one
+      short -- a pressure level below the terrain, or below the sea surface in
+      a deep low, does not exist -- its rows may simply be left out (or written
+      as ``nan``) and the column starts higher up.  Such a **ragged** table is
+      aligned by pressure, so it must carry ``p_hPa``, and levels may be absent
+      only at the bottom of a column: an interior or top gap is a hole in the
+      data rather than terrain, and is rejected.  A gridded
       table needs a *coord* here, and is what
       :class:`TabulatedLocationCentered` samples at the shower impact point.
       The grid may be regional: a position outside it is an error, not a
