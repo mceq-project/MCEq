@@ -999,7 +999,7 @@ class MSIS00LocationCentered(MSIS00Atmosphere):
             self._azimuth_averaging = False
             self._azimuth_avg_coords = []
             info(
-                1,
+                2,
                 f"zenith={theta_deg:.1f}\u00b0, azimuth={azimuth_deg:.1f}\u00b0"
                 f" \u2192 impact lat={lat:.2f}\u00b0, lon={lon:.2f}\u00b0,"
                 f" local zenith={effective_theta:.2f}\u00b0",

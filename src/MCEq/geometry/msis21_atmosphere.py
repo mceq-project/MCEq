@@ -472,7 +472,7 @@ class MSIS21LocationCentered(MSIS21Atmosphere):
             self._azimuth_averaging = False
             self._azimuth_avg_coords = []
             info(
-                1,
+                2,
                 f"MSIS21: zenith={theta_deg:.1f}°, "
                 f"azimuth={azimuth_deg:.1f}° → "
                 f"impact lat={lat:.2f}°, lon={lon:.2f}°",
