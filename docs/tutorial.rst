@@ -96,8 +96,10 @@ energy cutoff (larger than the minimal grid energy :attr:`mceq_config.e_min`)::
 
 The intermediate solutions also give longitudinal profiles and their maxima.
 :func:`MCEq.driver.observables.depth_profile` returns the particle number
-along the depth grid and :func:`MCEq.driver.observables.xmax` locates its
-maximum. For muons::
+along the depth grid, or with ``definition='production'`` the production
+rate :math:`dN/dX` (the source term of the cascade equation: decays and
+interactions of *other* species), and :func:`MCEq.driver.observables.xmax`
+locates the maximum of either with a Gaisser-Hillas fit. For muons::
 
     X_grid = np.linspace(0, mceq.density_model.max_X, 300)
     mceq.solve(int_grid=X_grid)
@@ -106,16 +108,23 @@ maximum. For muons::
     X, n_mu = mceq.muon_depth_profile(min_energy_cutoff=1.0)
     xmax = mceq.muon_xmax(min_energy_cutoff=1.0)
 
+    # Muon production rate dN/dX in 1/(g/cm^2) and the muon production depth
+    X, rate = mceq.muon_depth_profile(definition='production', min_energy_cutoff=1.0)
+    xmax_prod = mceq.muon_xmax(definition='production', min_energy_cutoff=1.0)
+
     # Restricted to muons between 10 and 100 GeV, or to a parent category
     xmax_10_100 = mceq.muon_xmax(min_energy_cutoff=10., max_energy_cutoff=100.)
     xmax_pi = mceq.muon_xmax(min_energy_cutoff=1.0, prefix='pi_')
 
-The peak is refined with a parabola through the three grid points around the
-maximum, so the grid resolution sets the accuracy. A maximum on the first or
-last grid point is returned as is and reported at debug level 1. The muon
-number of an inclusive flux peaks in the upper troposphere at GeV energies
-and moves toward the ground with rising energy; see the example notebook
-``Muon_depth_profiles``.
+The Gaisser-Hillas fit holds :math:`X_0` at -45 g/cm², as the Pierre Auger
+Observatory's muon production depth analysis does; ``x0=None`` fits it and
+``method='grid'`` returns the grid point of the maximum instead. A maximum on
+the first or last grid point is reported at debug level 1. The muon number
+of an inclusive flux peaks in the upper troposphere at GeV energies and
+moves toward the ground with rising energy, while its production rate peaks
+within the first few g/cm² at every energy; for a single primary set with
+``set_single_primary_particle`` the production peaks mid-atmosphere. See the
+example notebook ``Muon_depth_profiles``.
 
 All particles listed by :func:`MCEq.ParticleManager.print_particle_tables(0)` are
 available to :func:`MCEq.core.get_solution`.
