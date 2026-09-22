@@ -132,7 +132,7 @@ class InitialState:
         a nucleus with mass A and charge Z is modeled by using Z protons
         and A-Z neutrons at energy :math:`E_{nucleon}= E_{nucleus} / A`
         The nucleus type is defined via :math:`\\text{CORSIKA ID} = A*100 + Z`. For
-        example iron has the CORSIKA ID 5226.
+        example iron has the CORSIKA ID 5626.
 
         Single leptons or hadrons can be defined by specifiying `pdg_id` instead of
         `corsika_id`.
