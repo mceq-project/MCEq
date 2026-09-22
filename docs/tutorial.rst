@@ -95,36 +95,40 @@ energy cutoff (larger than the minimal grid energy :attr:`mceq_config.e_min`)::
     n_p = np.sum(mceq.get_solution('p+', integrate=True))
 
 The intermediate solutions also give longitudinal profiles and their maxima.
-:func:`MCEq.driver.observables.depth_profile` returns the particle number
-along the depth grid, or with ``definition='production'`` the production
-rate :math:`dN/dX` (the source term of the cascade equation: decays and
-interactions of *other* species), and :func:`MCEq.driver.observables.xmax`
-locates the maximum of either with a Gaisser-Hillas fit. For muons::
+:func:`MCEq.driver.observables.depth_profile` returns the production rate
+:math:`dN/dX` along the depth grid (the source term of the cascade equation:
+decays and interactions of *other* species), or with ``definition='number'``
+the particle number, and :func:`MCEq.driver.observables.xmax` locates the
+maximum: with a Gaisser-Hillas fit for the production profile, the procedure
+of the Pierre Auger Observatory's muon production depth analysis, and with a
+parabola through the grid maximum for the number profile. For the muons of a
+single :math:`10^{19}` eV proton shower::
 
     X_grid = np.linspace(0, mceq.density_model.max_X, 300)
+    mceq.set_single_primary_particle(1e10, corsika_id=14)
     mceq.solve(int_grid=X_grid)
 
-    # Number of muons above 1 GeV along the path, and the depth of its maximum
-    X, n_mu = mceq.muon_depth_profile(min_energy_cutoff=1.0)
+    # Muon production rate dN/dX in 1/(g/cm^2) above 1 GeV, and the muon
+    # production depth from the Gaisser-Hillas fit
+    X, rate = mceq.muon_depth_profile(min_energy_cutoff=1.0)
     xmax = mceq.muon_xmax(min_energy_cutoff=1.0)
 
-    # Muon production rate dN/dX in 1/(g/cm^2) and the muon production depth
-    X, rate = mceq.muon_depth_profile(definition='production', min_energy_cutoff=1.0)
-    xmax_prod = mceq.muon_xmax(definition='production', min_energy_cutoff=1.0)
+    # Number of muons above 1 GeV along the path, and the depth of its maximum
+    X, n_mu = mceq.muon_depth_profile(definition='number', min_energy_cutoff=1.0)
+    xmax_n = mceq.muon_xmax(definition='number', min_energy_cutoff=1.0)
 
     # Restricted to muons between 10 and 100 GeV, or to a parent category
     xmax_10_100 = mceq.muon_xmax(min_energy_cutoff=10., max_energy_cutoff=100.)
     xmax_pi = mceq.muon_xmax(min_energy_cutoff=1.0, prefix='pi_')
 
-The Gaisser-Hillas fit holds :math:`X_0` at -45 g/cm², as the Pierre Auger
-Observatory's muon production depth analysis does; ``x0=None`` fits it and
-``method='grid'`` returns the grid point of the maximum instead. A maximum on
-the first or last grid point is reported at debug level 1. The muon number
-of an inclusive flux peaks in the upper troposphere at GeV energies and
-moves toward the ground with rising energy, while its production rate peaks
-within the first few g/cm² at every energy; for a single primary set with
-``set_single_primary_particle`` the production peaks mid-atmosphere. See the
-example notebook ``Muon_depth_profiles``.
+The Gaisser-Hillas fit holds :math:`X_0` at -45 g/cm² as the Auger analysis
+does; ``x0=None`` fits it, and ``method`` selects ``'gaisser-hillas'``,
+``'parabola'`` or ``'grid'`` explicitly. A maximum on the first or last grid
+point is reported at debug level 1. For an inclusive cosmic-ray flux the
+production rate peaks within the first few g/cm² at every energy, so the fit
+is only meaningful for single primaries; the muon number of an inclusive
+flux peaks in the upper troposphere at GeV energies and moves toward the
+ground with rising energy. See the example notebook ``Muon_depth_profiles``.
 
 All particles listed by :func:`MCEq.ParticleManager.print_particle_tables(0)` are
 available to :func:`MCEq.core.get_solution`.

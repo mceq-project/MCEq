@@ -120,14 +120,16 @@ def test_depth_profile_is_the_particle_count_per_depth(mceq_sib21):
     X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 50)
     mceq_sib21.solve(int_grid=X_grid)
 
-    X, n = mceq_sib21.muon_depth_profile()
+    X, n = mceq_sib21.muon_depth_profile(definition="number")
     np.testing.assert_allclose(X, X_grid)
     expected = [mceq_sib21.n_mu(grid_idx=i) for i in range(len(X_grid))]
     np.testing.assert_allclose(n, expected)
     assert n[0] == 0  # no muons at the top of the atmosphere
     assert np.all(n[1:] > 0)
 
-    _, spectrum = mceq_sib21.depth_profile("total_mu+", per_energy=True)
+    _, spectrum = mceq_sib21.depth_profile(
+        "total_mu+", definition="number", per_energy=True
+    )
     assert spectrum.shape == (len(X), mceq_sib21.dim)
     np.testing.assert_allclose(
         spectrum[-1], mceq_sib21.get_solution("total_mu+", grid_idx=len(X) - 1)
@@ -152,9 +154,9 @@ def test_depth_profile_energy_cuts(mceq_sib21):
     X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 20)
     mceq_sib21.solve(int_grid=X_grid)
 
-    _, total = mceq_sib21.muon_depth_profile()
-    _, low = mceq_sib21.muon_depth_profile(max_energy_cutoff=1e4)
-    _, high = mceq_sib21.muon_depth_profile(min_energy_cutoff=1e4)
+    _, total = mceq_sib21.muon_depth_profile(definition="number")
+    _, low = mceq_sib21.muon_depth_profile(definition="number", max_energy_cutoff=1e4)
+    _, high = mceq_sib21.muon_depth_profile(definition="number", min_energy_cutoff=1e4)
     np.testing.assert_allclose(low + high, total)
     assert np.all(low <= total) and np.any(low < total)
     with pytest.raises(ValueError, match="No energy bin"):
@@ -188,7 +190,7 @@ def test_production_profile_is_the_source_term(mceq_sib21):
     mceq_sib21.solve(int_grid=X_grid)
 
     X, rate = mceq_sib21.depth_profile("total_numu", definition="production")
-    _, n_numu = mceq_sib21.depth_profile("total_numu")
+    _, n_numu = mceq_sib21.depth_profile("total_numu", definition="number")
     i = len(X) // 3
     assert np.gradient(n_numu, X)[i] == pytest.approx(rate[i], rel=1e-2)
 
@@ -251,14 +253,14 @@ def test_muon_xmax_of_the_inclusive_flux(mceq_sib21):
     X_grid = np.linspace(0, mceq_sib21.density_model.max_X, 300)
     mceq_sib21.solve(int_grid=X_grid)
 
-    X, n = mceq_sib21.muon_depth_profile()
+    X, n = mceq_sib21.muon_depth_profile(definition="number")
     X_peak = X[np.argmax(n)]
-    xmax = mceq_sib21.muon_xmax()  # parabola for the number profile
-    assert mceq_sib21.muon_xmax(method="parabola") == xmax
-    assert mceq_sib21.muon_xmax(method="grid") == X_peak
+    xmax = mceq_sib21.muon_xmax(definition="number")  # parabola by default
+    assert mceq_sib21.muon_xmax(definition="number", method="parabola") == xmax
+    assert mceq_sib21.muon_xmax(definition="number", method="grid") == X_peak
     assert abs(xmax - X_peak) <= X[1] - X[0]
     assert 500.0 < xmax < X_grid[-1]
-    assert mceq_sib21.xmax(["total_mu+", "total_mu-"]) == xmax
+    assert mceq_sib21.xmax(["total_mu+", "total_mu-"], definition="number") == xmax
 
     assert 0 < mceq_sib21.muon_xmax(definition="production", method="grid") < 20.0
 
@@ -266,14 +268,15 @@ def test_muon_xmax_of_the_inclusive_flux(mceq_sib21):
 def test_xmax_on_the_grid_edge(mceq_sib21):
     """A two-point grid cannot bracket a peak: the edge depth comes back."""
     mceq_sib21.solve([0, 1])
-    assert mceq_sib21.muon_xmax() == 1.0
+    assert mceq_sib21.muon_xmax() == 1.0  # the fit cannot run on two points
+    assert mceq_sib21.muon_xmax(definition="number") == 1.0
     assert mceq_sib21.muon_xmax(method="grid") == 1.0
 
 
 def test_xmax_of_an_empty_profile(mceq_sib21):
     """There are no muons at the top of the atmosphere."""
     mceq_sib21.solve([0])
-    assert np.isnan(mceq_sib21.muon_xmax())
+    assert np.isnan(mceq_sib21.muon_xmax(definition="number"))
     # Neutrinos from muon decays: no muons yet, so nothing is produced.
     assert np.isnan(mceq_sib21.xmax("mu_numu", definition="production"))
 

@@ -201,7 +201,7 @@ def fit_gaisser_hillas(X, profile, x0=-45.0):
 def depth_profile(
     run,
     particle_name,
-    definition="number",
+    definition="production",
     min_energy_cutoff=1e-1,
     max_energy_cutoff=None,
     per_energy=False,
@@ -211,10 +211,9 @@ def depth_profile(
 
     Two profiles are available:
 
-    - ``definition="number"``: the number of particles :math:`N(X)` in the
-      energy range, i.e. :func:`n_particles` at every grid depth;
-    - ``definition="production"``: the production rate :math:`dN/dX`, the
-      source term of the cascade equation evaluated on the stored states,
+    - ``definition="production"`` (default): the production rate
+      :math:`dN/dX`, the source term of the cascade equation evaluated on
+      the stored states,
 
       .. math::
 
@@ -224,7 +223,9 @@ def depth_profile(
       where only the blocks that feed the species from *other* species
       enter: losses (interaction, decay, continuous energy loss) and
       same-species regeneration are not production. For muons this is the
-      muon production depth distribution of air-shower studies.
+      muon production depth distribution of air-shower studies;
+    - ``definition="number"``: the number of particles :math:`N(X)` in the
+      energy range, i.e. :func:`n_particles` at every grid depth.
 
     The run must have been solved with an ``int_grid``, which sets the
     resolution of the profile.
@@ -281,7 +282,7 @@ def depth_profile(
 def xmax(
     run,
     particle_name,
-    definition="number",
+    definition="production",
     min_energy_cutoff=1e-1,
     max_energy_cutoff=None,
     method=None,
@@ -361,7 +362,7 @@ def xmax(
         )
     try:
         _, x_max, _, _ = fit_gaisser_hillas(X, profile, x0=x0)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         info(1, f"Gaisser-Hillas fit failed ({exc}); returning the grid maximum.")
         return float(X[imax])
     return x_max
@@ -369,7 +370,7 @@ def xmax(
 
 def muon_depth_profile(
     run,
-    definition="number",
+    definition="production",
     min_energy_cutoff=1e-1,
     max_energy_cutoff=None,
     prefix="total_",
@@ -398,29 +399,32 @@ def muon_depth_profile(
 
 def muon_xmax(
     run,
-    definition="number",
+    definition="production",
     min_energy_cutoff=1e-1,
     max_energy_cutoff=None,
     prefix="total_",
     method=None,
     x0=-45.0,
 ):
-    r"""Muon :math:`X_{max}`: the slant depth in g/cm² at which the number
-    of muons (positive plus negative) in the chosen energy range is largest,
-    or, with ``definition="production"``, at which their production rate
-    peaks: the muon production depth :math:`X^\mu_{max}` that air-shower
-    arrays measure, located by a Gaisser-Hillas fit as in those analyses.
+    r"""Muon :math:`X^\mu_{max}`: the slant depth in g/cm² at which the
+    production rate of muons (positive plus negative) in the chosen energy
+    range peaks, located by a Gaisser-Hillas fit as in the muon production
+    depth analyses of air-shower arrays; or, with ``definition="number"``,
+    the depth at which the number of muons is largest.
 
-    For an inclusive flux the muon number at GeV energies rises, peaks in
-    the upper troposphere and decays away toward the ground; with rising
-    energy the peak moves toward the ground. The production rate of an
-    inclusive flux peaks within the first few g/cm² at every energy, because
-    the steep primary spectrum weights the first interactions; for a single
-    primary (:meth:`MCEqRun.set_single_primary_particle`) it peaks in the
-    middle of the atmosphere. The profiles are :func:`muon_depth_profile`.
-    Requires a preceding ``solve(int_grid=...)``::
+    The production profile of a single primary
+    (:meth:`MCEqRun.set_single_primary_particle`) peaks in the middle of
+    the atmosphere and is the observable those analyses measure. For an
+    inclusive flux it peaks within the first few g/cm² at every energy,
+    because the steep primary spectrum weights the first interactions, and
+    the fit carries no meaning there; the muon *number* of an inclusive flux
+    rises, peaks in the upper troposphere at GeV energies and moves toward
+    the ground with rising energy. The profiles are
+    :func:`muon_depth_profile`. Requires a preceding
+    ``solve(int_grid=...)``::
 
         X_grid = np.linspace(0, mceq.density_model.max_X, 300)
+        mceq.set_single_primary_particle(1e10, corsika_id=14)
         mceq.solve(int_grid=X_grid)
         xmax = mceq.muon_xmax(min_energy_cutoff=1.0)
 
