@@ -19,6 +19,7 @@ Submodules
   environment
   misc
   models
+  operators
   solvers
   species
 

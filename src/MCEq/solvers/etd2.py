@@ -18,7 +18,7 @@ scalar formulas it calls belong in :mod:`MCEq.solvers.numerics`.
 import numpy as np
 
 from MCEq.misc import info
-from MCEq.operators.compiled import compile_operator
+from MCEq.operators.compiled import compile_operator, coupled_corner
 from MCEq.solvers.backends import (
     accelerate_backend,
     cuda_backend,
@@ -33,73 +33,34 @@ def etd2_driver(
     """ETD2RK step loop — every route, every backend.
 
     Integrates ``dPhi/dX = (A + ri B) S Phi`` with the Cox–Matthews
-    exponential RK2: the diagonal ``D`` of ``A + ri B`` is treated exactly
-    through an integrating factor, the off-diagonal remainder explicitly.
-    ``S = I`` is the paraxial transport. With the sec(theta) transport
-    ``S = I + T Pi``, where ``T`` is the constant Hankel-space representation
-    of multiplication by ``min(sec theta, sec theta_cap)`` minus the identity
-    (see :mod:`MCEq.operators.secant`) and ``Pi`` the projector onto the columns
-    with ``E_kin < config.secant_theta_e_max``. The operator is then split, per
-    state column i in the support of Pi and the coupled mode subspace P
-    (S_P = (I+T)[P,P]):
+    exponential RK2: the diagonal ``D`` exactly through its exp / phi
+    factors, the off-diagonal remainder ``F`` explicitly. ``S = I`` is the
+    paraxial transport; with the sec(theta) transport the coupled corner
+    of the state is carried in the eigenbasis of the mode coupling, rotated
+    in once before the loop and back once after it. Formulas and stage
+    order: :ref:`solver-mathematics`.
 
-      exact slot   D0_i S_P      D0_i = diagonal of A + ri B at kappa = 0
-                                 (the k-independent part)
-      remainder    everything else: off-diagonal production acting on
-                   w = S Phi, the k-dependent diagonal spread on the
-                   coupled rows, and the one-way cross coupling from the
-                   uncoupled modes.
+    Args:
+      nsteps: number of steps.
+      dX, rho_inv: the path, ``(nsteps,)`` for one path shared by every
+        lane or ``(nsteps, K)`` for one path per lane; a lane with
+        ``h == 0`` is left unchanged.
+      be: the backend, built on the compiled operator.
+      phi: initial state in the state's own order, ``(dim,)`` or
+        ``(dim, K)``.
+      grid_idcs: step indices at which to snapshot the state.
+      schedule, phi0_per_pixel: a
+        :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
+        initial states ``(dim, K_total)``; requires per-lane paths and no
+        snapshots.
 
-    The exact slot is evaluated in the eigenbasis ``S_P = V diag(lam)
-    V^-1`` (constant, shared by every column), where exp/phi1/phi2 of
-    ``h D0_i S_P`` are elementwise. Unconditionally stable at any
-    stiffness; stitching the coupling into the CSR instead puts stiff
-    coupled loss terms in the explicit part and diverges.
+    Returns:
+      ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
+      ``(dim, K_total)`` pixel matrix with a schedule.
 
-    The operator behind ``be`` is a :class:`~MCEq.operators.compiled.
-    CompiledOperator`; with coupling, the state lives in its low-E-first
-    layout (``phi`` and the results are in the original layout), the
-    coupled plane is the corner block ``x.reshape(n_k, N, K)[:n_P, :n_g]``
-    and the operand of ``T_P`` the low-E block ``[:, :n_g]`` — strided
-    views.
-
-    Stages per step (state x = Phi_n, corner C(.) of a full-state array;
-    the corner terms are absent for the paraxial transport):
-
-      1. factors      eD, hphi1, hphi2 = f(h D), D = d_int + ri d_dec, with
-                      the step size folded into the phi factors
-                      (:mod:`MCEq.solvers.numerics`); block factors
-                      f(h D0_i lam_j) on the corner, without it
-      2. operand      x_c = C(x); Y = T_P x[:, G];  C(x) <- x_c + Y
-                      (x now holds w = S x)
-      3. remainder    F = A_off w + ri B_off w  (SpMM);
-                      C(F) += Df (x_c + Y) - D0 (x_c + T_PP x_c)
-      4. predictor    a = eD x + hphi1 F on the full state;
-                      C(a) = V eDB Vi x_c + h V phi1B Vi C(F)
-      5. operand and remainder (2-3) at a: a_c = C(a), Y_a, F_a
-      6. corrector    x = a + hphi2 (F_a - F) on the full state;
-                      C(x) = a_c + h V phi2B Vi (C(F_a) - C(F))
-      7. harvest      carousel harvest/reset, or int_grid snapshot
-
-    In 4 and 6 the full-state formula also writes the corner, using the
-    operand w there instead of the state; that block is discarded and
-    replaced by the exact-slot update, so no copy of the state is needed
-    to form w. Batching: ``phi`` is ``(dim,)`` or ``(dim, K)``; ``dX`` /
-    ``rho_inv`` are ``(nsteps,)`` (one shared path, the multi-RHS route)
-    or ``(nsteps, K)`` (per-lane paths; lanes with ``h == 0`` are pinned
-    to exact identity). A :class:`MCEq.solvers.schedule.CarouselSchedule`
-    with
-    ``phi0_per_pixel`` turns the per-lane form into the LPT carousel and
-    the return value into the ``(dim, K_total)`` per-pixel solution.
-    Single-axis is K = 1 without a schedule.
-
-    Precision: the loop carries the step size and ``rho_inv`` twice, in
-    fp64 for stage 1 (``h64`` / ``ri64``, which feed the diagonals and the
-    exact slot) and in ``be.dtype`` for the stages that touch the state --
-    ``ri`` for the SpMM, and ``h`` for the coupled corner, which is the one
-    place the step size still multiplies state-dtype arrays. At fp64 they
-    are the same values. See
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+    The step size and ``rho_inv`` reach the factor stage in fp64 and the
+    SpMM in the state dtype
+    (:data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`).
     """
     xp = be.xp
     dtype = be.dtype
@@ -139,57 +100,68 @@ def etd2_driver(
 
     phc[:] = to_layout(be.asarray(phi.reshape(dim, K)))
 
-    if per_lane:
-        dX_64 = be.asarray(dX, np.float64)
-        ri_64 = be.asarray(rho_inv, np.float64)
-        dX_b = dX_64 if fp64 else be.asarray(dX)
-        ri_b = ri_64 if fp64 else be.asarray(rho_inv)
+    # the path, uploaded once: fp64 for the factor stage, the state dtype
+    # for the SpMM
+    dX_64 = be.asarray(dX, np.float64)
+    ri_64 = be.asarray(rho_inv, np.float64)
+    ri_b = ri_64 if fp64 else be.asarray(rho_inv)
 
     if coupled:
-        n_k, N, n_P, n_g = lay.n_k, lay.N, lay.n_P, lay.n_g
-        T_P, T_PP, V, Vi, lam = be.coupling()
+        W, V, Vi = be.coupling()
         lmm = be.left_matmul
 
         def corner(x):
-            return x.reshape(n_k, N, K)[:n_P, :n_g]
+            return coupled_corner(lay, x)
 
         def low_e(x):
-            return x.reshape(n_k, N, K)[:, :n_g]
+            return x.reshape((lay.n_k, lay.N) + x.shape[1:])[:, : lay.n_g]
 
-        # Constant diagonals of the coupled plane and of the kappa = 0 mode.
-        d_int_c, d_dec_c = (d.reshape(n_k, N)[:n_P, :n_g] for d in (be.d_int, be.d_dec))
-        d_int_0, d_dec_0 = (d.reshape(n_k, N)[0, :n_g] for d in (be.d_int, be.d_dec))
+        def rotate(x, M):
+            """``C(x) <- M C(x)`` for a state-shaped ``x``."""
+            xp.copyto(corner(x), lmm(M, corner(x)))
 
-        plane = (n_P, n_g, K)
-        Y = xp.empty(plane, dtype=dtype)
-        x_c = xp.empty(plane, dtype=dtype)
-        a_c = xp.empty(plane, dtype=dtype)
-        F_c = xp.empty(plane, dtype=dtype)
-        tmp = xp.empty(plane, dtype=dtype)
-        mode_tmp = xp.empty(plane, dtype=dtype)
+        # constant parts of the corner diagonals Df = d_int_c + ri d_dec_c
+        # and lam_j D0_i = L_int + ri L_dec
+        d_int_c, d_dec_c = (
+            be.asarray(d, np.float64)[:, :, None] for d in be.op.corner_diagonals
+        )
+        L_int, L_dec = (
+            be.asarray(d, np.float64)[:, :, None] for d in be.op.exact_slot_diagonals
+        )
+        Df = xp.empty((lay.n_P, lay.n_g, K if per_lane else 1), dtype=np.float64)
+        D0lam = xp.empty_like(Df)
+        plane = (lay.n_P, lay.n_g, K)
+        psi = xp.empty(plane, dtype=dtype)
+        work = xp.empty(plane, dtype=dtype)
+        rot = xp.empty(plane, dtype=dtype)
 
-        def block_action(factors, source, out):
-            """``V diag(factors) V^-1 source`` on a coupled plane."""
-            lmm(Vi, source, out=mode_tmp)
-            xp.multiply(factors, mode_tmp, out=mode_tmp)
-            lmm(V, mode_tmp, out=out)
-
-        def eval_F(x, x_c, F, ri, Df, D0):
-            """Stages 2-3 at the state x whose corner is held in x_c: F <- the
-            remainder at x; x itself becomes the operand w = S x."""
-            lmm(T_P, low_e(x), out=Y)
-            xp.add(x_c, Y, out=corner(x))
+        def eval_F(x, F, ri):
+            """``F <- F(x)`` for a state ``x`` whose corner holds ``Psi``."""
+            xc, Fc = corner(x), corner(F)
+            xp.copyto(psi, xc)
+            # the corner of the operand S x, in place of Psi around the SpMM
+            lmm(W, low_e(x), out=work)
+            xp.copyto(xc, work)
             be.apply_off(x, F, ri)
-            lmm(T_PP, x_c, out=tmp)
-            xp.add(x_c, tmp, out=tmp)
-            xp.multiply(Df, corner(x), out=Y)
-            xp.multiply(D0, tmp, out=tmp)
-            xp.subtract(Y, tmp, out=Y)
-            xp.add(corner(F), Y, out=corner(F))
+            # Vi (F_c + Df C(S x)) - lam_j D0_i Psi
+            xp.multiply(Df, xc, out=work)
+            xp.add(Fc, work, out=work)
+            lmm(Vi, work, out=rot)
+            xp.multiply(D0lam, psi, out=work)
+            xp.subtract(rot, work, out=Fc)
+            xp.copyto(xc, psi)
+
+        rotate(phc, Vi)
+    else:
+
+        def eval_F(x, F, ri):
+            be.apply_off(x, F, ri)
 
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
         phi0_pp = to_layout(be.asarray(phi0_per_pixel))
+        if coupled:
+            rotate(phi0_pp, Vi)
         rs, cs = schedule.reset_t_starts, schedule.record_t_starts
         rj, rp = (xp.asarray(schedule.reset_j), xp.asarray(schedule.reset_pixel))
         cj, cpix = (xp.asarray(schedule.record_j), xp.asarray(schedule.record_pixel))
@@ -204,71 +176,23 @@ def etd2_driver(
     # See :data:`MCEq.solvers.path._EM_BLOWUP_CAVEAT` for the errstate contract.
     with np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
-            # 1. diagonal factors of the full state and of the exact slot
-            if per_lane:
-                h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows, fp64
-                ri = ri_b[k]  # the same row in the state dtype
-            else:
-                h64, ri64 = np.float64(dX[k]), np.float64(rho_inv[k])
-                ri = dtype(ri64)
+            # 1. factors of the full state, corner included
+            h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64
+            ri = ri_b[k]  # the same in the state dtype
             eD, hphi1, hphi2 = be.diag_factors(h64, ri64)
             if coupled:
-                # The exact slot scales the coupled corner by h after the
-                # eigenbasis GEMMs, so it is the one stage that still needs
-                # the step size in the state dtype.
-                if per_lane:
-                    h_c = dX_b[k][None, None, :]
-                    frozen = (h64 == 0.0)[None, None, :]
-                    Df = d_dec_c[:, :, None] * ri64 + d_int_c[:, :, None]
-                    D0 = d_dec_0[:, None] * ri64 + d_int_0[:, None]
-                    ZB = lam[:, None, None] * (D0 * h64)
-                    D0_b = D0[None]
-                    eDB, phi1B, phi2B = be.block_factors(ZB)
-                else:
-                    h_c = dtype(h64)
-                    Df = (d_dec_c * ri64 + d_int_c)[:, :, None]
-                    D0 = d_dec_0 * ri64 + d_int_0
-                    ZB = lam[:, None] * (D0 * h64)
-                    D0_b = D0[None, :, None]
-                    eDB, phi1B, phi2B = (f[:, :, None] for f in be.block_factors(ZB))
+                xp.multiply(d_dec_c, ri64, out=Df)
+                xp.add(Df, d_int_c, out=Df)
+                xp.multiply(L_dec, ri64, out=D0lam)
+                xp.add(D0lam, L_int, out=D0lam)
 
-            # 2-3. operand and remainder at the state
-            if coupled:
-                xp.copyto(x_c, corner(phc))
-                eval_F(phc, x_c, F_phi, ri, Df, D0_b)
-                xp.copyto(F_c, corner(F_phi))
-            else:
-                be.apply_off(phc, F_phi, ri)
-
-            # 4. predictor a = eD x + hphi1 F, exact slot on the corner
+            # 2-4. remainder, predictor, remainder, corrector
+            eval_F(phc, F_phi, ri)
             be.predictor(eD, phc, hphi1, F_phi, out=a)
-            if coupled:
-                block_action(eDB, x_c, a_c)
-                block_action(phi1B, F_c, tmp)
-                xp.multiply(tmp, h_c, out=tmp)
-                xp.add(a_c, tmp, out=a_c)
-                if per_lane:
-                    xp.copyto(a_c, x_c, where=frozen)
-                xp.copyto(corner(a), a_c)
-
-            # 5. operand and remainder at the predictor
-            if coupled:
-                eval_F(a, a_c, F_a, ri, Df, D0_b)
-            else:
-                be.apply_off(a, F_a, ri)
-
-            # 6. corrector x = a + hphi2 (F_a - F), exact slot on the corner
+            eval_F(a, F_a, ri)
             be.corrector(a, F_a, F_phi, hphi2, out=phc)
-            if coupled:
-                xp.subtract(corner(F_a), F_c, out=tmp)
-                block_action(phi2B, tmp, tmp)
-                xp.multiply(tmp, h_c, out=tmp)
-                xp.add(a_c, tmp, out=tmp)
-                if per_lane:
-                    xp.copyto(tmp, x_c, where=frozen)
-                xp.copyto(corner(phc), tmp)
 
-            # 7. harvest finished lanes BEFORE the reset reloads them
+            # 5. harvest finished lanes BEFORE the reset reloads them
             if schedule is not None:
                 lo, hi = int(cs[k]), int(cs[k + 1])
                 if hi > lo:
@@ -290,7 +214,13 @@ def etd2_driver(
     )
 
     if schedule is not None:
+        if coupled:
+            rotate(sol_pixel, V)
         return be.to_host(from_layout(sol_pixel))
+    if coupled:
+        rotate(phc, V)
+        for snapshot in grid_sol:
+            rotate(snapshot, V)
     sol = be.to_host(from_layout(phc))
     grid = np.array([])
     if grid_sol:

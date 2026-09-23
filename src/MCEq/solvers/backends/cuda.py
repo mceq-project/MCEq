@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from MCEq.operators.compiled import coupled_corner
 from MCEq.solvers.backends.base import _state_dtype
 from MCEq.solvers.numerics import CORRECTOR_EXPR, PHI_C_BODY, PREDICTOR_EXPR
 
@@ -89,7 +90,7 @@ def _build_cuda_etd2_kernels(cp):
 
     One kernel per driver stage, named for the stage, and every body
     generated from the formula table of :mod:`MCEq.solvers.numerics` --
-    :data:`~MCEq.solvers.numerics.PHI_C_BODY` for the two factor stages,
+    :data:`~MCEq.solvers.numerics.PHI_C_BODY` for the factor stage,
     :data:`~MCEq.solvers.numerics.PREDICTOR_EXPR` and
     :data:`~MCEq.solvers.numerics.CORRECTOR_EXPR` for the two state stages --
     so a change to a formula reaches this backend and the NumPy path
@@ -122,17 +123,6 @@ def _build_cuda_etd2_kernels(cp):
         """,
         "mceq_etd2_diag_factors",
     )
-    block_factors = cp.ElementwiseKernel(
-        "float64 z",
-        "float64 eDB, float64 phi1B, float64 phi2B",
-        f"""
-        {PHI_C_BODY}
-        eDB = e;
-        phi1B = p1;
-        phi2B = p2;
-        """,
-        "mceq_etd2_block_factors",
-    )
     predictor = cp.ElementwiseKernel(
         "T eD, T x, T hphi1, T F",
         "T a",
@@ -147,7 +137,6 @@ def _build_cuda_etd2_kernels(cp):
     )
     return SimpleNamespace(
         diag_factors=diag_factors,
-        block_factors=block_factors,
         predictor=predictor,
         corrector=corrector,
     )
@@ -243,16 +232,22 @@ class CudaBackend:
             cp.empty((dim, K if per_lane else 1), dtype=dtype) for _ in range(3)
         )
         self._diag = (self.d_int[:, None], self.d_dec[:, None])
+        # the corner's diagonals lam_j D0_i, broadcast over the lane axis
+        self._corner_diag = None
+        if self.op.layout.coupled:
+            self._corner_diag = tuple(
+                cp.asarray(d, dtype=cp.float64)[:, :, None]
+                for d in self.op.exact_slot_diagonals
+            )
 
     def coupling(self):
-        """``T_P, T_PP, V, Vi`` in the state dtype (they act on the state);
-        ``lam`` in fp64 (it forms the phi arguments of the exact slot)."""
+        """``W, V, Vi`` of the compiled operator on the device, in the state
+        dtype."""
         if self._coupling is None:
             c = self.op.coupling
-            cp = self.cp
             self._coupling = tuple(
-                cp.asarray(m, dtype=self.dtype) for m in (c.T_P, c.T_PP, c.V, c.Vi)
-            ) + (cp.asarray(c.lam, dtype=cp.float64),)
+                self.cp.asarray(m, dtype=self.dtype) for m in (c.W, c.V, c.Vi)
+            )
         return self._coupling
 
     def state_buffers(self, dim, K):
@@ -270,28 +265,28 @@ class CudaBackend:
             cp.multiply(tmp, ri, out=tmp)
             out += tmp
 
-    def left_matmul(self, matrix, plane, out):
+    def left_matmul(self, matrix, plane, out=None):
+        """The device form of :func:`MCEq.solvers.numerics.left_matmul`."""
         plane_2d = plane.reshape(plane.shape[0], -1)
+        if out is None:
+            return (matrix @ plane_2d).reshape((matrix.shape[0],) + plane.shape[1:])
         self.cp.matmul(matrix, plane_2d, out=out.reshape(matrix.shape[0], -1))
         return out
 
     def diag_factors(self, h, ri):
         """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)``, broadcastable
-        to (dim, K). ``h`` and ``ri`` come in fp64 and the diagonals are
-        fp64; the kernel evaluates there and writes the factors in the state
-        dtype, so the cast happens once, at the kernel's output."""
+        to (dim, K); on the sec(theta) corner the factors of ``h lam_j D0_i``.
+        ``h`` and ``ri`` come in fp64 and the diagonals are fp64; the kernel
+        evaluates there and writes the factors in the state dtype, so the
+        cast happens once, at the kernel's output."""
         d_int, d_dec = self._diag
         if self._per_lane:
             h, ri = h[None, :], ri[None, :]
         self._kernels.diag_factors(d_int, d_dec, h, ri, *self._factors)
+        if self._corner_diag is not None:
+            corners = (coupled_corner(self.op.layout, f) for f in self._factors)
+            self._kernels.diag_factors(*self._corner_diag, h, ri, *corners)
         return self._factors
-
-    def block_factors(self, ZB):
-        """``eDB, phi1B, phi2B`` of the coupled plane's argument, in fp64.
-
-        No step size folded in: the exact slot applies ``h`` after the
-        eigenbasis GEMMs, where it scales the coupled corner as a whole."""
-        return self._kernels.block_factors(ZB)
 
     def predictor(self, eD, x, hphi1, F, out):
         self._kernels.predictor(eD, x, hphi1, F, out)
@@ -309,7 +304,7 @@ class CudaBackend:
         self.cp.cuda.Stream.null.synchronize()
 
     def close(self):
-        self._state = self._factors = self._diag = None
+        self._state = self._factors = self._diag = self._corner_diag = None
         self._dec_tmp = self._coupling = None
 
 

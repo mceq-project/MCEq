@@ -43,9 +43,11 @@ def continuous_loss_dx_cap(run):
     sec = run._resolve_secant()
     cached = getattr(run, "_loss_step_cache", None)
     if cached is None or cached[0] is not run.int_m or cached[1] is not sec:
+        bands = builder._contloss_bands
         rate = continuous_loss_rate(
-            builder._contloss_bands.values(),
+            bands.values(),
             None if sec is None else sec["lam"],
+            [builder._contloss_upwind_rows[key] for key in bands],
         )
         cap = LOSS_STEP_SAFETY / rate if rate else np.inf
         run._loss_step_cache = (run.int_m, sec, cap)

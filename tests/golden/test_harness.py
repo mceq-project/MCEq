@@ -1205,20 +1205,17 @@ def solve1d_golden():
 
 
 def test_solve1d_layout_resolves_per_case(solve1d_golden):
-    """Each case resolves its own species table from its own meta keys.
+    """The case resolves its species table from its own meta keys.
 
-    On the v1.4 CI database `emon` added the six e+/e- rows (72 / 2232 vs
-    66 / 2046); the v2 tables carry no e+-, so both cases now resolve to the
-    same 66-species layout -- still read per case, which is what this pins.
+    The section carries the one production case, `emoff` (e+/e- disabled,
+    photons and electrons outside the v2 goldens): 66 species on the 31-bin
+    grid, read from `emoff/meta/`, which is what this pins.
     """
     emoff = _flux_metric.layout_for("emoff/theta89/state", solve1d_golden)
-    emon = _flux_metric.layout_for("emon/theta0/state", solve1d_golden)
     assert (emoff.dim, emoff.dim_states, len(emoff.table)) == (31, 2046, 66)
-    assert (emon.dim, emon.dim_states, len(emon.table)) == (31, 2046, 66)
     assert emoff.dim * len(emoff.table) == emoff.dim_states
     assert dict(emoff.table)["antinue"] == 0
-    assert "e+_l" not in dict(emon.table)
-    assert "mu+_l" in dict(emon.table)
+    assert "mu+_l" in dict(emoff.table)
     assert "e+_l" not in dict(emoff.table)
 
 
@@ -1544,7 +1541,7 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
     # test to put on a spectrum
     for key, dip in (
         ("spectrum/single_total_mu+", -1.360e-2),
-        ("spectrum/single_total_numu", -2.976e-6),
+        ("spectrum/single_total_numu", -3.023e-6),
     ):
         row = arrays[key]
         assert not _flux_metric.sign_definite(row)
@@ -1563,11 +1560,11 @@ def test_solve2d_boundary_artefact_sits_inside_the_trim():
             row[: _flux_metric.n_retained(row.size, trim)]
         )
     # the artefact deepens with zenith: -1.06% of the peak at 0 deg, -13.0% at 72
-    # (re-measured 2026-09-17 on the golden regenerated after the loss-stencil
-    # step guard: 249 -> 6467 steps moved the numu dip by 2% and the 72 deg
-    # lane by 4e-4; the bins the artefact occupies did not move)
+    # (re-measured 2026-09-23 on the golden regenerated with the closure rows
+    # out of the loss cap, 6467 -> 379 steps: the numu dip moved by 1.6% and
+    # the 72 deg lane by 3e-4; the bins the artefact occupies did not move)
     assert carousel[0].min() / carousel[0].max() == pytest.approx(-0.0106, abs=1e-4)
-    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1303, abs=1e-4)
+    assert carousel[-1].min() / carousel[-1].max() == pytest.approx(-0.1300, abs=1e-4)
 
 
 def test_solve2d_trim_does_not_make_the_guard_a_no_op():

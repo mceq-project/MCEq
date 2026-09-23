@@ -1,26 +1,16 @@
-"""Operator assembly for the ETD2RK solvers.
+"""Operator assembly for the ETD2RK step loop.
 
-:class:`~MCEq.operators.matrix_builder.MatrixBuilder` produces the cascade
-operator as two constant sparse matrices, ``A = int_m`` and ``B = dec_m``.
-The ETD2RK step loop does not consume them directly: it integrates the
-diagonal of ``A + ri B`` exactly and the off-diagonal explicitly, in a state
-layout of its choosing, and with the sec(theta) transport it needs the
-constant mode-coupling operators of :mod:`MCEq.operators.secant` alongside.
-This module is the layer in between — host-only and backend-agnostic.
-:func:`compile_operator` turns the matrices (and the optional coupling
-operator set) into one :class:`CompiledOperator`, to be treated as read-only
-while a backend or cache uses it; the backends in
-:mod:`MCEq.solvers` place that object onto their library handles or device
-and execute the step loop of :func:`MCEq.solvers.etd2_driver` against it.
-:func:`em_step_scale` is the other property of ``A`` the step loop needs and
-the matrices do not carry: the stiffness scale that caps ``dX``.
+:func:`compile_operator` turns the constant matrices ``A = int_m`` and
+``B = dec_m`` of :class:`~MCEq.operators.matrix_builder.MatrixBuilder` and
+the optional sec(theta) operator set of :mod:`MCEq.operators.secant` into
+one read-only :class:`CompiledOperator`: the diagonal / off-diagonal split
+in the state layout of the step loop and the mode-coupling operators in
+their eigenbasis. :func:`em_step_scale` is the EM stiffness scale that caps
+``dX``. The mathematics is in :ref:`solver-mathematics`.
 
-Numerics: the off-diagonals are CSR with every row's nonzeros kept in
-their build order, also after the layout permutation (the column indices
-are then no longer sorted within a row — deliberately: sorting would change
-the summation order). Every backend therefore sums the same products in
-the same order, and the cross-backend agreement of the kernels is a
-property of this object.
+The off-diagonals are CSR with every row's nonzeros kept in their build
+order, also after the layout permutation, so every backend sums the same
+products in the same order.
 """
 
 from types import SimpleNamespace
@@ -88,16 +78,27 @@ def secant_layout(sec_ops, dim):
     )
 
 
+def coupled_corner(layout, a):
+    """The coupled plane of a state-shaped array ``a`` as a strided view:
+    ``a.reshape(n_k, N, ...)[:n_P, :n_g]`` for ``a`` of shape ``(dim,)`` or
+    ``(dim, K)``."""
+    return a.reshape((layout.n_k, layout.N) + a.shape[1:])[: layout.n_P, : layout.n_g]
+
+
 def secant_coupling(sec_ops):
-    """The constant mode-coupling operators as contiguous fp64 arrays:
-    ``T_P`` (n_P, n_k), ``T_PP`` (n_P, n_P), the eigenbasis ``V``, ``Vi`` and
-    eigenvalues ``lam`` of ``S_P = I + T_PP`` (see :mod:`MCEq.operators.secant`)."""
-    return SimpleNamespace(
-        **{
-            k: np.ascontiguousarray(sec_ops[k], dtype=np.float64)
-            for k in ("T_P", "T_PP", "V", "Vi", "lam")
-        }
+    """The mode-coupling operators of the coupled corner in the eigenbasis of
+    ``S_P = I + T_PP = V diag(lam) Vi`` (see :mod:`MCEq.operators.secant`), as
+    contiguous fp64 arrays: ``V``, ``Vi``, ``lam`` (eigenvectors, their
+    inverse and the eigenvalues of ``S_P``) and ``W = [V diag(lam) |
+    T_P[:, P^c]]`` of shape ``(n_P, n_k)``, which maps the low-E block of the
+    state onto the corner of the operand ``S Phi``."""
+    V, Vi, lam, T_P = (
+        np.ascontiguousarray(sec_ops[k], dtype=np.float64)
+        for k in ("V", "Vi", "lam", "T_P")
     )
+    n_P = V.shape[0]
+    W = np.hstack([V * lam[None, :], T_P[:, n_P:]])
+    return SimpleNamespace(V=V, Vi=Vi, lam=lam, W=np.ascontiguousarray(W))
 
 
 def _permute_csr(off, perm, inv_perm):
@@ -142,16 +143,47 @@ class CompiledOperator:
     def split(self):
         return self.d_int, self.d_dec, self.int_off, self.dec_off
 
+    @property
+    def corner_diagonals(self):
+        """``(d_int, d_dec)`` on the coupled plane, ``(n_P, n_g)`` fp64
+        arrays: the kappa-dependent diagonal of the coupled modes."""
+        return tuple(
+            np.ascontiguousarray(coupled_corner(self.layout, d))
+            for d in (self.d_int, self.d_dec)
+        )
+
+    @property
+    def exact_slot_diagonals(self):
+        """``(L_int, L_dec)``, ``(n_P, n_g)`` fp64 arrays: the diagonal of
+        the exactly integrated coupled operator in the eigenbasis.
+        ``L_dec = lam_j d_dec_0i`` with ``D0`` the kappa = 0 row of the
+        diagonals; ``L_int = lam_j d_int_0i`` plus the eigenbasis diagonal
+        of the kappa-dependent part of ``d_int`` on the corner (the muon
+        multiple-scattering damping), so that only its mode mixing is left
+        to the remainder (:ref:`solver-mathematics`)."""
+        lay, c = self.layout, self.coupling
+        lam = c.lam[:, None]
+        d_int0, d_dec0 = (
+            d.reshape(lay.n_k, lay.N)[0, : lay.n_g][None, :]
+            for d in (self.d_int, self.d_dec)
+        )
+        delta = coupled_corner(lay, self.d_int) - d_int0
+        # diagonal of Vi diag(delta_i) V for every column i
+        damping = (c.Vi * c.V.T) @ delta * lam
+        return (lam * d_int0 + damping, lam * d_dec0)
+
 
 def compile_operator(int_m, dec_m, sec_ops=None):
     """Assemble the ETD2RK operator from the matrices of ``MatrixBuilder``.
 
-    Without ``sec_ops`` this is the diagonal / off-diagonal split in the
-    state's own order (paraxial transport). With ``sec_ops`` the split is
-    permuted once into the low-E-first layout of :func:`secant_layout`
-    and the coupling operators are attached. Pure function of its inputs;
-    :class:`MCEq.core.MCEqRun` caches the result against the identity of
-    the matrices and the operator set.
+    Args:
+      int_m, dec_m: interaction and decay matrices in the state's own order.
+      sec_ops: sec(theta) operator set of :mod:`MCEq.operators.secant`; the
+        split is then permuted into the layout of :func:`secant_layout` and
+        the coupling operators attached. ``None``: paraxial transport.
+
+    Pure function of its inputs; :class:`MCEq.core.MCEqRun` caches the
+    result against the identity of the matrices and the operator set.
     """
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     dim = int(d_int.shape[0])

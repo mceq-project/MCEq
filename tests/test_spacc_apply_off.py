@@ -274,7 +274,7 @@ def _bound(p, make_apply_off, per_lane=False, dtype=np.float64, sec_ops=None):
 def _coupled_problem(n_k=36, N=6, K=4, nsteps=6, seed=7):
     """A block-diagonal problem in the secant layout of ``_secant_ops``.
 
-    Reaches the coupled corner, so ``_block`` is allocated, and runs per-lane
+    Reaches the coupled corner, so its factor buffers are allocated, and runs per-lane
     paths, so the ``step_buffers`` planes are ``(dim, K)`` rather than
     ``(dim,)``. ``n_k`` is the smallest that operator set allows -- its
     ``T_P`` carries an off-``P`` column at mode 35 -- and ``N`` the smallest
@@ -315,11 +315,13 @@ def _coupled_problem(n_k=36, N=6, K=4, nsteps=6, seed=7):
 
 def _host_scratch(be):
     """Every array ``HostBackend.bind`` allocated, flattened."""
-    bufs = be._bufs
+
+    def planes(bufs):
+        return [bufs[k] for k in ("hD", "eD", "phi1", "phi2")] + list(bufs["work"])
+
     return (
-        [bufs[k] for k in ("hD", "eD", "phi1", "phi2")]
-        + list(bufs["work"])
-        + list(be._block or ())
+        planes(be._bufs)
+        + ([] if be._corner is None else planes(be._corner))
         + list(be._factors or ())
         + ([] if be._work is None else [be._work])
     )
@@ -343,7 +345,7 @@ def test_host_close_releases_bind_scratch():
     del sol
     be.close()
     assert _alive(refs) == 0
-    assert (be._bufs, be._block, be._factors, be._work, be._coupling) == (None,) * 5
+    assert (be._bufs, be._corner, be._factors, be._work, be._coupling) == (None,) * 5
     assert be._ptr_cache == {}
 
 
@@ -399,14 +401,14 @@ def test_host_close_releases_coupled_scratch(dtype):
     p = _coupled_problem()
     be, sol = _bound(p, _scipy_binding, True, dtype, p["sec_ops"])
     assert be._bufs["eD"].shape == (p["dim"], p["phi0"].shape[1])
-    assert be._block is not None and be._coupling is not None
+    assert be._corner is not None and be._coupling is not None
     assert (be._factors is None) is (dtype is np.float64)
     refs = [weakref.ref(a) for a in _host_scratch(be)]
     assert np.all(np.isfinite(sol))
     del sol
     be.close()
     assert _alive(refs) == 0
-    assert (be._bufs, be._block, be._factors, be._work, be._coupling) == (None,) * 5
+    assert (be._bufs, be._corner, be._factors, be._work, be._coupling) == (None,) * 5
 
 
 @pytest.mark.skipif(not config.has_mkl, reason="MKL not available")

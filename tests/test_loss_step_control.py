@@ -22,6 +22,18 @@ def test_stiffness_tracks_grid_and_secant():
     assert continuous_loss_rate([]) == 0
 
 
+def test_upwind_closure_rows_do_not_enter_the_rate():
+    # Row 0 is the stiff upwind closure (rate 1), row 1 the explicit
+    # interior (rate 0.1); only the interior sets the cap.
+    band = np.array([[-1.0, 1.0, 0.0], [0.0, -0.1, 0.1], [0.0, 0.0, -0.01]])
+    assert continuous_loss_rate([band]) == pytest.approx(1.0)
+    assert continuous_loss_rate([band], upwind_rows=[1]) == pytest.approx(0.1)
+    assert continuous_loss_rate([band], [2.0], upwind_rows=[1]) == pytest.approx(0.2)
+    assert continuous_loss_rate([band], upwind_rows=[3]) == 0
+    with pytest.raises(ValueError):
+        continuous_loss_rate([band, band], upwind_rows=[1])
+
+
 def test_nonfinite_stencil_rejected():
     with pytest.raises(ValueError, match="Nonfinite"):
         continuous_loss_rate([np.array([[0.0, np.nan], [0.0, 0.0]])])
@@ -31,7 +43,9 @@ def test_cap_rebuilt_with_operator_and_secant():
     bands = {(0, 0): np.array([[-1.0, 2.0], [0.0, -1.0]])}
     sec = None
     run = SimpleNamespace(
-        matrix_builder=SimpleNamespace(_contloss_bands=bands),
+        matrix_builder=SimpleNamespace(
+            _contloss_bands=bands, _contloss_upwind_rows={(0, 0): 0}
+        ),
         int_m=object(),
         _resolve_secant=lambda: sec,
     )
@@ -63,7 +77,8 @@ def test_run_guard_clamps_override_and_floor_and_refreshes_settings():
             solver=settings, em=SimpleNamespace(adaptive_step=False)
         ),
         matrix_builder=SimpleNamespace(
-            _contloss_bands={0: np.array([[-1e3, 1e3], [0.0, -1e3]])}
+            _contloss_bands={0: np.array([[-1e3, 1e3], [0.0, -1e3]])},
+            _contloss_upwind_rows={0: 0},
         ),
         int_m=object(),
         _resolve_secant=lambda: None,

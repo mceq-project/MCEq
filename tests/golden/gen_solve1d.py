@@ -3,24 +3,15 @@
 Plan section 8.1: SIBYLL21 on the reduced database at zenith 0/60/89 deg, with
 the state vector, the integration path, the named spectra behind
 :meth:`MCEqRun.get_solution`, and the particle counters
-:meth:`n_particles` / :meth:`n_mu` / :meth:`n_e`.
+:meth:`n_particles` / :meth:`n_mu`.
 
-Two cases, because the EM block is only conditionally stable under ETD2:
-
-``emoff``
-    ``adv_set["disabled_particles"] = [11, -11]`` -- the production default --
-    at theta = 0, 60 and 89 deg. Every entry is finite and the system is well
-    conditioned: a 1-ulp perturbation of ``_phi0`` moves the solution by
-    rel-L2 ~2e-16, and numpy_etd2 and mkl_etd2 agree bitwise. Every key is
-    therefore compared bitwise on the host.
-``emon``
-    ``adv_set["disabled_particles"] = []`` -- what ``tests/conftest.py``'s
-    ``mceq_sib21`` fixture uses -- at theta = 0 ONLY. With e+/e- in the system
-    the solve diverges with zenith: max|phi| is 9.5e-02 at 0 deg, 3.1e+21 at
-    60 deg, 4.4e+208 at 85 deg and NaN at 89 deg. The NaN mask is backend
-    dependent (at 89 deg mkl_etd2 produces 192 NaN entries and numpy_etd2 186,
-    the six extra being antinue), so above 0 deg no cross-backend golden of
-    this case exists.
+One case, ``emoff``: ``adv_set["disabled_particles"] = [11, -11]``, the
+production default, at theta = 0, 60 and 89 deg. Photons and electrons are
+outside the v2 goldens: the EM sector is disabled by default until the EM
+database exists, so no photon spectrum and no electron counter is recorded.
+Every entry is finite and the system is well conditioned: a 1-ulp perturbation
+of ``_phi0`` moves the solution by rel-L2 ~2e-16, and numpy_etd2 and mkl_etd2
+agree bitwise. Every key is therefore compared bitwise on the host.
 
 ``get_solution`` returns zeros for an unrecognised particle name whenever
 ``config.excpt_on_missing_particle`` is False, so :func:`build` pins that flag
@@ -139,7 +130,6 @@ NAMES = (
     "total_antinumu",
     "total_nue",
     "total_antinue",
-    "total_gamma",
     "total_p+",
     "conv_mu+",
     "conv_mu-",
@@ -155,17 +145,16 @@ NAMES = (
 )
 
 #: Names carried through the E^mag weighting and the ``return_as`` branches.
-WEIGHTED_NAMES = ("total_mu+", "total_numu", "total_gamma", "total_p+")
+WEIGHTED_NAMES = ("total_mu+", "total_numu", "total_p+")
 
 #: Integrated spectra: one charged lepton, one neutrino, one hadron, since
-#: n_particles/n_mu/n_e all funnel through ``integrate=True``.
+#: n_particles/n_mu both funnel through ``integrate=True``.
 INTEGRATED_NAMES = ("total_mu+", "total_numu", "total_p+")
 
 #: Spectra recorded per depth-grid snapshot.
-GRID_NAMES = ("total_mu+", "total_numu", "total_gamma")
+GRID_NAMES = ("total_mu+", "total_numu")
 
 THETAS_EMOFF = (0.0, 60.0, 89.0)
-THETAS_EMON = (0.0,)
 
 #: Depths in g/cm2 for the grid solve.
 INT_GRID = [10.0, 100.0, 500.0, 1000.0]
@@ -173,11 +162,9 @@ INT_GRID = [10.0, 100.0, 500.0, 1000.0]
 #: The raw state vectors: one per solved zenith, plus the depth-grid stacks.
 #: Everything else in the section is either a path integer, an operator digest
 #: or a `get_solution` readout, and stays bitwise.
-STATE_KEYS = tuple(
-    f"{case}/theta{theta:g}/state"
-    for case, thetas in (("emoff", THETAS_EMOFF), ("emon", THETAS_EMON))
-    for theta in thetas
-) + ("emoff/grid/grid_sol", "emon/grid/grid_sol")
+STATE_KEYS = tuple(f"emoff/theta{theta:g}/state" for theta in THETAS_EMOFF) + (
+    "emoff/grid/grid_sol",
+)
 
 #: Per-species bound for the raw states, 1e-11 (maintainer ruling 2026-09-02).
 #: The guard is sign definiteness over the grid less its top 3 bins: on the
@@ -206,7 +193,6 @@ TOLERANCES = {
     # per species; this prefix carries the getters (n_particles, n_mu, the
     # grid stacks) whose drift measured <= 2.8e-14 rel-L2.
     "emoff/": {"mode": "rel_l2", "rtol": LIBM_RTOL},
-    "emon/": {"mode": "rel_l2", "rtol": LIBM_RTOL},
     **{
         key: {
             "mode": "per_species_max",
@@ -237,9 +223,9 @@ def _record_meta(arrays, case, mceq):
         [f"{q.mceqidx}:{q.name}" for q in mceq.pman.cascade_particles], dtype="U32"
     )
     arrays[p + "phi0"] = np.copy(mceq._phi0)
-    # etot_grid shifts e_bins by the particle mass, so a massive and a massless
-    # species pin both halves of the shift.
-    for name in ("mu+", "p+", "gamma"):
+    # etot_grid shifts e_bins by the particle mass, so two massive species and
+    # a massless one pin both halves of the shift.
+    for name in ("mu+", "p+", "numu"):
         arrays[p + "etot_grid/" + name] = mceq.etot_grid(name)
     _record_sparse(arrays, p + "int_m", mceq.int_m)
     _record_sparse(arrays, p + "dec_m", mceq.dec_m)
@@ -267,7 +253,7 @@ def _record_spectra(arrays, tag, mceq, grid_idx=None):
         )
 
 
-def _record_solve(arrays, case, mceq, theta, with_e):
+def _record_solve(arrays, case, mceq, theta):
     """Solve at one zenith and store the path, the state and the spectra."""
     tag = f"{case}/theta{theta:g}"
     mceq.set_zenith_azimuth(theta)
@@ -287,10 +273,6 @@ def _record_solve(arrays, case, mceq, theta, with_e):
     arrays[tag + "/n_mu_cut1e3"] = np.asarray(mceq.n_mu(min_energy_cutoff=1e3))
     for label in ("total_mu+", "total_numu"):
         arrays[tag + "/n_particles/" + label] = np.asarray(mceq.n_particles(label))
-    # The v2 hadronic tables carry no e+- (the EM sector lives in mceq-EM),
-    # so ``n_e`` exists only when the system actually holds electrons.
-    if with_e and any(p.name == "e+" for p in mceq.pman.all_particles):
-        arrays[tag + "/n_e"] = np.asarray(mceq.n_e())
 
 
 def _record_grid_solve(arrays, case, mceq):
@@ -351,10 +333,7 @@ def build():
         )
         arrays["meta/get_solution_return_as_default"] = np.asarray(bound_default)
 
-        for case, disabled, thetas, with_e in (
-            ("emoff", [11, -11], THETAS_EMOFF, False),
-            ("emon", [], THETAS_EMON, True),
-        ):
+        for case, disabled, thetas in (("emoff", [11, -11], THETAS_EMOFF),):
             config.adv_set["disabled_particles"] = disabled
             mceq = MCEqRun(
                 interaction_model="SIBYLL21",
@@ -364,7 +343,7 @@ def build():
             try:
                 _record_meta(arrays, case, mceq)
                 for theta in thetas:
-                    _record_solve(arrays, case, mceq, theta, with_e)
+                    _record_solve(arrays, case, mceq, theta)
                 _record_grid_solve(arrays, case, mceq)
                 backends.update(str(k) for k in mceq._backend_cache)
             finally:
@@ -390,26 +369,18 @@ def build():
             SECTION,
             note=(
                 "1D SIBYLL21 on the reduced DB. Case emoff (disabled_particles"
-                " [11,-11]) at theta 0/60/89 deg; case emon (disabled_particles"
-                " []) at theta 0 deg only, where the EM block is still finite."
+                " [11,-11], the production default) at theta 0/60/89 deg; no"
+                " photon spectrum and no electron counter, the EM sector being"
+                " outside the v2 goldens. Solved with the fast decays integrated"
+                " as chains within the step at the automatic dX_max (8 g/cm^2)."
                 " Host backends agree bitwise; the golden test re-runs the"
                 " section under cuda_etd2 and compares it against this file at"
-                " rel-L2 1e-9 (measured worst case 9.8e-14) except on the"
-                " state keys, which CUDA has to meet on the per-species bound."
-                " The state keys carry per_species_max at 1e-11 with a"
-                " 1e-12 x peak floor and the sign-definite guard applied to the"
-                " grid less its top 3 bins, the top bins being an upper-"
-                "boundary artefact rather than a flux: across the phi-Taylor"
-                " retune the worst admitted species of the final states then"
-                " moves 1.129e-12 (k_mu+_l at 3548 GeV, emoff/theta89) and the"
-                " worst named flux 1.08e-12 (total_mu+, same key and bin),"
-                " while the unguarded worst is 1.35e-9 on e+_l at 71 TeV, a"
-                " cancellation residual with negative bins rather than a flux."
-                " Over all six state keys, the depth-grid stacks included, the"
-                " worst is 2.915e-12 (e+_l at 447 TeV, emon/grid/grid_sol[0]),"
-                " so the bound carries 3.4x. The trim admits 259 of 278"
-                " final-state species-lane entries and all 12 key species,"
-                " against 135 and 10 untrimmed. Every other key is bitwise."
+                " rel-L2 1e-9 except on the state keys, which CUDA has to meet"
+                " on the per-species bound. The state keys carry"
+                " per_species_max at 1e-11 with a 1e-12 x peak floor and the"
+                " sign-definite guard applied to the grid less its top 3 bins,"
+                " the top bins being an upper-boundary artefact rather than a"
+                " flux. Every other key is bitwise."
             ),
             tolerances=TOLERANCES,
             extra={
