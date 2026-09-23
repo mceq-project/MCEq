@@ -1,0 +1,1 @@
+New docs page *The transport step: the mathematics*: the diagonal-exact ETD2RK step and the sec(theta) elongation in the eigenbasis of the mode coupling, as implemented, with each formula linked to the function that carries it.
