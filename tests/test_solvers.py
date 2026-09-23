@@ -1965,7 +1965,9 @@ class _StubMCEq:
         from types import SimpleNamespace
 
         self._mceq_db = SimpleNamespace(is_2d=False)
-        self.matrix_builder = SimpleNamespace(_contloss_bands={})
+        self.matrix_builder = SimpleNamespace(
+            _contloss_bands={}, _contloss_upwind_rows={}
+        )
         self._resolve_secant = lambda: None
         # M3: the path helpers now read settings through ``run.config``
         # (snapshot or live view); the stub hands them the live module,

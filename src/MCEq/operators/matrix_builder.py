@@ -168,6 +168,9 @@ class MatrixBuilder:
                             # second cont_loss_operator call nor a change here.
                             band = self.cont_loss_operator(parent.pdg_id)
                             self._contloss_bands[idx] = band
+                            self._contloss_upwind_rows[idx] = self._closure_rows_for(
+                                parent.pdg_id
+                            )
                             self._preband_blocks[idx] = self.C_blocks[idx].copy()
                             if self.is_2d:
                                 self.C_blocks[idx] += band[None, :, :]
@@ -288,6 +291,15 @@ class MatrixBuilder:
         n_rows = 0 if hits.size == 0 else int(hits.max()) + 1
         return min(max(n_rows, UPWIND_ROWS_FLOOR), int(self._energy_grid.d) - 2)
 
+    def _closure_rows_for(self, pdg_id):
+        """Number of leading rows of one particle's loss band that are its
+        monotone upwind closure: :meth:`_upwind_rows_for` under an
+        ``expfit_low_upwind*`` stencil, 0 for every other stencil."""
+        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
+        if not str(method).startswith("expfit_low_upwind"):
+            return 0
+        return self._upwind_rows_for(pdg_id)
+
     def _differential_operator_for(self, pdg_id):
         """The derivative operator to fold one particle's ``dEdX`` into.
 
@@ -322,6 +334,7 @@ class MatrixBuilder:
     def _reset_band_split(self):
         """Drop the band stashes and both assembled halves of ``int_m``."""
         self._contloss_bands, self._preband_blocks = {}, {}
+        self._contloss_upwind_rows = {}
         self._int_m_hadr = self._dEdx_band = self._assembly_key = None
 
     def _current_assembly_key(self):
