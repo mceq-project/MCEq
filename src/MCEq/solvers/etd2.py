@@ -26,6 +26,23 @@ from MCEq.solvers.backends import (
     numpy_backend,
 )
 
+#: ``log2`` of the largest initial value the fp32 state carries.
+_FP32_PEAK_EXP = 76
+
+
+def _fp32_scale(phi, phi0_per_pixel=None):
+    """The power of two ``s`` that puts ``max |phi|`` at
+    ``2**_FP32_PEAK_EXP``: the fp32 state carries ``s phi``, which keeps the
+    high-energy fluxes clear of the subnormals. 1.0 for a zero state."""
+    peak = max(
+        float(np.max(np.abs(p), initial=0.0))
+        for p in (phi, phi0_per_pixel)
+        if p is not None
+    )
+    if not np.isfinite(peak) or peak == 0.0:
+        return 1.0
+    return 2.0 ** (_FP32_PEAK_EXP - int(np.ceil(np.log2(peak))))
+
 
 def etd2_driver(
     nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
@@ -98,7 +115,9 @@ def etd2_driver(
     def from_layout(x):
         return x if lay.inv_perm is None else x[xp.asarray(lay.inv_perm)]
 
-    phc[:] = to_layout(be.asarray(phi.reshape(dim, K)))
+    # fp32 carries s phi (see :func:`_fp32_scale`); undone on the way out
+    scale = 1.0 if fp64 else _fp32_scale(phi, phi0_per_pixel)
+    phc[:] = to_layout(be.asarray(scale * phi.reshape(dim, K)))
 
     # the path, uploaded once: fp64 for the factor stage, the state dtype
     # for the SpMM
@@ -159,7 +178,7 @@ def etd2_driver(
 
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
-        phi0_pp = to_layout(be.asarray(phi0_per_pixel))
+        phi0_pp = to_layout(be.asarray(scale * phi0_per_pixel))
         if coupled:
             rotate(phi0_pp, Vi)
         rs, cs = schedule.reset_t_starts, schedule.record_t_starts
@@ -216,17 +235,20 @@ def etd2_driver(
     if schedule is not None:
         if coupled:
             rotate(sol_pixel, V)
-        return be.to_host(from_layout(sol_pixel))
+        return be.to_host(from_layout(sol_pixel)) / scale
     if coupled:
         rotate(phc, V)
         for snapshot in grid_sol:
             rotate(snapshot, V)
-    sol = be.to_host(from_layout(phc))
+    sol = be.to_host(from_layout(phc)) / scale
     grid = np.array([])
     if grid_sol:
         grid = xp.stack(grid_sol)
-        grid = be.to_host(
-            grid if lay.inv_perm is None else grid[:, xp.asarray(lay.inv_perm)]
+        grid = (
+            be.to_host(
+                grid if lay.inv_perm is None else grid[:, xp.asarray(lay.inv_perm)]
+            )
+            / scale
         )
     if not batched:
         sol = sol[:, 0]
