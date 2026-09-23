@@ -7,7 +7,9 @@ sec(theta) transport at the default cap, muon multiple scattering and
 helicity-dependent decays, a single 100 GeV proton at theta=30 deg, solved
 with the numpy ETD2 kernel with the current default settings (eps=0.01, requested dX_max=2),
 further limited by the assembled loss-stencil and secant guard. The fixture
-was refreshed after the September 2026 step-controller correction.
+was refreshed after the September 2026 step-controller correction, and again
+(September 2026) for the sec(theta) corner in the eigenbasis of the coupling
+and the closure rows leaving the continuous-loss step cap.
 
 This module re-runs the identical configuration and asserts agreement with
 the stored solution. Because fixture and test share the code path, kernel
