@@ -120,6 +120,23 @@ factor stage (``diag_factors``), the sparse product :math:`N x`
 precision of the state, see
 :data:`~MCEq.solvers.backends.base._PRECISION_CONTRACT`.
 
+In single precision the limit is the exponent range, not the mantissa. The
+fluxes fall roughly as :math:`E^{-3}` over the twelve decades of the energy
+grid and reach :math:`10^{-40}` near :math:`10^{10}` GeV at the surface,
+below the smallest normal single-precision number; the products
+:math:`N_{ij} x_j` inside the sparse product fall below it earlier, near
+:math:`10^{7}` GeV. The equation is linear, so the driver integrates
+:math:`s\Phi` with :math:`s` a power of two that puts :math:`\max|\Phi_0|`
+at :math:`2^{76}` (:func:`~MCEq.solvers.etd2._fp32_scale`) and divides
+:math:`s` out of the result; :math:`s` is exact and the headroom above,
+about :math:`2^{52}`, covers the growth of the secondaries and the largest
+operator entries. What remains is the rounding of the stored state, once
+per stage. On the production 2D operator (0.05 GeV to :math:`10^{11}` GeV,
+48 modes) the angle-integrated lepton fluxes then agree with double
+precision below :math:`10^{10}` GeV to :math:`10^{-5}` at 0° (1100 steps),
+:math:`2\times10^{-5}` at 60° (1600 steps) and :math:`3\times10^{-4}` at 90°
+(18 800 steps); the error grows with the number of steps.
+
 What restricts the step
 -----------------------
 

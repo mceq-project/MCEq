@@ -32,6 +32,11 @@ the SpMM in the state dtype.
 The phi quotients cancel near their Taylor-switch radii, which are
 calibrated for FP64 rounding; the contract binds the inputs of the factor
 stage, not only its arithmetic.
+
+At FP32 the driver solves for ``s phi`` with ``s`` an exact power of two
+(:func:`MCEq.solvers.etd2._fp32_scale`) and divides it out of the result:
+fluxes falling like E^-3 reach 1e-40 near 1e10 GeV, below the FP32 normal
+range, and the products inside the SpMM fall below it first.
 """
 
 #: State dtype per ``fp_precision``; the one place 32/64 becomes a dtype.

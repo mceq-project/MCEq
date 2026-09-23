@@ -743,6 +743,31 @@ def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
     assert rel_l2 < 1e-4, f"{backend} fp32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
 
 
+def test_solve_etd2_fp32_below_normal_range():
+    """A state at 1e-40, below the fp32 normal range, keeps fp32 precision:
+    the driver solves for a power-of-two multiple of it."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solve_etd2
+
+    rng = np.random.default_rng(7)
+    nsteps, size = 30, 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+    A = rng.standard_normal((size, size)) * 0.05
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m, dec_m = sp.csr_matrix(A), sp.csr_matrix(B)
+    phi0 = rng.uniform(0.1, 1.0, size=(size, 2)) * 1e-40
+
+    sol64, _ = solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy")
+    sol32, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", fp_precision=32
+    )
+    np.testing.assert_allclose(sol32, sol64, rtol=1e-4, atol=0)
+
+
 @pytest.mark.xdist_group("spacc")
 @pytest.mark.skipif(not config.has_accelerate, reason="Accelerate only on macOS")
 @pytest.mark.parametrize("K", [1, 4, 16, 70])
