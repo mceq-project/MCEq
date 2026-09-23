@@ -20,28 +20,18 @@ import numpy as np
 #: :func:`MCEq.solvers.etd2.etd2_driver` and
 #: :func:`MCEq.solvers.etd2.solve_etd2`.
 _PRECISION_CONTRACT = """\
-The diagonals (``d_int``, ``d_dec``) and the phi factors computed from
-them (``eD``, ``h phi1``, ``h phi2``, and the coupled-block ``eDB`` /
-``phi1B`` / ``phi2B``) are evaluated in FP64 whatever the requested
-precision, and cast once, on the way out, to the state dtype. The state,
-the scratch buffers and the off-diagonal operator are stored in the
-requested dtype, and every stage that touches them runs there. The step
-size and ``rho_inv`` therefore reach stage 1 in FP64; ``rho_inv`` reaches
-the SpMM in the state dtype, and the step size reaches the state stages
-only inside the phi factors, having been folded into them in FP64 (the
-sec(theta) exact slot, which scales its corner by ``h`` after the
-eigenbasis GEMMs, is the exception).
+The diagonals (``d_int``, ``d_dec``, and ``lam_j D0_i`` on the sec(theta)
+corner) and the phi factors computed from them (``eD``, ``h phi1``,
+``h phi2``) are evaluated in FP64 whatever the requested precision, and
+cast once, on the way out, to the state dtype. The state, the scratch
+buffers and the off-diagonal operator are stored in the requested dtype,
+and every stage that touches them runs there. The step size and
+``rho_inv`` therefore reach the factor stage in FP64; ``rho_inv`` reaches
+the SpMM in the state dtype.
 
-Why: ``phi1 = (e^z - 1) / z`` and ``phi2 = (e^z - 1 - z) / z^2`` cancel
-catastrophically around the Taylor-switch thresholds, which are
-calibrated for FP64 rounding — in FP32 they lose 3-7 digits. The
-diagonals are also cheap: ``O(dim)`` work per step for a shared
-integration path and ``O(dim * K)`` for one path per lane, against the
-``O(nnz*K)`` SpMM, so FP64 there costs nothing measurable. The contract
-binds the *inputs* of stage 1 and not only its arithmetic: rounding the
-diagonals to FP32 first costs a factor ~100 in the accuracy of
-``exp(h D)`` and makes two backends that otherwise hold the contract
-disagree by far more than FP32 roundoff.
+The phi quotients cancel near their Taylor-switch radii, which are
+calibrated for FP64 rounding; the contract binds the inputs of the factor
+stage, not only its arithmetic.
 """
 
 #: State dtype per ``fp_precision``; the one place 32/64 becomes a dtype.

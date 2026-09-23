@@ -1,30 +1,24 @@
 """The host backend: numpy elementwise kernels, C step stages, BLAS GEMMs.
 
 :class:`HostBackend` executes every stage of
-:func:`MCEq.solvers.etd2.etd2_driver` on host arrays and delegates only the
-off-diagonal SpMM to an ``apply_off`` binding -- scipy in
-:mod:`MCEq.solvers.backends.base`, MKL in
-:mod:`MCEq.solvers.backends.mkl`, Apple Accelerate in
-:mod:`MCEq.solvers.backends.accelerate`. The factor stages are the numpy
-lowering of :mod:`MCEq.solvers.numerics`; the predictor and the corrector are
-its C lowering, :mod:`MCEq.solvers._kernels.etd2`, at both precisions and every
-problem size.
-
-Stage code shared by all three host bindings belongs here; a binding's own
-ctypes plumbing belongs in that binding's module.
+:func:`MCEq.solvers.etd2.etd2_driver` on host arrays and delegates the
+off-diagonal SpMM to an ``apply_off`` binding: scipy
+(:mod:`MCEq.solvers.backends.base`), MKL (:mod:`MCEq.solvers.backends.mkl`)
+or Apple Accelerate (:mod:`MCEq.solvers.backends.accelerate`). The
+predictor and the corrector run in C (:mod:`MCEq.solvers._kernels.etd2`),
+with the numpy lowering of :mod:`MCEq.solvers.numerics` as the fallback.
 """
 
 from ctypes import POINTER, c_double, c_float
 
 import numpy as np
 
+from MCEq.operators.compiled import coupled_corner
 from MCEq.solvers import numerics
 from MCEq.solvers.backends.base import ScipyApplyOff, _state_dtype
 from MCEq.solvers.numerics import (
     diagonal_factors,
     left_matmul,
-    phi_factors,
-    phi_work,
     step_buffers,
 )
 
@@ -33,16 +27,9 @@ _C_POINTER = {np.float64: POINTER(c_double), np.float32: POINTER(c_float)}
 
 
 def _fused_stages(dtype):
-    """The C predictor / corrector of :mod:`MCEq.solvers._kernels.etd2` at ``dtype``,
-    or ``None`` when the extension is not built.
-
-    Imported on demand rather than at module level: importing
-    :mod:`MCEq.solvers` must not dlopen anything (see
-    ``tests/test_solvers_import.py``). An unbuilt source tree, or a platform
-    where the extension does not compile, falls back to the numpy lowering of
-    the same table; the two agree to the bit, which
-    ``tests/test_solvers.py::test_c_stages_match_numpy_lowering`` checks.
-    """
+    """The C predictor / corrector of :mod:`MCEq.solvers._kernels.etd2` at
+    ``dtype``, or ``None`` when the extension is not built. Imported on
+    demand: importing :mod:`MCEq.solvers` must not dlopen anything."""
     try:
         from MCEq.solvers._kernels.etd2 import (
             etd2_corrector_f32,
@@ -62,17 +49,12 @@ class HostBackend:
     """Stage execution on host arrays for
     :func:`MCEq.solvers.etd2.etd2_driver`.
 
-    numpy elementwise kernels, the fused C step stages and BLAS GEMMs; the
-    SpMM is the ``apply_off`` binding of the sparse library (scipy, MKL or
-    Apple Accelerate). ``op`` is
-    the :class:`~MCEq.operators.compiled.CompiledOperator` the binding was
-    built from — it carries the layout and the coupling operators.
-
-    ``dtype`` is the state precision, float64 or float32: the state, the
-    scratch buffers and ``apply_off``'s operator are stored in it, while
-    the diagonals and the phi factors are computed in fp64 and cast once,
-    in :meth:`diag_factors`. See
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+    ``op`` is the :class:`~MCEq.operators.compiled.CompiledOperator`,
+    ``apply_off`` the SpMM binding of the sparse library and ``dtype`` the
+    state precision (float64 or float32): the state, the scratch buffers and
+    the operator are stored in it; the diagonals and the phi factors are
+    computed in fp64 and cast once
+    (:data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`).
     """
 
     xp = np
@@ -95,30 +77,34 @@ class HostBackend:
         fp64 = self.dtype is np.float64
         self._dim, self._K, self._per_lane = dim, K, per_lane
         shape = (dim, K) if per_lane else (dim,)
-        # Dropped first, so two generations of scratch never coexist.
-        self._bufs = self._block = self._factors = self._work = None
+        # dropped first, so two generations of scratch never coexist
+        self._bufs = self._corner = self._factors = self._work = None
         self._ptr_cache = {}
         self._bufs = step_buffers(shape)
+        lay = self.op.layout
+        if lay.coupled:
+            # factor buffers and diagonals of the corner, flat over (mode, column)
+            n_c = lay.n_P * lay.n_g
+            self._corner = step_buffers((n_c, K) if per_lane else (n_c,))
+            self._corner_diag = tuple(d.ravel() for d in self.op.exact_slot_diagonals)
         stages = _fused_stages(self.dtype)
         self._predict, self._correct = stages or (None, None)
         self._ptr = _C_POINTER[self.dtype]
-        # Scratch for the numpy lowering, allocated only when it is what runs.
+        # scratch for the numpy lowering
         self._work = None if stages else np.empty((dim, K), dtype=self.dtype)
-        # Landing buffers for the one cast of the fp64 factors, or None at
-        # fp64 where the factor buffers are already the state dtype.
+        # landing buffers for the one cast of the fp64 factors (None at fp64)
         self._factors = (
             None if fp64 else tuple(np.empty(shape, dtype=self.dtype) for _ in range(3))
         )
         self._apply_off.bind(dim, K, nsteps)
 
     def coupling(self):
-        """``T_P, T_PP, V, Vi`` in the state dtype (they act on the state);
-        ``lam`` in fp64 (it forms the phi arguments of the exact slot)."""
+        """``W, V, Vi`` of the compiled operator in the state dtype."""
         if self._coupling is None:
             c = self.op.coupling
             self._coupling = tuple(
-                np.asarray(m, dtype=self.dtype) for m in (c.T_P, c.T_PP, c.V, c.Vi)
-            ) + (np.asarray(c.lam, dtype=np.float64),)
+                np.asarray(m, dtype=self.dtype) for m in (c.W, c.V, c.Vi)
+            )
         return self._coupling
 
     def state_buffers(self, dim, K):
@@ -137,43 +123,25 @@ class HostBackend:
         return self._factors
 
     def diag_factors(self, h, ri):
-        """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)``.
-
-        ``h`` and ``ri`` come in fp64 and the evaluation runs there; only the
-        result is cast. The arrays are ``(dim,)`` for a shared integration
-        path and ``(dim, K)`` for one path per lane — the C stages take the
-        lane stride from ``per_lane``, not from the shape, so these are the
-        backend's own buffers rather than views of them."""
+        """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)`` in the state
+        dtype, ``(dim,)`` or ``(dim, K)``; on the sec(theta) corner the
+        factors of ``h lam_j D0_i``. ``h`` and ``ri`` come in fp64 and the
+        evaluation runs there."""
         b = self._bufs
         diagonal_factors(h, ri, self.d_int, self.d_dec, b)
+        if self._corner is not None:
+            c = self._corner
+            diagonal_factors(h, ri, *self._corner_diag, c)
+            for name in ("eD", "phi1", "phi2"):
+                dst = coupled_corner(self.op.layout, b[name])
+                np.copyto(dst, c[name].reshape(dst.shape))
         return self._cast_factors(b["eD"], b["phi1"], b["phi2"])
 
-    def block_factors(self, ZB):
-        """``eDB, phi1B, phi2B`` of the coupled plane's argument, in fp64.
-
-        No step size folded in: the exact slot applies ``h`` after the
-        eigenbasis GEMMs, where it scales the coupled corner as a whole."""
-        if self._block is None or self._block[0].shape != ZB.shape:
-            self._block = tuple(np.empty(ZB.shape) for _ in range(3)) + phi_work(
-                ZB.shape
-            )
-        eDB, phi1B, phi2B = self._block[:3]
-        phi_factors(ZB, eDB, phi1B, phi2B, self._block[3:])
-        return eDB, phi1B, phi2B
-
     def _ptrs(self, arrays):
-        """ctypes pointers to `arrays`, memoized for the life of the solve.
-
-        Every array the two stages touch is allocated once, in :meth:`bind`
-        or :meth:`state_buffers`, and handed back unchanged on every step.
-        ``ndarray.ctypes.data_as`` costs ~2.5 us per array, which is more
-        than the kernel itself at K = 1, so the pointers are built once. The
-        key is ``id(arr)``, unique only among live objects, so the entry
-        carries its array and the identity check refuses a hit that a
-        recycled id would otherwise satisfy. The entry is not what keeps the
-        array alive: ``data_as`` pins it through the pointer's own ``._arr``,
-        which is why :meth:`close` has to drop the cache to release it.
-        """
+        """ctypes pointers to ``arrays``, memoized by identity for the life of
+        the solve: ``data_as`` costs more than a kernel at K = 1. The entry
+        keeps its array so a recycled ``id`` cannot hit; ``data_as`` pins the
+        array, which is why :meth:`close` drops the cache."""
         cache = self._ptr_cache
         out = []
         for arr in arrays:
@@ -185,14 +153,12 @@ class HostBackend:
         return out
 
     def _bcast(self, factor):
-        """A shared-path factor as a column, so numpy broadcasts it over the
-        lane axis. The C stages take it flat and index it under ``per_lane``
-        instead, so only the numpy lowering needs this."""
+        """A shared-path factor as a column, broadcast over the lane axis
+        (the numpy lowering only)."""
         return factor if self._per_lane or factor.ndim == 2 else factor[:, None]
 
     def predictor(self, eD, x, hphi1, F, out):
-        """``a = eD x + hphi1 F`` — one fused pass of the C kernel, or the
-        numpy lowering of the same expression when it is not built."""
+        """``a = eD x + hphi1 F``: the C kernel, or the numpy lowering."""
         if self._predict is None:
             numerics.predictor(
                 self._bcast(eD), x, self._bcast(hphi1), F, out, self._work
@@ -206,8 +172,7 @@ class HostBackend:
         )
 
     def corrector(self, a, F_a, F, hphi2, out):
-        """``x = a + hphi2 (F_a - F)`` — one fused pass of the C kernel, or
-        the numpy lowering of the same expression when it is not built."""
+        """``x = a + hphi2 (F_a - F)``: the C kernel, or the numpy lowering."""
         if self._correct is None:
             numerics.corrector(a, self._bcast(hphi2), F_a, F, out, self._work)
             return
@@ -228,11 +193,9 @@ class HostBackend:
         pass
 
     def close(self):
-        """Release the step buffers, the lazily built coupling corner and the
-        pointer memo -- which is what holds the driver's state planes, since
-        ``data_as`` pins through the pointer. Assignment only, so it is safe
-        before a bind and idempotent after one."""
-        self._bufs = self._block = self._factors = None
+        """Release the buffers, the coupling and the pointer memo (which pins
+        the driver's state planes). Safe before a bind, idempotent after."""
+        self._bufs = self._corner = self._factors = None
         self._work = self._coupling = None
         self._ptr_cache = {}
         self._apply_off.close()
