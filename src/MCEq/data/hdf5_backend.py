@@ -94,13 +94,7 @@ class HDF5Backend:
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
         with self._read_session():
-            # In standalone EM mode (grid.em_standalone_grid), take the energy grid
-            # from the EM DB instead of the hadronic DB, so the EM cascade can run
-            # on a finer bins/decade grid than the (10/dec) hadronic DB. The inert
-            # hadronic interaction/decay matrices are then skipped and the e±
-            # ionization continuous-loss curve is interpolated onto the EM grid
-            # (see interaction_db / decay_db / cs_db / continuous_loss_db below).
-            # Default off.
+            # Handle custom grid for standalone EM calculations.
             self._em_standalone = bool(grid.em_standalone_grid)
             grid_store = self._em_store if self._em_standalone else self._had
 

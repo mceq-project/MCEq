@@ -371,9 +371,8 @@ class MCEqRun:
             info(2, "Skip, since current model identical to", interaction_model + ".")
             return
 
-        # Changing the normalized interaction-model name clears the injected
-        # channel overrides; reloading the same model preserves them, since
-        # surviving a reload is the point of the override hook.
+        # A model change clears injected channel overrides; a same-model reload
+        # keeps them -- surviving the reload is the point of the override hook.
         if self._interactions.iam != interaction_model:
             self._interactions.clear_channel_overrides()
 
@@ -384,7 +383,6 @@ class MCEqRun:
 
             self._resize_vectors_and_restore()
 
-            # initialize matrices
             if not build_matrices:
                 return
             self._system.build_matrices()
@@ -396,8 +394,7 @@ class MCEqRun:
 
         The ``phi0`` reallocation and the restore replay live on
         :class:`MCEq.driver.initial_state.InitialState`; this wrapper orders
-        them (solution first, then initial state) and supplies the replay,
-        which resolves the recorded method names against this class.
+        them and supplies the replay.
         """
         self._solution = np.zeros(self.dim_states)
         self._initial_state.resize(
@@ -710,12 +707,11 @@ class MCEqRun:
             ETD2 path construction. ``None`` → ``config.X_start`` (= 0).
           eps (float | None): within-step ``rho_inv`` variation tolerance
             for the ETD2 non-uniform schedule. ``None`` →
-            ``config.etd2_path["eps"]``; if that is also ``None``, use
-            .03 for 1D hadronic/lepton transport, .01 for 2D or electrons.
+            ``config.etd2_path["eps"]``; ``None`` there selects a
+            system-aware default.
           dX_max (float | None): cap on step size (off-diagonal stability
             cliff) for ETD2. ``None`` → ``config.etd2_path["dX_max"]``;
-            if that is also ``None``, use 5 g/cm² for 1D hadronic/lepton
-            transport, 2 for 2D or electrons. Matrix safety caps still apply.
+            ``None`` there selects a system-aware default.
           dX_min (float | None): floor on step size for ETD2. ``None`` →
             ``config.etd2_path["dX_min"]``.
           fd_span (float | None): forward-FD probe span for the ETD2

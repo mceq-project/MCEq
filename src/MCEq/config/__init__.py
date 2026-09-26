@@ -194,7 +194,8 @@ mkl_threads = _default_threads()
 etd2_path = {
     #: Within-step log inverse-density variation. None selects .03 for
     #: 1D hadronic/lepton transport and .01 for 2D or electron transport.
-    #: This is guidance for numerical accuracy, not a flux-error tolerance.
+    #: A numerical-accuracy guideline for the path controller; validate
+    #: flux accuracy separately.
     "eps": None,
     #: Requested ceiling in g/cm^2: None selects 5 for 1D hadronic/lepton
     #: transport, 2 for 2D or electron transport. Matrix guards still apply.
