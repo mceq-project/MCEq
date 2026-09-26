@@ -493,19 +493,12 @@ class MCEqRun:
         else:
             self.density_model = density_model_or_config
 
-        # A path belongs to the density-model instance that produced it.
-        # Invalidate it even when the new model has already cached the same
-        # zenith: set_zenith_azimuth then takes its angle-cache fast path and
-        # cannot otherwise distinguish this atmosphere switch.
-        self.integration_path = None
-
+        self.integration_path = None  # the angle cache cannot see a model switch
         if self.theta_deg is not None and isinstance(
             self.density_model, EarthsAtmosphere
         ):
             self.set_zenith_azimuth(self.theta_deg)
-        elif isinstance(self.density_model, GeneralizedTarget):
-            self.integration_path = None
-        else:
+        elif not isinstance(self.density_model, GeneralizedTarget):
             raise ValueError(f"Density model {self.density_model} not supported.")
 
     def set_zenith_azimuth(self, zenith_deg, azimuth_deg=None):
