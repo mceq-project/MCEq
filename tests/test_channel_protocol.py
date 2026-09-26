@@ -121,7 +121,7 @@ def mceq_sib21_ci_db():
     from MCEq.core import MCEqRun
 
     saved = config.mceq_db_fname
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         yield MCEqRun(
             interaction_model="QGSJET-II-04",
@@ -132,6 +132,22 @@ def mceq_sib21_ci_db():
         config.mceq_db_fname = saved
 
 
+def tracked(pman, keys):
+    """The children a walk should expect: those the manager carries.
+
+    The databases hold every channel, so a table may name a child the system
+    does not propagate -- photons and electrons when `enable_em` is off.
+    `_set_channels` skips those, and so must anything checking it.
+    """
+    refs = []
+    for key in keys:
+        try:
+            refs.append(pman[key])
+        except KeyError:
+            continue
+    return refs
+
+
 class TestCollapseIsBehaviourNeutral:
     def test_hadronic_wiring_matches_reference_walk(self, mceq_sib21_ci_db):
         run = mceq_sib21_ci_db
@@ -140,7 +156,7 @@ class TestCollapseIsBehaviourNeutral:
             if p.is_tracking:
                 continue
             if p.is_projectile:
-                expected = [run.pman[k] for k in table.relations[p.pdg_id]]
+                expected = tracked(run.pman, table.relations[p.pdg_id])
                 assert p.hadr_secondaries[: len(expected)] == expected
                 for s in expected:
                     assert p.hadr_yields[s] is table.get_matrix(p.pdg_id, s.pdg_id)
@@ -156,7 +172,7 @@ class TestCollapseIsBehaviourNeutral:
             if p.is_stable:
                 assert p.decay_dists == {}
                 continue
-            expected = [run.pman[k] for k in table.children(p.pdg_id)]
+            expected = tracked(run.pman, table.children(p.pdg_id))
             assert p.children[: len(expected)] == expected
             for c in expected:
                 assert p.decay_dists[c] is table.get_matrix(p.pdg_id, c.pdg_id)

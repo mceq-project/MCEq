@@ -61,20 +61,46 @@ jobs:
       - name: Install requirements
         run: uv pip install -e . --group notebooks
 
-      # Same asset, path and cache key as _run_tests.yml, on purpose: the two
-      # jobs then share one cache entry instead of each downloading the file.
-      - name: Cache test database
+      # Same assets, paths and cache key as _run_tests.yml, on purpose: the two
+      # jobs then share one cache entry instead of each downloading the files.
+      # The CI data packages: the v2 release data cut to the 31-bin test window
+      # (891 GeV .. 891 TeV) and packaged like the release -- a base package
+      # (FLUKA20251 + SIBYLL23E + spine), an extra-models package and the CI
+      # manifest the loader resolves the other models through. The cache key
+      # carries the manifest digest, so a new CI set invalidates the cache and
+      # an unchanged one is a hit on every run (the "Report" step shows which).
+      - name: Cache CI data packages
         id: cache-db
         uses: actions/cache@v6
         with:
-          path: src/MCEq/data/mceq_db_v140reduced_compact.h5
-          key: mceq-test-db-v1-${{ runner.os }}
+          path: |
+            src/MCEq/data/mceq_db_manifest_ci_v2.yaml
+            src/MCEq/data/mceq_ci_base_air_1d_v2.h5
+            src/MCEq/data/mceq_ci_extra_models_air_1d_v2.h5
+          key: mceq-ci-data-v2-f13deaa1-${{ runner.os }}
 
-      - name: Download test database if not cached
+      - name: Download CI data packages if not cached
         if: steps.cache-db.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          curl -L https://github.com/mceq-project/MCEq/releases/download/ci-assets/mceq_db_v140reduced_compact.h5 -o src/MCEq/data/mceq_db_v140reduced_compact.h5
+          for f in mceq_db_manifest_ci_v2.yaml mceq_ci_base_air_1d_v2.h5 mceq_ci_extra_models_air_1d_v2.h5; do
+            curl -fsSL "https://github.com/mceq-project/MCEq/releases/download/ci-assets/$f" -o "src/MCEq/data/$f"
+          done
+
+      - name: Report CI data cache state and verify digests
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-db.outputs.cache-hit }}"
+          python - <<'PY'
+          import hashlib, pathlib, sys, yaml
+          data = pathlib.Path("src/MCEq/data")
+          manifest = yaml.safe_load((data / "mceq_db_manifest_ci_v2.yaml").read_text())
+          for name, entry in manifest["files"].items():
+              digest = hashlib.sha256((data / name).read_bytes()).hexdigest()
+              print(name, "OK" if digest == entry["sha256"] else "MISMATCH")
+              if digest != entry["sha256"]:
+                  sys.exit(1)
+          PY
 
       # `--ignore` prunes a path before collection, so nbmake never opens the
       # ignored notebooks and a corrupted one would pass unnoticed. This step
@@ -101,63 +127,18 @@ jobs:
           sys.exit(bad != 0)
           PY
 
-      # `--nbmake-kernel=python3` runs the gate on a kernel that always
-      # exists. Every notebook now declares `python3` itself (M15), so the
-      # flag is belt-and-braces: it keeps a freshly-added notebook honest even
-      # if its metadata claims a private kernel name, as several did before
-      # the v2 refresh (python2, mceq_dev_396).
+      # Notebooks that want the cached data set `config.mceq_db_fname`
+      # themselves; without it MCEq downloads the default database.
       #
-      # A notebook that wants the database cached above has to set
-      # `config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"` itself. The
-      # default is the 292 MB mceq_db_lext_dpm193_v140.h5, MCEq downloads it on
-      # first use, and there is no environment override -- so a rewrite that
-      # forgets this line costs CI a 292 MB fetch.
-      #
-      # Why the four remaining notebooks are ignored (honest per-notebook
-      # reason; M15 re-measured all four against every database MCEq ships
-      # or downloads -- the CI-reduced file carries QGSJETII04 + SIBYLL21
-      # only, the 292 MB lext DB adds DPMJETIII193, EPOSLHC(+R), QGSJETIII,
-      # SIBYLL23D/E(+star variants), and nothing carries SIBYLL23C or the
-      # old DPMJet/QGSJet generations):
-      #
-      #   Muon spectra                          6 of its 8 models (both
-      #                                         DPMJet-III variants,
-      #                                         QGSJet-II-03, QGSJet-01c,
-      #                                         SIBYLL-2.3c; EPOS-LHC is
-      #                                         only in the lext DB) are in
-      #                                         no shipped DB. The Python-2
-      #                                         prints and kernelspec that
-      #                                         also blocked it are fixed;
-      #                                         a DB reissue is the way
-      #                                         this one comes back.
-      #   Partial_hadron_contribution           imports CRFluxModels
-      #                                         (pre-crflux, pip-absent) and
-      #                                         decomposes per hadron via
-      #                                         MCEqRun.set_obs_particles,
-      #                                         which the v2 API cull
-      #                                         removed; also needs
-      #                                         SIBYLL2.3c + low-energy
-      #                                         extension (no shipped DB).
-      #   Full_sky_carousel                     SIBYLL23D — not in the CI DB
-      #                                         and the point of the notebook
-      #                                         is the 2D-capable DB +
-      #                                         MSIS21/geomagnetic cutoffs;
-      #                                         swapping models guts the
-      #                                         demo. Verified runnable to
-      #                                         the cutoff cell on the lext
-      #                                         DB, where gtracr 2.0.0's API
-      #                                         breaks the cutoff adapter
-      #                                         (src-side; see the ORCA cell
-      #                                         note in the notebook).
-      #   Angular_shower_development            needs the 2D URQMD-150GeV
-      #                                         FLUKA DB (the D25 2D asset:
-      #                                         not in CI, not redistribut-
-      #                                         able; the host copy M15
-      #                                         probed is legacy `projectiles`
-      #                                         layout that the v2 backend
-      #                                         rejects), and its `particle`
-      #                                         import is not in the
-      #                                         notebooks group
+      # The four ignored notebooks below need models or data CI does not
+      # carry:
+      #   Muon spectra                 6 of its 8 models are in no shipped DB
+      #   Partial_hadron_contribution  needs CRFluxModels and set_obs_particles,
+      #                                both removed in v2
+      #   Full_sky_carousel            SIBYLL23D, and gtracr 2.0.0 breaks the
+      #                                geomagnetic cutoff adapter
+      #   Angular_shower_development   needs the 2D URQMD FLUKA DB, which is
+      #                                not redistributable
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \

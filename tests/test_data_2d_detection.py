@@ -34,7 +34,7 @@ def _restore_2d_config():
 @pytest.fixture(scope="module")
 def backend_1d():
     """Reduced 1D test database (already used by other tests)."""
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     return HDF5Backend(
         medium="air",
         paths=config.paths,

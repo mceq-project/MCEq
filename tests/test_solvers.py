@@ -557,14 +557,14 @@ def test_solve_batch_dtype_float32(kernel):
     import crflux.models as pm
 
     from MCEq.core import MCEqRun
-    from tests.golden import _flux_metric as flux_metric
+    from tests.helpers import flux_metric
 
     saved_kernel = config.kernel_config
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_db = config.mceq_db_fname
     config.kernel_config = kernel
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -944,7 +944,7 @@ def test_etd2_numpy_stable_at_high_zenith():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -1010,9 +1010,12 @@ def test_solve_etd2_numpy_second_order_convergence():
     refinement level.  Refining inside frozen native steps instead — what
     ``_etd2_oversampled`` does — is a strictly weaker check.
 
-    The error norm excludes the EM rows (gamma, e+/e-), and that exclusion
-    is the whole point of this test.  Measured on this fixture 2026-07-29,
-    production path, reference at 128x refinement:
+    The norm is taken over the whole state, which is the hadronic and
+    leptonic system: photons and electrons are not in it unless
+    ``config.enable_em`` is set.  That matters, because those rows are the
+    ones that are *not* second order.  Measured on this fixture 2026-07-29,
+    production path, reference at 128x refinement, back when gamma was
+    carried by default:
 
         rows            err @ default     order (1->2, 2->4, 4->8)
         all             2.26e-02          0.708  0.877  0.979
@@ -1021,26 +1024,22 @@ def test_solve_etd2_numpy_second_order_convergence():
 
     i.e. the hadronic/leptonic system is cleanly second order (confirmed at
     theta = 0, 60 and 89 deg; muon, numu and proton fluxes converge at
-    1.87-1.93 in relative terms), while the EM rows converge at first order
-    and carry essentially the *entire* whole-state error.  That is the
+    1.87-1.93 in relative terms), while the EM rows converged at first order
+    and carried essentially the *entire* whole-state error.  That is the
     documented ETD2 EM caveat — the semi-Lagrangian e+/e- and gamma rows
-    have no diagonal damping (see docs/mceq_v1.x_v2_diff.md).  Any all-rows
-    norm therefore reads order ~1 regardless of the scheme, which is why
-    this assertion must be taken over the non-EM block.
+    have no diagonal damping (see docs/mceq_v1.x_v2_diff.md).  An all-rows
+    norm used to read order ~1 for that reason alone, so the test masked
+    those rows out; with the EM species out of the system by default the
+    mask has nothing to remove and the whole-state norm is the honest one.
 
-    History: this test used to measure an all-rows norm on the production
-    path with the ``mceq_sib21`` fixture, which re-enables e+/e-.  The
-    coarsest solve then *diverged* (err ~1e8), so log2(err_h/err_h2) came
-    out ~33 and the ``>= 1.8`` floor was vacuous.  Whether it diverged was
-    round-off sensitive: on macos-15-intel/3.14 it stayed finite and the
-    honest all-rows ratio (1.04) surfaced as a CI failure.  The stability
-    bound below now rejects a divergence instead of reading it as high order.
+    The stability bound below rejects a divergence instead of reading it as
+    high order: with gamma present the coarsest solve could diverge (err
+    ~1e8), making log2(err_h/err_h2) come out ~33 and the ``>= 1.8`` floor
+    vacuous.
     """
-    saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
-    config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         import crflux.models as pm
 
@@ -1082,16 +1081,11 @@ def test_solve_etd2_numpy_second_order_convergence():
             )
             return phi
 
-        # Mask the EM block out of the error norm (see docstring).
-        em_rows = np.zeros(mceq.dim_states, dtype=bool)
-        for pdg in (22, 11, -11):
-            try:
-                part = mceq.pman[pdg]
-            except (KeyError, AttributeError):
-                continue
-            em_rows[part.lidx : part.uidx] = True
-        assert em_rows.any(), "expected gamma/e+- rows in the state vector"
-        keep = ~em_rows
+        # No EM rows to leave out: the species are not in the system here.
+        assert not any(pdg in mceq.pman for pdg in (22, 11, -11)), (
+            "EM species in the state vector; the order below would read ~1"
+        )
+        keep = np.ones(mceq.dim_states, dtype=bool)
 
         # Reference at 32x refinement: 8x beyond the finest test point, so
         # its own O(h^2) residual sits ~64x below it.
@@ -1120,7 +1114,9 @@ def test_solve_etd2_numpy_second_order_convergence():
             f"{errs[1]:.3e} -> {errs[2]:.3e} -> {errs[4]:.3e}"
         )
 
-        # Measures 2.07 and 2.14 on this fixture.
+        # Measures 1.88 and 1.92 on this fixture, at err 2.2e-04 for the
+        # default path -- two orders below the old all-rows 2.3e-02,
+        # which was almost entirely the gamma rows.
         for coarse, fine in ((1, 2), (2, 4)):
             order = np.log2(errs[coarse] / errs[fine])
             assert order >= 1.8, (
@@ -1129,7 +1125,6 @@ def test_solve_etd2_numpy_second_order_convergence():
                 f"{errs[fine]:.3e})"
             )
     finally:
-        config.adv_set["disabled_particles"] = saved_disabled
         config.kernel_config = saved_kernel
         config.mceq_db_fname = saved_db
 
@@ -1605,7 +1600,7 @@ def test_solve_etd2_numpy_generalized_target_convergence():
     saved_db = config.mceq_db_fname
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
 
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disabled_particles"] = [11, -11]
     try:
         target = GeneralizedTarget(len_target=1000.0, env_density=1.0, env_name="water")

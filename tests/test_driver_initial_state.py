@@ -43,7 +43,7 @@ def test_facade_phi0_is_the_initial_state_vector(mceq_sib21):
     """``_phi0`` delegates by object, and assignment rebinds the source.
 
     ``MCEqRun._phi0`` reads ``InitialState.phi0`` — same object — and the
-    setter (used by tests/golden generators and test_solvers_2d to
+    setter (used by the reference generators and test_solvers_2d to
     install a prepared vector) writes it back where readers see it.
     """
     saved = mceq_sib21._phi0

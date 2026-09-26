@@ -210,7 +210,7 @@ def test_models_ddm_uses_the_particlemanager_pdata():
 def test_ddm_spline_cache_is_a_class_attribute_on_the_class():
     """`DDMSplineDB._ddm_splines` must stay reachable on the class.
 
-    `tests/golden/gen_species.py` saves and restores it around its build.
+    the species reference generator saves and restores it around its build.
     Since the B7 fix (R3) it is an empty default the instances never share --
     the save/restore is a harmless belt-and-braces -- but the name must stay
     defined on the class or the generator's `dict(DDMSplineDB._ddm_splines)`

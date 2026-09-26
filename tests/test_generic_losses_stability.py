@@ -17,9 +17,11 @@ numpy_etd2, ``disabled_particles`` cleared as in the Xmax-3panel driver whose
 observable is the e+- deposit). It is built from local run-artifact databases
 in the harness repo, so all three tests skip when those paths are absent.
 
-The solve test carries ``@pytest.mark.slow`` (its name is deliberate, not a
-registered marker -- nothing deselects it yet; the full gate runs it, ~30 s)
-and the two operator-level tests are the default-on guards. The tests share
+The solve test carries ``@pytest.mark.slow`` and is skipped unless
+``--run-slow`` (root conftest, 2026-09-17): under the loss-stencil step guard
+of ``330cd12`` its solve went from ~30 s to many hours single-threaded, which
+stalled every full gate -- the step count this system now demands is an open
+maintainer question. The two operator-level tests are the default-on guards. The tests share
 one fixture instance through an xdist group, so the parallel gate builds the
 run once per worker, not once per test.
 """
@@ -77,7 +79,6 @@ def v13_hadronic_run():
             "generic_losses_all_charged",
             "muon_helicity_dependence",
             "average_loss_operator",
-            "loss_stencil_method",
         )
     }
     saved_adv = dict(config.adv_set)
@@ -89,7 +90,6 @@ def v13_hadronic_run():
         config.e_min = 1e-3
         config.e_max = 1.1e14
         config.enable_default_tracking = False
-        config.loss_stencil_method = "expfit_low_upwind2"
         config.muon_helicity_dependence = False
         config.average_loss_operator = False
         config.generic_losses_all_charged = True

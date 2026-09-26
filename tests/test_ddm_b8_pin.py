@@ -21,7 +21,7 @@ proves the two behaviours are observably distinct, so the fix (or a pin
 change) can never pass silently.
 
 Prior documentation of the defect: the prose note in the module docstring of
-``tests/golden/gen_species.py`` ("A third defect, not in the plan's ledger:
+the species reference generator ("A third defect, not in the plan's ledger:
 ``DataDrivenModel.e_min`` / ``e_max`` ... are stored and never read"). This
 file makes that note executable.
 

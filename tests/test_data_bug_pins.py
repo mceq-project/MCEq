@@ -143,7 +143,8 @@ def test_b20_deleted_no_unflavoured_keys_written():
 
 
 def _load_interactions(disabled):
-    """Load SIBYLL21 from the reduced DB with ``disabled_particles=disabled``.
+    """Load SIBYLL21 (CI extra-models package, resolved through the CI
+    manifest from the CI base) with ``disabled_particles=disabled``.
 
     ``conftest``'s autouse fixture restores ``config.adv_set`` and
     ``config.mceq_db_fname`` afterwards, so mutating them here is safe.
@@ -151,7 +152,7 @@ def _load_interactions(disabled):
     from MCEq import config
     from MCEq.data import HDF5Backend
 
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disabled_particles"] = list(disabled)
     inter = Interactions(
         HDF5Backend(
@@ -178,50 +179,53 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
 
     The observable needs a *negative* id. The HDF5 read filter (``data.py``,
     ``_load_and_convert_matrix``) excludes on ``abs(pdg) in exclude``, so
-    ``[11]`` drops both signs before ``load`` ever sees them (measured:
-    22 -> 20 particles, no e-11 anywhere) and leaves nothing for the buggy
-    filter to miss. ``[-11]`` matches no ``abs()`` at all, so both e+ and e-
+    ``[13]`` drops both signs before ``load`` ever sees them (measured:
+    20 -> 18 particles, no mu anywhere) and leaves nothing for the buggy
+    filter to miss. ``[-13]`` matches no ``abs()`` at all, so both mu+ and mu-
     are read in and the Python-level filter is the only thing acting -- and it
-    drops ``(-11, 0)`` from ``relations`` while ``particles`` keeps all 22.
+    drops ``(-13, 0)`` from ``relations`` while ``particles`` keeps all 22.
 
-    Correct behaviour: with ``[-11]`` the count should fall to 21 and
-    ``(-11, 0)`` should be absent from ``particles`` too. (The read filter's
+    (Pinned on e± until the CI data moved to the v2 tables, whose SIBYLL21
+    pack has no e± children; mu± exercise the identical code path.)
+
+    Correct behaviour: with ``[-13]`` the count should fall to 19 and
+    ``(-13, 0)`` should be absent from ``particles`` too. (The read filter's
     ``abs()`` vs the literal match here is B2's other half; this pin covers
     only leg (iii).)
     """
     baseline = _load_interactions([])
-    assert (-11, 0) in baseline.particles
-    assert (11, 0) in baseline.particles
+    assert (-13, 0) in baseline.particles
+    assert (13, 0) in baseline.particles
 
-    inter = _load_interactions([-11])
+    inter = _load_interactions([-13])
 
-    def em_children(obj):
+    def mu_children(obj):
         seen = set()
         for children in obj.relations.values():
-            seen.update(c for c in children if abs(c[0]) == 11)
+            seen.update(c for c in children if abs(c[0]) == 13)
         return seen
 
     # relations: correctly filtered.
-    assert (-11, 0) not in em_children(inter)
-    assert (11, 0) in em_children(inter)
-    # particles: the bug -- the positron survives, and the count is unchanged.
-    assert (-11, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 22
+    assert (-13, 0) not in mu_children(inter)
+    assert (13, 0) in mu_children(inter)
+    # particles: the bug -- the mu- survives, and the count is unchanged.
+    assert (-13, 0) in inter.particles
+    assert len(inter.particles) == len(baseline.particles) == 20
 
 
 def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
     """B2, the ``abs()`` half, recorded so the pin above cannot be misread.
 
-    ``disabled_particles=[11]`` removes e+ *and* e- in the backend, two
+    ``disabled_particles=[13]`` removes e+ *and* e- in the backend, two
     particles fewer than the unfiltered load. Correct behaviour under a literal
     match (which is what ``config``'s comment on ``disabled_particles``
-    promises) would be to drop ``(11, 0)`` only.
+    promises) would be to drop ``(13, 0)`` only.
     """
     baseline = _load_interactions([])
-    inter = _load_interactions([11])
+    inter = _load_interactions([13])
 
-    assert not [p for p in inter.particles if abs(p[0]) == 11]
-    assert len(inter.particles) == len(baseline.particles) - 2 == 20
+    assert not [p for p in inter.particles if abs(p[0]) == 13]
+    assert len(inter.particles) == len(baseline.particles) - 2 == 18
 
 
 # B6 -- InteractionCrossSections.get_cs unknown-family fall-through
@@ -368,6 +372,7 @@ def em_backend(had_path, em_path, medium):
     paths = SimpleNamespace(
         data_dir=had_path.parent,
         mceq_db_fname=had_path.name,
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         em_db_fname=em_path.name,
     )
     grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
@@ -476,7 +481,7 @@ def _load_b5(disable_unstable):
     from MCEq import config
     from MCEq.data import HDF5Backend
 
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disable_interactions_of_unstable"] = disable_unstable
     inter = Interactions(
         HDF5Backend(

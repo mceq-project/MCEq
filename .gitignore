@@ -25,3 +25,10 @@ src/MCEq/data/gtracr_cutoffs/
 
 # runtime-built sec(theta) operator cache (MCEq/secant.py)
 src/MCEq/data/secant_cache/
+
+# CI data set fetched (or symlinked) into the package data dir; never shipped
+src/MCEq/data/mceq_db_manifest_ci_v2.yaml
+
+# The stored 2D solution the baseline tests compare against; fetched from
+# the ci-assets release by tests/data/baseline_asset.py.
+tests/data/2d_baseline_solution.npz

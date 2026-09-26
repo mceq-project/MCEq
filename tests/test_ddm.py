@@ -195,15 +195,17 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
         channel, mceq_qgs, e_min=20, e_max=50, average=True
     )
 
+    # Values on the v2 CI data (QGSJETII04 sigma regenerated on real air, rc3);
+    # the v1.4 CI database gave 4.70861343e-04 / 4.00016770e-06 (1.6e-6 rel).
     expected_matrix = np.array(
         [
             [
                 8.00000000e-06,
-                4.70861343e-04,
+                4.70861943e-04,
             ],
             [
                 0.00000000e00,
-                4.00016770e-06,
+                4.00017400e-06,
             ],
         ]
     )

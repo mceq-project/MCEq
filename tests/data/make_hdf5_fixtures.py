@@ -12,7 +12,7 @@ Layout
 ------
 Written from what the reader actually requires (``HDF5Backend.__init__`` and
 ``_gen_db_dictionary``), cross-checked against
-``src/MCEq/data/mceq_db_v140reduced_compact.h5`` (1D, v1.4.0) and
+``src/MCEq/data/mceq_ci_base_air_1d_v2.h5`` (1D) and
 ``mceq_db_v2_fluka2d_rc7.h5`` (2D, 48 modes) with h5py:
 
 * ``/common`` carries the grid entirely in **attributes**, not datasets:

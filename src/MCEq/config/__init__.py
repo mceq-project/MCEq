@@ -28,10 +28,15 @@ print_module = False
 data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
+mceq_db_fname = "mceq_base_air_1d_v2.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
+
+#: Data-release manifest (YAML) listing each database file with its energy
+#: grid, checksum and the hadronic models it carries. Additional or updated
+#: model files are registered here.
+mceq_db_manifest = "mceq_db_manifest_v2.yaml"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -135,17 +140,29 @@ cuda_fp_precision = 64
 #: Floating point precision (is set automatically)
 floatlen = None
 
-#: BLAS thread limit, defaulting to ``min(16, os.cpu_count() or 1)``.
-#: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL. Sparse products and narrow dense products can be
-#: limited by memory bandwidth or thread contention: MKL's sparse SpMV scales
-#: near-linearly to ~16 threads, then plateaus or regresses on most servers,
-#: and the dense mode-coupling GEMMs of the secant routes are skinny
-#: ((n_P, n_k) @ (n_k, n_g*K)) so an all-cores fan-out on those shapes is pure
-#: contention. :func:`set_mkl_threads` applies the limit to supported, loaded
-#: BLAS libraries, OpenBLAS (what most numpy wheels link) included. Override
-#: after import for full control: ``MCEq.config.set_mkl_threads(n)``.
-mkl_threads = min(16, os.cpu_count() or 1)
+
+#: BLAS thread limit. Matrix products plateau beyond ~16 threads, so more
+#: cores do not buy speed. Override with
+#: ``MCEq.config.set_mkl_threads(n)``.
+def _available_cpus():
+    """CPUs this process may run on (the affinity mask, else ``cpu_count``)."""
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return os.cpu_count() or 1
+
+
+def _default_threads():
+    """BLAS threads to use: an explicit thread count in the environment,
+    else ``min(16, cpus)`` over the CPUs this process may run on.
+    """
+    for var in ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        value = os.environ.get(var, "")
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+    return min(16, _available_cpus())
+
+
+mkl_threads = _default_threads()
 
 # =========================================================================
 # Advanced settings
@@ -382,14 +399,12 @@ adv_set = {
     #: Might be different for yields (set_single_primary_particle)
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
-    #: Disable particle (production)
-    #: Default disables both e- (PDG 11) and e+ (PDG -11). Until a
-    #: validated EM database is shipped, the ETD2 EM cascade can blow up
-    #: at extreme zenith — see the "EM cascade caveat" in
-    #: docs/mceq_v1.x_v2_diff.md. The HDF5 reader checks absolute particle
-    #: IDs against this list, so a positive ID excludes both signs there;
-    #: later interaction-table filtering uses literal IDs.
-    "disabled_particles": [11, -11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
+    #: Disable particle (production). Photons and electrons need not be
+    #: listed: they are excluded automatically whenever ``enable_em`` is
+    #: off, and included when it is on. The HDF5 reader checks absolute
+    #: particle IDs against this list, so a positive ID excludes both signs
+    #: there; later interaction-table filtering uses literal IDs.
+    "disabled_particles": [],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Switch off decays. E.g., disable muon decay with [13,-13]

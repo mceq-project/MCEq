@@ -18,7 +18,7 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
 @pytest.mark.parametrize(
     ["particle_list", "projectiles"],
     [
-        [None, 13],
+        [None, 12],
         [[(2212, 0)], 1],
     ],
     ids=["None", "proton"],
@@ -47,10 +47,15 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # clamp (+1.2% on nnumu at 1e3; the boost-7165 pion no longer extrapolates).
 # Recalibrated 2026-09-10 for stencil-guarded steps, eps=.01/dX_max=2.
 # A same-operator eps=.003/dX_max=.2 control agrees within 0.006%.
+# Recalibrated 2026-09-16 for the v2 CI data (mceq_ci_base_air_1d_v2 +
+# SIBYLL21 from the CI extra package: rc4 tables, isospin-fixed SIBYLL, no
+# e+- in the system). At 1e3 both neutrino sums are now the small negative
+# grid-floor artifact the nnue note above describes; 1e4/1e5 moved by
+# -0.4%/+1.1% (nmu/nnumu) and -35%/-33% (nnue, which lost the e+- feed).
 testdata_primary = [
-    [1000.0, 1.2205302546882618e-05, 2.3524586513715353e-07, -4.364873643302216e-08],
-    [10000.0, 0.0986706881262703, 0.02442421924227454, 0.0014503672246277692],
-    [100000.0, 0.9066804216816294, 0.2812661560645263, 0.02013046067430346],
+    [1000.0, 1.076373716431726e-05, -3.8218711086143765e-07, -2.9566806734825375e-08],
+    [10000.0, 0.09845102404809755, 0.024696568807229105, 0.0009492346512922123],
+    [100000.0, 0.903930589516515, 0.28457628033654175, 0.01358841023352725],
 ]
 
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]

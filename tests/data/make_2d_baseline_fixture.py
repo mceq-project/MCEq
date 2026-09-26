@@ -10,9 +10,17 @@ cross-machine determinism) on a tight step schedule, and the Hankel-space
 state history plus the theta-space readouts are stored together with the
 full provenance needed to reproduce the run.
 
-Usage (from the repo root)::
+The file is 13 MB and is not kept in the repository: it lives on the
+``ci-assets`` release and ``tests/data/baseline_asset.py`` fetches it. After
+regenerating, publish it and update the digest that file pins::
 
     .venv/bin/python tests/data/make_2d_baseline_fixture.py
+    sha256sum tests/data/2d_baseline_solution.npz     # -> baseline_asset.SHA256
+    gh release upload ci-assets tests/data/2d_baseline_solution.npz \
+        --repo mceq-project/MCEq --clobber
+
+The cache key in .github/workflows/_run_tests.yml carries the digest too, so
+bump it in the same change or CI keeps serving the old file.
 """
 
 import pathlib

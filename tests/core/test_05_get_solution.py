@@ -79,17 +79,19 @@ def test_get_solution_return_as(mceq_sib21, return_as, integrate):
 
 
 def test_get_solution_dont_sum_helicities(mceq_sib21):
+    # Helicity states are exercised on mu-. This test used e+- before, but
+    # electrons are only in the system when config.enable_em is set.
     mceq_sib21.solve()
 
     # Get solution with summed helicities (default)
-    solution_summed = mceq_sib21.get_solution("e-", dont_sum_helicities=False)
-    solution_left_do = mceq_sib21.get_solution("e-_l", dont_sum_helicities=False)
-    solution_right_do = mceq_sib21.get_solution("e-_r", dont_sum_helicities=False)
+    solution_summed = mceq_sib21.get_solution("mu-", dont_sum_helicities=False)
+    solution_left_do = mceq_sib21.get_solution("mu-_l", dont_sum_helicities=False)
+    solution_right_do = mceq_sib21.get_solution("mu-_r", dont_sum_helicities=False)
 
     # Get individual helicity states
-    solution_left = mceq_sib21.get_solution("e-_l", dont_sum_helicities=True)
-    solution_right = mceq_sib21.get_solution("e-_r", dont_sum_helicities=True)
-    solution_0 = mceq_sib21.get_solution("e-", dont_sum_helicities=True)
+    solution_left = mceq_sib21.get_solution("mu-_l", dont_sum_helicities=True)
+    solution_right = mceq_sib21.get_solution("mu-_r", dont_sum_helicities=True)
+    solution_0 = mceq_sib21.get_solution("mu-", dont_sum_helicities=True)
 
     # Manual sum should equal the summed solution
     manual_sum = solution_left + solution_right + solution_0

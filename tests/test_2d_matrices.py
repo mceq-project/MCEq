@@ -94,12 +94,12 @@ def test_1d_matrix_unchanged():
         "muon_helicity_dependence": config.muon_helicity_dependence,
     }
     try:
-        config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+        config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
         config.e_min = 1.0
         config.e_max = 1e8
         config.muon_helicity_dependence = False
-        # The reduced 1D test db only ships SIBYLL21 / QGSJETII04 (matches
-        # the session fixtures in conftest.py).
+        # SIBYLL21 lives in the CI extra-models package and is resolved
+        # through the CI manifest (matches the session fixtures in conftest.py).
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
             primary_model=None,
