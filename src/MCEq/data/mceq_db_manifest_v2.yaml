@@ -1,7 +1,7 @@
 schema: 1
 release: v2.0.0
 url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
-created: '2026-09-27T10:43:38'
+created: '2026-09-27T17:53:43'
 defaults:
   1d: mceq_base_air_1d_v2.h5
   2d: mceq_base_air_2d_v2.h5
@@ -22,8 +22,8 @@ grids:
     k_grid_sha256: 2793167bb263e92ef15e631be8ee769fe8b80c56d0410533a5f568fcb11f8a14
 files:
   mceq_base_air_1d_v2.h5:
-    sha256: 2ad5342308b8bef4270801c2398ea02c8e75225607dfe8a7cd12367bf2b1f823
-    size: 67862719
+    sha256: 792f6b3409d4a0744b20e8567236f2b75282f60e56b810ab8f6df38963939916
+    size: 76993374
     grid: 1d-150
     spine: true
     models:
@@ -35,12 +35,12 @@ files:
     source:
       key: 1d
       file: mceq_db_v2_1d.h5
-      sha256: 697964b7ed3a205337e0dce2b6138872d3fc529baf40f427f7e7e0f1c81047b0
+      sha256: 446c0f93139a44c91c21489fa3d0b5fdefc138e7a72e4ac3389575d644ea59c2
       verbatim: false
     note: default 1D package; models used for the paper's 1D figures
   mceq_extra_models_air_1d_v2.h5:
-    sha256: 4c4d70ccb96a076384409bc85d2fca2771435a2949ce461497c59e77639f822f
-    size: 236023859
+    sha256: f21a075ab99eaecde74a82aa73c3b6f88c26431c3f2492b5749c884ba52fe9a6
+    size: 276338494
     grid: 1d-150
     spine: true
     models:
@@ -61,13 +61,13 @@ files:
     source:
       key: 1d
       file: mceq_db_v2_1d.h5
-      sha256: 697964b7ed3a205337e0dce2b6138872d3fc529baf40f427f7e7e0f1c81047b0
+      sha256: 446c0f93139a44c91c21489fa3d0b5fdefc138e7a72e4ac3389575d644ea59c2
       verbatim: false
     note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
       SIBYLL21/23D/23ESTAR*)
   mceq_base_air_2d_v2.h5:
-    sha256: 1ba5e4748891cafdce094141ea3291ed800f6d84a2d3a96d64caca4323581a68
-    size: 359214861
+    sha256: a702475ae2313f13bdd2afc21167300bf2f699e5bb33b05cb75b9bb8981ea854
+    size: 440645377
     grid: 2d-150x48
     spine: true
     models:
@@ -75,14 +75,14 @@ files:
       - FLUKA20251
     source:
       key: 2d
-      file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
-      sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
+      file: mceq_db_v2_2d.h5
+      sha256: 80ee4ff558365c3231d2232c30aa4a1b13408658a335c4f05faf34e9feccd71d
       verbatim: false
     note: default 2D package on the unified 150-bin lattice (FLUKA qe_fwd yields re-compacted
       with the 150-bin 2D decay cubes)
   mceq_model_SIBYLL23E_air_2d_v2.h5:
-    sha256: 5e163266d7963c2d2c1d80517801d64117b9ba3aa46bdb44c02b45e756589ff4
-    size: 1087834155
+    sha256: 8d9482b565450d29fd46e6e7daa2422279d5400649ec6d4abd7ec8ff93785f70
+    size: 1187282000
     grid: 2d-150x48
     spine: false
     models:
@@ -90,8 +90,8 @@ files:
       - SIBYLL23E
     source:
       key: 2d
-      file: mceq_db_v2_sib23e_fluka2d_blend_rc4.h5
-      sha256: f2a677c632c926df192b58a1635d173b15b474c3fcb52c447eda892e8a35a33b
+      file: mceq_db_v2_2d.h5
+      sha256: 80ee4ff558365c3231d2232c30aa4a1b13408658a335c4f05faf34e9feccd71d
       verbatim: false
     note: SIBYLL 2.3e 48-mode Hankel yields (m2m SIBYLL23E_hankel_fwd_fullgrid); needs
       mceq_base_air_2d_v2.h5

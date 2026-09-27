@@ -180,15 +180,16 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
     The observable needs a *negative* id. The HDF5 read filter (``data.py``,
     ``_load_and_convert_matrix``) excludes on ``abs(pdg) in exclude``, so
     ``[13]`` drops both signs before ``load`` ever sees them (measured:
-    20 -> 18 particles, no mu anywhere) and leaves nothing for the buggy
+    22 -> 20 particles, no mu anywhere) and leaves nothing for the buggy
     filter to miss. ``[-13]`` matches no ``abs()`` at all, so both mu+ and mu-
     are read in and the Python-level filter is the only thing acting -- and it
     drops ``(-13, 0)`` from ``relations`` while ``particles`` keeps all 22.
 
     (Pinned on e± until the CI data moved to the v2 tables, whose SIBYLL21
-    pack has no e± children; mu± exercise the identical code path.)
+    pack had no e± children until the yields were re-compacted with the
+    decay tables to 1 MeV; mu± exercise the identical code path.)
 
-    Correct behaviour: with ``[-13]`` the count should fall to 19 and
+    Correct behaviour: with ``[-13]`` the count should fall to 21 and
     ``(-13, 0)`` should be absent from ``particles`` too. (The read filter's
     ``abs()`` vs the literal match here is B2's other half; this pin covers
     only leg (iii).)
@@ -210,7 +211,7 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
     assert (13, 0) in mu_children(inter)
     # particles: the bug -- the mu- survives, and the count is unchanged.
     assert (-13, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 20
+    assert len(inter.particles) == len(baseline.particles) == 22
 
 
 def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
@@ -225,7 +226,7 @@ def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
     inter = _load_interactions([13])
 
     assert not [p for p in inter.particles if abs(p[0]) == 13]
-    assert len(inter.particles) == len(baseline.particles) - 2 == 18
+    assert len(inter.particles) == len(baseline.particles) - 2 == 20
 
 
 # B6 -- InteractionCrossSections.get_cs unknown-family fall-through
@@ -507,7 +508,7 @@ def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
     both nucleon signs plus the meson families and a 3122 hyperon family;
     with the flag on the same list survives minus the four nucleon tuples,
     ``relations`` still matches ``parents`` exactly, and ``particles`` keeps
-    all 20 entries either way -- the filter acts on the parent list only, so
+    all 22 entries either way -- the filter acts on the parent list only, so
     nucleons stay as secondaries.
 
     Correct behaviour: the flag keeps nucleons and strips the unstable
@@ -543,7 +544,7 @@ def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
     assert set(inter.relations) == set(inter.parents)
     # Parent-list filter only: the proton survives as a secondary.
     assert (2212, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 20
+    assert len(inter.particles) == len(baseline.particles) == 22
 
 
 def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():

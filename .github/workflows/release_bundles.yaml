@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: bundles
-          key: mceq-release-packages-dc713092-${{ runner.os }}
+          key: mceq-release-packages-4ac37a60-${{ runner.os }}
       - name: Download draft bundles
         if: steps.cache-bundles.outputs.cache-hit != 'true'
         env:
