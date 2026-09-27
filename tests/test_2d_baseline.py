@@ -73,7 +73,7 @@ def test_baseline_fixture_shapes_consistent(FIXTURE):
 def test_baseline_fixture_metadata(FIXTURE):
     """The provenance baked into the fixture pins the production 2D setup."""
     d = np.load(FIXTURE, allow_pickle=True)
-    assert str(d["db_fname"]) == "mceq_db_v2_fluka2d_rc7.h5"
+    assert str(d["db_fname"]) == "mceq_base_air_2d_rc7_v2.h5"
     assert str(d["interaction_model"]) == "FLUKA20251"
     assert str(d["kernel_config"]) == "numpy_etd2"
     assert float(d["theta_deg"]) == 30.0

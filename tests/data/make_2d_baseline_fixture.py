@@ -16,11 +16,12 @@ regenerating, publish it and update the digest that file pins::
 
     .venv/bin/python tests/data/make_2d_baseline_fixture.py
     sha256sum tests/data/2d_baseline_solution.npz     # -> baseline_asset.SHA256
-    gh release upload ci-assets tests/data/2d_baseline_solution.npz \
-        --repo mceq-project/MCEq --clobber
+    cp tests/data/2d_baseline_solution.npz 2d_baseline_solution_<sha[:12]>.npz
+    gh release upload ci-assets 2d_baseline_solution_<sha[:12]>.npz \
+        --repo mceq-project/MCEq
 
 The cache key in .github/workflows/_run_tests.yml carries the digest too, so
-bump it in the same change or CI keeps serving the old file.
+bump it and the download name in the same change.
 """
 
 import pathlib
@@ -30,7 +31,7 @@ import numpy as np
 
 from MCEq import config
 
-DB_FNAME = "mceq_db_v2_fluka2d_rc7.h5"
+DB_FNAME = "mceq_base_air_2d_rc7_v2.h5"
 INTERACTION_MODEL = "FLUKA20251"
 THETA_DEG = 30.0
 PRIMARY_ENERGY_GEV = 100.0

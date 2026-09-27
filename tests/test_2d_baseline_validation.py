@@ -66,7 +66,7 @@ def baseline():
 
 @pytest.fixture(scope="module")
 def mceq_2d(baseline):
-    fn = "mceq_base_air_2d_rc7_v2.h5"  # released byte copy of baseline["db_fname"]
+    fn = str(baseline["db_fname"])
     if not os.path.exists(os.path.join(config.data_dir, fn)):
         pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
 
