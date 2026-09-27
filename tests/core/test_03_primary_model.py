@@ -52,8 +52,10 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # e+- in the system). At 1e3 both neutrino sums are now the small negative
 # grid-floor artifact the nnue note above describes; 1e4/1e5 moved by
 # -0.4%/+1.1% (nmu/nnumu) and -35%/-33% (nnue, which lost the e+- feed).
+# Recalibrated 2026-09-27 for the decay tables to 1 MeV (mceq_db_v2_1d): only
+# the 1e3 row moves (nmu -2e-6, nnumu -2e-4, the nnue artifact -5.5%).
 testdata_primary = [
-    [1000.0, 1.076373716431726e-05, -3.8218711086143765e-07, -2.9566806734825375e-08],
+    [1000.0, 1.0763565114039787e-05, -3.8211165123485035e-07, -2.7933454251557005e-08],
     [10000.0, 0.09845102404809755, 0.024696568807229105, 0.0009492346512922123],
     [100000.0, 0.903930589516515, 0.28457628033654175, 0.01358841023352725],
 ]
