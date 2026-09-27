@@ -167,6 +167,17 @@ def test_secant_layout_and_split(secant_48mode_problem):
     # (Caching of the compiled operator is MCEqRun._compiled_operator's
     # job; compile_operator is pure.)
 
+    # The operand matrix W maps the low-E block, corner in the eigenbasis,
+    # onto the corner of S x = x + T_P x[:, g].
+    c = compile_operator(p["int_m"], p["dec_m"], ops).coupling
+    low_e = xp.reshape(lay.n_k, lay.N, p["K"])[:, : lay.n_g].copy()
+    low_e[: lay.n_P] = np.einsum("jk,kgl->jgl", c.Vi, low_e[: lay.n_P])
+    x_low = x.reshape(lay.n_k, lay.N, p["K"])[:, ops["low_e_idx"]]
+    operand = corner + np.einsum("jk,kgl->jgl", ops["T_P"], x_low)
+    np.testing.assert_allclose(
+        np.einsum("jk,kgl->jgl", c.W, low_e), operand, rtol=1e-13, atol=1e-15
+    )
+
     bad = dict(ops, P=np.array([0, 2, 3]))
     with pytest.raises(ValueError):
         secant_layout(bad, p["dim"])

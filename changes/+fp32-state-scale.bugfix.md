@@ -1,0 +1,1 @@
+Single-precision solves (``fp_precision=32``) integrate a power-of-two multiple of the state and divide it out of the result, so fluxes above about 10^7 GeV no longer fall out of the fp32 exponent range; on the production 2D operator fp32 now matches fp64 to 1e-5 (0°) to 3e-4 (90°) below 10^10 GeV, where it was wrong by order one above 10^8 GeV.

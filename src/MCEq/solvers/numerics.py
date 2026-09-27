@@ -1,75 +1,48 @@
 """The formula table of the ETD2RK step, and the buffers it runs in.
 
-One integration step, with ``D`` the diagonal of the operator, ``F`` the
-off-diagonal remainder and ``h`` the step size:
+One step, with ``D`` the diagonal of the operator, ``F`` the off-diagonal
+remainder and ``h`` the step size::
 
     eD = e^{hD}      hphi1 = h phi1(hD)      hphi2 = h phi2(hD)
     a  = eD x + hphi1 F(x)
     x+ = a + hphi2 (F(a) - F(x))
 
-``h`` is folded into the phi factors at the factor stage, so the predictor
-and the corrector are elementwise products of three arrays on every backend
-and carry no step size of their own. That fixes the association order --
-``h`` onto the phi factor first, the product onto the remainder -- at the one
-place it is written, instead of leaving each backend's ufunc chain or kernel
-to choose it.
+Derivation: :ref:`solver-mathematics`.
 
-This module is the single source of those formulas, lowered three ways:
-
-* numpy, here -- :func:`phi_factors`, :func:`diagonal_factors` -- serving
-  :class:`MCEq.solvers.backends.host.HostBackend` and through it MKL and
-  Accelerate;
-* C, ``MCEq/solvers/_kernels/etd2/etd2_kernels.c``, which carries
-  :data:`PREDICTOR_EXPR` and :data:`CORRECTOR_EXPR` verbatim as its
-  ``ETD2_PREDICT`` / ``ETD2_CORRECT`` macros;
-* cupy, :func:`MCEq.solvers.backends.cuda._build_cuda_etd2_kernels`, whose
-  ElementwiseKernel bodies are generated from :data:`PHI_C_BODY` and the same
-  two expression strings.
-
-numpy only. A new scalar formula of the step loop belongs here; anything
-that touches a library handle, a device, or a configuration value does not.
+This module is the single source of the formulas, lowered three ways:
+numpy here; C in ``MCEq/solvers/_kernels/etd2/etd2_kernels.c``, which
+carries the two ``*_EXPR`` strings verbatim as macros; cupy in
+:func:`MCEq.solvers.backends.cuda._build_cuda_etd2_kernels`, whose kernel
+bodies are formatted from the same strings. ``h`` is folded into the phi
+factors at the factor stage, so the association order is fixed here and
+the predictor and corrector are products of three arrays. numpy only.
 """
 
 import numpy as np
 
 # --- the formula table -----------------------------------------------------
 
-#: Radii below which the analytic phi quotients are replaced by their Taylor
-#: series — order 2 for phi1, order 3 for phi2. phi2 switches at the wider
-#: radius because its numerator cancels to second order where phi1's cancels
-#: to first: with the numerator formed as ``e^z - 1``, the quotient carries
-#: ``~2u/|z|`` for phi1 and ``~2u/z^2`` for phi2 (``u = 2^-53``), and each
-#: radius sits where that meets the truncation of the series taken.
-#:
-#: Measured against a 60-digit reference over ``1e-8 <= |z| <= 1``, both signs
-#: (:func:`tests.test_solvers.test_phi_factors_accuracy`), the worst relative
-#: error is 7.9e-13 for phi1 at ``z = 1.4e-4`` and 5.4e-12 for phi2 at
-#: ``z = 6.3e-3`` — in both cases on the quotient side just outside the
-#: radius, which is what makes the radius, not the series order, the thing
-#: that sets the accuracy. phi2's third Horner term is what lets its radius
-#: widen that far, and buys 39x for one multiply-add.
+#: Radii below which the phi quotients are replaced by their Taylor series
+#: (order 2 for phi1, order 3 for phi2), set where the cancellation of the
+#: quotient meets the truncation of the series; worst relative error 7.9e-13
+#: (phi1) and 5.4e-12 (phi2) against a 60-digit reference
+#: (:func:`tests.test_solvers.test_phi_factors_accuracy`).
 _PHI1_SMALL = 1.3e-4
 _PHI2_SMALL = 6.31e-3
 _INV_6 = 1.0 / 6.0
 _INV_24 = 1.0 / 24.0
 _INV_120 = 1.0 / 120.0
 
-#: The two state stages as C expressions, with the step size already folded
-#: into the phi factors. The compiled lowerings are built from these strings:
-#: ``etd2_kernels.c`` carries them as macros and the cupy kernels format them
-#: into ElementwiseKernel bodies.
+#: The two state stages as C expressions; ``etd2_kernels.c`` carries them as
+#: macros and the cupy kernels format them into their bodies.
 PREDICTOR_EXPR = "(eD) * (x) + (hphi1) * (F)"
 CORRECTOR_EXPR = "(a) + (hphi2) * ((F_a) - (F))"
 
 
 def predictor(eD, x, hphi1, F, out, work):
-    """``out = eD x + hphi1 F`` — the numpy lowering of
-    :data:`PREDICTOR_EXPR`, associated exactly as written.
-
-    The compiled lowerings are what the host and CUDA backends run; this is
-    the reference they are checked against, and the fallback when the C
-    extension is not built. ``work`` is a scratch array of ``out``'s shape.
-    """
+    """``out = eD x + hphi1 F``, the numpy lowering of :data:`PREDICTOR_EXPR`:
+    the reference of the compiled stages and the fallback without the C
+    extension. ``work`` is a scratch array of ``out``'s shape."""
     np.multiply(eD, x, out=out)
     np.multiply(hphi1, F, out=work)
     np.add(out, work, out=out)
@@ -100,28 +73,14 @@ const double p2 = (az > {_PHI2_SMALL!r})
 
 
 def phi_factors(z, e, phi1, phi2, work):
-    """``e^z``, ``phi1(z)`` and ``phi2(z)`` elementwise, into given buffers.
+    """``e^z``, ``phi1(z)`` and ``phi2(z)`` elementwise, into given buffers::
 
         phi1(z) = (e^z - 1) / z        Taylor 1 + z/2 + z^2/6
         phi2(z) = (e^z - 1 - z) / z^2  Taylor 1/2 + z/6 + z^2/24 + z^3/120
 
-    Both quotients cancel as ``z -> 0``, phi1 to first order and phi2 to
-    second, so inside :data:`_PHI1_SMALL` / :data:`_PHI2_SMALL` the series is
-    evaluated by Horner instead. The numerator is ``e^z - 1``, formed from the
-    exponential the step needs anyway for ``eD``, rather than ``expm1``, which
-    costs accuracy in a band above each radius; see :data:`_PHI1_SMALL` for
-    what that costs and what fixing it would move.
-
-    The Taylor form is written for every entry and the quotient overwrites it
-    where the argument is large enough, so the branch costs one mask pass and
-    no gather. ``work`` is the ``(em1, t, mask)`` triple of :func:`phi_work`,
-    the shape of ``z``; every output and temporary is preallocated because
-    this runs once per integration step.
-
-    ``z`` is ``hD`` over the full state, ``(dim,)`` for a shared integration
-    path and ``(dim, K)`` per lane, and ``h D0 lam`` over the coupled plane of
-    the sec(theta) exact slot. One implementation for all three: the shapes
-    differ, the formula does not.
+    Inside :data:`_PHI1_SMALL` / :data:`_PHI2_SMALL` the series replaces the
+    quotient. ``work`` is the ``(em1, t, mask)`` triple of :func:`phi_work`,
+    the shape of ``z``.
     """
     em1, t, mask = work
     np.exp(z, out=e)
@@ -157,18 +116,10 @@ def phi_work(shape):
 
 
 def step_buffers(shape):
-    """Buffers of the diagonal-factor stage, allocated once per solve.
-
-    ``shape`` is ``(dim,)`` when every lane walks one shared integration path
-    and ``(dim, K)`` when each carries its own atmosphere path, so that both
-    ``h`` and ``ri`` vary along the lane axis. Centralized here so every
-    backend shares a layout: this is a hot loop, and an allocation inside it
-    dominates the SpMMs once those run on a tuned BLAS.
-
-    Six float64 arrays and one boolean of ``shape``. At the full-sky
-    operating point dim=7986, K=3072 the float64 arrays alone require
-    about 1.18 GB.
-    """
+    """Buffers of the diagonal-factor stage, allocated once per solve:
+    ``hD, eD, phi1, phi2`` of ``shape`` (``(dim,)`` for a shared path,
+    ``(dim, K)`` per lane) in fp64 and the ``work`` triple of
+    :func:`phi_work`."""
     return {
         "hD": np.empty(shape, dtype=np.float64),
         "eD": np.empty(shape, dtype=np.float64),
@@ -179,25 +130,16 @@ def step_buffers(shape):
 
 
 def diagonal_factors(h, ri, d_int, d_dec, bufs):
-    """``eD``, ``h phi1(hD)`` and ``h phi2(hD)`` of one step, in place.
-
-    ``D = d_int + ri d_dec`` is the diagonal of the operator at this step and
-    ``hD`` its scaled form. One function for both integration paths: a shared
-    path passes scalar ``h`` and ``ri`` against ``(dim,)`` buffers, the
-    per-lane paths of the carousel pass ``(K,)`` lane rows against a
-    ``(dim, K)`` plane. The shapes differ, the formula does not.
-
-    Folding ``h`` in here is what leaves the predictor and the corrector with
-    three arrays and no step size; see the module docstring. A lane with
-    ``h == 0`` is frozen by the same arithmetic: ``hD = 0`` gives ``eD = 1``
-    and ``hphi1 = hphi2 = 0``, so its step collapses to ``x <- x``.
-    """
+    """``eD``, ``h phi1(hD)`` and ``h phi2(hD)`` of one step, in place, for
+    ``D = d_int + ri d_dec``. ``h`` and ``ri`` are scalars against ``(dim,)``
+    buffers or ``(K,)`` lane rows against ``(dim, K)``. A lane with
+    ``h == 0`` gets ``eD = 1`` and ``hphi1 = hphi2 = 0``."""
     hD, eD, phi1, phi2 = (bufs[k] for k in ("hD", "eD", "phi1", "phi2"))
     if hD.ndim == 2:
         d_int, d_dec = d_int[:, None], d_dec[:, None]
         h, ri = h[None, :], ri[None, :]
 
-    # D = d_int + ri d_dec, then hD = h D, both in the one buffer.
+    # D = d_int + ri d_dec, then hD = h D, in the one buffer
     np.multiply(d_dec, ri, out=hD)
     np.add(hD, d_int, out=hD)
     np.multiply(hD, h, out=hD)
