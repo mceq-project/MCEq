@@ -90,7 +90,7 @@ def decode_decays(path, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_db_v2_fluka2d_rc7.h5"]
+    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_base_air_2d_rc7_v2.h5"]
 )
 def test_shipped_databases_are_four_column(db_fname):
     """Justifies the fixtures: no real file reaches the 2-column branch.
@@ -103,7 +103,9 @@ def test_shipped_databases_are_four_column(db_fname):
 
     path = pathlib.Path(config.data_dir) / db_fname
     if not path.exists():
-        pytest.skip(f"{db_fname} not available; symlink it into src/MCEq/data/")
+        pytest.skip(
+            f"{db_fname} not available; python -m MCEq.data.download --file {db_fname}"
+        )
 
     with h5py.File(path, "r") as db:
         widths = set()
@@ -128,9 +130,9 @@ def test_fixture_kappa_grid_is_a_subsample_of_the_production_grid():
     """
     from MCEq import config
 
-    path = pathlib.Path(config.data_dir) / "mceq_db_v2_fluka2d_rc7.h5"
+    path = pathlib.Path(config.data_dir) / "mceq_base_air_2d_rc7_v2.h5"
     if not path.exists():
-        pytest.skip("mceq_db_v2_fluka2d_rc7.h5 not available")
+        pytest.skip("mceq_base_air_2d_rc7_v2.h5 not available")
 
     with h5py.File(path, "r") as db:
         production = np.asarray(db["common"].attrs["k_grid"])
@@ -516,7 +518,7 @@ def test_equivalence_aliasing_on_the_shipped_reduced_database():
 
     path = pathlib.Path(config.data_dir) / "mceq_ci_base_air_1d_v2.h5"
     if not path.exists():
-        pytest.skip("reduced database not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{path.name} not available (ci-assets release)")
 
     index = backend(path, disabled=[11, -11]).interaction_db("SIBYLL2.1")
 

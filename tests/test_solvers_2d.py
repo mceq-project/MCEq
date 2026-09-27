@@ -53,7 +53,7 @@ def _restore_2d_config():
 def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
-        mceq_db_fname="mceq_db_v2_fluka2d_rc7.h5",
+        mceq_db_fname="mceq_base_air_2d_rc7_v2.h5",
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         e_min=1e-1,
         e_max=1e4,
@@ -72,7 +72,7 @@ def _solve(kernel, base, secant=False):
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
     config.e_min = base["e_min"]
     config.e_max = base["e_max"]

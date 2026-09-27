@@ -47,9 +47,9 @@ def backend_1d():
 @pytest.fixture(scope="module")
 def backend_2d():
     """FLUKA 2D database. Must be present (or symlinked) on disk."""
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_base_air_2d_rc7_v2.h5"
     if not os.path.exists(os.path.join(config.data_dir, fn)):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
     return HDF5Backend(
         medium="air",
