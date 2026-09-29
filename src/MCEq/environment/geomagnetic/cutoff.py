@@ -403,19 +403,49 @@ def build_phi0_with_cutoff(
     p_flux_2d = np.zeros((n_E, K), dtype=np.float64)
     n_flux_2d = np.zeros((n_E, K), dtype=np.float64)
 
-    for corsika_id, Z, A in mass_groups:
-        if corsika_id not in primary_model.nucleus_ids:
-            continue
-        E_nucleus_tot = e_tot_nucleon * A
-        phi_nuc = np.asarray(
-            primary_model.nucleus_flux(corsika_id, E_nucleus_tot),
-            dtype=np.float64,
+# Patch for GSF geomagnetic rigidity to work
+# Build proton/neutron primary flux with per-pixel rigidity cutoff
+    if len(primary_model.nucleus_ids) == 0:
+        # All-nucleon primary model, e.g. GlobalSplineFitBeta.
+        # Model does not expose individual nuclear species through
+        # nucleus_flux(), so the standard Z-dependent mass-group treatment
+        # below cannot be used.
+        # Instead, get the all-nucleon p/n flux directly and apply the
+        # cutoff to that representation.
+
+        _, p_flux, n_flux = primary_model.p_and_n_flux(e_tot_nucleon)
+
+        p_flux = np.asarray(p_flux, dtype=np.float64).reshape(-1)
+        n_flux = np.asarray(n_flux, dtype=np.float64).reshape(-1)
+
+        # Effective all-nucleon cutoff.
+        # This reproduces the cutoff convention used by
+        # GlobalSplineFitBeta(geomagnetic_cutoff=Rc).
+        mask = (
+            e_tot_nucleon[:, None]
+            > rc_GV_per_pixel[None, :]
         )
-        mask = (E_nucleus_tot[:, None] > Z * rc_GV_per_pixel[None, :]).astype(
-            np.float64
-        )
-        p_flux_2d += Z * A * (phi_nuc[:, None] * mask)
-        n_flux_2d += (A - Z) * A * (phi_nuc[:, None] * mask)
+
+        p_flux_2d[:] = p_flux[:, None] * mask
+        n_flux_2d[:] = n_flux[:, None] * mask
+
+    else:
+        # Standard species-resolved primary model, e.g. H3a.
+        # Apply rigidity cutoff separately to each nuclear mass group.
+
+        for corsika_id, Z, A in mass_groups:
+            if corsika_id not in primary_model.nucleus_ids:
+                continue
+            E_nucleus_tot = e_tot_nucleon * A
+            phi_nuc = np.asarray(
+                primary_model.nucleus_flux(corsika_id, E_nucleus_tot),
+                dtype=np.float64,
+            )
+            mask = (E_nucleus_tot[:, None] > Z * rc_GV_per_pixel[None, :]).astype(
+                np.float64
+            )
+            p_flux_2d += (Z * A * phi_nuc[:, None] * mask)
+            n_flux_2d += ((A - Z) * A * phi_nuc[:, None] * mask)
 
     p = mceq.pman[(2212, 0)]
     if (2112, 0) in mceq.pman and not mceq.pman[(2112, 0)].is_resonance:
@@ -427,6 +457,8 @@ def build_phi0_with_cutoff(
     for k in range(K):
         phi0[p.lidx + min_idx : p.uidx, k] = 1e-4 * p_flux_2d[min_idx:, k]
         if has_neutrons:
-            phi0[nproj.lidx + min_idx : nproj.uidx, k] = 1e-4 * n_flux_2d[min_idx:, k]
+            phi0[nproj.lidx + min_idx : nproj.uidx, k] = (
+                1e-4 * n_flux_2d[min_idx:, k]
+            )
 
     return phi0
