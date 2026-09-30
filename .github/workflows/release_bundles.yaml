@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: bundles
-          key: mceq-release-packages-4ac37a60-${{ runner.os }}
+          key: mceq-release-packages-d0bc1fca-${{ runner.os }}
       - name: Download draft bundles
         if: steps.cache-bundles.outputs.cache-hit != 'true'
         env:
@@ -46,8 +46,7 @@ jobs:
             --pattern 'mceq_db_manifest_v2.yaml' \
             --pattern 'mceq_base_air_1d_v2.h5*' \
             --pattern 'mceq_extra_models_air_1d_v2.h5*' \
-            --pattern 'mceq_base_air_2d_v2.h5*' \
-            --pattern 'mceq_base_air_2d_rc7_v2.h5*'
+            --pattern 'mceq_base_air_2d_v2.h5*'
           cd bundles
           sha256sum --check ./*.sha256
       - name: Report cache state and verify digests

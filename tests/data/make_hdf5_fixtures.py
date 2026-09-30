@@ -13,7 +13,7 @@ Layout
 Written from what the reader actually requires (``HDF5Backend.__init__`` and
 ``_gen_db_dictionary``), cross-checked against
 ``src/MCEq/data/mceq_ci_base_air_1d_v2.h5`` (1D) and
-``mceq_db_v2_fluka2d_rc7.h5`` (2D, 48 modes) with h5py:
+``mceq_base_air_2d_v2.h5`` (2D, 48 modes) with h5py:
 
 * ``/common`` carries the grid entirely in **attributes**, not datasets:
   ``e_grid`` (n_e,), ``e_bins`` (n_e+1,), ``widths`` (n_e,), scalar
@@ -28,9 +28,9 @@ Written from what the reader actually requires (``HDF5Backend.__init__`` and
   optional ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
   (n_ch, dim_full+1).
 * ``len_data[i]`` is the nnz of **one Hankel-mode block**, not of the whole
-  channel: on the rc7 2D file ``data.shape[1] == len_data.sum() * n_k``
-  (``decays/polarized``: 13721232 == 285859 * 48; ``decays/unpolarized``:
-  11822448 == 246301 * 48) and each channel's indptr rises by exactly
+  channel: on the 2D base file ``data.shape[1] == len_data.sum() * n_k``
+  (``decays/polarized``: 41574672 == 866139 * 48; ``decays/unpolarized``:
+  37206288 == 775131 * 48) and each channel's indptr rises by exactly
   ``len_data[i]`` across every one of the 48 mode blocks. Both invariants
   are asserted below, so a malformed fixture fails here rather than
   decoding to a wrong-but-finite matrix.
@@ -57,7 +57,7 @@ Facts verified while building this, worth not rediscovering
   flux model can not be used.')``, the fixture having no nucleon channels in
   its decay pack. Nothing here builds an ``MCEqRun``; the tests drive
   ``HDF5Backend`` directly.
-* The 8-mode kappa grid is a **subsample** of the 48-value rc7 production
+* The 8-mode kappa grid is a **subsample** of the 48-value production
   grid, not its head. A head truncation (``kappa = 0..7``) loads fine but
   then fails ``MCEq.operators.secant.build_secant_kernel_ops`` with
   ``RuntimeError: secant coupling: S_P eigenvalues not positive-real (min
@@ -84,7 +84,7 @@ E_GRID = np.sqrt(E_BINS[:-1] * E_BINS[1:])
 WIDTHS = np.diff(E_BINS)
 
 #: The 48 kappa values of the production 2D database
-#: ``mceq_db_v2_fluka2d_rc7.h5`` (``/common`` attr ``k_grid``).
+#: ``mceq_base_air_2d_v2.h5`` (``/common`` attr ``k_grid``).
 # fmt: off
 K_GRID_PRODUCTION = np.array([
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28, 33, 38, 43,

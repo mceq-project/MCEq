@@ -1,7 +1,7 @@
 """Installed-package smoke checks against the staged v2 data packages.
 
 Staged by the release-bundle workflow into ``MCEQ_RELEASE_BUNDLES`` (the
-manifest, the 1D packages, the 2D bases). The SIBYLL23E 2D model file is
+manifest, the 1D packages, the 2D base). The SIBYLL23E 2D model file is
 deliberately *not* staged: its test makes the loader resolve it through the
 manifest and fetch it. The draft release needs an authenticated download,
 which the loader's ``_download_file`` does not do, so the ``gh_fetch`` fixture
@@ -23,7 +23,6 @@ BUNDLES = os.environ.get("MCEQ_RELEASE_BUNDLES")
 MANIFEST = "mceq_db_manifest_v2.yaml"
 EXTRA = "mceq_extra_models_air_1d_v2.h5"
 SIBYLL_2D = "mceq_model_SIBYLL23E_air_2d_v2.h5"
-RC7 = "mceq_base_air_2d_rc7_v2.h5"
 pytestmark = pytest.mark.skipif(not BUNDLES, reason="release bundles not staged")
 
 
@@ -184,13 +183,12 @@ def test_missing_model_error_names_manifest(monkeypatch):
         MCEqRun(interaction_model="NOSUCHMODEL", primary_model=None, theta_deg=0.0)
 
 
-@pytest.mark.parametrize("primary", ["2d", RC7])
-def test_solve_2d_fluka(primary, monkeypatch, tmp_path):
+def test_solve_2d_fluka(monkeypatch, tmp_path):
     import crflux.models as pm
 
     from MCEq.core import MCEqRun
 
-    _configure(monkeypatch, package(primary), tmp_path, e_min=10.0, e_max=100.0)
+    _configure(monkeypatch, package("2d"), tmp_path, e_min=10.0, e_max=100.0)
     run = MCEqRun(
         interaction_model="FLUKA20251",
         low_energy_model=None,

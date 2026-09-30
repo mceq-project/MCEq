@@ -31,7 +31,7 @@ import numpy as np
 
 from MCEq import config
 
-DB_FNAME = "mceq_base_air_2d_rc7_v2.h5"
+DB_FNAME = "mceq_base_air_2d_v2.h5"
 INTERACTION_MODEL = "FLUKA20251"
 THETA_DEG = 30.0
 PRIMARY_ENERGY_GEV = 100.0

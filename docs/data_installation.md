@@ -17,7 +17,6 @@ keep working unchanged.
 | `mceq_extra_models_air_1d_v2.h5` | 1D, 150 bins | the same spine plus every other 1D model: DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8CASCADE, PYTHIA8ANGANTYR, QGSJETII04, QGSJETIII, SIBYLL21, SIBYLL23D, SIBYLL23ESTAR{BAR,MIXED,RHO,STRANGE} |
 | `mceq_base_air_2d_v2.h5` | 2D, 150 bins × 48 Hankel modes | 2D spine (decays, losses) and FLUKA20251. **Default 2D package.** |
 | `mceq_model_SIBYLL23E_air_2d_v2.h5` | 2D, 150 × 48 | SIBYLL23E 2D yields only (a *model file*: needs the 2D base) |
-| `mceq_base_air_2d_rc7_v2.h5` | 2D, 80 bins × 48 modes | the FLUKA-only 2D database of the MCEq v2 paper, unchanged |
 | `mceq_db_manifest_v2.yaml` | — | the manifest: grid, sha256, size and models per medium of every file |
 
 A copy of the manifest ships inside the package; the files are assets of the

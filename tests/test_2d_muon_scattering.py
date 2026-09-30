@@ -26,7 +26,7 @@ def _restore(saved):
 
 @pytest.fixture(scope="module")
 def mceq_2d_with_scattering():
-    fn = "mceq_base_air_2d_rc7_v2.h5"
+    fn = "mceq_base_air_2d_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -50,7 +50,7 @@ def mceq_2d_with_scattering():
 
 @pytest.fixture(scope="module")
 def mceq_2d_no_scattering():
-    fn = "mceq_base_air_2d_rc7_v2.h5"
+    fn = "mceq_base_air_2d_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):

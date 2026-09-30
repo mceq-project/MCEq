@@ -28,7 +28,7 @@ Everything except the ``regenerate_matrices``, canonical-``int_m`` and
 construct-once pins is database-free: the methods under test read a bin-edge
 array and a sparse matrix, so a synthetic operator exercises the production
 code path without the interaction database. The three that need one use the
-reduced database CI carries, never the 329 MB 2D one.
+reduced database CI carries, never the 441 MB 2D one.
 """
 
 from __future__ import annotations
@@ -441,7 +441,7 @@ def test_the_assembled_1d_operators_are_canonical(mceq_sib21):
 
     The synthetic paths above pin the assembly code; this pins the objects a
     run actually hands to ``_compiled_operator``, on the reduced database CI
-    carries. The 2D operators would need the 329 MB FLUKA rc7 database, so
+    carries. The 2D operators would need the 441 MB FLUKA 2D database, so
     they are covered by the synthetic 2D branch here and by the assertion the
     ``operators2d`` generator makes on all fourteen of its cells.
     """

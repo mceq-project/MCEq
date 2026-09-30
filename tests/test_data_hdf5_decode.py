@@ -90,7 +90,7 @@ def decode_decays(path, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_base_air_2d_rc7_v2.h5"]
+    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_base_air_2d_v2.h5"]
 )
 def test_shipped_databases_are_four_column(db_fname):
     """Justifies the fixtures: no real file reaches the 2-column branch.
@@ -122,7 +122,7 @@ def test_shipped_databases_are_four_column(db_fname):
 def test_fixture_kappa_grid_is_a_subsample_of_the_production_grid():
     """Guards the constant the 2D fixture is built from against DB drift.
 
-    ``make_hdf5_fixtures.K_GRID_PRODUCTION`` is a hand-copy of the rc7
+    ``make_hdf5_fixtures.K_GRID_PRODUCTION`` is a hand-copy of the 2D base
     ``/common`` ``k_grid``; the 8-mode fixture grid is an evenly spaced
     subsample of it. A head truncation instead loads but then fails
     ``build_secant_kernel_ops`` with an error blaming ``theta_cap_deg`` -- see
@@ -130,9 +130,9 @@ def test_fixture_kappa_grid_is_a_subsample_of_the_production_grid():
     """
     from MCEq import config
 
-    path = pathlib.Path(config.data_dir) / "mceq_base_air_2d_rc7_v2.h5"
+    path = pathlib.Path(config.data_dir) / "mceq_base_air_2d_v2.h5"
     if not path.exists():
-        pytest.skip("mceq_base_air_2d_rc7_v2.h5 not available")
+        pytest.skip("mceq_base_air_2d_v2.h5 not available")
 
     with h5py.File(path, "r") as db:
         production = np.asarray(db["common"].attrs["k_grid"])
