@@ -51,6 +51,7 @@ isolated from later global writes.
 | `data_dir` | `config.paths.data_dir` |
 | `em_db_fname` | `config.paths.em_db_fname` |
 | `mceq_db_fname` | `config.paths.mceq_db_fname` |
+| `mceq_db_manifest` | `config.paths.mceq_db_manifest` |
 | `A_target` | `config.physics.A_target` |
 | `adv_set` | `config.physics.filters` |
 | `assume_nucleon_interactions_for_exotics` | `config.physics.assume_nucleon_interactions_for_exotics` |

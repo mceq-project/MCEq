@@ -102,3 +102,34 @@ def test_swapping_the_atmosphere_keeps_the_current_zenith(mceq_sib21):
 
     mceq_sib21.set_density_model(("CORSIKA", ("BK_USStd", None)))
     mceq_sib21.set_zenith_azimuth(0.0)
+
+
+def test_swapping_cached_atmosphere_invalidates_integration_path():
+    """Equal cached angles must not retain a path from another atmosphere."""
+    from MCEq.driver.mceq_run import MCEqRun
+    from MCEq.environment.base import EarthsAtmosphere
+
+    class CachedAtmosphere(EarthsAtmosphere):
+        def __init__(self, theta_deg):
+            self.theta_deg = theta_deg
+            self.thrad = None
+            self.max_theta = 90.0
+
+        def get_density(self, h_cm):
+            return 1.0
+
+        def set_theta(self, theta_deg):
+            self.theta_deg = theta_deg
+
+    run = MCEqRun.__new__(MCEqRun)
+    run.density_model = CachedAtmosphere(60.0)
+    run.theta_deg = 60.0
+    stale_path = (1, object(), object(), None)
+    run.integration_path = stale_path
+    replacement = CachedAtmosphere(60.0)
+
+    run.set_density_model(replacement)
+
+    assert run.integration_path is None
+    assert run.density_model is replacement
+    assert run.theta_deg == 60.0

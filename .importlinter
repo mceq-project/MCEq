@@ -25,8 +25,8 @@
 # that removes an import must delete its line here in the same PR.
 # `exhaustive_ignores` only
 # ratchets upwards -- it fails on a module that appears, while a stale entry for
-# a module that is gone is silent, and the `structure` golden section is what
-# reports that.
+# a module that is gone is silent; the `structure` section of the reference
+# numbers in mceq-maintenance-tools reports that.
 #
 # INI form (not the pyproject.toml TOML form) so contracts carry ids and
 # `lint-imports --contract C5` can run one of them.
@@ -252,7 +252,7 @@ ancestors =
     MCEq.models
 # No ignores. Since §13.2 item 6 the ancestors also include `MCEq.species` and
 # `MCEq.models`: today nothing catches a manager<->particle or models<->shim
-# cycle but this contract and the structure golden's cycles array. Probes (a
+# cycle but this contract and the structure reference's cycles array. Probes (a
 # `from MCEq.species import manager` in particle.py, a `from MCEq import
 # particlemanager` in manager.py) flip C7/C4b BROKEN respectively.
 # The one cycle this contract carried -- msis21_atmosphere

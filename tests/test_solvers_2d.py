@@ -9,7 +9,7 @@ dimension-agnostic, so equality holds to round-off.
 Each backend gates on the capability probe the rest of the suite uses:
 ``config.has_accelerate`` (macOS), ``config.has_mkl`` (``libmkl_rt`` under the
 prefix) and ``config.has_cuda`` (an importable cupy *and* a visible device).
-Every test needs the 329 MB FLUKA 2D database and skips without it.
+Every test needs the 441 MB FLUKA 2D database and skips without it.
 """
 
 import os
@@ -21,7 +21,7 @@ from MCEq import config
 from MCEq.core import MCEqRun
 
 #: Keep this module's tests on one ``--dist loadgroup`` worker; the database
-#: costs 329 MB per process. Five other modules open the same file and are not
+#: costs 441 MB per process. Five other modules open the same file and are not
 #: in the group, so this bounds one module rather than the whole suite.
 pytestmark = pytest.mark.xdist_group("fluka2d")
 
@@ -53,7 +53,8 @@ def _restore_2d_config():
 def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
-        mceq_db_fname="mceq_db_v2_fluka2d_rc7.h5",
+        mceq_db_fname="mceq_base_air_2d_v2.h5",
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         e_min=1e-1,
         e_max=1e4,
         muon_helicity_dependence=True,
@@ -71,7 +72,7 @@ def _solve(kernel, base, secant=False):
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
     config.e_min = base["e_min"]
     config.e_max = base["e_max"]

@@ -33,9 +33,11 @@ def test_set_theta_deg(mceq_sib21, theta, nmu):
     assert nmu_sol == approx(nmu, abs=1e-8)
 
 
+# Particle counts on the v2 CI data; e+- are not in the system without
+# enable_em.
 testdata_model = [
-    ["QGSJETII04", 48],
-    ["SIBYLL21", 52],
+    ["QGSJETII04", 36],
+    ["SIBYLL21", 40],
 ]
 ids_model = [f"{model[0]}" for model in testdata_model]
 
@@ -56,7 +58,7 @@ def test_set_interaction_model_update_particle_list(mceq_sib21):
 
     mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=True)
     n_particles = len(mceq_sib21._particle_list)
-    assert n_particles == 48
+    assert n_particles == 36
 
     mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
     n_particles_s = len(mceq_sib21._particle_list)

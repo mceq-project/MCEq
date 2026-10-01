@@ -55,6 +55,14 @@ For installations with pip, upgrading the code and data tables can be done with
 In case of major updates the database file will be updated on first import and the old
 one will be removed. For installations from source, pull the latest release or master branch. The database file will be updated automatically as well.
 
+.. note::
+   Since v2 the data is distributed as packages described by a YAML manifest
+   (a 1D base with FLUKA20251 + SIBYLL23E, an extra-models package, 2D
+   packages), so an install carries only the models it runs; a model missing
+   from the selected database is fetched from the data release on first use.
+   See :doc:`../data_installation` for the file list, the cluster pre-fetch
+   CLI and how to register a database of your own.
+
 Building MCEq from source
 .........................
 

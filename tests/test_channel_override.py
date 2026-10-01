@@ -22,7 +22,7 @@ pytestmark = pytest.mark.usefixtures("ci_reduced_db")
 
 @pytest.fixture
 def ci_reduced_db(monkeypatch):
-    monkeypatch.setattr(config, "mceq_db_fname", "mceq_db_v140reduced_compact.h5")
+    monkeypatch.setattr(config, "mceq_db_fname", "mceq_ci_base_air_1d_v2.h5")
 
 
 @pytest.fixture(scope="module")
@@ -33,7 +33,7 @@ def run_sib21():
     from MCEq.core import MCEqRun
 
     saved = _cfg.mceq_db_fname
-    _cfg.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    _cfg.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         return MCEqRun(
             interaction_model="SIBYLL21",

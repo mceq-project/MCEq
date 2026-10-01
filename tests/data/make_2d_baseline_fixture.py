@@ -10,9 +10,18 @@ cross-machine determinism) on a tight step schedule, and the Hankel-space
 state history plus the theta-space readouts are stored together with the
 full provenance needed to reproduce the run.
 
-Usage (from the repo root)::
+The file is 13 MB and is not kept in the repository: it lives on the
+``ci-assets`` release and ``tests/data/baseline_asset.py`` fetches it. After
+regenerating, publish it and update the digest that file pins::
 
     .venv/bin/python tests/data/make_2d_baseline_fixture.py
+    sha256sum tests/data/2d_baseline_solution.npz     # -> baseline_asset.SHA256
+    cp tests/data/2d_baseline_solution.npz 2d_baseline_solution_<sha[:12]>.npz
+    gh release upload ci-assets 2d_baseline_solution_<sha[:12]>.npz \
+        --repo mceq-project/MCEq
+
+The cache key in .github/workflows/_run_tests.yml carries the digest too, so
+bump it and the download name in the same change.
 """
 
 import pathlib
@@ -22,7 +31,7 @@ import numpy as np
 
 from MCEq import config
 
-DB_FNAME = "mceq_db_v2_fluka2d_rc7.h5"
+DB_FNAME = "mceq_base_air_2d_v2.h5"
 INTERACTION_MODEL = "FLUKA20251"
 THETA_DEG = 30.0
 PRIMARY_ENERGY_GEV = 100.0
@@ -77,6 +86,7 @@ def main():
         "secant_theta_transport": str(config.secant_theta_transport),
         "secant_theta_cap_deg": float(config.secant_theta_cap_deg),
         "muon_multiple_scattering": bool(config.muon_multiple_scattering),
+        "muon_scattering_model": str(config.muon_scattering_model),
         "muon_helicity_dependence": bool(config.muon_helicity_dependence),
         "mceq_commit": subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

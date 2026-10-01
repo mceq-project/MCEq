@@ -171,6 +171,7 @@ def _backend_on(path):
     paths = SimpleNamespace(
         data_dir=path.parent,
         mceq_db_fname=path.name,
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         # No EM database exists for the fixtures; enable_em is False.
         em_db_fname="no_such_em_db.h5",
     )

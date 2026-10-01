@@ -242,13 +242,17 @@ def test_snapshot_run_is_detached_from_later_writes():
     from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
 
-    snap = RunConfig.snapshot()
     saved = config.e_min
     try:
-        config.e_min = 7e0
+        # Both values are inside the test database's window, so the grid can
+        # tell them apart: a run built from the snapshot must keep the first.
+        config.e_min = 1e4
+        snap = RunConfig.snapshot()
+        config.e_min = 1e5
         m = MCEqRun(config=snap, **_run_kwargs((pm.HillasGaisser2012, "H3a")))
-        # the frozen grid (e_min 0.1 at snapshot time) reached the energy grid
-        assert m.e_bins[0] < 1.0, m.e_bins[0]
+        assert m.e_bins[0] < 1e5, m.e_bins[0]
+        live = MCEqRun(**_run_kwargs((pm.HillasGaisser2012, "H3a")))
+        assert live.e_bins[0] > m.e_bins[0]
     finally:
         config.e_min = saved
 

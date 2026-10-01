@@ -20,11 +20,6 @@ full-grid one, the second because constructing a model with ``e_min=`` /
 proves the two behaviours are observably distinct, so the fix (or a pin
 change) can never pass silently.
 
-Prior documentation of the defect: the prose note in the module docstring of
-``tests/golden/gen_species.py`` ("A third defect, not in the plan's ledger:
-``DataDrivenModel.e_min`` / ``e_max`` ... are stored and never read"). This
-file makes that note executable.
-
 The window machinery underneath is real: ``_generate_DDM_matrix`` honours its
 own ``e_min``/``e_max`` arguments via ``_eval_energy_cuts``. Test 2 pins that
 mechanism -- in the spirit of the B20/B5 mechanism tests in

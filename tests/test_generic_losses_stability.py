@@ -1,9 +1,8 @@
 """Stability of the continuous-loss band with generic losses on all charged.
 
-Repro and regression trio for the ``generic_losses_all_charged=True`` blowup
-documented in ``runs/2026-09-08_nan-generic-losses-repro`` of the
-mceq-em-integration harness: with the flag on, a coupled hadronic run on the
-wide (1 MeV floor, 10 bins/decade) v13 grid went non-finite at X=440 -- ETD2
+Repro and regression trio for the ``generic_losses_all_charged=True`` blowup:
+with the flag on, a coupled hadronic run on the wide (1 MeV floor, 10
+bins/decade) v13 grid went non-finite at X=440 -- ETD2
 exponentiates only the diagonal and treats the loss stencil explicitly, so a
 row with one-step stiffness ``dX_max * |dEdX| / (E * dlnE) >> 1`` sits in the
 expfit interior's unstable regime and grows from round-off. The fix makes the
@@ -14,32 +13,28 @@ generic proton curve to its tabulated boost range in
 
 The fixture mirrors the repro driver (p @ 5.6e9 GeV, theta 60, e_min 1e-3,
 numpy_etd2, ``disabled_particles`` cleared as in the Xmax-3panel driver whose
-observable is the e+- deposit). It is built from local run-artifact databases
-in the harness repo, so all three tests skip when those paths are absent.
+observable is the e+- deposit). Its two databases are not released; point
+``MCEQ_GENERIC_LOSSES_DB_DIR`` at a directory holding them, else all three
+tests skip.
 
-The solve test carries ``@pytest.mark.slow`` (its name is deliberate, not a
-registered marker -- nothing deselects it yet; the full gate runs it, ~30 s)
-and the two operator-level tests are the default-on guards. The tests share
-one fixture instance through an xdist group, so the parallel gate builds the
+The solve test takes hours under the loss-stencil step guard, so it is marked
+``slow`` and runs only with ``--run-slow``; the two operator-level tests run by
+default. The tests share one fixture instance through an xdist group, so the parallel gate builds the
 run once per worker, not once per test.
 """
 
+import os
 import pathlib
 
 import numpy as np
 import pytest
 
-HARNESS = pathlib.Path("/ceph/sharedfs/work/SATORI/anatoli/devel/mceq-em-integration")
+DB_DIR = pathlib.Path(os.environ.get("MCEQ_GENERIC_LOSSES_DB_DIR", "/nonexistent"))
 #: v13 compact DB with the 1 MeV low-energy extension (the grid the blowup
 #: was reproduced on; ``generic`` table 0.00146 .. 11.6 boost).
-V13_DB = (
-    HARNESS
-    / "runs/2026-05-25_em-db-v13-1mev/outputs/mceq_db_v13_1mev_compact_lext_DPMJETIII193.h5"
-)
+V13_DB = DB_DIR / "mceq_db_v13_1mev_compact_lext_DPMJETIII193.h5"
 #: PPM EM companion DB (enable_em is on, as in the repro driver).
-EM_DB = (
-    HARNESS / "runs/2026-06-26_ppm-prod-realistic/outputs/mceq_db_real-ppm-10dec_EM.h5"
-)
+EM_DB = DB_DIR / "mceq_db_real-ppm-10dec_EM.h5"
 
 pytestmark = pytest.mark.xdist_group("generic_losses_stability")
 
@@ -55,7 +50,7 @@ def v13_hadronic_run():
     adaptive layer replaces the manual rows=24 stop-gap.
     """
     if not (V13_DB.is_file() and EM_DB.is_file()):
-        pytest.skip("v13 / EM databases are harness-local run artifacts")
+        pytest.skip("set MCEQ_GENERIC_LOSSES_DB_DIR to the v13 / EM databases")
     import MCEq.config as config
     from MCEq.core import MCEqRun
     from MCEq.geometry.density_profiles import CorsikaAtmosphere
@@ -77,7 +72,6 @@ def v13_hadronic_run():
             "generic_losses_all_charged",
             "muon_helicity_dependence",
             "average_loss_operator",
-            "loss_stencil_method",
         )
     }
     saved_adv = dict(config.adv_set)
@@ -89,7 +83,6 @@ def v13_hadronic_run():
         config.e_min = 1e-3
         config.e_max = 1.1e14
         config.enable_default_tracking = False
-        config.loss_stencil_method = "expfit_low_upwind2"
         config.muon_helicity_dependence = False
         config.average_loss_operator = False
         config.generic_losses_all_charged = True

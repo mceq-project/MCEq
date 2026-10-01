@@ -16,6 +16,7 @@ def _saved_config():
         "e_max": config.e_max,
         "muon_helicity_dependence": config.muon_helicity_dependence,
         "muon_multiple_scattering": config.muon_multiple_scattering,
+        "muon_scattering_model": config.muon_scattering_model,
     }
 
 
@@ -26,17 +27,18 @@ def _restore(saved):
 
 @pytest.fixture(scope="module")
 def mceq_2d_with_scattering():
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_base_air_2d_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     saved = _saved_config()
     config.mceq_db_fname = fn
     config.e_min = 1e-1
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = True
+    config.muon_scattering_model = "gaussian"
     try:
         yield MCEqRun(
             interaction_model="FLUKA20251",
@@ -50,17 +52,42 @@ def mceq_2d_with_scattering():
 
 @pytest.fixture(scope="module")
 def mceq_2d_no_scattering():
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_base_air_2d_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     saved = _saved_config()
     config.mceq_db_fname = fn
     config.e_min = 1e-1
     config.e_max = 1e4
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False
+    try:
+        yield MCEqRun(
+            interaction_model="FLUKA20251",
+            primary_model=None,
+            theta_deg=0.0,
+            density_model=("CORSIKA", ("USStd", None)),
+        )
+    finally:
+        _restore(saved)
+
+
+@pytest.fixture(scope="module")
+def mceq_2d_coulomb():
+    fn = "mceq_base_air_2d_v2.h5"
+    if not os.path.exists(
+        os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
+    ):
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
+    saved = _saved_config()
+    config.mceq_db_fname = fn
+    config.e_min = 1e-1
+    config.e_max = 1e4
+    config.muon_helicity_dependence = True
+    config.muon_multiple_scattering = True
+    config.muon_scattering_model = "screened-coulomb"
     try:
         yield MCEqRun(
             interaction_model="FLUKA20251",
@@ -195,3 +222,26 @@ def sparse_diag_from(values, shape):
     from scipy.sparse import diags
 
     return diags(values, 0, shape=shape, format="csr")
+
+
+def test_coulomb_muon_rows_match_rate(mceq_2d_coulomb, mceq_2d_no_scattering):
+    """With the screened Coulomb model the extra muon diagonal is ``-Gamma``,
+    computed from the air composition stored in the database."""
+    from MCEq.operators.scattering import screened_coulomb_rate
+
+    db = mceq_2d_coulomb._mceq_db
+    rate = screened_coulomb_rate(
+        mceq_2d_coulomb.e_grid,
+        db.k_grid,
+        db.scattering_composition(),
+        mceq_2d_coulomb.pman[(13, 0)].mass,
+    )
+    N = mceq_2d_coulomb.dim_states
+    extra = (
+        mceq_2d_coulomb.int_m.tocsr().diagonal()
+        - mceq_2d_no_scattering.int_m.tocsr().diagonal()
+    ).reshape(db.n_k, N)
+    for _pdg_hel, lidx, dim in _muon_lidcs(mceq_2d_coulomb):
+        np.testing.assert_allclose(
+            extra[:, lidx : lidx + dim], -rate, rtol=1e-6, atol=1e-30
+        )

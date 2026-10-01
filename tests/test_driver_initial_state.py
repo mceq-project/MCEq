@@ -43,8 +43,8 @@ def test_facade_phi0_is_the_initial_state_vector(mceq_sib21):
     """``_phi0`` delegates by object, and assignment rebinds the source.
 
     ``MCEqRun._phi0`` reads ``InitialState.phi0`` — same object — and the
-    setter (used by tests/golden generators and test_solvers_2d to
-    install a prepared vector) writes it back where readers see it.
+    setter (used by test_solvers_2d to install a prepared vector) writes it
+    back where readers see it.
     """
     saved = mceq_sib21._phi0
     sentinel = np.zeros(saved.shape)

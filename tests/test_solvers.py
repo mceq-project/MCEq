@@ -557,14 +557,14 @@ def test_solve_batch_dtype_float32(kernel):
     import crflux.models as pm
 
     from MCEq.core import MCEqRun
-    from tests.golden import _flux_metric as flux_metric
+    from tests.helpers import flux_metric
 
     saved_kernel = config.kernel_config
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_db = config.mceq_db_fname
     config.kernel_config = kernel
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -741,6 +741,31 @@ def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
     assert sol_f32.dtype == np.float64  # the driver hands back fp64
     rel_l2 = np.linalg.norm(sol_f32 - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
     assert rel_l2 < 1e-4, f"{backend} fp32 (K={K}) vs numpy fp64 rel-L2 = {rel_l2:.3e}"
+
+
+def test_solve_etd2_fp32_below_normal_range():
+    """A state at 1e-40, below the fp32 normal range, keeps fp32 precision:
+    the driver solves for a power-of-two multiple of it."""
+    import scipy.sparse as sp
+
+    from MCEq.solvers import solve_etd2
+
+    rng = np.random.default_rng(7)
+    nsteps, size = 30, 24
+    dX = np.full(nsteps, 0.1)
+    rho_inv = np.linspace(1.0, 2.0, nsteps)
+    A = rng.standard_normal((size, size)) * 0.05
+    A -= np.diag(np.abs(A).sum(axis=1) + 0.1)
+    B = rng.standard_normal((size, size)) * 0.02
+    B -= np.diag(np.abs(B).sum(axis=1) + 0.05)
+    int_m, dec_m = sp.csr_matrix(A), sp.csr_matrix(B)
+    phi0 = rng.uniform(0.1, 1.0, size=(size, 2)) * 1e-40
+
+    sol64, _ = solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy")
+    sol32, _ = solve_etd2(
+        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", fp_precision=32
+    )
+    np.testing.assert_allclose(sol32, sol64, rtol=1e-4, atol=0)
 
 
 @pytest.mark.xdist_group("spacc")
@@ -944,7 +969,7 @@ def test_etd2_numpy_stable_at_high_zenith():
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
     config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         mceq = MCEqRun(
             interaction_model="SIBYLL21",
@@ -1010,37 +1035,17 @@ def test_solve_etd2_numpy_second_order_convergence():
     refinement level.  Refining inside frozen native steps instead — what
     ``_etd2_oversampled`` does — is a strictly weaker check.
 
-    The error norm excludes the EM rows (gamma, e+/e-), and that exclusion
-    is the whole point of this test.  Measured on this fixture 2026-07-29,
-    production path, reference at 128x refinement:
+    The norm is taken over the whole state, the hadronic and leptonic
+    system; photons and electrons are not in it unless ``config.enable_em``
+    is set. The EM rows converge only at first order (no diagonal damping,
+    see docs/mceq_v1.x_v2_diff.md) and would dominate the error.
 
-        rows            err @ default     order (1->2, 2->4, 4->8)
-        all             2.26e-02          0.708  0.877  0.979
-        EM only         2.27e-02          0.708  0.877  0.979
-        non-EM          5.95e-03          2.065  2.121  2.030
-
-    i.e. the hadronic/leptonic system is cleanly second order (confirmed at
-    theta = 0, 60 and 89 deg; muon, numu and proton fluxes converge at
-    1.87-1.93 in relative terms), while the EM rows converge at first order
-    and carry essentially the *entire* whole-state error.  That is the
-    documented ETD2 EM caveat — the semi-Lagrangian e+/e- and gamma rows
-    have no diagonal damping (see docs/mceq_v1.x_v2_diff.md).  Any all-rows
-    norm therefore reads order ~1 regardless of the scheme, which is why
-    this assertion must be taken over the non-EM block.
-
-    History: this test used to measure an all-rows norm on the production
-    path with the ``mceq_sib21`` fixture, which re-enables e+/e-.  The
-    coarsest solve then *diverged* (err ~1e8), so log2(err_h/err_h2) came
-    out ~33 and the ``>= 1.8`` floor was vacuous.  Whether it diverged was
-    round-off sensitive: on macos-15-intel/3.14 it stayed finite and the
-    honest all-rows ratio (1.04) surfaced as a CI failure.  The stability
-    bound below now rejects a divergence instead of reading it as high order.
+    The stability bound below rejects a divergence, which would otherwise
+    produce a large error ratio that reads as high order.
     """
-    saved_disabled = list(config.adv_set.get("disabled_particles", []))
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
-    config.adv_set["disabled_particles"] = [11, -11]
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     try:
         import crflux.models as pm
 
@@ -1082,16 +1087,11 @@ def test_solve_etd2_numpy_second_order_convergence():
             )
             return phi
 
-        # Mask the EM block out of the error norm (see docstring).
-        em_rows = np.zeros(mceq.dim_states, dtype=bool)
-        for pdg in (22, 11, -11):
-            try:
-                part = mceq.pman[pdg]
-            except (KeyError, AttributeError):
-                continue
-            em_rows[part.lidx : part.uidx] = True
-        assert em_rows.any(), "expected gamma/e+- rows in the state vector"
-        keep = ~em_rows
+        # No EM rows to leave out: the species are not in the system here.
+        assert not any(pdg in mceq.pman for pdg in (22, 11, -11)), (
+            "EM species in the state vector; the order below would read ~1"
+        )
+        keep = np.ones(mceq.dim_states, dtype=bool)
 
         # Reference at 32x refinement: 8x beyond the finest test point, so
         # its own O(h^2) residual sits ~64x below it.
@@ -1120,7 +1120,8 @@ def test_solve_etd2_numpy_second_order_convergence():
             f"{errs[1]:.3e} -> {errs[2]:.3e} -> {errs[4]:.3e}"
         )
 
-        # Measures 2.07 and 2.14 on this fixture.
+        # Measures 1.88 and 1.92 on this setup, at err 2.2e-04 for the
+        # default path.
         for coarse, fine in ((1, 2), (2, 4)):
             order = np.log2(errs[coarse] / errs[fine])
             assert order >= 1.8, (
@@ -1129,7 +1130,6 @@ def test_solve_etd2_numpy_second_order_convergence():
                 f"{errs[fine]:.3e})"
             )
     finally:
-        config.adv_set["disabled_particles"] = saved_disabled
         config.kernel_config = saved_kernel
         config.mceq_db_fname = saved_db
 
@@ -1605,7 +1605,7 @@ def test_solve_etd2_numpy_generalized_target_convergence():
     saved_db = config.mceq_db_fname
     saved_disabled = list(config.adv_set.get("disabled_particles", []))
 
-    config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disabled_particles"] = [11, -11]
     try:
         target = GeneralizedTarget(len_target=1000.0, env_density=1.0, env_name="water")
@@ -1965,7 +1965,9 @@ class _StubMCEq:
         from types import SimpleNamespace
 
         self._mceq_db = SimpleNamespace(is_2d=False)
-        self.matrix_builder = SimpleNamespace(_contloss_bands={})
+        self.matrix_builder = SimpleNamespace(
+            _contloss_bands={}, _contloss_upwind_rows={}
+        )
         self._resolve_secant = lambda: None
         # M3: the path helpers now read settings through ``run.config``
         # (snapshot or live view); the stub hands them the live module,

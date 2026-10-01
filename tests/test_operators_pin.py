@@ -1,21 +1,14 @@
-"""Behaviour pins for the operators layer, taken before Phase 5 moves it.
-
-Phase 5 of the layered-architecture refactor lifts ``MatrixBuilder`` and
-``MCEqRun._em_cascade_step_scale`` out of ``core.py`` into an ``operators/``
-package, extracts the loss stencils and the kappa^2 muon damping as pure
-functions, and splits ``int_m`` into ``int_m_hadr + dEdx_band``. The numbers
-are pinned by the ``operators1d`` / ``operators2d`` golden sections; what is
-pinned here is the *behaviour* around them, which no array value records:
+"""Behaviour of the operators layer that array values do not show:
 
 * which stencil names the builder accepts, and that it rejects the rest;
 * that ``op_matrix`` is built in ``MatrixBuilder.__init__`` and nowhere else,
   so ``regenerate_matrices()`` alone does not pick up a stencil change;
-* that every assembly path returns a *canonical* CSR — the one property the
-  golden digests cannot see, and the one MKL and cuSPARSE handles depend on;
-* that the golden sweep's construct-once shortcut is the same operator as a
-  fresh ``MCEqRun``, which was measured and then left in a docstring;
+* that every assembly path returns a *canonical* CSR — the one property a
+  checksum cannot see, and the one MKL and cuSPARSE handles depend on;
+* that rebuilding the operators on one run gives the same operator as a
+  fresh ``MCEqRun``;
 * the two-term invariant ``int_m == int_m_hadr + dEdx_band`` and the two
-  properties of the split the golden digests cannot see: that the band is
+  properties of the split a checksum cannot see: that the band is
   reused rather than recomputed, and that a settings change since the assembly
   is refused instead of answered with a mismatched half;
 * the identity, invalidation and release contract of the ``_compiled_operator``
@@ -27,7 +20,7 @@ Everything except the ``regenerate_matrices``, canonical-``int_m`` and
 construct-once pins is database-free: the methods under test read a bin-edge
 array and a sparse matrix, so a synthetic operator exercises the production
 code path without the interaction database. The three that need one use the
-reduced database CI carries, never the 329 MB 2D one.
+reduced database CI carries, never the 441 MB 2D one.
 """
 
 from __future__ import annotations
@@ -42,13 +35,9 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.core import MatrixBuilder, MCEqRun
 from MCEq.operators import loss_stencil, scattering
-from tests.golden import gen_operators1d
-from tests.golden._harness import canonical_csr_problems, sparse_digest
-from tests.golden._operator_sweep import (
-    STENCILS,
-    build_cell_operators,
-    pinned_config,
-)
+from tests.helpers import operators as operator_helpers
+from tests.helpers.operators import STENCILS, build_cell_operators, pinned_config
+from tests.helpers.sparse import canonical_csr_problems, sparse_digest
 
 # ---------------------------------------------------------------------------
 # loss stencils: which names exist, and that each one is a different operator
@@ -95,7 +84,7 @@ def stencil_config(monkeypatch):
 
 
 def test_stencil_names_match_the_builders_own_error(stencil_config):
-    """The golden sweep's `STENCILS` is the set the stencil module accepts.
+    """`STENCILS` is the set the stencil module accepts.
 
     The names are read back out of the ``ValueError`` rather than restated, so
     a family added to the builder without a golden cell fails here instead of
@@ -163,7 +152,7 @@ def test_expfit_interior_rows_do_not_annihilate_a_constant(
 
 
 def test_the_seven_stencils_are_seven_different_operators(stencil_config):
-    """Pairwise distinct on one grid — what makes the golden sweep informative."""
+    """Pairwise distinct on one grid — what makes the sweep informative."""
     matrices = {method: _op_matrix(method) for method in STENCILS}
     for i, a in enumerate(STENCILS):
         for b in STENCILS[i + 1 :]:
@@ -387,9 +376,11 @@ class _BlocksStub:
 
 @pytest.fixture
 def assembly_config(monkeypatch):
-    """Fix the two globals `_csr_from_blocks` reads through its groups."""
+    """Fix the globals `_csr_from_blocks` reads through its groups. The stub
+    has no database, so the Gaussian model (no medium composition) is used."""
     monkeypatch.setattr(config, "floatlen", np.float64)
     monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", "gaussian")
 
 
 @pytest.mark.parametrize("is_2d", [False, True], ids=["1d", "2d"])
@@ -444,7 +435,7 @@ def test_the_assembled_1d_operators_are_canonical(mceq_sib21):
 
     The synthetic paths above pin the assembly code; this pins the objects a
     run actually hands to ``_compiled_operator``, on the reduced database CI
-    carries. The 2D operators would need the 329 MB FLUKA rc7 database, so
+    carries. The 2D operators would need the 441 MB FLUKA 2D database, so
     they are covered by the synthetic 2D branch here and by the assertion the
     ``operators2d`` generator makes on all fourteen of its cells.
     """
@@ -542,7 +533,7 @@ def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# the golden sweep's construct-once shortcut == a fresh MCEqRun
+# operators rebuilt on one run == a fresh MCEqRun
 # ---------------------------------------------------------------------------
 
 #: The two cells the equivalence is measured on. ``upwind`` takes the
@@ -557,16 +548,15 @@ def _operator_digests(int_m, dec_m):
 
 
 def _reused_and_fresh_digests():
-    """Both arms of the equivalence, under the `operators1d` config pins.
+    """Both arms of the equivalence, under :data:`CONFIG_PINS`.
 
-    The reused arm is the sweep's own :func:`build_cell_operators`, on one run
-    constructed at the pinned default — the generator's exact sequence. The
-    fresh arm sets the two globals and constructs a whole ``MCEqRun`` per cell,
+    The reused arm is :func:`build_cell_operators` on one run constructed at
+    the default settings. The fresh arm sets the two globals and constructs a whole ``MCEqRun`` per cell,
     which builds ``op_matrix`` in ``MatrixBuilder.__init__`` and the matrices
     from it, with no state carried in from another cell.
     """
-    with pinned_config(gen_operators1d.CONFIG_PINS, gen_operators1d.ADV_SET_PINS):
-        mceq = MCEqRun(**gen_operators1d.RUN_KWARGS)
+    with pinned_config(operator_helpers.CONFIG_PINS, operator_helpers.ADV_SET_PINS):
+        mceq = MCEqRun(**operator_helpers.RUN_KWARGS)
         try:
             reused = {
                 cell: _operator_digests(*build_cell_operators(mceq, *cell))
@@ -579,7 +569,7 @@ def _reused_and_fresh_digests():
         for stencil, scatter in EQUIVALENCE_CELLS:
             config.loss_stencil_method = stencil
             config.muon_multiple_scattering = scatter
-            run = MCEqRun(**gen_operators1d.RUN_KWARGS)
+            run = MCEqRun(**operator_helpers.RUN_KWARGS)
             try:
                 fresh[stencil, scatter] = _operator_digests(run.int_m, run.dec_m)
             finally:

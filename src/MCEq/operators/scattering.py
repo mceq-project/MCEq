@@ -1,41 +1,42 @@
-r"""Gaussian multiple Coulomb scattering of muons in the 2D transport.
+r"""Multiple Coulomb scattering of muons in the 2D transport.
 
 In the 2D (Hankel) transport a state is a set of ``n_k`` modes, mode ``k``
 carrying the angular scale ``kappa_k``; ``kappa = 0`` is the axis-integrated
-(paraxial) mode. Small-angle diffusion of the angular distribution is a
-Laplacian in the transverse angle, and the Hankel transform turns that into a
-diagonal multiplier: with a Gaussian angular spread growing as
-``<theta^2> = theta_s^2(E) X`` per unit slant depth,
+(paraxial) mode. Scattering couples neither modes nor energies: it adds a rate
+``-Gamma(E, kappa_k)`` to the muon diagonal of each mode, which ETD2RK
+integrates exactly through ``exp(h D)``. ``Gamma`` is the single-scattering
+rate in mode space; multiple scattering follows from the exponential.
+``Gamma(E, 0) = 0``, so the axis-integrated flux is unchanged.
 
-    ``dF_k/dX |_ms = -(kappa_k^2 / 4) theta_s^2(E) F_k``.               (1)
+Two models:
 
-So scattering neither couples modes nor couples energies -- it is one number
-per ``(mode, species, energy)``, and it is added to the diagonal of the
-interaction operator. That placement is the point: the diagonal is the part
-ETD2RK integrates through ``exp(h D)``, so the damping is exact at any step
-size and needs no operator split. The paraxial mode is untouched, ``kappa = 0``
-in (1) giving zero: broadening the beam does not change its axis-integrated
-content.
+- Gaussian, ``Gamma = kappa^2 theta_s^2(E) / 4`` with the Gauss approximation
+  of CORSIKA (Heck & Pierog handbook p. 12). Gaussian core only, no
+  single-scattering tail.
+- Screened Coulomb, ``Gamma = sum_i R_i [1 - kappa a_i K_1(kappa a_i)]``: the
+  Hankel transform of the screened Rutherford cross section in the small-angle
+  plane, summed over the elements ``i`` of the medium. Wentzel screening angle
+  ``a_i`` from the Thomas-Fermi radius with the Moliere correction (Geant4
+  Physics Reference Manual, single scattering, Eqs. 97-98); atomic electrons
+  enter as ``Z(Z + 1)``. Point nuclei, no recoil, no charge or helicity
+  dependence. The angular distribution has no finite second moment.
 
-``theta_s`` is the Gauss approximation CORSIKA uses (Heck & Pierog handbook
-p. 12): the Gaussian core only, with no Moliere tail, so wide-angle single
-scatters are not described.
-
-Only muons are treated here. Hadronic species are dominated by nuclear
-interaction well before scattering matters, and the e+- angular distribution
-is set by the EM cascade's own kinematics rather than by Coulomb scattering
-of a through-going track.
+Only muons are treated. Hadrons interact before scattering matters, and the
+e+- angular distribution is set by the EM cascade kinematics.
 """
 
 from __future__ import annotations
 
 import numpy as np
+from scipy import constants
+from scipy.special import k1
 
 __all__ = [
     "E_S",
     "LAMBDA_S",
     "MUON_MASS",
     "mode_damping",
+    "screened_coulomb_rate",
     "muon_state_offsets",
     "theta_s_squared",
 ]
@@ -106,3 +107,43 @@ def muon_state_offsets(pdg2pref):
             if hasattr(particle, "lidx") and getattr(particle, "mceqidx", -1) >= 0:
                 offsets.append(particle.lidx)
     return offsets
+
+
+def _one_minus_z_k1(z):
+    """``1 - z K_1(z)``, with its series below ``z = 1e-3``; zero at ``z = 0``."""
+    out = np.zeros_like(z)
+    small = (z > 0) & (z < 1e-3)
+    x = z[small]
+    log = np.log(x / 2) + np.euler_gamma
+    out[small] = -x * x / 2 * (log - 0.5) - x**4 / 16 * (log - 1.25)
+    large = z >= 1e-3
+    out[large] = 1 - z[large] * k1(z[large])
+    return out
+
+
+def screened_coulomb_rate(e_kin, kappa, composition, muon_mass=MUON_MASS):
+    """Screened Coulomb rate ``Gamma`` [cm^2/g], shape ``(n_k, n_energy)``.
+
+    ``e_kin`` is the kinetic energy in GeV, ``kappa`` the mode scale in 1/rad.
+    ``composition`` has rows ``(Z, A [g/mol], atom fraction)``; the fractions
+    give ``N_A f / sum(f A)`` atoms per gram.
+    """
+    e_kin = np.asarray(e_kin, dtype=float)
+    kappa = np.asarray(kappa, dtype=float)
+    comp = np.asarray(composition, dtype=float)
+    hbarc = constants.hbar * constants.c / constants.electron_volt * 1e-7  # GeV cm
+    bohr = constants.physical_constants["Bohr radius"][0] * 100  # cm
+    alpha = constants.alpha
+    p2 = e_kin * (e_kin + 2 * muon_mass)
+    beta2 = p2 / (e_kin + muon_mass) ** 2
+    mean_a = np.sum(comp[:, 1] * comp[:, 2])
+    rate = np.zeros((kappa.size, e_kin.size))
+    for z, _, fraction in comp:
+        a_tf = 0.5 * (3 * np.pi / 4) ** (2 / 3) * bohr / z ** (1 / 3)
+        a2 = hbarc**2 / (p2 * a_tf**2) * (1.13 + 3.76 * (z * alpha) ** 2 / beta2)
+        strength = (
+            4 * np.pi * constants.Avogadro * fraction / mean_a
+            * (alpha * hbarc) ** 2 * z * (z + 1) / (p2 * beta2)
+        )  # fmt: skip
+        rate += strength / a2 * _one_minus_z_k1(kappa[:, None] * np.sqrt(a2))
+    return rate
