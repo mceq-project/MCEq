@@ -10,8 +10,4 @@ The numbers are regenerated with
     python -m tests.reference.values
 
 against the CI database, which is small enough to ship and to cache.
-
-The much larger set of reference numbers used during the v2 refactor -- full
-operator and spline dumps, pinned bitwise to one numpy/BLAS build -- is a
-maintenance instrument and lives in mceq-maintenance-tools under `goldens/`.
 """

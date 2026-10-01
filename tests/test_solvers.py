@@ -1035,32 +1035,13 @@ def test_solve_etd2_numpy_second_order_convergence():
     refinement level.  Refining inside frozen native steps instead — what
     ``_etd2_oversampled`` does — is a strictly weaker check.
 
-    The norm is taken over the whole state, which is the hadronic and
-    leptonic system: photons and electrons are not in it unless
-    ``config.enable_em`` is set.  That matters, because those rows are the
-    ones that are *not* second order.  Measured on this fixture 2026-07-29,
-    production path, reference at 128x refinement, back when gamma was
-    carried by default:
+    The norm is taken over the whole state, the hadronic and leptonic
+    system; photons and electrons are not in it unless ``config.enable_em``
+    is set. The EM rows converge only at first order (no diagonal damping,
+    see docs/mceq_v1.x_v2_diff.md) and would dominate the error.
 
-        rows            err @ default     order (1->2, 2->4, 4->8)
-        all             2.26e-02          0.708  0.877  0.979
-        EM only         2.27e-02          0.708  0.877  0.979
-        non-EM          5.95e-03          2.065  2.121  2.030
-
-    i.e. the hadronic/leptonic system is cleanly second order (confirmed at
-    theta = 0, 60 and 89 deg; muon, numu and proton fluxes converge at
-    1.87-1.93 in relative terms), while the EM rows converged at first order
-    and carried essentially the *entire* whole-state error.  That is the
-    documented ETD2 EM caveat — the semi-Lagrangian e+/e- and gamma rows
-    have no diagonal damping (see docs/mceq_v1.x_v2_diff.md).  An all-rows
-    norm used to read order ~1 for that reason alone, so the test masked
-    those rows out; with the EM species out of the system by default the
-    mask has nothing to remove and the whole-state norm is the honest one.
-
-    The stability bound below rejects a divergence instead of reading it as
-    high order: with gamma present the coarsest solve could diverge (err
-    ~1e8), making log2(err_h/err_h2) come out ~33 and the ``>= 1.8`` floor
-    vacuous.
+    The stability bound below rejects a divergence, which would otherwise
+    produce a large error ratio that reads as high order.
     """
     saved_kernel = config.kernel_config
     saved_db = config.mceq_db_fname
@@ -1139,9 +1120,8 @@ def test_solve_etd2_numpy_second_order_convergence():
             f"{errs[1]:.3e} -> {errs[2]:.3e} -> {errs[4]:.3e}"
         )
 
-        # Measures 1.88 and 1.92 on this fixture, at err 2.2e-04 for the
-        # default path -- two orders below the old all-rows 2.3e-02,
-        # which was almost entirely the gamma rows.
+        # Measures 1.88 and 1.92 on this setup, at err 2.2e-04 for the
+        # default path.
         for coarse, fine in ((1, 2), (2, 4)):
             order = np.log2(errs[coarse] / errs[fine])
             assert order >= 1.8, (

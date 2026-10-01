@@ -86,6 +86,7 @@ def main():
         "secant_theta_transport": str(config.secant_theta_transport),
         "secant_theta_cap_deg": float(config.secant_theta_cap_deg),
         "muon_multiple_scattering": bool(config.muon_multiple_scattering),
+        "muon_scattering_model": str(config.muon_scattering_model),
         "muon_helicity_dependence": bool(config.muon_helicity_dependence),
         "mceq_commit": subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

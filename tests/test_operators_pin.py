@@ -1,20 +1,12 @@
-"""Behaviour pins for the operators layer, taken before Phase 5 moves it.
-
-Phase 5 of the layered-architecture refactor lifts ``MatrixBuilder`` and
-``MCEqRun._em_cascade_step_scale`` out of ``core.py`` into an ``operators/``
-package, extracts the loss stencils and the kappa^2 muon damping as pure
-functions, and splits ``int_m`` into ``int_m_hadr + dEdx_band``. The numbers
-themselves are recorded in the reference set kept with the maintenance
-tools; what is pinned here is the *behaviour* around them, which no array
-value records:
+"""Behaviour of the operators layer that array values do not show:
 
 * which stencil names the builder accepts, and that it rejects the rest;
 * that ``op_matrix`` is built in ``MatrixBuilder.__init__`` and nowhere else,
   so ``regenerate_matrices()`` alone does not pick up a stencil change;
 * that every assembly path returns a *canonical* CSR — the one property a
   checksum cannot see, and the one MKL and cuSPARSE handles depend on;
-* that the sweep's construct-once shortcut is the same operator as a
-  fresh ``MCEqRun``, which was measured and then left in a docstring;
+* that rebuilding the operators on one run gives the same operator as a
+  fresh ``MCEqRun``;
 * the two-term invariant ``int_m == int_m_hadr + dEdx_band`` and the two
   properties of the split a checksum cannot see: that the band is
   reused rather than recomputed, and that a settings change since the assembly
@@ -384,9 +376,11 @@ class _BlocksStub:
 
 @pytest.fixture
 def assembly_config(monkeypatch):
-    """Fix the two globals `_csr_from_blocks` reads through its groups."""
+    """Fix the globals `_csr_from_blocks` reads through its groups. The stub
+    has no database, so the Gaussian model (no medium composition) is used."""
     monkeypatch.setattr(config, "floatlen", np.float64)
     monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", "gaussian")
 
 
 @pytest.mark.parametrize("is_2d", [False, True], ids=["1d", "2d"])
@@ -539,7 +533,7 @@ def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# the sweep's construct-once shortcut == a fresh MCEqRun
+# operators rebuilt on one run == a fresh MCEqRun
 # ---------------------------------------------------------------------------
 
 #: The two cells the equivalence is measured on. ``upwind`` takes the
@@ -554,11 +548,10 @@ def _operator_digests(int_m, dec_m):
 
 
 def _reused_and_fresh_digests():
-    """Both arms of the equivalence, under the `operators1d` config pins.
+    """Both arms of the equivalence, under :data:`CONFIG_PINS`.
 
-    The reused arm is the sweep's own :func:`build_cell_operators`, on one run
-    constructed at the pinned default — the generator's exact sequence. The
-    fresh arm sets the two globals and constructs a whole ``MCEqRun`` per cell,
+    The reused arm is :func:`build_cell_operators` on one run constructed at
+    the default settings. The fresh arm sets the two globals and constructs a whole ``MCEqRun`` per cell,
     which builds ``op_matrix`` in ``MatrixBuilder.__init__`` and the matrices
     from it, with no state carried in from another cell.
     """

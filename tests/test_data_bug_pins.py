@@ -185,10 +185,6 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
     are read in and the Python-level filter is the only thing acting -- and it
     drops ``(-13, 0)`` from ``relations`` while ``particles`` keeps all 22.
 
-    (Pinned on e± until the CI data moved to the v2 tables, whose SIBYLL21
-    pack had no e± children until the yields were re-compacted with the
-    decay tables to 1 MeV; mu± exercise the identical code path.)
-
     Correct behaviour: with ``[-13]`` the count should fall to 21 and
     ``(-13, 0)`` should be absent from ``particles`` too. (The read filter's
     ``abs()`` vs the literal match here is B2's other half; this pin covers
@@ -217,7 +213,7 @@ def test_b2_disabled_child_is_dropped_from_relations_but_kept_in_particles():
 def test_b2_positive_id_excludes_both_signs_at_hdf5_read_time():
     """B2, the ``abs()`` half, recorded so the pin above cannot be misread.
 
-    ``disabled_particles=[13]`` removes e+ *and* e- in the backend, two
+    ``disabled_particles=[13]`` removes mu+ *and* mu- in the backend, two
     particles fewer than the unfiltered load. Correct behaviour under a literal
     match (which is what ``config``'s comment on ``disabled_particles``
     promises) would be to drop ``(13, 0)`` only.

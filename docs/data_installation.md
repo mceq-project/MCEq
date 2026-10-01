@@ -2,33 +2,35 @@
 
 # Data installation
 
-MCEq ships its yield, cross-section, decay and energy-loss tables as HDF5
-databases that are downloaded on first use into `config.data_dir` (the
-package's `MCEq/data` directory unless you point it elsewhere). Since v2 the
-data comes in **packages** described by a small YAML **manifest**, so an
-install carries only the models it runs; the single-file databases of v1
-keep working unchanged.
+MCEq reads its yields, cross sections, decays and energy-loss tables from HDF5
+databases. They are downloaded on first use into `config.data_dir` (by default
+the `MCEq/data` directory of the installed package). The v2 data are split into
+packages, listed with their checksums and models in a YAML manifest.
 
-## The packages of the v2 data release
+## The v2 data release
 
 | file | grid | contents |
 |---|---|---|
-| `mceq_base_air_1d_v2.h5` | 1D, 150 bins (1 MeV–1 EeV) | energy grid, decays, continuous losses (air, hydrogen, ice, rock, water); FLUKA20251 and SIBYLL23E (+ SIBYLL23E on hydrogen). **Default 1D package.** |
-| `mceq_extra_models_air_1d_v2.h5` | 1D, 150 bins | the same spine plus every other 1D model: DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8CASCADE, PYTHIA8ANGANTYR, QGSJETII04, QGSJETIII, SIBYLL21, SIBYLL23D, SIBYLL23ESTAR{BAR,MIXED,RHO,STRANGE} |
-| `mceq_base_air_2d_v2.h5` | 2D, 150 bins × 48 Hankel modes | 2D spine (decays, losses) and FLUKA20251. **Default 2D package.** |
-| `mceq_model_SIBYLL23E_air_2d_v2.h5` | 2D, 150 × 48 | SIBYLL23E 2D yields only (a *model file*: needs the 2D base) |
-| `mceq_db_manifest_v2.yaml` | — | the manifest: grid, sha256, size and models per medium of every file |
+| `mceq_base_air_1d_v2.h5` | 1D, 150 bins (1 MeV–1 EeV) | decays, continuous losses (air, hydrogen, ice, rock, water), FLUKA20251, SIBYLL23E (air and hydrogen). **Default 1D database.** |
+| `mceq_extra_models_air_1d_v2.h5` | 1D, 150 bins | the same tables plus DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8CASCADE, PYTHIA8ANGANTYR, QGSJETII04, QGSJETIII, SIBYLL21, SIBYLL23D, SIBYLL23ESTAR{BAR,MIXED,RHO,STRANGE} |
+| `mceq_base_air_2d_v2.h5` | 2D, 150 bins × 48 Hankel modes | 2D decays, continuous losses, FLUKA20251, air composition for muon scattering. **Default 2D database.** |
+| `mceq_model_SIBYLL23E_air_2d_v2.h5` | 2D, 150 × 48 | SIBYLL23E 2D yields only; used together with the 2D base file |
+| `mceq_db_manifest_v2.yaml` | — | grid, sha256, size and models per medium of each file |
 
-A copy of the manifest ships inside the package; the files are assets of the
-`v2.0.0` release of the MCEq repository and every one has a `.sha256`
-sidecar.
+The FLUKA20251 yields cover projectile energies up to 10^5 GeV. Use FLUKA as the
+low-energy model together with a high-energy model, for example
+`interaction_model="SIBYLL23E", low_energy_model="FLUKA20251"`. SIBYLL23E yields
+start at 70 GeV.
+
+The files are assets of the `v2.0.0` release of the MCEq repository, each with a
+`.sha256` file. A copy of the manifest is installed with the package.
 
 ## How a run finds its data
 
-`config.mceq_db_fname` names the **primary** database. It supplies the energy
-grid, the decay and loss tables and whatever models it holds — so it must be
-a *base* package or any monolithic database. When you ask for a model the
-primary does not carry:
+`config.mceq_db_fname` names the primary database. It provides the energy grid,
+decays and continuous losses, and the models it contains. A model that is not in
+the primary database is looked up in the manifest (`config.mceq_db_manifest`,
+read from `config.data_dir` if present, else the installed copy):
 
 ```python
 from MCEq import config
@@ -40,86 +42,70 @@ run = MCEqRun(interaction_model="SIBYLL23ESTARRHO", theta_deg=0.0,
               primary_model=(pm.HillasGaisser2012, "H3a"))
 ```
 
-the loader reads the manifest (`config.mceq_db_manifest`, looked up in
-`config.data_dir`, else the packaged copy), picks the package on the **same
-energy grid** that lists `SIBYLL23ESTARRHO` for the run's medium
-(`mceq_extra_models_air_1d_v2.h5`), downloads it once if it is missing, checks
-that its `common/e_grid` is byte-identical to the primary's, and reads the
-yields and cross sections from it. Decays and losses always come from the
-primary. Numerics are unaffected: a model solved from a package is bitwise
-equal to the same model solved from the monolithic source database.
+Here `mceq_extra_models_air_1d_v2.h5` is downloaded if missing and the yields and
+cross sections of SIBYLL23ESTARRHO are read from it. Decays and losses always
+come from the primary database. The result is identical to a run on a single
+file that contains all models.
 
-Downloads are safe for cluster jobs that start together: the file is written
-to a temporary name, verified against the manifest's sha256 and renamed
-atomically, and a `<file>.lock` sentinel lets exactly one process fetch while
-the others fail fast with the pre-fetch commands below. No half-written
-database is ever read.
+A download is written to a temporary file, checked against the sha256 in the
+manifest and then renamed. When several jobs start at once, one downloads and
+the others stop with a message to pre-fetch the data (below).
 
-For 2D runs point the primary at the 2D base:
+For 2D runs use the 2D base file:
 
 ```python
-config.mceq_db_fname = "mceq_base_air_2d_v2.h5"      # FLUKA20251, 48 modes
+config.mceq_db_fname = "mceq_base_air_2d_v2.h5"
 run = MCEqRun(interaction_model="SIBYLL23E", low_energy_model="FLUKA20251", ...)
-#  -> mceq_model_SIBYLL23E_air_2d_v2.h5 (1.1 GB) is fetched on first use
+# downloads mceq_model_SIBYLL23E_air_2d_v2.h5 (1.1 GB) on first use
 ```
 
-A model that no package on the primary's grid provides raises an error that
-names the model, the manifest and the models the release does offer on that
-grid.
+If no file in the release provides the requested model, the error lists the
+models that are available.
 
 ## Pre-fetching on clusters
 
 ```bash
-# the default 1D and 2D packages
+# the default 1D and 2D databases
 python -m MCEq.data.download --defaults
-# every package that provides a model (1D grid by default; --dim 2d for the 2D family)
+# the files that provide given models (1D by default, --dim 2d for 2D)
 python -m MCEq.data.download --model SIBYLL23ESTARRHO --model QGSJETIII
 python -m MCEq.data.download --model SIBYLL23E --dim 2d
-# one file by name, or everything in the manifest (~2 GB)
+# one file by name, or all files (~2 GB)
 python -m MCEq.data.download --file mceq_extra_models_air_1d_v2.h5
 python -m MCEq.data.download --all
-# into a custom data directory (the one you set config.data_dir to)
+# into the directory that config.data_dir points to
 python -m MCEq.data.download --defaults --dir /project/mceq-data
 ```
 
-## Registering your own model file
+## Adding your own model file
 
-The manifest is plain YAML and the loader trusts it, so a database of your
-own becomes selectable by adding one entry to the copy in `config.data_dir`
-(copy the packaged file there first if it is not present):
+Add an entry to the manifest in `config.data_dir` (copy the installed manifest
+there first):
 
 ```yaml
 files:
   my_model_air_1d.h5:
-    path: /data/mceq/my_model_air_1d.h5   # local file: used in place, never fetched
-    grid: 1d-150                          # must be a grid id the manifest already defines
-    spine: false
+    path: /data/mceq/my_model_air_1d.h5   # local file, never downloaded
+    grid: 1d-150                          # a grid defined in the manifest
     models:
       air: [MYMODEL]
 ```
 
-The file needs the `common` group of the grid it declares (copy it from the
-base package) and the model's `hadronic_interactions/air/MYMODEL`
-(+ `_indptrs`) and `cross_sections/air/MYMODEL` datasets in the layout of the
-release packages — mceq-maintenance-tools step 6 (`6_split_bundles.py`)
-writes exactly this layout from any compact database.
+The file needs the `common` group of the base file and the datasets
+`hadronic_interactions/air/MYMODEL`, `hadronic_interactions/air/MYMODEL_indptrs`
+and `cross_sections/air/MYMODEL`, in the same layout as the release files.
 
-## The CI package set
+## Test data
 
-The test suite and the example notebooks run on a CI-sized cut of the same
-release data: `mceq_ci_base_air_1d_v2.h5` (FLUKA20251 + SIBYLL23E),
-`mceq_ci_extra_models_air_1d_v2.h5` (the other 13 models) and
-`mceq_db_manifest_ci_v2.yaml`, the 1D release restricted to the 31-bin window
-891 GeV – 891 TeV (assets of the `ci-assets` release; not usable for
-physics). A package declares the manifest it belongs to in its root attribute
-`mceq_db_manifest`, and that declaration takes precedence over
-`config.mceq_db_manifest` when the file is present in `config.data_dir`, so
-selecting `mceq_ci_base_air_1d_v2.h5` resolves SIBYLL21 or QGSJETII04 through
-the CI manifest without further configuration.
+The test suite and the example notebooks use a reduced copy of the 1D release,
+31 energy bins from 891 GeV to 891 TeV: `mceq_ci_base_air_1d_v2.h5`
+(FLUKA20251, SIBYLL23E), `mceq_ci_extra_models_air_1d_v2.h5` (the other models)
+and `mceq_db_manifest_ci_v2.yaml`, assets of the `ci-assets` release. They are
+not meant for physics. Each package names its manifest in the root attribute
+`mceq_db_manifest`, which takes precedence over `config.mceq_db_manifest`.
 
-## Monolithic databases
+## Older databases
 
-A single-file database (`mceq_db_lext_dpm193_v142.h5`, the retired v1.4 CI
-database, your own builds) is resolved against its own contents only and
-never touches the manifest, so every existing script, pin and CI cache keeps
-working. The v1 default file remains the default primary for now.
+v2 reads the single-file v1.4 databases (for example
+`mceq_db_lext_dpm193_v142.h5`): set `config.mceq_db_fname` to the file name. A
+single file is used as is, without the manifest.

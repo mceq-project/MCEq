@@ -55,7 +55,7 @@ def etd2_driver(
     paraxial transport; with the sec(theta) transport the coupled corner
     of the state is carried in the eigenbasis of the mode coupling, rotated
     in once before the loop and back once after it. Formulas and stage
-    order: :ref:`solver-mathematics`.
+    order: :ref:`solver-math`.
 
     Args:
       nsteps: number of steps.

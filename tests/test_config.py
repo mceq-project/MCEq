@@ -198,7 +198,7 @@ def test_download_publishes_only_complete_file(tmp_path, monkeypatch, failure):
 
 
 # ---------------------------------------------------------------------------
-# BLAS thread default honours the environment
+# BLAS thread default follows the environment
 # ---------------------------------------------------------------------------
 
 
@@ -211,9 +211,8 @@ def test_download_publishes_only_complete_file(tmp_path, monkeypatch, failure):
     ],
 )
 def test_default_thread_count_honours_the_environment(env, expected):
-    """A scheduler's ``*_NUM_THREADS`` is the per-process BLAS budget MCEq
-    starts from; importing MCEq used to overwrite it with ``min(16, cpu)``,
-    which oversubscribed pytest-xdist workers on shared nodes."""
+    """A ``*_NUM_THREADS`` set in the environment is the BLAS thread count
+    MCEq uses; without one it is ``min(16, cpus)``."""
     import os
     import subprocess
     import sys

@@ -33,9 +33,8 @@ def test_set_theta_deg(mceq_sib21, theta, nmu):
     assert nmu_sol == approx(nmu, abs=1e-8)
 
 
-# Particle counts on the v2 CI data (2026-09-16): the v2 tables carry no e+-
-# (six e+- helicity species and their two tracking children are gone), so
-# 48/52 on the v1.4 CI database became 40/44.
+# Particle counts on the v2 CI data; e+- are not in the system without
+# enable_em.
 testdata_model = [
     ["QGSJETII04", 36],
     ["SIBYLL21", 40],

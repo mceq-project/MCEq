@@ -30,7 +30,7 @@ products** (two evaluations of :math:`F(\Phi) = N\Phi`, one against
 plus a handful of element-wise vector ops on length-:math:`N` arrays.
 The sec(θ) mode coupling is carried in its eigenbasis; the complete
 mathematics of the step, formula by formula with the function that
-carries each, is on :ref:`solver-mathematics`.
+carries each, is on :ref:`solver-math`.
 
 The diagonal-exact treatment removes the explicit-stability bound
 that forced ~10 :sup:`4` steps at high zenith in MCEq 1.x — the new

@@ -101,41 +101,35 @@ class GroupView:
         return GroupView(object.__getattribute__(self, "_name"), fields, over=values)
 
 
+def _same(*names):
+    """Fields whose group attribute and flat config name coincide."""
+    return {name: name for name in names}
+
+
 #: group name -> {attribute: flat config name}
 GROUPS = {
-    "paths": {
-        "data_dir": "data_dir",
-        "mceq_db_fname": "mceq_db_fname",
-        "em_db_fname": "em_db_fname",
-        "mceq_db_manifest": "mceq_db_manifest",
-    },
-    "grid": {
-        "e_min": "e_min",
-        "e_max": "e_max",
-        "dtype": "floatlen",
-        "em_standalone_grid": "em_standalone_grid",
-    },
-    "physics": {
-        "enable_em": "enable_em",
-        "enable_energy_loss": "enable_energy_loss",
-        "enable_cont_rad_loss": "enable_cont_rad_loss",
-        "enable_em_ion": "enable_em_ion",
-        "generic_losses_all_charged": "generic_losses_all_charged",
-        "muon_helicity_dependence": "muon_helicity_dependence",
-        "muon_multiple_scattering": "muon_multiple_scattering",
-        "muon_scattering_model": "muon_scattering_model",
-        "enable_default_tracking": "enable_default_tracking",
-        "prompt_ctau": "prompt_ctau",
-        "minimal_primary_energy": "minimal_primary_energy",
-        "standard_particles": "standard_particles",
-        "use_isospin_sym": "use_isospin_sym",
-        "assume_nucleon_interactions_for_exotics": "assume_nucleon_interactions_for_exotics",
-        "fallback_to_air_cs": "fallback_to_air_cs",
-        "interaction_medium": "interaction_medium",
-        "A_target": "A_target",
-        "filters": "adv_set",
-        "low_energy": "low_energy_extension",
-    },
+    "paths": _same("data_dir", "mceq_db_fname", "em_db_fname", "mceq_db_manifest"),
+    "grid": _same("e_min", "e_max", "em_standalone_grid") | {"dtype": "floatlen"},
+    "physics": _same(
+        "enable_em",
+        "enable_energy_loss",
+        "enable_cont_rad_loss",
+        "enable_em_ion",
+        "generic_losses_all_charged",
+        "muon_helicity_dependence",
+        "muon_multiple_scattering",
+        "muon_scattering_model",
+        "enable_default_tracking",
+        "prompt_ctau",
+        "minimal_primary_energy",
+        "standard_particles",
+        "use_isospin_sym",
+        "assume_nucleon_interactions_for_exotics",
+        "fallback_to_air_cs",
+        "interaction_medium",
+        "A_target",
+    )
+    | {"filters": "adv_set", "low_energy": "low_energy_extension"},
     "losses": {
         "stencil_method": "loss_stencil_method",
         "stencil_alpha0": "loss_stencil_alpha0",
@@ -149,16 +143,16 @@ GROUPS = {
         "step_safety": "em_step_safety",
         "step_dense_eig_max": "em_step_dense_eig_max",
     },
-    "environment": {
-        "density_model": "density_model",
-        "r_E": "r_E",
-        "h_obs": "h_obs",
-        "h_atm": "h_atm",
-        "max_density": "max_density",
-        "len_target": "len_target",
-        "env_density": "env_density",
-        "env_name": "env_name",
-    },
+    "environment": _same(
+        "density_model",
+        "r_E",
+        "h_obs",
+        "h_atm",
+        "max_density",
+        "len_target",
+        "env_density",
+        "env_name",
+    ),
     "secant": {
         "transport": "secant_theta_transport",
         "cap_deg": "secant_theta_cap_deg",
@@ -171,27 +165,13 @@ GROUPS = {
     # picked up by a later solve() on a live instance: _calculate_integration_path
     # keys its cache on the unresolved kwargs, so a post-construction write is
     # only seen after force=True or an explicit solve(eps=...) argument.
-    "solver": {
-        "X_start": "X_start",
-        "etd2_path": "etd2_path",
-    },
-    "backend": {
-        "kernel_config": "kernel_config",
-        "cuda_gpu_id": "cuda_gpu_id",
-        "cuda_fp_precision": "cuda_fp_precision",
-        "mkl_threads": "mkl_threads",
-        "mkl_path": "mkl_path",
-    },
-    "output": {
-        "return_as": "return_as",
-        "excpt_on_missing_particle": "excpt_on_missing_particle",
-    },
-    "debug": {
-        "level": "debug_level",
-        "override_fcn": "override_debug_fcn",
-        "override_max_level": "override_max_level",
-        "print_module": "print_module",
-    },
+    "solver": _same("X_start", "etd2_path"),
+    "backend": _same(
+        "kernel_config", "cuda_gpu_id", "cuda_fp_precision", "mkl_threads", "mkl_path"
+    ),
+    "output": _same("return_as", "excpt_on_missing_particle"),
+    "debug": _same("override_max_level", "print_module")
+    | {"level": "debug_level", "override_fcn": "override_debug_fcn"},
 }
 
 #: Flat config name -> the group and group attribute that own it.

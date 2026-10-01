@@ -11,7 +11,7 @@ The layer between the species definition and the solvers:
 and decay matrices, :mod:`MCEq.operators.compiled` assembles them into the
 operator the ETD2RK step loop runs against, :mod:`MCEq.operators.secant`
 builds the sec(θ) mode coupling and :mod:`MCEq.operators.stiffness` the
-continuous-loss step cap. The mathematics is on :ref:`solver-mathematics`.
+continuous-loss step cap. The math is on :ref:`solver-math`.
 
 Reference/API
 =============

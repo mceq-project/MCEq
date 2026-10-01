@@ -76,9 +76,10 @@ def _preload_nvidia_pip_libs():
 # --------------------------------------------------------------------
 # The off-diagonal SpMM ``out = int_off x + ri dec_off x`` as one CSR
 # kernel that streams both operators once whatever K. One row per group of
-# ``S * C`` lanes of a warp: slice ``s`` strides the row's nonzeros, column group ``c`` owns ``K / C`` contiguous columns
-# of the ``(dim, K)`` C-ordered state, so a group reads a state row as one
-# coalesced segment; the slices are summed with warp shuffles.
+# ``S * C`` lanes of a warp: slice ``s`` strides the row's nonzeros, column
+# group ``c`` owns ``K / C`` contiguous columns of the ``(dim, K)`` C-ordered
+# state, so a group reads a state row as one coalesced segment; the slices
+# are summed with warp shuffles.
 # :func:`_lane_map` picks ``(S, C)``.
 # --------------------------------------------------------------------
 _CSR_SPMM_SRC = r"""
@@ -314,11 +315,11 @@ class CudaOperator:
     """Device copy of a compiled operator's split for the CUDA backend.
 
     Owns the device CSR arrays of ``int_off`` / ``dec_off``
-    (:class:`_DeviceCsr`) in the state dtype of ``fp_precision`` (32 or 64), and the diagonals
-    in fp64 whatever the precision — see
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`. The
-    state and scratch buffers are allocated per solve by
-    :class:`CudaBackend`; one device operator serves every K.
+    (:class:`_DeviceCsr`) in the state dtype of ``fp_precision`` (32 or 64),
+    and the diagonals in fp64 whatever the precision (see
+    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). The state and
+    scratch buffers are allocated per solve by :class:`CudaBackend`; one
+    device operator serves every K.
     """
 
     def __init__(self, int_off, dec_off, d_int, d_dec, device_id, fp_precision):

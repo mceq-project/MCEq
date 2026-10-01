@@ -90,8 +90,7 @@ def test_n_e_energy_cutoff_and_grid(mceq_sib21):
     import crflux.models as pm
 
     if not any(p.name == "e+" for p in mceq_sib21.pman.all_particles):
-        # The v2 hadronic tables carry no e+- (EM sector in mceq-EM); n_e is
-        # identically zero without enable_em, so the pin has nothing to bite.
+        # Without enable_em there are no e+- in the system and n_e is zero.
         pytest.skip("no e+- in the hadronic system; n_e needs enable_em")
     mceq_sib21.set_primary_model(pm.HillasGaisser2012, "H3a")
     mceq_sib21.solve([0, 1])

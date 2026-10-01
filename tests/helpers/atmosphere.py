@@ -12,9 +12,6 @@ MSIS21_CLASSES = frozenset(
     }
 )
 
-#: Atmosphere classes the section cannot construct, with the reason. Reported
-#: as a golden array so the gap is a compared fact rather than a claim in prose.
-
 
 def h_form(cls_name: str) -> str:
     """Which ``geom.h`` call form this class's spline tail uses.
@@ -26,7 +23,7 @@ def h_form(cls_name: str) -> str:
     sample; the two MSIS21 tails call it once on the whole vector. So the split
     is exactly MSIS21 against everything else.
 
-    It matters because the two forms do not agree bitwise: ``h`` squares
+    The two forms can differ by 1 ULP: ``h`` squares
     ``A_1 + l - dl``, and numpy lowers ``arr ** 2`` to a multiply while a
     float64 scalar goes through libm ``pow``, which is 1 ULP off at some
     arguments. The ``- r_E`` at the end turns that into 1 ULP of 6.37e8 cm.

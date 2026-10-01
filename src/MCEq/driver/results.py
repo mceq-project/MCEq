@@ -15,23 +15,12 @@ angle-integrated spectrum — see ``docs/mceq_v1.x_v2_diff.md`` §11.9.
 Per-mode / per-angle readout is :func:`convert_to_theta_space`.
 """
 
-from importlib import import_module
-
 import numpy as np
 import scipy.special
 from scipy.interpolate import interp1d
 
+from MCEq import config
 from MCEq.misc import info
-
-#: ``get_solution``'s default ``return_as`` below captures the process
-#: default when this function is defined (v1 semantics, pinned by the
-#: reference signature probe); pass ``None`` to resolve the
-#: setting from the run. The module is fetched dynamically rather than
-#: with a static import: the driver may import config either way (C5
-#: exempts it), but the AST-based structure census sees only static
-#: import statements, and the dynamic form keeps that census's import
-#: graph the shape it was pinned with.
-config = import_module("MCEq.config")
 
 
 class MCEqBatchResult:
@@ -324,6 +313,7 @@ def get_solution(
     mag=0.0,
     grid_idx=None,
     integrate=False,
+    # Default fixed at import time (v1 behaviour); None uses the run's setting.
     return_as=config.return_as,
     dont_sum_helicities=False,
 ):

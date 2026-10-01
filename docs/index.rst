@@ -25,7 +25,7 @@ Various models/parameterizations for particle interactions and atmospheric densi
   quickstart/index
   tutorial
   example-gallery
-  solver_mathematics
+  solver_math
   data_installation
   v14v13_diff
   migration_v2_layout

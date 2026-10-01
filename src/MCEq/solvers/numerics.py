@@ -7,7 +7,7 @@ remainder and ``h`` the step size::
     a  = eD x + hphi1 F(x)
     x+ = a + hphi2 (F(a) - F(x))
 
-Derivation: :ref:`solver-mathematics`.
+Derivation: :ref:`solver-math`.
 
 This module is the single source of the formulas, lowered three ways:
 numpy here; C in ``MCEq/solvers/_kernels/etd2/etd2_kernels.c``, which

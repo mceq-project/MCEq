@@ -9,12 +9,10 @@ from __future__ import annotations
 import copy
 from contextlib import contextmanager
 
-#: Config globals this section fixes. The autouse fixture in tests/conftest.py
-#: restores six of them, so a section built inside a full pytest session has to
-#: set — and afterwards restore — the rest itself. ``loss_stencil_method`` and
-#: ``muon_multiple_scattering`` are pinned to the production defaults and then
-#: swept by :data:`._operator_sweep.CELLS`; they are listed so the sweep starts
-#: from a known state and the teardown puts it back.
+#: Config globals set for the operator builds and restored afterwards (the
+#: autouse fixture in tests/conftest.py restores only some of them).
+#: ``loss_stencil_method`` and ``muon_multiple_scattering`` start at the
+#: production defaults and are then varied per build.
 CONFIG_PINS = {
     "debug_level": 0,
     "override_debug_fcn": [],
@@ -76,8 +74,8 @@ RUN_KWARGS = {
 
 
 #: Every interior stencil ``MatrixBuilder._construct_differential_operator``
-#: accepts (:data:`MCEq.operators.loss_stencil.STENCIL_METHODS`, since Phase 5
-#: move B; ``core.py:3295-3352`` before it). Kept in the order of the dispatch:
+#: accepts (:data:`MCEq.operators.loss_stencil.STENCIL_METHODS`), in the order
+#: of the dispatch:
 #: the two ``expfit_low_upwind*`` composites, the three high-order families,
 #: then the two monotone upwind operators. ``tests/test_operators_pin.py``
 #: reads the accepted names out of the ``ValueError`` the method raises and
@@ -92,34 +90,15 @@ STENCILS = (
     "upwind2",
 )
 
-#: ``(label, config.muon_multiple_scattering)`` for the second sweep axis.
-
-
-#: ``(label, config.muon_multiple_scattering)`` for the second sweep axis.
+#: ``(label, config.muon_multiple_scattering)`` for the second axis.
 SCATTERING = (("ms_on", True), ("ms_off", False))
-
-#: The one cell outside the cross product: ``average_loss_operator``, at the
-#: default stencil with muon scattering on. The flag sends
-#: ``cont_loss_operator`` through ``_average_operator`` —
-#: ``matrix_power(I + op * step, 1/step) - I`` — and is False in all five
-#: generators, with nothing else in the suite setting it, so the branch and its
-#: ``np.linalg.matrix_power`` have no golden coverage at all. Both generators
-#: pin ``loss_step_for_average`` at 1e-1, so the cell runs at ten explicit
-#: Euler steps rather than at whatever the ambient value happens to be.
-#:
-#: It is not a third axis: the averaging is a property of the band, not of the
-#: stencil dispatch or of the assembly, so fourteen more cells would pin the
-#: same statement seven times over at 0.9 s each in 2D.
 
 
 @contextmanager
 def pinned_config(config_pins, adv_set_pins):
-    """Hold one section's config pins in force, then put the globals back.
+    """Set the given config globals, then restore them.
 
-    The generator and the fresh-build equivalence test enter the fixture
-    through this, so the test cannot drift onto a different one. The
-    ``hasattr`` sweep fails loudly on a pin block naming a config global the
-    tree has dropped, rather than silently pinning nothing.
+    Fails if a name is no longer a config global.
     """
     from MCEq import config
 
@@ -143,9 +122,8 @@ def pinned_config(config_pins, adv_set_pins):
 def build_cell_operators(mceq, stencil, scattering, average=False):
     """Assemble ``(int_m, dec_m)`` for one cell on an already-built run.
 
-    The sweep's whole construct-once shortcut, in one function, so the
-    generator and the equivalence test in ``tests/test_operators_pin.py``
-    exercise the same three calls instead of two copies that can drift.
+    Reuses the run instead of constructing a new one per setting;
+    ``tests/test_operators_pin.py`` checks that both give the same operator.
 
     All three globals are set on every cell, ``average_loss_operator``
     included, so the averaged cell cannot leak into the one built after it.
@@ -164,8 +142,3 @@ def build_cell_operators(mceq, stencil, scattering, average=False):
     builder = mceq.matrix_builder
     builder._construct_differential_operator()
     return builder.construct_matrices(skip_decay_matrix=False)
-
-
-# --------------------------------------------------------------------------
-# recorders
-# --------------------------------------------------------------------------

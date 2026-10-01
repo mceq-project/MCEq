@@ -31,7 +31,7 @@ SCHEMA = 1
 
 
 def array_sha256(values) -> str:
-    """sha256 of the raw C-order bytes of an array: the spine digest."""
+    """sha256 of the raw C-order bytes of an array: the grid digest."""
     return hashlib.sha256(
         np.ascontiguousarray(np.asarray(values)).tobytes()
     ).hexdigest()

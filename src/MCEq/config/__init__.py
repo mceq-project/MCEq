@@ -330,15 +330,15 @@ use_isospin_sym = True
 #: dataset defect.
 muon_helicity_dependence = True
 
-#: Gaussian multiple Coulomb scattering of muons in the 2D transport,
-#: applied as per-mode diagonal damping -kappa^2 theta_s^2(E)/4 with the
-#: CORSIKA Gauss-approximation theta_s (E_s = 21 MeV, lambda_s = 37.7
-#: g/cm2; Gaussian core only, no Moliere tail). Disable only to compare
-#: against MC runs with scattering switched off.
+#: Coulomb scattering of muons in the 2D transport (see
+#: :mod:`MCEq.operators.scattering`). Disable only to compare against MC runs
+#: with scattering switched off.
 muon_multiple_scattering = True
 
-#: Muon angular model: legacy "gaussian" or a material table in the 2D DB.
-muon_scattering_model = "gaussian"
+#: Muon scattering model: "screened-coulomb" (screened Rutherford, with the
+#: single-scattering tail; needs the medium composition in the database) or
+#: "gaussian" (CORSIKA Gauss approximation, Gaussian core only).
+muon_scattering_model = "screened-coulomb"
 
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,

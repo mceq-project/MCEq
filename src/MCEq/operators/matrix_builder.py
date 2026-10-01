@@ -471,9 +471,8 @@ class MatrixBuilder:
     def _muon_scattering_damping(self):
         """Return muon offsets and negative rates, shape (n_k, n_energy).
 
-        The selected Gaussian or material-table generator enters the interaction
-        diagonal. ETD2 exponentiates the uncoupled diagonal; secant coupling is
-        applied by the existing solver and still requires step convergence.
+        The rate of the selected model (:mod:`MCEq.operators.scattering`)
+        enters the interaction diagonal, which ETD2 integrates exactly.
         """
         if not (
             self.is_2d and getattr(self._physics, "muon_multiple_scattering", False)
@@ -493,8 +492,18 @@ class MatrixBuilder:
             damping = np.asarray(
                 [scattering.mode_damping(theta_s_sq, kappa) for kappa in self.k_grid]
             )
+        elif model == "screened-coulomb":
+            damping = -scattering.screened_coulomb_rate(
+                self._energy_grid.c,
+                self.k_grid,
+                self._layout.scattering_composition(),
+                mu_mass,
+            )
         else:
-            damping = -self._layout.muon_scattering_rate(model)
+            raise ValueError(
+                f"Unknown muon_scattering_model {model!r}; "
+                "use 'screened-coulomb' or 'gaussian'."
+            )
         return muon_lidcs, damping
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):

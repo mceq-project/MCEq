@@ -3,7 +3,7 @@
 The largest absolute off-diagonal row sum of the assembled loss bands,
 without their monotone upwind closure rows and scaled by the largest
 sec(theta) eigenvalue, is the rate that caps the step at
-``LOSS_STEP_SAFETY / rate`` (:ref:`solver-mathematics`, the loss cap). A
+``LOSS_STEP_SAFETY / rate`` (:ref:`solver-math`, the loss cap). A
 conservative step policy, not an error estimator.
 """
 

@@ -17,12 +17,9 @@ observable is the e+- deposit). Its two databases are not released; point
 ``MCEQ_GENERIC_LOSSES_DB_DIR`` at a directory holding them, else all three
 tests skip.
 
-The solve test carries ``@pytest.mark.slow`` and is skipped unless
-``--run-slow`` (root conftest, 2026-09-17): under the loss-stencil step guard
-of ``330cd12`` its solve went from ~30 s to many hours single-threaded, which
-stalled every full gate -- the step count this system now demands is an open
-maintainer question. The two operator-level tests are the default-on guards. The tests share
-one fixture instance through an xdist group, so the parallel gate builds the
+The solve test takes hours under the loss-stencil step guard, so it is marked
+``slow`` and runs only with ``--run-slow``; the two operator-level tests run by
+default. The tests share one fixture instance through an xdist group, so the parallel gate builds the
 run once per worker, not once per test.
 """
 

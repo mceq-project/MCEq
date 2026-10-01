@@ -61,14 +61,8 @@ jobs:
       - name: Install requirements
         run: uv pip install -e . --group notebooks
 
-      # Same assets, paths and cache key as _run_tests.yml, on purpose: the two
-      # jobs then share one cache entry instead of each downloading the files.
-      # The CI data packages: the v2 release data cut to the 31-bin test window
-      # (891 GeV .. 891 TeV) and packaged like the release -- a base package
-      # (FLUKA20251 + SIBYLL23E + spine), an extra-models package and the CI
-      # manifest the loader resolves the other models through. The cache key
-      # carries the manifest digest, so a new CI set invalidates the cache and
-      # an unchanged one is a hit on every run (the "Report" step shows which).
+      # The v2 data cut to the 31-bin test window (891 GeV .. 891 TeV). Same
+      # paths and cache key as _run_tests.yml, so both jobs share one entry.
       - name: Cache CI data packages
         id: cache-db
         uses: actions/cache@v6

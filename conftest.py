@@ -7,17 +7,11 @@ live here and work from the repository root.
 Nothing here imports MCEq — the file is loaded before collection, including in
 jobs that only lint.
 
-It also sets the BLAS thread budget of every test process, and it must: this
-file is the first thing pytest imports in the controller and in every xdist
-worker, before numpy loads its BLAS (OpenBLAS reads ``OPENBLAS_NUM_THREADS``
-once, at load). The budget is the CPUs this process may use divided among the
-workers (``PYTEST_XDIST_WORKER_COUNT``, 1 in the controller and without xdist),
-capped at 16: ``-n 8`` on a 48-core node runs 8 x 6 threads, ``-n 3`` on a
-4-vCPU runner 3 x 1. ``MCEq.config._default_threads()`` reads the same
-variables, so library and tests agree on one budget. An explicit outer setting
-(a scheduler, a CI job) is respected; the marker variable tells a worker that
-the values it inherited came from the controller's own computation and must be
-redone with the worker count.
+It also sets the BLAS thread count of every test process before numpy loads
+its BLAS (OpenBLAS reads ``OPENBLAS_NUM_THREADS`` once, at load): the available
+CPUs divided among the xdist workers, capped at 16 (``-n 3`` on a 4-vCPU runner
+gives 1 thread each). A value set outside pytest is kept. The marker variable
+tells a worker to recompute values it inherited from the controller.
 """
 
 from __future__ import annotations
@@ -48,7 +42,7 @@ if os.environ.get(_THREADS_FROM_CONFTEST) or not any(
 MARKERS = (
     "cuda: requires a usable CUDA device, not merely an importable cupy",
     "slow: a solve costing many minutes on production-size databases (needs"
-    " --run-slow); the full gate passes it deliberately, CI never does",
+    " --run-slow); not run in CI",
 )
 
 #: `(marker, flag)` for every mark this conftest skips unless its flag is

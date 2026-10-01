@@ -61,8 +61,8 @@ files:
     note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
       SIBYLL21/23D/23ESTAR*)
   mceq_base_air_2d_v2.h5:
-    sha256: 4592f7698f60a6fbc65c91d249aa7e9d8a52b196b4fcc434e247b277f47761aa
-    size: 440645377
+    sha256: 346f6bf96cefa3ae237a90317074cf3b2a8d8726c04b3d9827852815d554ac33
+    size: 440652097
     grid: 2d-150x48
     spine: true
     models:
@@ -74,7 +74,7 @@ files:
       sha256: 80ee4ff558365c3231d2232c30aa4a1b13408658a335c4f05faf34e9feccd71d
       verbatim: false
     note: default 2D package on the unified 150-bin lattice (FLUKA qe_fwd yields re-compacted
-      with the 150-bin 2D decay cubes)
+      with the 150-bin 2D decay cubes); air composition for muon scattering
   mceq_model_SIBYLL23E_air_2d_v2.h5:
     sha256: 97ea3c33a8f37441720e0d962ddd2d0228c7dc006802ae7ec267dd2d0c51f4fe
     size: 1187282000

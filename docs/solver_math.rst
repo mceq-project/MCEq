@@ -1,17 +1,15 @@
-.. _solver-mathematics:
+.. _solver-math:
 
-***********************************
-The transport step: the mathematics
-***********************************
+*******************
+Transport step math
+*******************
 
 .. currentmodule:: MCEq
 
-This page states the mathematics of the ETD2RK transport step of MCEq 2
-as implemented, and names the function that carries each formula. It
-covers two things: the diagonal-exact splitting and the exponential
-integrator, and the :math:`\sec\theta` path elongation carried in the
-eigenbasis of the mode coupling. The code is slim on purpose; what a stage
-computes is written here once.
+The ETD2RK transport step of MCEq 2 as implemented, with the function that
+implements each formula: the diagonal-exact splitting and the exponential
+integrator, and the :math:`\sec\theta` path elongation in the eigenbasis of
+the mode coupling.
 
 Cascade equations in slant depth
 ================================
@@ -194,8 +192,8 @@ of the next section (one without it):
 :func:`~MCEq.driver.paths.continuous_loss_dx_cap`. The closure rows are
 left out because they are sized for the design depth already and their
 one-step map is bounded for any step under the diagonal-exact splitting;
-their row sums fall as :math:`1/E` and measure accuracy, not stability.
-This is a conservative policy, not a proof of stability of the full
+their row sums fall as :math:`1/E` and limit accuracy, not stability.
+The cap is a heuristic; it does not prove stability of the full
 non-normal operator.
 
 Two-dimensional transport
@@ -288,13 +286,11 @@ multiple-scattering damping of the muons
 :math:`\Delta` does not commute with :math:`S_P`, so it cannot be
 integrated exactly in this basis; its eigenbasis diagonal goes into
 :math:`L` and only its mode mixing stays in the remainder. This matters
-for stability. With all of :math:`\Delta` in the remainder, the one-step
-map of the lowest muon bin of the production configuration (:math:`E =
-45` MeV, :math:`\kappa_{\max} = 2000`, :math:`\sec\theta` capped at
-3.86) has spectral radius 1.0 at :math:`h = 2` g/cm² and 1.36 at
-:math:`h = 2.37`, where a horizontal solve at :math:`dX_{\max} = 3`
-became nonfinite; with :eq:`cornerL` the radius is 0.50 at :math:`h = 2`
-and 0.42 at :math:`h = 3`.
+for stability: for the lowest muon bin of the production configuration
+(:math:`E = 45` MeV, :math:`\kappa_{\max} = 2000`, :math:`\sec\theta` capped
+at 3.86) the spectral radius of the one-step map is 0.50 at :math:`h = 2`
+g/cm² and 0.42 at :math:`h = 3`; with all of :math:`\Delta` in the remainder
+it is 1.0 at :math:`h = 2` and 1.36 at :math:`h = 2.37`.
 The corner therefore receives the same elementwise factors as the rest of
 the state and the predictor and corrector :eq:`etd2` apply unchanged. Only
 the remainder needs the coupling. The operand of the transport operator is

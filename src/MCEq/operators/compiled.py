@@ -6,7 +6,7 @@ the optional sec(theta) operator set of :mod:`MCEq.operators.secant` into
 one read-only :class:`CompiledOperator`: the diagonal / off-diagonal split
 in the state layout of the step loop and the mode-coupling operators in
 their eigenbasis. :func:`em_step_scale` is the EM stiffness scale that caps
-``dX``. The mathematics is in :ref:`solver-mathematics`.
+``dX``. The math is in :ref:`solver-math`.
 
 The off-diagonals are CSR with every row's nonzeros kept in their build
 order, also after the layout permutation, so every backend sums the same
@@ -160,7 +160,7 @@ class CompiledOperator:
         diagonals; ``L_int = lam_j d_int_0i`` plus the eigenbasis diagonal
         of the kappa-dependent part of ``d_int`` on the corner (the muon
         multiple-scattering damping), so that only its mode mixing is left
-        to the remainder (:ref:`solver-mathematics`)."""
+        to the remainder (:ref:`solver-math`)."""
         lay, c = self.layout, self.coupling
         lam = c.lam[:, None]
         d_int0, d_dec0 = (

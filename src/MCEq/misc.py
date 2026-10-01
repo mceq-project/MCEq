@@ -52,9 +52,8 @@ def _moved_to_data(name):
     `from MCEq.data import energy_grid` resolves the *attribute* of the
     package, which a later re-export of the namedtuple under its lowercase
     name would silently turn into the tuple type. The statements are still
-    written out so that `grimp` -- and the structure reference generator,
-    which parses the same text -- sees the two `MCEq.misc -> MCEq.data.*`
-    edges.
+    written out so that static import analysis (`grimp`) sees the two
+    `MCEq.misc -> MCEq.data.*` edges.
 
     Only the FIRST access imports; later ones come out of `_RESOLVED`. The
     memo matters at interpreter shutdown, when an `import` can fail and
@@ -217,8 +216,7 @@ def strip_em_species(particle_list, physics):
     """Leave the electromagnetic species out unless the cascade is on.
 
     Without EM interactions photons and electrons have no transport, and pi0
-    has nothing to decay into. Energy reaching them leaves the cascade where
-    it is produced, which is where it left before they were dropped. The
+    has nothing to decay into; energy going into them leaves the cascade. The
     databases carry the channels either way; this decides only what the
     solver propagates.
     """

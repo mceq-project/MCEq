@@ -47,45 +47,30 @@ class HDF5Backend:
                 stack.enter_context(self._em_store.session())
             yield
 
-    def muon_scattering_rate(self, model):
-        """Read a material generator [cm2/g] on the active energy/mode grid.
+    def scattering_composition(self):
+        """Elemental composition of the medium, rows ``(Z, A [g/mol], atom fraction)``.
 
-        Tables are independent of hadronic model. No interpolation or material
-        fallback is implicit: a missing or incompatible table is an error.
+        Read from ``material_scattering/<medium>/composition``; the screened
+        Coulomb scattering model needs it.
         """
-        if not isinstance(model, str) or not model or "/" in model:
-            raise ValueError("Invalid muon scattering model name")
-        path = f"material_scattering/{self.medium}/muon/{model}"
-        if not self._had.has(path):
+        group = f"material_scattering/{self.medium}"
+        if not self._had.has(f"{group}/composition"):
             raise ValueError(
-                f"Muon scattering table {path!r} is absent from {self.had_fname}. "
-                "Use a database containing this material/model or explicitly "
-                "select physics.muon_scattering_model='gaussian'."
+                f"{group}/composition is absent from {self.had_fname}. Use a "
+                "database with this medium or set "
+                "config.muon_scattering_model = 'gaussian'."
             )
-        attrs = self._had.attrs(path)
-        expected = dict(
-            schema_version=1,
-            model=model,
-            rate_units="cm2/g",
-            energy_units="GeV",
-            energy_kind="kinetic",
-            kappa_units="rad^-1",
-            axes="energy,kappa",
-        )
-        if any(attrs.get(key) != value for key, value in expected.items()):
-            raise ValueError(f"Incompatible muon scattering metadata at {path}")
-        data = self._had.read_group_datasets(path)
-        energy, kappa, rate = data["e_kin"], data["kappa"], data["rate"]
+        comp = np.asarray(self._had.read_group_datasets(group)["composition"], float)
         if (
-            not np.array_equal(energy, self._e_grid_full)
-            or not np.array_equal(kappa, self.k_grid)
-            or rate.shape != (energy.size, kappa.size)
-            or np.any(~np.isfinite(rate))
-            or np.any(rate < 0)
-            or np.any(rate[:, kappa == 0] != 0)
+            comp.ndim != 2
+            or comp.shape[1] != 3
+            or not np.all(np.isfinite(comp))
+            or np.any(comp <= 0)
+            or np.any(comp[:, 0] != np.round(comp[:, 0]))
+            or not np.isclose(comp[:, 2].sum(), 1.0, rtol=0, atol=1e-6)
         ):
-            raise ValueError(f"Invalid muon scattering grids or rates at {path}")
-        return rate[self._cuts, :].T.copy()
+            raise ValueError(f"Invalid composition at {group}/composition")
+        return comp
 
     def __init__(
         self,

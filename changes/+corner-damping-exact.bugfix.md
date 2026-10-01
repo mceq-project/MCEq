@@ -1,1 +1,5 @@
-In the sec(theta) corner the eigenbasis diagonal of the kappa-dependent part of the interaction diagonal (the muon multiple-scattering damping) is now integrated exactly (``CompiledOperator.exact_slot_diagonals``); only its mode mixing stays in the explicit remainder. With the damping fully explicit, the 2D step became unstable at the lowest muon bin above about 2 g/cm^2 for ``e_min = 0.05`` GeV and ``sec(theta)`` capped at 75 deg, which left horizontal solves nonfinite at ``dX_max = 3`` once the continuous-loss cap stopped binding.
+The 2D sec(theta) step integrates the eigenbasis diagonal of the muon
+multiple-scattering damping exactly (`CompiledOperator.exact_slot_diagonals`);
+only its mode mixing stays explicit. Treated fully explicitly, the damping made
+near-horizontal solves with `e_min = 0.05` GeV and `dX_max = 3` diverge in the
+lowest muon energy bins.

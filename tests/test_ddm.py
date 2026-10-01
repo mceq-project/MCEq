@@ -195,10 +195,7 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
         channel, mceq_qgs, e_min=20, e_max=50, average=True
     )
 
-    # Values on the v2 CI data (QGSJETII04 sigma regenerated on real air, rc3;
-    # yields re-compacted with the decay tables to 1 MeV, which moves the
-    # second diagonal entry by -1.5e-6 rel); the v1.4 CI database gave
-    # 4.70861343e-04 / 4.00016770e-06.
+    # Values on the v2 CI data.
     expected_matrix = np.array(
         [
             [

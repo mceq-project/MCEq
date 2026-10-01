@@ -52,22 +52,16 @@ def canonical_csr_problems(mat, label="matrix") -> list:
     """Every way `mat` is not a canonical CSR, as sentences. Empty when it is.
 
     Canonical is what MKL and cuSPARSE assume of the buffers they bind: one
-    entry per `(row, column)`, columns ascending within a row. Unsorted indices
-    are *invisible* to every digest in this harness — :func:`sparse_digest`
-    sorts a copy before hashing, so a matrix that came back with two entries of
-    a row transposed hashes identically to the sorted one and compares green
-    against the stored digest. Duplicate entries do move the hash, but only as
-    an unexplained digest change that regenerating the section absorbs, after
-    which the section pins a non-canonical operator forever. Either way the
-    live buffers a backend has bound are wrong and nothing here says so.
+    entry per `(row, column)`, columns ascending within a row.
+    :func:`sparse_digest` sorts a copy before hashing, so it cannot detect
+    unsorted indices.
 
     The buffers are checked directly, not through `has_sorted_indices` /
     `has_canonical_format`: scipy caches both flags on first read, so an
     in-place edit of `indices` leaves them answering True over unsorted data.
     Each flag is then checked *against* the buffers, sorting for the first and
-    sorting-plus-uniqueness for the second, because a backend that reads a flag
-    and skips its own sort is misled by a stale one exactly as badly as by
-    unsorted data.
+    sorting-plus-uniqueness for the second, since a backend may trust a flag
+    and skip its own sort.
     """
     problems = []
     if mat.format != "csr":
