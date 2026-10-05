@@ -2464,6 +2464,57 @@ def test_cuda_diag_factors_f64diag_accuracy():
         )
 
 
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+@pytest.mark.parametrize("fp", [64, 32])
+@pytest.mark.parametrize("same_pattern", [True, False])
+def test_cuda_apply_off_mode_blocks(same_pattern, fp):
+    """The SpMM kernel against scipy on ``n_k`` diagonal blocks, with one
+    pattern kept once or a pattern per block (every row its own), over a
+    partial tile, K across the lane maps, one ``ri`` and one per lane."""
+    from types import SimpleNamespace
+
+    import cupy as cp
+    import scipy.sparse as sp
+
+    from MCEq.solvers.backends import cuda as cu
+
+    rng = np.random.default_rng(5)
+    n_k, N = 5, 300
+
+    def blocks(density):
+        base = sp.random(N, N, density=density, random_state=rng, format="csr")
+        out = []
+        for _ in range(n_k):
+            b = (
+                base.copy()
+                if same_pattern
+                else sp.random(N, N, density=density, random_state=rng, format="csr")
+            )
+            b.data = rng.standard_normal(b.nnz)
+            out.append(b)
+        return sp.block_diag(out, format="csr")
+
+    A, B = blocks(0.1), blocks(0.03)
+    dim = n_k * N
+    dev = cu.CudaOperator(
+        A, B, np.zeros(dim), np.zeros(dim), config.cuda_gpu_id, fp, n_k
+    )
+    assert dev.n_blk == (n_k if same_pattern else 1)
+    be = cu.CudaBackend(
+        dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
+    )
+    tol = 1e-13 if fp == 64 else 1e-5
+    for K in (1, 3, 8, 64):
+        be.bind(dim, K, False, 1)
+        x = rng.standard_normal((dim, K))
+        for ri in (np.float64(1.7), rng.uniform(0.5, 2.0, K)):
+            out = cp.empty((dim, K), dtype=be.dtype)
+            be.apply_off(be.asarray(x), out, be.asarray(ri))
+            ref = A @ x + ri * (B @ x)
+            err = np.max(np.abs(cp.asnumpy(out) - ref)) / np.max(np.abs(ref))
+            assert err < tol, f"K={K}, ri {np.shape(ri)}: rel err {err:.1e}"
+
+
 @pytest.mark.skipif(
     "fork" not in multiprocessing.get_all_start_methods(),
     reason="no fork start method; the path build runs serially here",
