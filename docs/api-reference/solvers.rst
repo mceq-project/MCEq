@@ -59,11 +59,12 @@ The solver is layered like the matrix build:
    (scipy CSR SpMM), :func:`mkl_backend` (MKL sparse BLAS handles,
    row-major SpMM over the ``(dim, K)`` state), :func:`accelerate_backend`
    (Apple Accelerate sparse handles, column-major SpMM in 64-column tiles
-   over staged buffers) or :func:`cuda_backend` (cuSPARSE via cupy, fp64 or
-   fp32 with fp64 diagonal factors). The backend owns the handles / device
-   buffers and executes the stages of the step on its array module —
-   nothing else differs between backends. The sparse product itself is one
-   small ``apply_off`` binding per library: :class:`ScipyApplyOff`,
+   over staged buffers) or :func:`cuda_backend` (one CSR SpMM kernel for both
+   operators, which keeps the sparsity pattern shared by the Hankel modes
+   once; fp64 or fp32 with fp64 diagonal factors). The backend owns the
+   handles / device buffers and executes the stages of the step on its array
+   module — nothing else differs between backends. The sparse product itself
+   is one small ``apply_off`` binding per library: :class:`ScipyApplyOff`,
    :class:`MklApplyOff`, :class:`SpaccApplyOff`.
 4. :func:`etd2_driver` is the one step loop. It runs the single-axis solve
    (``K = 1``), the shared-path multi-RHS solve (``(dim, K)`` state, one
