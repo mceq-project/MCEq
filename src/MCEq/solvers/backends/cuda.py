@@ -79,13 +79,13 @@ def _preload_nvidia_pip_libs():
 # ``S * C`` lanes of a warp: slice ``s`` strides the row's nonzeros, column
 # group ``c`` owns ``K / C`` contiguous columns of the ``(dim, K)`` C-ordered
 # state, so a group reads a state row as one coalesced segment; the slices
-# are summed with warp shuffles. ``csr_spmm_acc`` adds one operator's
-# product to ``out`` on the same lane layout (the Legendre band).
-# :func:`_lane_map` picks ``(S, C)``. An operator made of ``n_k`` diagonal
-# blocks with one sparsity pattern (the modes of the 2D operators)
-# keeps that pattern once. The groups walk tiles of ``_SPMM_TILE`` pattern
-# rows, the same tile in every block in turn, so the tile's indices are
-# read from cache after the first block.
+# are summed with warp shuffles; :func:`_lane_map` picks ``(S, C)``.
+# The operators are ``n_blk`` diagonal blocks with one sparsity pattern each
+# (the modes of a 2D operator, else ``n_blk = 1``), stored once.
+# Groups walk tiles of ``_SPMM_TILE`` pattern rows through every block in
+# turn, so a tile's indices are read from cache after the first block.
+# ``csr_spmm_acc`` adds one operator's product to ``out`` on the same lane
+# layout (the Legendre continuous-loss band).
 # --------------------------------------------------------------------
 _CSR_SPMM_SRC = r"""
 template <typename T, int KC>
@@ -146,13 +146,11 @@ __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
     }
 }
 
-// y = A x + ri B x over (n_rows, K) C-ordered x and y; ri is read as
-// ri[k * ri_stride]: stride 0 for one shared value, 1 for one per lane.
-// A and B are n_blk diagonal blocks of N rows sharing the pattern (ip, idx);
-// block b's values start at b * nnz of its matrix. The groups run over tiles
-// of `tile` pattern rows, block after block within a tile, so a tile's
-// indices and state rows are reused from cache. Every lane of a warp reaches
-// the shuffles (inactive rows sum nothing).
+// y = A x + ri B x over (n_blk * N, K) C-ordered x and y. A and B are n_blk
+// diagonal blocks of N rows with one pattern (ip, idx) each; block b's values
+// start at b * nnz. ri is read as ri[k * ri_stride]: stride 0 for one shared
+// value, 1 for one per lane. Every lane of a warp reaches the shuffles
+// (inactive rows sum nothing).
 template <typename T, int K, int S, int C>
 __global__ void csr_spmm_off(const int N, const int n_blk, const int tile,
                              const int* __restrict__ ipA,
@@ -240,13 +238,11 @@ _LANE_MAPS = {
 
 
 def _lane_map(K, itemsize, row_nnz=None, kernel="csr_spmm_off"):
-    """``(S, C)`` of the SpMM kernel for ``K`` state columns and ``row_nnz``
-    nonzeros per row: the tuned entry of :data:`_LANE_MAPS`, or one column
-    group of 16 slices for any other ``K`` (each lane then holds all K
-    accumulators), with at most ``row_nnz / 16`` slices. The band kernel
-    ``csr_spmm_acc`` keeps the column groups and takes one slice: its rows
-    hold about two nonzeros (S = 1 is within 3 % of the best S on the 2D
-    Legendre band)."""
+    """``(S, C)`` for ``K`` state columns: the :data:`_LANE_MAPS` entry, else
+    ``(16, 1)``; ``S`` is halved while ``16 S`` exceeds ``row_nnz``, the
+    nonzeros per row of both operators together. The band kernel
+    ``csr_spmm_acc`` takes ``S = 1`` (about two nonzeros per row; within 3 %
+    of the best S on the 2D Legendre band)."""
     S, C = _LANE_MAPS[itemsize].get(K, (16, 1))
     if kernel == "csr_spmm_acc":
         return 1, C
@@ -259,9 +255,8 @@ _SPMM_KERNELS = {}
 
 
 def _spmm_kernel(cp, dtype, K, row_nnz=None, kernel="csr_spmm_off"):
-    """The compiled ``kernel<T, K, S, C>`` of :data:`_CSR_SPMM_SRC` for the
-    state ``dtype``, ``K`` and ``row_nnz``, with its lanes per row; compiled
-    once per process."""
+    """The compiled ``kernel<T, K, S, C>`` of :data:`_CSR_SPMM_SRC` and its
+    lanes per row; cached per process."""
     dtype = np.dtype(dtype)
     S, C = _lane_map(K, dtype.itemsize, row_nnz, kernel)
     key = (dtype, int(K), kernel, S, C)
