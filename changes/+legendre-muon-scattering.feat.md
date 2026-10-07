@@ -1,0 +1,1 @@
+Muon multiple scattering on Legendre-mode 2D databases uses the exact Goudsmit–Saunderson rates of the screened Coulomb (Wentzel) cross section and, for the Gaussian model, the spherical diffusion eigenvalue l(l + 1) θ_s²/4. `MCEq.operators.scattering.mode_rates` selects the rate per model and angular basis.
