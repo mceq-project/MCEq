@@ -139,21 +139,18 @@ class HDF5Backend:
             )
 
             # 2D databases are detected by the ``k_dim`` attribute on the
-            # ``common`` group; there is no config flag.
+            # ``common`` group; there is no config flag. Their modes are the
+            # Legendre moments <P_l(cos theta)> with l = k_grid.
             self.is_2d = "k_dim" in ca
+            self.angular_basis = hdf5_store.angular_basis(ca, grid_store.fname)
             if self.is_2d:
                 self.n_k = int(ca["k_dim"])
                 self.k_grid = np.asarray(ca["k_grid"])
             else:
                 self.n_k = 1
                 self.k_grid = np.asarray([0])
-            # "legendre": the modes are <P_l(cos theta)> with l = k_grid.
-            basis = ca.get("angular_basis", "hankel")
-            self.angular_basis = (
-                basis.decode() if isinstance(basis, bytes) else str(basis)
-            )
 
-            # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
+            # Full CSR dimension: in 2D it spans n_k modes * energy grid.
             if self.is_2d:
                 self.dim_full = int(ca["e_dim"]) * self.n_k
             else:
@@ -201,7 +198,7 @@ class HDF5Backend:
         eqv_lookup = reverse_equivalences(equivalences)
 
         for tupidx, tup in enumerate(tuple_idcs):
-            # In 2D each channel stores n_k Hankel-mode blocks back-to-back,
+            # In 2D each channel stores n_k mode blocks back-to-back,
             # so the flat read length per channel scales with n_k.
             if self.is_2d:
                 expand_len = self.n_k

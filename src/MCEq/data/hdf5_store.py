@@ -114,6 +114,28 @@ class HDF5Store:
             return {k: np.asarray(group[k]) for k in group}
 
 
+def angular_basis(common, fname):
+    """``"legendre"`` for a 2D ``common`` group (``k_dim`` set), ``None`` for 1D.
+
+    The modes of a 2D file are the Legendre moments ``<P_l(cos theta)>`` with
+    ``l = k_grid``, declared by ``angular_basis = "legendre"``. A 2D file
+    without it, such as the Hankel-mode packages of the v2.0.0 release, is
+    refused.
+    """
+    if "k_dim" not in common:
+        return None
+    basis = common.get("angular_basis")
+    basis = basis.decode() if isinstance(basis, bytes) else basis
+    if basis != "legendre":
+        raise ValueError(
+            f"{fname} is a 2D database with angular_basis = {basis!r}. MCEq "
+            "reads 2D databases booked in Legendre moments only (common "
+            "attribute angular_basis = 'legendre'); Hankel-mode 2D files, such "
+            "as mceq_base_air_2d_v2.h5 of v2.0.0, are not supported."
+        )
+    return basis
+
+
 def unpack_channel(
     mat_data,
     indptr_row,
@@ -140,7 +162,7 @@ def unpack_channel(
     ``(1, n_e, n_e)``.  A 1D channel yields ``(n_e, n_e)``.
     """
     if is_2d:
-        # The stored channel matrix is block-diagonal in kappa
+        # The stored channel matrix is block-diagonal in the mode
         # (modes are decoupled). Slice each per-mode block out of
         # the sparse matrix and energy-cut it straight into a
         # preallocated ``(n_k, n_e, n_e)`` tensor -- the dense

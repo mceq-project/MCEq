@@ -145,8 +145,11 @@ class ModelStoreCache:
 
     def _check_grid(self, store, name) -> None:
         """Refuse a package whose ``common/e_grid`` is not byte-identical to
-        the primary's: the two would index each other's bins silently."""
-        other = np.ascontiguousarray(np.asarray(store.attrs("common")["e_grid"]))
+        the primary's: the two would index each other's bins silently. A 2D
+        package must be booked in Legendre moments, like the primary."""
+        common = store.attrs("common")
+        hdf5_store.angular_basis(common, store.fname)
+        other = np.ascontiguousarray(np.asarray(common["e_grid"]))
         if (
             other.shape != self._e_grid.shape
             or other.tobytes() != self._e_grid.tobytes()

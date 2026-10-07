@@ -273,6 +273,46 @@ def test_one_dimensional_channel_decodes_to_the_stored_block(hdf5_fixture_dbs):
     assert np.array_equal(decoded, fixtures.channel_block(NEXT_CH))
 
 
+def _hankel_copy(path, basis):
+    """The 2D fixture with ``angular_basis`` removed (``basis=None``) or set."""
+    with h5py.File(path, "r+") as db:
+        del db["common"].attrs["angular_basis"]
+        if basis is not None:
+            db["common"].attrs["angular_basis"] = basis
+    return path
+
+
+def test_angular_basis_of_the_fixtures(hdf5_fixture_dbs):
+    """2D files are Legendre, 1D files have no angular basis."""
+    assert backend(hdf5_fixture_dbs["two_d_width4"]).angular_basis == "legendre"
+    assert backend(hdf5_fixture_dbs["one_d_width4"]).angular_basis is None
+
+
+@pytest.mark.parametrize("basis", [None, "hankel", b"hankel"])
+def test_two_dimensional_database_without_legendre_basis_is_refused(tmp_path, basis):
+    """2D files are read as Legendre moments only. A file without
+    ``angular_basis = "legendre"`` -- the Hankel-mode packages -- is refused
+    with an error naming the file, instead of being solved in the wrong basis.
+    """
+    path = fixtures.build_database(tmp_path / "hankel_2d.h5", n_k=fixtures.N_K)
+    _hankel_copy(path, basis)
+    with pytest.raises(ValueError, match=r"hankel_2d\.h5 is a 2D database.*Legendre"):
+        backend(path)
+
+
+def test_two_dimensional_model_package_without_legendre_basis_is_refused(tmp_path):
+    """A 2D model package found through the manifest passes the same check."""
+    from MCEq.data import db_manifest, hdf5_store
+
+    path = fixtures.build_database(tmp_path / "hankel_model.h5", n_k=fixtures.N_K)
+    _hankel_copy(path, None)
+    cache = db_manifest.ModelStoreCache.__new__(db_manifest.ModelStoreCache)
+    cache._e_grid = np.ascontiguousarray(fixtures.E_GRID)
+    cache._paths = SimpleNamespace(mceq_db_fname="primary.h5")
+    with pytest.raises(ValueError, match="Legendre moments only"):
+        cache._check_grid(hdf5_store.HDF5Store(str(path)), path.name)
+
+
 def test_two_dimensional_channel_decodes_to_one_block_per_mode(hdf5_fixture_dbs):
     """2D channels come back as ``(n_k, n_e, n_e)``, mode block by mode block.
 

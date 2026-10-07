@@ -88,6 +88,15 @@ def _configure(monkeypatch, primary, data_dir, **extra):
         monkeypatch.setattr(config, name, value)
 
 
+def _require_legendre_2d():
+    """Skip unless the staged default 2D package is booked in Legendre
+    moments, the only 2D basis MCEq reads."""
+    with h5py.File(package("2d")) as f:
+        basis = f["common"].attrs.get("angular_basis")
+    if (basis.decode() if isinstance(basis, bytes) else basis) != "legendre":
+        pytest.skip("the staged 2D package is not a Legendre database")
+
+
 def _finite_positive(run, species):
     for s in species:
         flux = run.get_solution(s)
@@ -188,6 +197,7 @@ def test_solve_2d_fluka(monkeypatch, tmp_path):
 
     from MCEq.core import MCEqRun
 
+    _require_legendre_2d()
     _configure(monkeypatch, package("2d"), tmp_path, e_min=10.0, e_max=100.0)
     run = MCEqRun(
         interaction_model="FLUKA20251",
@@ -205,6 +215,7 @@ def test_solve_2d_sibyll_via_model_file(gh_fetch, monkeypatch):
 
     from MCEq.core import MCEqRun
 
+    _require_legendre_2d()
     _configure(monkeypatch, package("2d"), BUNDLES, e_min=10.0, e_max=100.0)
     run = MCEqRun(
         interaction_model="SIBYLL23E",
@@ -223,6 +234,7 @@ def test_2d_low_energy_convergence(monkeypatch, tmp_path):
     from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
 
+    _require_legendre_2d()
     monkeypatch.setattr(config.paths, "mceq_db_fname", str(package("2d")))
     monkeypatch.setattr(config.paths, "data_dir", tmp_path)
     monkeypatch.setattr(config.debug, "level", 0)

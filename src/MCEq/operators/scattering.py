@@ -1,27 +1,25 @@
 r"""Multiple Coulomb scattering of muons in the 2D transport.
 
-A 2D state is a set of ``n_k`` angular modes: Hankel modes ``<J0(kappa
-theta)>`` or Legendre modes ``<P_l(cos theta)>`` (``layout.angular_basis``).
-Scattering couples neither modes nor energies: it adds a rate ``-Gamma(E, k)``
-to the muon diagonal of each mode ``k``, which ETD2RK integrates exactly
-through ``exp(h D)``. ``Gamma`` is the single-scattering rate in mode space;
-multiple scattering follows from the exponential (Goudsmit-Saunderson for
-Legendre modes). ``Gamma(E, 0) = 0``, so the angle-integrated flux is
+A 2D state is a set of ``n_k`` angular modes, the Legendre moments
+``<P_l(cos theta)>``. Scattering couples neither modes nor energies: it adds a
+rate ``-Gamma(E, l)`` to the muon diagonal of each mode, which ETD2RK
+integrates exactly through ``exp(h D)``. ``Gamma`` is the single-scattering
+rate in mode space; multiple scattering follows from the exponential
+(Goudsmit-Saunderson). ``Gamma(E, 0) = 0``, so the angle-integrated flux is
 unchanged.
 
 Two models:
 
 - Gaussian, the Gauss approximation of CORSIKA (Heck & Pierog handbook
-  p. 12): ``Gamma = kappa^2 theta_s^2(E) / 4`` for Hankel modes and the
-  diffusion eigenvalue ``l (l + 1) theta_s^2 / 4`` on the sphere for Legendre
-  modes. Gaussian core only, no single-scattering tail.
+  p. 12): the diffusion eigenvalue ``Gamma = l (l + 1) theta_s^2(E) / 4`` on
+  the sphere. Gaussian core only, no single-scattering tail.
 - Screened Coulomb, the Wentzel cross section ``C / (1 - cos chi + 2 A)^2``
   summed over the elements of the medium. Screening ``A = chi_a^2 / 4`` from
   the Thomas-Fermi radius with the Moliere correction (Geant4 Physics
   Reference Manual, single scattering, Eqs. 97-98); atomic electrons enter as
-  ``Z(Z + 1)``. Hankel modes use its small-angle Hankel transform,
-  ``Gamma = sum_i R_i [1 - kappa a_i K_1(kappa a_i)]``; Legendre modes use the
-  exact transport cross sections ``sigma_l`` (:func:`transport_cross_sections`).
+  ``Z(Z + 1)``. ``Gamma`` is the sum of the exact transport cross sections
+  ``sigma_l`` (:func:`transport_cross_sections`); its small-angle limit at
+  ``kappa = l + 1/2`` is ``sum_i R_i [1 - kappa a_i K_1(kappa a_i)]``.
   Point nuclei, no recoil, no charge or helicity dependence. The angular
   distribution has no finite second moment.
 
@@ -33,7 +31,6 @@ from __future__ import annotations
 
 import numpy as np
 from scipy import constants
-from scipy.special import k1
 
 __all__ = [
     "E_S",
@@ -41,7 +38,6 @@ __all__ = [
     "MUON_MASS",
     "mode_rates",
     "muon_state_offsets",
-    "screened_coulomb_rate",
     "screened_coulomb_rate_legendre",
     "theta_s_squared",
     "transport_cross_sections",
@@ -86,21 +82,20 @@ def theta_s_squared(e_kin, muon_mass=MUON_MASS):
     return (1.0 / LAMBDA_S) * (E_S / (e_lab * beta**2)) ** 2
 
 
-def mode_rates(model, e_kin, k_grid, layout, muon_mass=MUON_MASS):
-    """Rate ``Gamma >= 0`` [cm^2/g] of ``model``, shape ``(n_k, n_energy)``.
+def mode_rates(model, e_kin, l_grid, layout, muon_mass=MUON_MASS):
+    """Rate ``Gamma >= 0`` [cm^2/g] of ``model``, shape ``(n_l, n_energy)``,
+    at the Legendre degrees ``l_grid``.
 
-    ``k_grid`` holds ``kappa`` for Hankel modes and ``l`` for Legendre modes
-    (``layout.angular_basis``). ``layout.scattering_composition()`` is read
-    only by the screened Coulomb model.
+    ``layout.scattering_composition()`` is read only by the screened Coulomb
+    model.
     """
-    legendre = getattr(layout, "angular_basis", "hankel") == "legendre"
-    k = np.asarray(k_grid, dtype=float)
+    ell = np.asarray(l_grid, dtype=float)
     if model == "gaussian":
-        scale2 = k * (k + 1) if legendre else k**2
-        return scale2[:, None] * theta_s_squared(e_kin, muon_mass) / 4.0
+        return (ell * (ell + 1))[:, None] * theta_s_squared(e_kin, muon_mass) / 4.0
     if model == "screened-coulomb":
-        rate = screened_coulomb_rate_legendre if legendre else screened_coulomb_rate
-        return rate(e_kin, k, layout.scattering_composition(), muon_mass)
+        return screened_coulomb_rate_legendre(
+            e_kin, ell, layout.scattering_composition(), muon_mass
+        )
     raise ValueError(
         f"Unknown muon_scattering_model {model!r}; "
         "use 'screened-coulomb' or 'gaussian'."
@@ -144,36 +139,10 @@ def _elements(e_kin, composition, muon_mass):
         yield constants.Avogadro * fraction / mean_a, chi2 / 4, strength
 
 
-def _one_minus_z_k1(z):
-    """``1 - z K_1(z)``, with its series below ``z = 1e-3``; zero at ``z = 0``."""
-    out = np.zeros_like(z)
-    small = (z > 0) & (z < 1e-3)
-    x = z[small]
-    log = np.log(x / 2) + np.euler_gamma
-    out[small] = -x * x / 2 * (log - 0.5) - x**4 / 16 * (log - 1.25)
-    large = z >= 1e-3
-    out[large] = 1 - z[large] * k1(z[large])
-    return out
-
-
-def screened_coulomb_rate(e_kin, kappa, composition, muon_mass=MUON_MASS):
-    """Hankel-mode screened Coulomb rate [cm^2/g], shape ``(n_k, n_energy)``.
-
-    ``e_kin`` is the kinetic energy in GeV, ``kappa`` the mode scale in 1/rad,
-    ``composition`` as in :func:`_elements`.
-    """
-    e_kin = np.asarray(e_kin, dtype=float)
-    kappa = np.asarray(kappa, dtype=float)
-    rate = np.zeros((kappa.size, e_kin.size))
-    for n, screening, strength in _elements(e_kin, composition, muon_mass):
-        z = kappa[:, None] * (2 * np.sqrt(screening))
-        rate += np.pi * n * strength / screening * _one_minus_z_k1(z)
-    return rate
-
-
 def screened_coulomb_rate_legendre(e_kin, l_grid, composition, muon_mass=MUON_MASS):
-    """Legendre-mode screened Coulomb rate ``sum_i n_i sigma_l,i`` [cm^2/g],
-    shape ``(n_l, n_energy)``, at the integer degrees ``l_grid``."""
+    """Screened Coulomb rate ``sum_i n_i sigma_l,i`` [cm^2/g], shape
+    ``(n_l, n_energy)``, at the integer degrees ``l_grid``. ``e_kin`` is the
+    kinetic energy in GeV, ``composition`` as in :func:`_elements`."""
     e_kin = np.asarray(e_kin, dtype=float)
     l_grid = np.asarray(l_grid, dtype=float)
     ls = np.rint(l_grid).astype(int)

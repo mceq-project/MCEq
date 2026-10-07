@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import h5py
 import numpy as np
 import pytest
+from scipy.special import k1
 
 from MCEq.data.hdf5_backend import HDF5Backend
 from MCEq.data.hdf5_store import HDF5Store
@@ -18,7 +19,7 @@ AIR_INTEGER_A = [[7, 14.0, 0.7847874810295787], [8, 16.0, 0.210518910117893],
 #: CODATA 2018 muon mass [GeV], used by that generator.
 MUON_MASS = 0.1056583755
 
-#: (kinetic energy [GeV], kappa [1/rad], rate [cm2/g]) from the generator.
+#: (kinetic energy [GeV], kappa [1/rad], planar rate [cm2/g]) from the generator.
 REFERENCE = [
     (0.011220184543019636, 1, 0.006631083974020151),
     (0.011220184543019636, 43, 7.2701139234472745),
@@ -32,17 +33,43 @@ REFERENCE = [
 ]
 
 
+def _one_minus_z_k1(z):
+    """``1 - z K_1(z)``, with its series below ``z = 1e-3``; zero at ``z = 0``."""
+    out = np.zeros_like(z)
+    small = (z > 0) & (z < 1e-3)
+    x = z[small]
+    log = np.log(x / 2) + np.euler_gamma
+    out[small] = -x * x / 2 * (log - 0.5) - x**4 / 16 * (log - 1.25)
+    large = z >= 1e-3
+    out[large] = 1 - z[large] * k1(z[large])
+    return out
+
+
+def _planar_rate(e_kin, kappa, composition, muon_mass=scattering.MUON_MASS):
+    """Small-angle limit of the screened Coulomb rate on the flat sky,
+    ``sum_i R_i [1 - kappa a_i K_1(kappa a_i)]`` with ``a_i = 2 sqrt(A_i)``,
+    from the element parameters of ``scattering._elements``."""
+    e_kin, kappa = np.asarray(e_kin, dtype=float), np.asarray(kappa, dtype=float)
+    rate = np.zeros((kappa.size, e_kin.size))
+    for n, screening, strength in scattering._elements(e_kin, composition, muon_mass):
+        z = kappa[:, None] * (2 * np.sqrt(screening))
+        rate += np.pi * n * strength / screening * _one_minus_z_k1(z)
+    return rate
+
+
 @pytest.mark.parametrize(("e_kin", "kappa", "expected"), REFERENCE)
-def test_rate_matches_reference(e_kin, kappa, expected):
-    rate = scattering.screened_coulomb_rate([e_kin], [kappa], AIR_INTEGER_A, MUON_MASS)
+def test_element_parameters_match_generator(e_kin, kappa, expected):
+    """Screening and strength per element against the mceq-EM generator,
+    through the planar limit it tabulated."""
+    rate = _planar_rate([e_kin], [kappa], AIR_INTEGER_A, MUON_MASS)
     np.testing.assert_allclose(rate[0, 0], expected, rtol=1e-9)
 
 
 def test_rate_zero_mode_and_monotone():
     e_kin = np.geomspace(1e-2, 1e6, 30)
-    kappa = np.concatenate([[0.0], np.geomspace(1e-3, 1e4, 40)])
-    rate = scattering.screened_coulomb_rate(e_kin, kappa, AIR_INTEGER_A)
-    assert rate.shape == (kappa.size, e_kin.size)
+    ls = np.array([0, 1, 2, 3, 5, 8, 13, 21, 34, 64, 102, 486, 2000])
+    rate = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A)
+    assert rate.shape == (ls.size, e_kin.size)
     assert np.all(rate[0] == 0)
     assert np.all(np.diff(rate, axis=0) > 0)
     assert np.all(np.diff(rate[1:], axis=1) < 0)
@@ -111,7 +138,9 @@ def test_all_muon_charges_helicities_and_operator_placement(db):
     pman.pdg2pref, pman.dim_states, pman.dim = particles, 12, 2
     builder._pman = pman
     matrix = builder._csr_from_blocks({}, apply_muon_scattering=True)
-    rate = scattering.screened_coulomb_rate(e_kin, k_grid, AIR_INTEGER_A, MUON_MASS)
+    rate = scattering.screened_coulomb_rate_legendre(
+        e_kin, k_grid, AIR_INTEGER_A, MUON_MASS
+    )
     expected = np.zeros(24)
     expected[12:24] = np.tile(-rate[1], 6)
     np.testing.assert_allclose(matrix.diagonal(), expected, rtol=1e-15)
@@ -231,7 +260,7 @@ def test_single_scattering_moments_mc():
 
 
 def test_legendre_rate_small_angle_limit_and_l1_pin():
-    """The Hankel rate at ``kappa = l + 1/2`` is the small-angle limit of the
+    """The planar rate at ``kappa = l + 1/2`` is the small-angle limit of the
     exact rate: equal to 2e-4 at l = 64 and 1e-5 from l = 256. At l = 1 it is
     12.7 % high in air, nearly independent of energy (regression pin)."""
     e_kin = np.geomspace(0.1, 10.0, 7)
@@ -239,9 +268,7 @@ def test_legendre_rate_small_angle_limit_and_l1_pin():
     exact = scattering.screened_coulomb_rate_legendre(
         e_kin, ls, AIR_INTEGER_A, MUON_MASS
     )
-    planar = scattering.screened_coulomb_rate(
-        e_kin, ls[1:] + 0.5, AIR_INTEGER_A, MUON_MASS
-    )
+    planar = _planar_rate(e_kin, ls[1:] + 0.5, AIR_INTEGER_A, MUON_MASS)
     assert np.all(exact[0] == 0)
     ratio = planar / exact[1:]
     np.testing.assert_allclose(ratio[0], 1.127, atol=0.002)
@@ -265,26 +292,21 @@ def test_legendre_rate_composition_sum_and_integer_modes():
         scattering.screened_coulomb_rate_legendre(e_kin, [0, 1.5], AIR_INTEGER_A)
 
 
-def test_gaussian_mode_rates_per_basis():
-    """Hankel ``kappa^2 theta_s^2 / 4``; Legendre ``l (l + 1) theta_s^2 / 4``."""
-    e_kin, k = np.array([0.3, 3.0]), np.array([0.0, 1.0, 4.0])
+def test_gaussian_mode_rates():
+    """The diffusion eigenvalue ``l (l + 1) theta_s^2 / 4``."""
+    e_kin, ell = np.array([0.3, 3.0]), np.array([0.0, 1.0, 4.0])
     theta2 = scattering.theta_s_squared(e_kin, MUON_MASS)
-    hankel = scattering.mode_rates("gaussian", e_kin, k, None, MUON_MASS)
-    legendre = scattering.mode_rates(
-        "gaussian", e_kin, k, SimpleNamespace(angular_basis="legendre"), MUON_MASS
-    )
-    np.testing.assert_allclose(hankel, np.outer(k**2, theta2) / 4, rtol=1e-15)
-    np.testing.assert_allclose(legendre, np.outer(k * (k + 1), theta2) / 4, rtol=1e-15)
+    rate = scattering.mode_rates("gaussian", e_kin, ell, None, MUON_MASS)
+    np.testing.assert_allclose(rate, np.outer(ell * (ell + 1), theta2) / 4, rtol=1e-15)
 
 
 @pytest.mark.parametrize("model", ["screened-coulomb", "gaussian"])
 def test_legendre_operator_placement(db, model):
-    """On a Legendre database the muon diagonals carry the exact per-l rate."""
+    """The muon diagonals carry the exact per-l rate of either model."""
     l_grid, e_kin = np.array([0.0, 1.0, 67.0]), np.array([0.5, 50.0])
     builder = MatrixBuilder.__new__(MatrixBuilder)
     builder.is_2d, builder.n_k, builder.k_grid = True, 3, l_grid
     builder._layout = _backend(db)
-    builder._layout.angular_basis = "legendre"
     builder._physics = SimpleNamespace(
         muon_multiple_scattering=True, muon_scattering_model=model
     )

@@ -1,9 +1,9 @@
-"""Angular basis of a 2D database as seen by the operator compilation.
+"""Angular modes of a 2D database as seen by the operator compilation.
 
-Hankel databases compile ``int_m`` as assembled. Legendre databases compile
-the hadronic part and the continuous-loss band separately, so that the
-removal of backward production (:func:`MCEq.operators.legendre.backward_removal`)
-acts on produced particles only; energy loss keeps the direction.
+2D databases carry Legendre moments. Their operators compile the hadronic
+part and the continuous-loss band separately, so that the removal of
+backward production (:func:`MCEq.operators.legendre.backward_removal`) acts
+on produced particles only; energy loss keeps the direction.
 """
 
 from types import SimpleNamespace
@@ -12,24 +12,23 @@ from MCEq import config
 from MCEq.operators.legendre import backward_removal, dense_count
 
 
-def _legendre(run):
-    db = getattr(run, "_mceq_db", None)
-    if getattr(db, "angular_basis", "hankel") != "legendre":
+def _removal(run):
+    if not getattr(getattr(run, "_mceq_db", None), "is_2d", False):
         return False
     return bool(getattr(run, "_cfg", config).secant.legendre_removal)
 
 
 def inputs(run):
     """``(int_m, dec_m)`` for :func:`MCEq.operators.compiled.compile_operator`."""
-    if not _legendre(run):
+    if not _removal(run):
         return run.int_m, run.dec_m
     return run.matrix_builder.int_m_hadr, run.dec_m
 
 
 def extras(run):
     """``band`` and ``mode_mix`` keywords of ``compile_operator``, empty for
-    Hankel databases or with ``secant.legendre_removal`` off."""
-    if not _legendre(run):
+    1D databases or with ``secant.legendre_removal`` off."""
+    if not _removal(run):
         return {}
     n_d = dense_count(run._mceq_db.k_grid)
     mix = SimpleNamespace(M=backward_removal(n_d - 1), n_D=n_d, N=run.dim_states)
