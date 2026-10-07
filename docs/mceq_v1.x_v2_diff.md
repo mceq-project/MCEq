@@ -890,6 +890,13 @@ frequency space. This section documents (a) the math the PR is solving,
 which is structurally cleaner and substantially faster than the PR's
 sequential per-mode loop — and (d) what is still open.
 
+> The planar Hankel modes of this section are no longer used: 2D databases
+> now carry Legendre moments ⟨P_l(cos θ)⟩, of which the Hankel modes are the
+> small-angle limit at κ = l + ½ (`MCEq.operators.legendre`, the 2D
+> sections of `docs/solver_math.rst`). The functions this section names for
+> the Hankel readout and the fitted secant operator are removed; the stacked
+> ETD2RK state and the eigenbasis secant step carry over unchanged.
+
 ### 11.1 Hankel-space cascade equation
 
 The 2D state is a particle density `η_h(E, X, θ)` parameterised by

@@ -76,7 +76,8 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
     ``spec`` is the ``secant`` config group (``cap_deg``, ``e_max``);
     ``theta_cap_deg`` overrides ``spec.cap_deg`` and must lie in [0, 90).
 
-    Returns a dict with:
+    Returns a dict with::
+
       P          -- indices of the coupled modes (the dense block of l_grid)
       T_P        -- T restricted to coupled rows, all columns (n_P, n_k)
       T_PP       -- the (n_P, n_P) same-subspace block

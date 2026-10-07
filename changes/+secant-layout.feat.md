@@ -1,5 +1,5 @@
 The secant ETD2 route works on a low-E-first state layout: `secant_layout`
-permutes each Hankel-mode block so the coupled (mode, low-E) plane is a
+permutes each mode block so the coupled (mode, low-E) plane is a
 strided corner view of the state, and `compile_operator` applies that
 permutation to the diagonal/off-diagonal split once (cached on `MCEqRun`).
 Every gather/scatter of the step disappears on all backends, and the coupling

@@ -9,9 +9,10 @@ operators (:mod:`MCEq.operators`)
 The layer between the species definition and the solvers:
 :class:`~MCEq.operators.matrix_builder.MatrixBuilder` fills the interaction
 and decay matrices, :mod:`MCEq.operators.compiled` assembles them into the
-operator the ETD2RK step loop runs against, :mod:`MCEq.operators.secant`
-builds the sec(θ) mode coupling and :mod:`MCEq.operators.stiffness` the
-continuous-loss step cap. The math is on :ref:`solver-math`.
+operator the ETD2RK step loop runs against, :mod:`MCEq.operators.legendre`
+holds the Legendre angular modes of the 2D transport,
+:mod:`MCEq.operators.secant` builds the sec(θ) mode coupling and
+:mod:`MCEq.operators.stiffness` the continuous-loss step cap. The math is on :ref:`solver-math`.
 
 Reference/API
 =============
@@ -19,6 +20,9 @@ Reference/API
   :include-all-objects:
   :no-inheritance-diagram:
   :skip: SimpleNamespace
+
+.. automodapi:: MCEq.operators.legendre
+  :no-inheritance-diagram:
 
 .. automodapi:: MCEq.operators.secant
   :no-inheritance-diagram:

@@ -131,8 +131,8 @@ jobs:
       #                                both removed in v2
       #   Full_sky_carousel            SIBYLL23D, and gtracr 2.0.0 breaks the
       #                                geomagnetic cutoff adapter
-      #   Angular_shower_development   needs the 2D URQMD FLUKA DB, which is
-      #                                not redistributable
+      #   Angular_shower_development   needs the Legendre 2D CI database,
+      #                                not yet on the ci-assets release
       - name: Execute notebooks
         run: |
           pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
