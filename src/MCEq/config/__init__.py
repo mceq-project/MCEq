@@ -523,8 +523,9 @@ def set_mkl_threads(nthreads):
     MKL through ``mkl_set_num_threads`` (loading ``libmkl_rt`` on the first
     call) and, when threadpoolctl is available, every other pool it finds —
     OpenBLAS above all, which is what numpy links against in most wheels.
-    One process-wide setting, applied once: the solver never adjusts a pool
-    around an individual step loop.
+    One process-wide setting; only the step loop on the MKL backend runs
+    OpenBLAS and BLIS at one thread
+    (:func:`MCEq.solvers.etd2.etd2_driver`).
 
     Idempotent on the library side: reuse the loaded MKL handle. Each call
     updates the thread environment and reapplies limits to supported, loaded

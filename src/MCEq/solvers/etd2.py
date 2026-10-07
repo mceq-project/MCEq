@@ -15,6 +15,8 @@ particular library or device belongs in :mod:`MCEq.solvers.backends`; the
 scalar formulas it calls belong in :mod:`MCEq.solvers.numerics`.
 """
 
+from contextlib import nullcontext
+
 import numpy as np
 
 from MCEq.misc import info
@@ -44,6 +46,22 @@ def _fp32_scale(phi, phi0_per_pixel=None):
     return 2.0 ** (_FP32_PEAK_EXP - int(np.ceil(np.log2(peak))))
 
 
+def _serial_dense_blas(be):
+    """Context of the step loop: OpenBLAS and BLIS at one thread when the
+    SpMM runs on MKL's threads, MKL's own pool as set.
+
+    MKL's threads spin between the sparse calls, and the small dense GEMMs
+    that numpy sends to another BLAS on the same cores wait for them: 30-90 ms
+    per call instead of ~1 ms, a 3-5x slower step at 8 threads.
+    """
+    if be.name != "mkl":
+        return nullcontext()
+    from threadpoolctl import ThreadpoolController
+
+    blas = ThreadpoolController().select(internal_api=["openblas", "blis"])
+    return blas.limit(limits=1)
+
+
 def etd2_driver(
     nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
 ):
@@ -55,7 +73,8 @@ def etd2_driver(
     paraxial transport; with the sec(theta) transport the coupled corner
     of the state is carried in the eigenbasis of the mode coupling, rotated
     in once before the loop and back once after it. Formulas and stage
-    order: :ref:`solver-math`.
+    order: :ref:`solver-math`. On the MKL backend the loop runs the other
+    BLAS pools at one thread (:func:`_serial_dense_blas`).
 
     Args:
       nsteps: number of steps.
@@ -209,7 +228,7 @@ def etd2_driver(
     start = time()
 
     # See :data:`MCEq.solvers.path._EM_BLOWUP_CAVEAT` for the errstate contract.
-    with np.errstate(over="ignore", invalid="ignore"):
+    with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
             h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64

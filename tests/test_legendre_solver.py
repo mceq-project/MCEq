@@ -127,3 +127,54 @@ def test_without_removal_the_band_split_is_neutral(system):
         *args, sp.csr_matrix(system.hadr + system.band), sp.csr_matrix(system.dec), phi0
     )
     np.testing.assert_allclose(split, whole, rtol=1e-12, atol=1e-14)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "mkl"])
+def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
+    """Inside the step loop of the MKL backend OpenBLAS runs at one thread and
+    MKL keeps its pool; other backends and the pools after the loop are
+    untouched."""
+    from threadpoolctl import ThreadpoolController, threadpool_limits
+
+    import MCEq.solvers.etd2 as etd2
+    from MCEq import mkl_runtime
+
+    if backend == "mkl":
+        pytest.importorskip("MCEq.solvers.backends.mkl")
+    seen = []
+    make = etd2._BACKENDS[backend]
+
+    def recording(*args):
+        be = make(*args)
+        stage = be.diag_factors
+
+        def diag_factors(*a):
+            seen.append((ThreadpoolController().info(), mkl_threads()))
+            return stage(*a)
+
+        be.diag_factors = diag_factors
+        return be
+
+    monkeypatch.setitem(etd2._BACKENDS, backend, recording)
+
+    def threads(info, api):
+        return {p["num_threads"] for p in info if p["internal_api"] == api}
+
+    def mkl_threads():
+        lib = mkl_runtime.lib()
+        return None if lib is None else lib.mkl_get_max_threads()
+
+    phi0 = np.random.default_rng(4).random(N_K * N)
+    with threadpool_limits(limits=2, user_api="blas"):
+        before = ThreadpoolController().info()
+        if not threads(before, "openblas"):
+            pytest.skip("numpy is not linked against OpenBLAS")
+        try:
+            _solve(system, None, 0.7, 0.1, phi0, nsteps=3, backend=backend)
+        except (OSError, RuntimeError) as exc:
+            pytest.skip(f"{backend} unavailable: {exc}")
+        after = ThreadpoolController().info(), mkl_threads()
+    serial = backend == "mkl"
+    assert threads(seen[0][0], "openblas") == ({1} if serial else {2})
+    assert seen[0][1] == after[1]
+    assert threads(after[0], "openblas") == {2}
