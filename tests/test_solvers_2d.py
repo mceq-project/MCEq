@@ -9,7 +9,7 @@ dimension-agnostic, so equality holds to round-off.
 Each backend gates on the capability probe the rest of the suite uses:
 ``config.has_accelerate`` (macOS), ``config.has_mkl`` (``libmkl_rt`` under the
 prefix) and ``config.has_cuda`` (an importable cupy *and* a visible device).
-Every test needs the 441 MB FLUKA 2D database and skips without it.
+Every test needs the 2D CI database (Legendre, 25 MB) and skips without it.
 """
 
 import os
@@ -20,9 +20,9 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
-#: Keep this module's tests on one ``--dist loadgroup`` worker; the database
-#: costs 441 MB per process. Five other modules open the same file and are not
-#: in the group, so this bounds one module rather than the whole suite.
+#: Keep this module's tests on one ``--dist loadgroup`` worker, so the decoded
+#: 2D operators live in one process. Five other modules open the same file and
+#: are not in the group, so this bounds one module rather than the whole suite.
 pytestmark = pytest.mark.xdist_group("fluka2d")
 
 #: Globals :func:`_solve` sets that ``conftest._restore_global_config_state``
@@ -53,10 +53,10 @@ def _restore_2d_config():
 def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
-        mceq_db_fname="mceq_base_air_2d_v2.h5",
+        mceq_db_fname="mceq_ci_base_air_2d_legendre_v2.h5",
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         e_min=1e-1,
-        e_max=1e4,
+        e_max=1e2,
         muon_helicity_dependence=True,
         muon_multiple_scattering=False,
         theta_deg=60.0,

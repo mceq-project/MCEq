@@ -1,6 +1,6 @@
 """Fetch the stored 2D solution the baseline tests compare against.
 
-The file is 13 MB, so it is not kept in the repository. It lives with the
+The file is 6 MB, so it is not kept in the repository. It lives with the
 other test data on the ``ci-assets`` release and is downloaded once into
 ``tests/data/``, where it stays. Regenerate it with
 ``tests/data/make_2d_baseline_fixture.py`` and upload the new file when the
@@ -14,7 +14,7 @@ import pathlib
 import urllib.request
 
 NAME = "2d_baseline_solution.npz"
-SHA256 = "21feb7f019f36ceac49ef52e5f34f1a4034ad90af4f0715f9e444e48919fc7d7"
+SHA256 = "8f6bc4cc381134de5de50086546cbad5403f15a159af0f5bd7c8d890aa196c47"
 #: Published under a digest-stamped name, so an older commit keeps its file.
 URL = (
     "https://github.com/mceq-project/MCEq/releases/download/ci-assets/"

@@ -3,7 +3,7 @@
 The backend should detect a 2D database by reading the ``k_dim`` attribute
 from the ``common`` HDF5 group and expose ``is_2d``, ``n_k`` and ``k_grid``
 attributes. The 1D reduced test database has no ``k_dim`` attribute; the
-FLUKA 2D database has ``k_dim=48``.
+2D CI database has ``k_dim=16`` Legendre modes.
 """
 
 import os
@@ -46,8 +46,8 @@ def backend_1d():
 
 @pytest.fixture(scope="module")
 def backend_2d():
-    """FLUKA 2D database. Must be present (or symlinked) on disk."""
-    fn = "mceq_base_air_2d_v2.h5"
+    """2D CI database (Legendre). Must be present (or symlinked) on disk."""
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
     if not os.path.exists(os.path.join(config.data_dir, fn)):
         pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
@@ -69,7 +69,8 @@ def test_1d_database_not_2d(backend_1d):
 
 def test_2d_database_detected(backend_2d):
     assert backend_2d.is_2d is True
-    assert backend_2d.n_k == 48
+    assert backend_2d.n_k == 16
+    assert backend_2d.angular_basis == "legendre"
     assert backend_2d.k_grid[0] == 0
     assert backend_2d.k_grid[-1] == 2000
     assert np.issubdtype(backend_2d.k_grid.dtype, np.integer) or np.issubdtype(
