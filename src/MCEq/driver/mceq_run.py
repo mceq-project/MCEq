@@ -877,16 +877,11 @@ class MCEqRun:
         k_grid = np.asarray(self._mceq_db.k_grid)
         e_centers = np.asarray(self._energy_grid.c)
         n_species = self.dim_states // self.dim
-        basis = getattr(self._mceq_db, "angular_basis", "hankel")
         key = (
-            basis,
             hash(k_grid.tobytes()),
             hash(e_centers.tobytes()),
             n_species,
             self._cfg.secant_theta_cap(),
-            self._cfg.secant.row_kmax,
-            self._cfg.secant.lam_rel,
-            self._cfg.secant.w_flat,
             self._cfg.secant.e_max,
         )
         cached = getattr(self, "_secant_ops_cache", None)
@@ -897,8 +892,6 @@ class MCEqRun:
                 n_species,
                 self._cfg.secant,
                 theta_cap_deg=self._cfg.secant_theta_cap(),
-                paths=self._cfg.paths,
-                basis=basis,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]

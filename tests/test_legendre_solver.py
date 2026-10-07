@@ -21,7 +21,7 @@ from MCEq.solvers import solve_etd2
 N_SP, N_E, L_GRID = 2, 6, np.array([0, 1, 2, 3, 7])
 N = N_SP * N_E
 N_K, N_D = len(L_GRID), 4
-SPEC = SimpleNamespace(cap_deg=75.0, row_kmax=50.0, lam_rel=1e-9, w_flat=1.0, e_max=0.5)
+SPEC = SimpleNamespace(cap_deg=75.0, e_max=0.5)
 CUDA = pytest.param(
     "cuda",
     marks=[
@@ -68,9 +68,7 @@ def _reference(s, ri, S, X, phi0):
 
 
 def _secant_ops():
-    return build_secant_kernel_ops(
-        L_GRID, np.logspace(-2, 1, N_E), N_SP, SPEC, basis="legendre"
-    )
+    return build_secant_kernel_ops(L_GRID, np.logspace(-2, 1, N_E), N_SP, SPEC)
 
 
 def _solve(s, sec_ops, ri, X, phi0, nsteps=4000, backend="numpy", fp=64):

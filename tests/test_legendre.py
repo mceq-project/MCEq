@@ -261,7 +261,7 @@ def test_wide_secant_eigenbasis(cap):
     """``S_P = I + T_PP`` has the eigenvalue ``1/mu_cap`` ~30-fold; the real
     eigenbasis stays well conditioned and reproduces ``S_P``."""
     ops = build_secant_kernel_ops(
-        L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap, basis="legendre"
+        L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
     )
     v, lam = ops["V"], ops["lam"]
     s_p = np.eye(len(lam)) + ops["T_PP"]
