@@ -41,6 +41,7 @@ __all__ = [
     "forward_weights",
     "hemisphere_projection",
     "jackson_weights",
+    "l_interpolation",
     "legendre_p",
     "moments",
     "secant_coupling",
@@ -107,14 +108,16 @@ def forward_weights(l_max):
     return c
 
 
-def _coupling(l_max, pieces, extra_nodes):
-    """``M[g]`` with ``g`` given as ``[(lo, hi, g_callable), ...]`` on [-1, 1]."""
+def _coupling(l_max, pieces, extra_nodes, n_rows=None):
+    """``M[g]`` with ``g`` given as ``[(lo, hi, g_callable), ...]`` on [-1, 1];
+    the first ``n_rows`` rows (all by default) against every ``l' <= l_max``."""
+    n_rows = l_max + 1 if n_rows is None else n_rows
     x, w = np.polynomial.legendre.leggauss(l_max + 1 + extra_nodes)
-    m = np.zeros((l_max + 1, l_max + 1))
+    m = np.zeros((n_rows, l_max + 1))
     for lo, hi, g in pieces:
         mu = 0.5 * (hi - lo) * x + 0.5 * (hi + lo)
         p = legendre_p(l_max, mu)
-        m += (p * (0.5 * (hi - lo) * w * g(mu))) @ p.T
+        m += (p[:n_rows] * (0.5 * (hi - lo) * w * g(mu))) @ p.T
     return m * ((2 * np.arange(l_max + 1) + 1) / 2)[None, :]
 
 
@@ -127,14 +130,15 @@ def hemisphere_projection(l_max):
     return _coupling(l_max, [(0.0, 1.0, np.ones_like)], 0)
 
 
-def secant_coupling(l_max, theta_cap_deg=75.0, extra_nodes=64):
+def secant_coupling(l_max, theta_cap_deg=75.0, extra_nodes=64, n_rows=None):
     """``G = M[g]`` with ``g = 1 / max(mu, mu_cap)`` on ``[-1, 1]``.
 
     Per unit axis depth a particle at ``theta`` crosses ``sec theta`` more
     matter, capped at ``theta_cap_deg < 90``. ``g`` is constant below
     ``mu_cap``, including the backward hemisphere, which the transport keeps
     empty through ``B``; the quadrature is exact there and ``extra_nodes``
-    resolve ``1/mu`` above it.
+    resolve ``1/mu`` above it. ``n_rows`` keeps only the leading rows, each
+    against every column ``l' <= l_max``.
     """
     if not 0 <= theta_cap_deg < 90:
         raise ValueError(f"theta_cap_deg must be in [0, 90), got {theta_cap_deg}")
@@ -142,7 +146,7 @@ def secant_coupling(l_max, theta_cap_deg=75.0, extra_nodes=64):
     pieces = [(-1.0, mu_cap, lambda mu: np.full_like(mu, 1 / mu_cap))]
     if mu_cap < 1:
         pieces.append((mu_cap, 1.0, np.reciprocal))
-    return _coupling(l_max, pieces, extra_nodes)
+    return _coupling(l_max, pieces, extra_nodes, n_rows)
 
 
 def jackson_weights(l_max):
@@ -177,6 +181,22 @@ def dense_count(l_grid):
     l_grid = np.asarray(l_grid)
     match = l_grid == np.arange(len(l_grid))
     return len(l_grid) if match.all() else int(np.argmin(match))
+
+
+def l_interpolation(l_grid, l_out):
+    """``(len(l_out), len(l_grid))`` matrix that maps values on the mode grid
+    to values at ``l_out``: a not-a-knot cubic spline in ``l``.
+
+    A dense-only grid evaluated at its own ``l`` gives the identity.
+    """
+    from scipy.interpolate import CubicSpline
+
+    l_grid = np.asarray(l_grid)
+    l_out = np.asarray(l_out)
+    n = len(l_grid)
+    if dense_count(l_grid) == n and np.array_equal(l_out, l_grid):
+        return np.eye(n)
+    return CubicSpline(l_grid, np.eye(n), axis=0, bc_type="not-a-knot")(l_out)
 
 
 def theta_density(a, l_grid, theta, smooth=True):

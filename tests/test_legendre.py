@@ -8,11 +8,13 @@ from scipy.integrate import quad
 from MCEq.operators.legendre import (
     forward_weights,
     hemisphere_projection,
+    l_interpolation,
     legendre_p,
     moments,
     secant_coupling,
     series,
 )
+from MCEq.operators.secant import build_secant_kernel_ops, legendre_coupling
 
 # Hankel kappa grid of the v2 2D database (48 modes).
 K_GRID = np.array(
@@ -20,6 +22,9 @@ K_GRID = np.array(
      50, 58, 67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422,
      486, 560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000]
 )  # fmt: skip
+
+# Legendre l grid of the 90-mode database: dense l <= 64, the Hankel grid above.
+L_GRID = np.concatenate([np.arange(65), K_GRID[K_GRID > 64]])
 
 
 def hg_sample(rng, g, n):
@@ -214,3 +219,50 @@ def test_secant_on_collimated_state():
     assert err[0] < 1e-2
     assert err[1] < err[0] / 4
     assert err[2] < 1e-3
+
+
+def test_l_interpolation():
+    """Not-a-knot cubic spline: exact on cubics, the identity on a dense grid."""
+    l_all = np.arange(L_GRID[-1] + 1)
+    cubic = 3.0 - 2e-2 * l_all + 1e-5 * l_all**2 - 2e-9 * l_all**3
+    m = l_interpolation(L_GRID, l_all)
+    np.testing.assert_allclose(m @ cubic[L_GRID], cubic, rtol=1e-11)
+    np.testing.assert_array_equal(
+        l_interpolation(np.arange(9), np.arange(9)), np.eye(9)
+    )
+
+
+def test_wide_secant_coupling_on_narrow_cones():
+    """The dense rows of ``T`` reach the sparse modes: on cones down to 0.1 deg
+    they reproduce the converged ``G`` (rows against l <= 3000) applied to the
+    exact moments. ``G`` cut at the dense block misses the top rows by up to
+    0.9 a_0 on the same cones."""
+    n_d = 65
+    t = legendre_coupling(L_GRID, 75.0)
+    g_ref = secant_coupling(3000, 75.0, n_rows=n_d)
+    g_cut = secant_coupling(n_d - 1, 75.0)
+    for sigma in (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 15.0):
+        kappa = 1 / np.radians(sigma) ** 2
+        ref = g_ref @ vmf_moments(kappa, np.arange(3001))
+        a = vmf_moments(kappa, L_GRID)
+        np.testing.assert_allclose(a[:n_d] + t[:n_d] @ a, ref, rtol=0, atol=1e-6)
+        if sigma <= 1.0:
+            assert np.abs(g_cut @ a[:n_d] - ref).max() > 0.4
+    # sparse rows are not elongated; a dense-only grid keeps G - 1
+    assert not t[n_d:].any()
+    np.testing.assert_allclose(
+        legendre_coupling(np.arange(n_d), 75.0), g_cut - np.eye(n_d), atol=1e-13
+    )
+
+
+@pytest.mark.parametrize("cap", [50.0, 55.0, 75.0, 89.0])
+def test_wide_secant_eigenbasis(cap):
+    """``S_P = I + T_PP`` has the eigenvalue ``1/mu_cap`` ~30-fold; the real
+    eigenbasis stays well conditioned and reproduces ``S_P``."""
+    ops = build_secant_kernel_ops(
+        L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap, basis="legendre"
+    )
+    v, lam = ops["V"], ops["lam"]
+    s_p = np.eye(len(lam)) + ops["T_PP"]
+    assert np.linalg.cond(v) < 1e4
+    np.testing.assert_allclose((v * lam) @ ops["Vi"], s_p, rtol=0, atol=1e-9)

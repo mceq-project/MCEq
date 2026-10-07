@@ -100,8 +100,14 @@ def test_coupled_route_matches_expm(system):
     S = np.eye(N_K * N) + np.kron(T, np.diag(low))
     phi0 = np.random.default_rng(2).random(N_K * N)
     ref = _reference(system, 0.4, S, 1.0, phi0)
-    sol = _solve(system, ops, 0.4, 1.0, phi0)
-    np.testing.assert_allclose(sol, ref, rtol=2e-6, atol=1e-9)
+    # the dense rows couple to the sparse mode l = 7 explicitly: second order
+    # convergence to the exact exponential, 4.3e-5 at 4000 steps
+    err = [
+        np.abs(_solve(system, ops, 0.4, 1.0, phi0, nsteps=n) / ref - 1).max()
+        for n in (4000, 8000)
+    ]
+    assert err[1] < 2e-5
+    assert 3.5 < err[0] / err[1] < 4.5
 
 
 def test_without_removal_the_band_split_is_neutral(system):

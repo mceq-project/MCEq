@@ -189,17 +189,26 @@ def secant_coupling_matrix(
 
 
 def legendre_coupling(l_grid, theta_cap_deg):
-    """``T = G - 1`` on the dense Legendre block, zero elsewhere.
+    """``T = G - 1`` on the dense rows of the Legendre grid, zero elsewhere.
 
     ``G`` is the exact multiplication by ``1 / max(mu, mu_cap)`` of
-    :func:`MCEq.operators.legendre.secant_coupling`; the sparse high-l modes
-    describe narrow cones, which are not elongated.
+    :func:`MCEq.operators.legendre.secant_coupling`. Its dense rows reach
+    far beyond the dense block (``g`` has a kink at ``mu_cap``), so they are
+    taken against every ``l <= l_grid[-1]`` and mapped onto all modes by the
+    cubic interpolation in ``l`` of
+    :func:`MCEq.operators.legendre.l_interpolation`. The sparse rows stay
+    zero: the sparse high-l modes describe narrow cones, which are not
+    elongated.
     """
-    from MCEq.operators.legendre import dense_count, secant_coupling
+    from MCEq.operators.legendre import dense_count, l_interpolation, secant_coupling
 
+    l_grid = np.asarray(l_grid)
     n_d = dense_count(l_grid)
+    l_int = np.arange(int(l_grid[-1]) + 1)
     T = np.zeros((len(l_grid), len(l_grid)))
-    T[:n_d, :n_d] = secant_coupling(n_d - 1, theta_cap_deg) - np.eye(n_d)
+    G = secant_coupling(len(l_int) - 1, theta_cap_deg, n_rows=n_d)
+    T[:n_d] = G @ l_interpolation(l_grid, l_int)
+    T[:n_d, :n_d] -= np.eye(n_d)
     return T
 
 
@@ -256,6 +265,12 @@ def build_secant_kernel_ops(
             "~45 deg the coupling is nearly nilpotent and S_P becomes "
             "numerically defective. Use theta_cap_deg >= 50."
         )
+    # A conjugate pair with |imag| <= 1e-9 (a split of the degenerate
+    # eigenvalue 1/mu_cap) spans its invariant plane with Re v and Im v; the
+    # real parts of the pair alone would be one vector twice.
+    pair = np.flatnonzero(lam.imag > 0)
+    V = V.copy()
+    V[:, pair + 1] = V[:, pair].imag
     lam = lam.real
     V = V.real
     Vi = np.linalg.inv(V)
