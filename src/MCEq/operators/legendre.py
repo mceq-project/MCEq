@@ -187,7 +187,9 @@ def l_interpolation(l_grid, l_out):
     """``(len(l_out), len(l_grid))`` matrix that maps values on the mode grid
     to values at ``l_out``: a not-a-knot cubic spline in ``l``.
 
-    A dense-only grid evaluated at its own ``l`` gives the identity.
+    One map for every place that needs the moments between the sparse modes,
+    the readout and the secant coupling. A dense-only grid evaluated at its
+    own ``l`` gives the identity.
     """
     from scipy.interpolate import CubicSpline
 
@@ -202,17 +204,16 @@ def l_interpolation(l_grid, l_out):
 def theta_density(a, l_grid, theta, smooth=True):
     """Angular density from moments ``a[..., mode]`` on the sparse ``l_grid``.
 
-    The moments are interpolated linearly in ``l`` to every ``l`` up to
-    ``l_grid[-1]`` and summed as a Legendre series, with Jackson damping when
-    ``smooth``. Returns ``f(theta) sin(theta) / theta``, the density in the
-    planar measure ``theta dtheta`` of the Hankel readout, so that
-    ``int f_planar theta dtheta = int f dmu``.
+    The moments are interpolated in ``l`` with :func:`l_interpolation` to
+    every ``l`` up to ``l_grid[-1]`` and summed as a Legendre series, with
+    Jackson damping when ``smooth``. Returns ``f(theta) sin(theta) / theta``,
+    the density in the planar measure ``theta dtheta`` of the Hankel readout,
+    so that ``int f_planar theta dtheta = int f dmu``.
     """
     a = np.asarray(a, dtype=float)
     l_grid = np.asarray(l_grid)
     l_all = np.arange(int(l_grid[-1]) + 1)
-    flat = a.reshape(-1, a.shape[-1])
-    full = np.stack([np.interp(l_all, l_grid, row) for row in flat])
+    full = a.reshape(-1, a.shape[-1]) @ l_interpolation(l_grid, l_all).T
     if smooth:
         full = full * jackson_weights(l_all[-1])
     theta = np.asarray(theta, dtype=float)

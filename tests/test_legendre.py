@@ -13,6 +13,7 @@ from MCEq.operators.legendre import (
     moments,
     secant_coupling,
     series,
+    theta_density,
 )
 from MCEq.operators.secant import build_secant_kernel_ops, legendre_coupling
 
@@ -266,3 +267,26 @@ def test_wide_secant_eigenbasis(cap):
     s_p = np.eye(len(lam)) + ops["T_PP"]
     assert np.linalg.cond(v) < 1e4
     np.testing.assert_allclose((v * lam) @ ops["Vi"], s_p, rtol=0, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "cones",
+    [
+        [(0.9, 1.0), (0.08, 5.0), (0.015, 15.0), (0.005, 40.0)],
+        [(0.9, 0.5), (0.08, 3.0), (0.015, 12.0), (0.005, 35.0)],
+        [(0.85, 2.0), (0.12, 7.0), (0.025, 20.0), (0.005, 45.0)],
+        [(0.93, 0.25), (0.05, 2.0), (0.015, 10.0), (0.005, 30.0)],
+    ],
+)
+def test_theta_density_wide_tail(cones):
+    """Narrow core with tails at 1e-7..1e-4 of the peak (``(weight, sigma
+    deg)`` vMF cones), moments on the sparse grid only: the readout follows
+    the tail at 20-60 deg to 3 %. Linear interpolation in ``l`` misses it by
+    factors of 2-10 and goes negative."""
+    theta = np.radians(np.linspace(20, 60, 81))
+    kappas = [(w, 1 / np.radians(s) ** 2) for w, s in cones]
+    a = sum(w * vmf_moments(k, L_GRID) for w, k in kappas)
+    f_mu = sum(w * k * np.exp(k * (np.cos(theta) - 1)) / -np.expm1(-2 * k)
+               for w, k in kappas)  # fmt: skip
+    truth = f_mu * np.sin(theta) / theta
+    np.testing.assert_allclose(theta_density(a, L_GRID, theta), truth, rtol=3e-2)
