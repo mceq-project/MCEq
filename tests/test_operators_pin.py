@@ -14,7 +14,7 @@
 * the identity, invalidation and release contract of the ``_compiled_operator``
   cache;
 * the dense-vs-ARPACK gate of the EM step scale, the norm fallback behind
-  both, and that on a stitched 2D operator it reads Hankel mode 0 alone.
+  both, and that on a stitched 2D operator it reads mode l = 0 alone.
 
 Everything except the ``regenerate_matrices``, canonical-``int_m`` and
 construct-once pins is database-free: the methods under test read a bin-edge
@@ -858,7 +858,7 @@ def test_em_step_scale_is_cached_against_int_m_identity(monkeypatch):
     assert len(calls) == 2
 
 
-def test_em_step_scale_reads_hankel_mode_0_of_a_stitched_operator(monkeypatch):
+def test_em_step_scale_reads_mode_0_of_a_stitched_operator(monkeypatch):
     """``p.lidx`` / ``p.uidx`` are offsets inside one ``dim_states`` block.
 
     So on the ``(n_k * dim_states)`` operator the 2D assembly produces, the
@@ -886,7 +886,7 @@ def test_em_step_scale_reads_hankel_mode_0_of_a_stitched_operator(monkeypatch):
     stub.int_m = sp.block_diag(
         [
             sp.csr_matrix(_em_matrix(_positive_em_block(scale), dim_states))
-            for scale in mode_scales  # kappa-block per Hankel mode
+            for scale in mode_scales  # one block per angular mode
         ],
         format="csr",
     )
@@ -899,7 +899,7 @@ def test_em_step_scale_reads_hankel_mode_0_of_a_stitched_operator(monkeypatch):
     assert MCEqRun._em_cascade_step_scale(stub) != pytest.approx(
         max(mode_scales) * EM_BLOCK_RHO, rel=1e-8
     ), (
-        "the EM step scale now covers every Hankel mode. That is the Phase 6 "
+        "the EM step scale now covers every angular mode. That is the Phase 6 "
         "fix, not a regression: update this test, and note that the "
         "operators1d golden section is 1D (n_k == 1) and does not move."
     )

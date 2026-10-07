@@ -9,7 +9,7 @@ density by exactly ``sec(theta)``.
 
 Solution: multiplication by ``g(mu) = 1 / max(mu, cos theta_cap)`` in angle
 space is the constant mode-coupling matrix ``S = I + T = M[g]`` on the
-Legendre moments (:func:`MCEq.operators.legendre.secant_coupling`, exact by
+Legendre moments (:func:`MCEq.operators.legendre.path_elongation`, exact by
 quadrature). The corrected transport right-multiplies the per-mode blocks::
 
     da_l/dX = M_l  sum_l' (I + T)_{ll'} a_l'
@@ -50,7 +50,7 @@ def legendre_coupling(l_grid, theta_cap_deg):
     """``T = G - 1`` on the dense rows of the Legendre grid, zero elsewhere.
 
     ``G`` is the exact multiplication by ``1 / max(mu, mu_cap)`` of
-    :func:`MCEq.operators.legendre.secant_coupling`. Its dense rows reach
+    :func:`MCEq.operators.legendre.path_elongation`. Its dense rows reach
     far beyond the dense block (``g`` has a kink at ``mu_cap``), so they are
     taken against every ``l <= l_grid[-1]`` and mapped onto all modes by the
     cubic interpolation in ``l`` of
@@ -58,13 +58,13 @@ def legendre_coupling(l_grid, theta_cap_deg):
     zero: the sparse high-l modes describe narrow cones, which are not
     elongated.
     """
-    from MCEq.operators.legendre import dense_count, l_interpolation, secant_coupling
+    from MCEq.operators.legendre import dense_count, l_interpolation, path_elongation
 
     l_grid = np.asarray(l_grid)
     n_d = dense_count(l_grid)
     l_int = np.arange(int(l_grid[-1]) + 1)
     T = np.zeros((len(l_grid), len(l_grid)))
-    G = secant_coupling(len(l_int) - 1, theta_cap_deg, n_rows=n_d)
+    G = path_elongation(len(l_int) - 1, theta_cap_deg, n_rows=n_d)
     T[:n_d] = G @ l_interpolation(l_grid, l_int)
     T[:n_d, :n_d] -= np.eye(n_d)
     return T

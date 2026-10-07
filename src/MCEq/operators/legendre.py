@@ -44,7 +44,7 @@ __all__ = [
     "l_interpolation",
     "legendre_p",
     "moments",
-    "secant_coupling",
+    "path_elongation",
     "series",
     "theta_density",
 ]
@@ -130,7 +130,7 @@ def hemisphere_projection(l_max):
     return _coupling(l_max, [(0.0, 1.0, np.ones_like)], 0)
 
 
-def secant_coupling(l_max, theta_cap_deg=75.0, extra_nodes=64, n_rows=None):
+def path_elongation(l_max, theta_cap_deg=75.0, extra_nodes=64, n_rows=None):
     """``G = M[g]`` with ``g = 1 / max(mu, mu_cap)`` on ``[-1, 1]``.
 
     Per unit axis depth a particle at ``theta`` crosses ``sec theta`` more
@@ -207,8 +207,8 @@ def theta_density(a, l_grid, theta, smooth=True):
     The moments are interpolated in ``l`` with :func:`l_interpolation` to
     every ``l`` up to ``l_grid[-1]`` and summed as a Legendre series, with
     Jackson damping when ``smooth``. Returns ``f(theta) sin(theta) / theta``,
-    the density in the planar measure ``theta dtheta`` of the Hankel readout,
-    so that ``int f_planar theta dtheta = int f dmu``.
+    the density in the planar measure ``theta dtheta``, so that
+    ``int f_planar theta dtheta = int f dmu``.
     """
     a = np.asarray(a, dtype=float)
     l_grid = np.asarray(l_grid)

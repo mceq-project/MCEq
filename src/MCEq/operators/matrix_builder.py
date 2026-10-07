@@ -69,7 +69,7 @@ class MatrixBuilder:
     ``pman`` is the particle manager holding the cascade species, their
     tabulated yields and the energy grid. ``layout`` supplies the mode layout
     of the database (``is_2d``, ``n_k``, ``k_grid``), which decides whether a
-    per-channel block is ``(dim, dim)`` or one slab per Hankel mode.
+    per-channel block is ``(dim, dim)`` or one slab per Legendre mode.
 
     ``grid``, ``losses`` and ``physics`` are the settings groups this builder
     reads (see the module docstring); they are required, injected by the
@@ -420,7 +420,7 @@ class MatrixBuilder:
         fp64, the dtype ``cont_loss_operator`` produces: a band cast to
         ``grid.dtype`` first would round twice, where ``block += band`` rounds
         the promoted sum once. The band is mode-independent -- added to every
-        Hankel slab of a species through ``band[None, :, :]`` -- so the 2D
+        mode slab of a species through ``band[None, :, :]`` -- so the 2D
         operator is ``n_k`` copies of the one-mode matrix. No ``(row, column)``
         is written twice, the species blocks being disjoint, so the COO
         conversion has no duplicates to sum in an unspecified order.
@@ -458,7 +458,7 @@ class MatrixBuilder:
         """Returns a new square zero valued matrix with dimensions of grid.
 
         For 2D databases the per-channel block carries an extra leading
-        ``n_k`` axis (one slab per Hankel mode), so the returned shape is
+        ``n_k`` axis (one slab per Legendre mode), so the returned shape is
         ``(n_k, dim, dim)`` instead of ``(dim, dim)``.
         """
         if self.is_2d:
@@ -503,9 +503,9 @@ class MatrixBuilder:
         without a dense global matrix.
 
         For 2D databases each block carries a leading ``n_k`` axis (one
-        slab per Hankel mode, shape ``(n_k, dim, dim)``). The Hankel modes
+        slab per Legendre mode, shape ``(n_k, dim, dim)``). The modes
         are mutually decoupled, so the operator is block-diagonal in
-        kappa: per mode, the nonzero entries of every channel slab are
+        l: per mode, the nonzero entries of every channel slab are
         scattered (with their global row/column offsets) into one COO
         triplet set and converted to CSR in one shot — no dense
         ``(dim_states, dim_states)`` intermediate. ``scipy.sparse.

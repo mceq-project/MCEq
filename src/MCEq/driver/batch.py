@@ -199,7 +199,7 @@ def solve_batch(
 
     # 2D databases: the stitched solver state is n_k * dim_states per
     # column. phi0 stays user-facing at dim_states (per mode); a delta
-    # angular initial condition populates every Hankel mode with the
+    # angular initial condition populates every Legendre mode with the
     # same amplitude, so tile the rows across the n_k blocks — the
     # exact analogue of the np.tile in solve().
     if run._mceq_db.is_2d:

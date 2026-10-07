@@ -108,7 +108,7 @@ def test_unpack_channel_1d_matches_the_reference_block(hdf5_fixture_dbs):
         start += length
 
 
-def test_unpack_channel_2d_yields_the_kappa_stack(hdf5_fixture_dbs):
+def test_unpack_channel_2d_yields_the_mode_stack(hdf5_fixture_dbs):
     path = hdf5_fixture_dbs["two_d_width4"]
     pack = HDF5Store(path).read_channel_pack("hadronic_interactions/air", "SIBYLL21")
     start = 0

@@ -740,8 +740,8 @@ class MCEqRun:
             info(2, "Warning: integration path calculation skipped.")
 
         # If the initial angular density is a delta function (e.g. a single
-        # cosmic-ray shower incident at some angle theta), all Hankel modes
-        # k are populated with the same amplitude as the 1D initial
+        # cosmic-ray shower incident along the axis), all Legendre modes
+        # (P_l(1) = 1) carry the same amplitude as the 1D initial
         # condition. The stitched ETD2 path operates on a length
         # ``n_k * dim_states`` state vector — broadcast ``_phi0`` across
         # the n_k blocks via ``np.tile`` so block-k of the stacked state

@@ -42,9 +42,9 @@ def identity_layout(dim):
 def secant_layout(sec_ops, dim):
     """Low-E-first state layout of the secant kernels.
 
-    The state is ``(n_k, N)`` row-major over (Hankel mode, species x
-    energy). The coupling acts on the modes ``P`` — a leading block, since
-    kappa is sorted — and on the low-E columns ``g``. Moving ``g`` to the
+    The state is ``(n_k, N)`` row-major over (Legendre mode, species x
+    energy). The coupling acts on the modes ``P`` — the leading dense block
+    of the l grid — and on the low-E columns ``g``. Moving ``g`` to the
     front of every mode block, ``x' = x[perm]``, makes the coupled plane
     the corner block ``x'.reshape(n_k, N)[:n_P, :n_g]``: a strided view,
     so the step needs no gather and no scatter. Returns a namespace with
@@ -163,7 +163,7 @@ class CompiledOperator:
     @property
     def corner_diagonals(self):
         """``(d_int, d_dec)`` on the coupled plane, ``(n_P, n_g)`` fp64
-        arrays: the kappa-dependent diagonal of the coupled modes."""
+        arrays: the l-dependent diagonal of the coupled modes."""
         return tuple(
             np.ascontiguousarray(coupled_corner(self.layout, d))
             for d in (self.d_int, self.d_dec)
@@ -173,9 +173,9 @@ class CompiledOperator:
     def exact_slot_diagonals(self):
         """``(L_int, L_dec)``, ``(n_P, n_g)`` fp64 arrays: the diagonal of
         the exactly integrated coupled operator in the eigenbasis.
-        ``L_dec = lam_j d_dec_0i`` with ``D0`` the kappa = 0 row of the
+        ``L_dec = lam_j d_dec_0i`` with ``D0`` the l = 0 row of the
         diagonals; ``L_int = lam_j d_int_0i`` plus the eigenbasis diagonal
-        of the kappa-dependent part of ``d_int`` on the corner (the muon
+        of the l-dependent part of ``d_int`` on the corner (the muon
         multiple-scattering damping), so that only its mode mixing is left
         to the remainder (:ref:`solver-math`)."""
         lay, c = self.layout, self.coupling
@@ -249,7 +249,7 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
     ``particles`` are the cascade species, read for ``is_em`` and for the
     ``lidx``/``uidx`` of those that are. Those offsets index one ``dim_states``
     block, so on the ``(n_k * dim_states)`` operator the 2D assembly stitches
-    this reads Hankel mode 0 alone. See the corresponding test in
+    this reads mode l = 0 alone. See the corresponding test in
     ``tests/test_operators_pin.py``.
     """
     col_ranges = [

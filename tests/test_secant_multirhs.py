@@ -1,10 +1,9 @@
 """Closure tests for the batched (multi-RHS / carousel) secant ETD2 driver.
 
-The synthetic fixture has 48 logical Hankel modes with a tiny per-mode
-state, so it exercises the production tensor layout, all modes,
-independent initial columns, carousel harvest/reset and frozen-lane
-pinning without the minutes-scale fitted operator or the external
-production database. The batched kernels must reproduce independent
+The synthetic fixture has 48 logical angular modes with a tiny per-mode
+state and a synthetic coupling, so it exercises the production tensor
+layout, all modes, independent initial columns, carousel harvest/reset and
+frozen-lane pinning without the external production database. The batched kernels must reproduce independent
 single-axis :func:`solve_etd2` solves; tolerances are
 ~1e-11 relative — SpMM and K-fold SpMV need not agree to round-off
 across BLAS implementations (the production fp64 CUDA carousel

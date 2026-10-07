@@ -11,20 +11,21 @@ from MCEq.operators.legendre import (
     l_interpolation,
     legendre_p,
     moments,
-    secant_coupling,
+    path_elongation,
     series,
     theta_density,
 )
 from MCEq.operators.secant import build_secant_kernel_ops, legendre_coupling
 
-# Hankel kappa grid of the v2 2D database (48 modes).
+# Sparse grid from 0 to 2000 (48 modes); its tail above 64 is the sparse part
+# of the production grid.
 K_GRID = np.array(
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28, 33, 38, 43,
      50, 58, 67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422,
      486, 560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000]
 )  # fmt: skip
 
-# Legendre l grid of the 90-mode database: dense l <= 64, the Hankel grid above.
+# Legendre l grid of the 90-mode database: dense l <= 64, sparse above.
 L_GRID = np.concatenate([np.arange(65), K_GRID[K_GRID > 64]])
 
 
@@ -177,11 +178,11 @@ def test_hemisphere_projection():
 
 
 @pytest.mark.parametrize("cap", [60.0, 75.0, 89.0])
-def test_secant_coupling(cap):
+def test_path_elongation(cap):
     """``G`` against direct quadrature of ``P_l g P_l'`` with the kink at
     ``mu_cap``, and its action on a polynomial."""
     l_max = 48
-    g_mat = secant_coupling(l_max, cap)
+    g_mat = path_elongation(l_max, cap)
     mu_cap = np.cos(np.radians(cap))
 
     def g(mu):
@@ -205,9 +206,9 @@ def test_secant_coupling(cap):
 
 
 def test_secant_without_elongation_is_identity():
-    np.testing.assert_allclose(secant_coupling(30, 0.0), np.eye(31), atol=1e-13)
+    np.testing.assert_allclose(path_elongation(30, 0.0), np.eye(31), atol=1e-13)
     with pytest.raises(ValueError):
-        secant_coupling(30, 90.0)
+        path_elongation(30, 90.0)
 
 
 def test_secant_on_collimated_state():
@@ -215,7 +216,7 @@ def test_secant_on_collimated_state():
     ``g(1) = 1``: the low moments of the truncated ``G 1`` converge to 1."""
     err = []
     for l_max in (64, 256, 1024):
-        ga = secant_coupling(l_max, 75.0) @ np.ones(l_max + 1)
+        ga = path_elongation(l_max, 75.0) @ np.ones(l_max + 1)
         err.append(np.abs(ga[:11] - 1).max())
     assert err[0] < 1e-2
     assert err[1] < err[0] / 4
@@ -240,8 +241,8 @@ def test_wide_secant_coupling_on_narrow_cones():
     0.9 a_0 on the same cones."""
     n_d = 65
     t = legendre_coupling(L_GRID, 75.0)
-    g_ref = secant_coupling(3000, 75.0, n_rows=n_d)
-    g_cut = secant_coupling(n_d - 1, 75.0)
+    g_ref = path_elongation(3000, 75.0, n_rows=n_d)
+    g_cut = path_elongation(n_d - 1, 75.0)
     for sigma in (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 15.0):
         kappa = 1 / np.radians(sigma) ** 2
         ref = g_ref @ vmf_moments(kappa, np.arange(3001))
