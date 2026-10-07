@@ -288,7 +288,14 @@ where :math:`D^0` is the diagonal of the :math:`l = 0` operator,
 common to all modes. :math:`S_P` acts on the mode index and :math:`D^0_i`
 on the energy index, so they commute, and the eigendecomposition
 :math:`S_P = V \mathrm{diag}(\lambda) V^{-1}` diagonalises the coupled
-block. The corner of the state is carried in the eigenbasis,
+block. :math:`S_P` is not normal: its cluster of eigenvalues at
+:math:`1/\mu_\mathrm{cap}` can split into conjugate pairs
+:math:`a \pm ib` with :math:`b/a` up to :math:`2.4\times10^{-7}` (caps
+7.4–7.8° on the 90-mode grid). Such a pair is kept as the real plane
+:math:`[\mathrm{Re}\,v, \mathrm{Im}\,v]` with :math:`\lambda = a`; the
+rotation :math:`\pm b` stays in the remainder below, and pairs with
+:math:`b/a > 10^{-5}` are refused. The corner of the state is carried in
+the eigenbasis,
 
 .. math::
 
@@ -323,9 +330,9 @@ the remainder needs the coupling. The operand of the transport operator is
 
 .. math::
 
-   \mathcal{C}(w) = V\mathrm{diag}(\lambda)\,\Psi + T_{P,P^c}\,\Phi_{P^c,g}
+   \mathcal{C}(w) = S_P V\,\Psi + T_{P,P^c}\,\Phi_{P^c,g}
                   = W\,\mathcal{L}(\Phi), \qquad
-   W = \bigl[\,V\mathrm{diag}(\lambda)\ \big|\ T_{P,P^c}\,\bigr],
+   W = \bigl[\,S_P V\ \big|\ T_{P,P^c}\,\bigr],
 
 with :math:`\mathcal{L}(\Phi) = \Phi_{\cdot,g}` the low-energy block over
 every mode. :math:`V`,

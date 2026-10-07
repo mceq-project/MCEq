@@ -45,6 +45,14 @@ import numpy as np
 
 from MCEq.misc import info
 
+#: Largest ``|imag| / real`` accepted for an eigenvalue of ``S_P``. The dense
+#: block is not normal, and its ~60-fold cluster at ``1/mu_cap`` splits
+#: into conjugate pairs; on the 90-mode grid the split reaches 2.4e-7
+#: (caps 7.4-7.8 deg). In the stiff limit the rotation of a pair is a
+#: fixed-point iteration of spectral radius ``|imag| / real``, which this
+#: bound keeps far below one.
+_PAIR_SPLIT_MAX = 1e-5
+
 
 def legendre_coupling(l_grid, theta_cap_deg):
     """``T = G - 1`` on the dense rows of the Legendre grid, zero elsewhere.
@@ -81,7 +89,9 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
       P          -- indices of the coupled modes (the dense block of l_grid)
       T_P        -- T restricted to coupled rows, all columns (n_P, n_k)
       T_PP       -- the (n_P, n_P) same-subspace block
-      V, Vi, lam -- eigendecomposition of S_P = I + T_PP (real)
+      V, Vi, lam -- real basis of S_P = I + T_PP: Vi S_P V = diag(lam),
+                    up to the rotation ±b of near-real pairs a ± ib
+                    (``V = [Re v, Im v]``, ``lam = a``)
       low_e_idx  -- state columns (species x energy) with
                     E_kin < spec.e_max
       n_k        -- number of angular modes
@@ -97,16 +107,18 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
     T_PP = T[np.ix_(P, P)]
     S_P = np.eye(len(P)) + T_PP
     lam, V = np.linalg.eig(S_P)
-    if np.abs(lam.imag).max() > 1e-9 or lam.real.min() <= 0:
+    split = np.abs(lam.imag) / np.abs(lam.real)
+    if split.max() > _PAIR_SPLIT_MAX or lam.real.min() <= 0:
         raise RuntimeError(
             "secant coupling: S_P eigenvalues not positive-real "
             f"(min real {lam.real.min():.3e}, "
-            f"max |imag| {np.abs(lam.imag).max():.3e}) at "
+            f"max |imag|/real {split.max():.3e}) at "
             f"theta_cap_deg = {theta_cap_deg:g}."
         )
-    # A conjugate pair with |imag| <= 1e-9 (a split of the degenerate
-    # eigenvalue 1/mu_cap) spans its invariant plane with Re v and Im v; the
-    # real parts of the pair alone would be one vector twice.
+    # A near-real conjugate pair a ± ib spans its invariant plane with
+    # Re v and Im v, on which S_P acts as [[a, b], [-b, a]]. The step loop
+    # integrates a exactly and leaves the rotation b to the explicit
+    # remainder (the operand uses S_P V, not V diag(lam)).
     pair = np.flatnonzero(lam.imag > 0)
     V = V.copy()
     V[:, pair + 1] = V[:, pair].imag

@@ -257,23 +257,39 @@ def test_wide_secant_coupling_on_narrow_cones():
     )
 
 
-@pytest.mark.parametrize("cap", [0.0, 0.5, 1.0, 5.0, 20.0, 45.0, 50.0, 75.0, 89.0])
+@pytest.mark.parametrize(
+    "cap", [0.0, 0.5, 1.0, 5.0, 7.4, 7.5, 7.7, 20.0, 45.0, 50.0, 75.0, 89.0]
+)
 def test_wide_secant_eigenbasis(cap):
-    """``S_P = I + T_PP`` has eigenvalues near ``1/mu_cap`` ~30-fold; the
-    real eigenbasis stays well conditioned and reproduces ``S_P`` at every
-    cap, down to ``S_P = I`` at cap 0."""
+    """``S_P = I + T_PP`` has eigenvalues near ``1/mu_cap`` ~60-fold. At caps
+    7.4-7.8 deg the cluster splits into conjugate pairs ``a ± ib`` with
+    ``b/a`` up to 2.4e-7; the real basis keeps their 2x2 rotation and stays
+    well conditioned, down to ``S_P = I`` at cap 0."""
     ops = build_secant_kernel_ops(
         L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
     )
-    v, lam = ops["V"], ops["lam"]
+    v, vi, lam = ops["V"], ops["Vi"], ops["lam"]
     s_p = np.eye(len(lam)) + ops["T_PP"]
     assert np.linalg.cond(v) < 1e4
-    np.testing.assert_allclose((v * lam) @ ops["Vi"], s_p, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(v @ vi, np.eye(len(lam)), rtol=0, atol=1e-12)
+    rest = vi @ s_p @ v - np.diag(lam)
+    assert np.abs(rest).max() < 1e-6 * lam.max()
+    if cap == 7.5:
+        assert np.abs(rest).max() > 1e-8  # a split pair is present
     # g lies in [1, 1/mu_cap]; truncated to the dense block, the spectrum
     # overshoots 1/mu_cap by 0.4 % at most (cap 20 deg).
     assert 1 - 1e-9 < lam.min() <= lam.max() < 1.005 / np.cos(np.radians(cap))
     if cap == 0.0:
         assert np.abs(ops["T_P"]).max() < 1e-7
+
+
+@pytest.mark.slow
+def test_wide_secant_cap_sweep():
+    """Every cap in [0, 90) on a 0.1 deg lattice builds on the 90-mode grid
+    (about 15 min)."""
+    for cap in np.arange(0.0, 90.0, 0.1):
+        ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+        assert np.linalg.cond(ops["V"]) < 1e4
 
 
 @pytest.mark.parametrize(

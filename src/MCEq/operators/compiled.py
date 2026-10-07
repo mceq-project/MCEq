@@ -87,17 +87,17 @@ def coupled_corner(layout, a):
 
 def secant_coupling(sec_ops):
     """The mode-coupling operators of the coupled corner in the eigenbasis of
-    ``S_P = I + T_PP = V diag(lam) Vi`` (see :mod:`MCEq.operators.secant`), as
-    contiguous fp64 arrays: ``V``, ``Vi``, ``lam`` (eigenvectors, their
-    inverse and the eigenvalues of ``S_P``) and ``W = [V diag(lam) |
-    T_P[:, P^c]]`` of shape ``(n_P, n_k)``, which maps the low-E block of the
-    state onto the corner of the operand ``S Phi``."""
+    ``S_P = I + T_PP`` (see :mod:`MCEq.operators.secant`), as contiguous fp64
+    arrays: ``V``, ``Vi``, ``lam`` (the real basis, its inverse and the
+    exactly integrated diagonal) and ``W = [S_P V | T_P[:, P^c]]`` of shape
+    ``(n_P, n_k)``, which maps the low-E block of the state onto the corner
+    of the operand ``S Phi``."""
     V, Vi, lam, T_P = (
         np.ascontiguousarray(sec_ops[k], dtype=np.float64)
         for k in ("V", "Vi", "lam", "T_P")
     )
     n_P = V.shape[0]
-    W = np.hstack([V * lam[None, :], T_P[:, n_P:]])
+    W = np.hstack([V + T_P[:, :n_P] @ V, T_P[:, n_P:]])
     return SimpleNamespace(V=V, Vi=Vi, lam=lam, W=np.ascontiguousarray(W))
 
 

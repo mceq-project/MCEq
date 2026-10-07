@@ -129,6 +129,28 @@ def test_coupled_route_matches_expm(system, backend):
 
 
 @pytest.mark.parametrize("backend", ["numpy", CUDA])
+def test_coupled_route_in_a_rotated_basis(system, backend):
+    """The step is exact in any real basis of ``S_P``: rotating two
+    eigenvectors into each other (as for the ``[Re v, Im v]`` plane of a
+    split pair) leaves the off-diagonal part to the remainder and the
+    solution on the exact exponential."""
+    ops = dict(_secant_ops())
+    c, s_ = np.cos(0.3), np.sin(0.3)
+    R = np.eye(len(ops["lam"]))
+    R[:2, :2] = [[c, -s_], [s_, c]]
+    ops["V"], ops["Vi"] = ops["V"] @ R, R.T @ ops["Vi"]
+    T = np.zeros((N_K, N_K))
+    T[ops["P"][:, None], np.arange(N_K)[None, :]] = ops["T_P"]
+    low = np.zeros(N)
+    low[ops["low_e_idx"]] = 1.0
+    S = np.eye(N_K * N) + np.kron(T, np.diag(low))
+    phi0 = np.random.default_rng(2).random(N_K * N)
+    ref = _reference(system, 0.4, S, 1.0, phi0)
+    sol = _solve(system, ops, 0.4, 1.0, phi0, nsteps=4000, backend=backend)
+    assert np.abs(sol / ref - 1).max() < 1e-4
+
+
+@pytest.mark.parametrize("backend", ["numpy", CUDA])
 def test_without_removal_the_band_split_is_neutral(system, backend):
     """mode_mix = identity reproduces the unsplit operator int_m = hadr + band."""
     eye = SimpleNamespace(M=np.eye(N_D), n_D=N_D, N=N)
