@@ -290,3 +290,32 @@ def test_theta_density_wide_tail(cones):
                for w, k in kappas)  # fmt: skip
     truth = f_mu * np.sin(theta) / theta
     np.testing.assert_allclose(theta_density(a, L_GRID, theta), truth, rtol=3e-2)
+
+
+@pytest.mark.parametrize("log_theta", [False, True])
+def test_convert_to_theta_space_reads_one_species(log_theta):
+    """``convert_to_theta_space`` slices the species out of each depth's
+    ``(n_k, dim_states)`` modes and reads them out with ``theta_density``;
+    a 5-degree cone integrates to its ``a_0`` in ``theta dtheta``."""
+    from types import SimpleNamespace
+
+    from MCEq.driver.results import convert_to_theta_space
+
+    n_e, kappa = 3, 1 / np.radians(5.0) ** 2
+    cone = vmf_moments(kappa, L_GRID)
+    state = np.zeros((len(L_GRID), 2 * n_e))
+    state[:, n_e:] = np.outer(cone, [1.0, 2.0, 4.0])
+    run = SimpleNamespace(
+        _mceq_db=SimpleNamespace(k_grid=L_GRID),
+        e_grid=np.ones(n_e),
+        pman=SimpleNamespace(pdg2mceqidx={(14, 0): 1}),
+    )
+    l_grid, amps, theta, f = convert_to_theta_space(
+        run, [state, 0.5 * state], 14, 0, theta_res=4000, log_theta=log_theta
+    )
+    np.testing.assert_array_equal(l_grid, L_GRID)
+    assert np.asarray(f).shape == (2, n_e, 4000)
+    np.testing.assert_array_equal(amps[1][2], 2.0 * cone)
+    np.testing.assert_allclose(f[0][1], theta_density(2.0 * cone, L_GRID, theta))
+    norm = np.trapezoid(np.asarray(f) * theta, theta, axis=-1)
+    np.testing.assert_allclose(norm, [[1, 2, 4], [0.5, 1, 2]], rtol=2e-3)

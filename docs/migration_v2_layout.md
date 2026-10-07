@@ -67,9 +67,11 @@ isolated from later global writes.
 | `minimal_primary_energy` | `config.physics.minimal_primary_energy` |
 | `muon_helicity_dependence` | `config.physics.muon_helicity_dependence` |
 | `muon_multiple_scattering` | `config.physics.muon_multiple_scattering` |
+| `muon_scattering_model` | `config.physics.muon_scattering_model` |
 | `prompt_ctau` | `config.physics.prompt_ctau` |
 | `standard_particles` | `config.physics.standard_particles` |
 | `use_isospin_sym` | `config.physics.use_isospin_sym` |
+| `legendre_backward_removal` | `config.secant.legendre_removal` |
 | `secant_theta_cap_deg` | `config.secant.cap_deg` |
 | `secant_theta_e_max` | `config.secant.e_max` |
 | `secant_theta_lam_rel` | `config.secant.lam_rel` |
@@ -111,7 +113,7 @@ the rest keep working under both spellings.
 | `MCEq.geometry.nrlmsise00` | `MCEq.environment._ext.nrlmsise00` | kept at 2.0 (public-usage census) |
 | `MCEq.geometry.nrlmsise00_mceq` | `MCEq.environment.msis00_backend` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.geometry.registry` | `MCEq.environment.registry` | removed at 2.0 (public-usage census: no users) |
-| `MCEq.hankel` | `MCEq.driver.results.inverse_hankel_legacy` | removed at 2.0 (public-usage census: no users) |
+| `MCEq.hankel` | `MCEq.operators.legendre.theta_density` | removed with the Hankel modes; the Legendre readout replaces it |
 | `MCEq.misc.EnergyGrid / energy_grid / gen_xmat` | `MCEq.data.energy_grid` | importable under both names |
 | `MCEq.operator_assembly` | `MCEq.operators.compiled` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | importable under both names |
