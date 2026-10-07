@@ -484,18 +484,19 @@ class MatrixBuilder:
         except (KeyError, AttributeError):
             mu_mass = scattering.MUON_MASS
         theta_s_sq = scattering.theta_s_squared(self._energy_grid.c, mu_mass)
+        kappas = scattering.mode_scales(self.k_grid, getattr(self, "_layout", None))
         muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
         model = getattr(self._physics, "muon_scattering_model", "gaussian")
         if model == "gaussian":
             damping = np.asarray(
-                [scattering.mode_damping(theta_s_sq, kappa) for kappa in self.k_grid]
+                [scattering.mode_damping(theta_s_sq, kappa) for kappa in kappas]
             )
         elif model == "screened-coulomb":
             damping = -scattering.screened_coulomb_rate(
                 self._energy_grid.c,
-                self.k_grid,
+                kappas,
                 self._layout.scattering_composition(),
                 mu_mass,
             )

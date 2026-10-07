@@ -1,0 +1,216 @@
+"""Legendre angular modes: Funk-Hecke composition, flat-sky limit, couplings."""
+
+import numpy as np
+import pytest
+import scipy.special as sp
+from scipy.integrate import quad
+
+from MCEq.operators.legendre import (
+    forward_weights,
+    hemisphere_projection,
+    legendre_p,
+    moments,
+    secant_coupling,
+    series,
+)
+
+# Hankel kappa grid of the v2 2D database (48 modes).
+K_GRID = np.array(
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28, 33, 38, 43,
+     50, 58, 67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422,
+     486, 560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000]
+)  # fmt: skip
+
+
+def hg_sample(rng, g, n):
+    """``cos alpha`` from the Henyey-Greenstein kernel; ``k_l = g^l``."""
+    s = (1 - g * g) / (1 - g + 2 * g * rng.random(n))
+    return (1 + g * g - s * s) / (2 * g)
+
+
+def vmf_sample(rng, kappa, n):
+    """``cos alpha`` from the von Mises-Fisher kernel on the sphere."""
+    xi = rng.random(n)
+    return 1 + np.log(xi + (1 - xi) * np.exp(-2 * kappa)) / kappa
+
+
+def vmf_moments(kappa, ell):
+    """``<P_l(cos alpha)> = I_{l+1/2}(kappa) / I_{1/2}(kappa)``."""
+    return sp.ive(ell + 0.5, kappa) / sp.ive(0.5, kappa)
+
+
+def rotate(mu, cos_alpha, rng):
+    """Polar cosine of a direction at ``alpha`` to ``mu``, uniform azimuth."""
+    phi = 2 * np.pi * rng.random(mu.size)
+    sin_a = np.sqrt(np.clip(1 - cos_alpha**2, 0, None))
+    return mu * cos_alpha + np.sqrt(np.clip(1 - mu**2, 0, None)) * sin_a * np.cos(phi)
+
+
+def test_recurrence_matches_scipy():
+    mu = np.linspace(-1, 1, 101)
+    p = legendre_p(2000, mu)
+    for ell in (0, 1, 2, 7, 50, 333, 2000):
+        np.testing.assert_allclose(p[ell], sp.eval_legendre(ell, mu), atol=1e-12)
+
+
+def test_sparse_moments_match_table():
+    mu = np.random.default_rng(1).uniform(-1, 1, 1000)
+    w = np.random.default_rng(2).random(1000)
+    ell = np.array([0, 3, 3, 17, 64, 1])
+    ref = legendre_p(64, mu)[ell] @ w
+    np.testing.assert_allclose(moments(mu, ell, w, chunk=77), ref, rtol=1e-12)
+
+
+def test_series_round_trip():
+    """A degree-6 polynomial is reproduced by its first 7 moments."""
+    x, w = np.polynomial.legendre.leggauss(16)
+
+    def f(mu):
+        return 1 + mu - 2 * mu**3 + 0.5 * mu**6
+
+    a = moments(x, np.arange(7), w * f(x))
+    mu = np.linspace(-1, 1, 41)
+    np.testing.assert_allclose(series(a, mu), f(mu), atol=1e-12)
+
+
+@pytest.mark.parametrize("g", [0.2, 0.6, 0.95])
+def test_henyey_greenstein_kernel_moments(g):
+    """``k_l`` by quadrature of the kernel density is ``g^ell``."""
+    x, w = np.polynomial.legendre.leggauss(4000)
+    density = 0.5 * (1 - g * g) / (1 + g * g - 2 * g * x) ** 1.5
+    ell = np.arange(31)
+    np.testing.assert_allclose(moments(x, ell, w * density), g**ell, atol=1e-10)
+
+
+@pytest.mark.parametrize("parent", ["hg-axis", "uniform-hemisphere"])
+def test_funk_hecke_composition_mc(parent):
+    """Composition on the sphere multiplies the moments: a_l(s) = k_l a_l(p).
+
+    The parent is either narrow-ish about the axis (HG, g=0.7) or spread over
+    the forward hemisphere; the kernel (HG, g=0.6) sends a sizeable fraction
+    backward, where planar composition fails.
+    """
+    rng = np.random.default_rng(42)
+    n = 400_000
+    ell = np.arange(41)
+    if parent == "hg-axis":
+        mu_p = hg_sample(rng, 0.7, n)
+        a_p = 0.7**ell
+    else:
+        mu_p = rng.random(n)
+        a_p = 2 * forward_weights(40) / (2 * ell + 1)
+    mu_s = rotate(mu_p, hg_sample(rng, 0.6, n), rng)
+    a_s = moments(mu_s, ell) / n
+    sigma = legendre_p(40, mu_s).std(axis=1) / np.sqrt(n)
+    assert np.all(np.abs(a_s - 0.6**ell * a_p) < 5 * sigma + 1e-12)
+
+
+def test_hilb_limit():
+    """``P_l(cos t) = sqrt(t / sin t) J_0((ell + 1/2) t) + O(ell^-3/2)`` on
+    ``0 < t <= pi/2``, and ``P_l(cos t) -> J_0((ell + 1/2) t)`` in the core
+    ``(ell + 1/2) t <= 5`` with an ``O(t^2)`` remainder."""
+    t = np.linspace(1e-6, np.pi / 2, 20001)
+    for ell in (10, 100, 1000, 2000):
+        p = legendre_p(ell, np.cos(t))[ell]
+        j = sp.j0((ell + 0.5) * t)
+        assert np.abs(p - np.sqrt(t / np.sin(t)) * j).max() < 0.07 * ell**-1.5
+        core = (ell + 0.5) * t <= 5
+        assert np.abs(p - j)[core].max() < 0.03 * (5 / (ell + 0.5)) ** 2
+
+
+@pytest.mark.parametrize("kappa", [1e2, 1e4, 1e6])
+def test_narrow_cone_moments_match_hankel(kappa):
+    """A von Mises-Fisher cone of width ``sigma = kappa^-1/2`` (5.7, 0.57,
+    0.057 deg): its Legendre moments equal the Hankel modes of the planar
+    Gaussian, ``exp(-kappa_H^2 sigma^2 / 2)`` at ``kappa_H = ell + 1/2``, to
+    ``O(sigma^2)``."""
+    ell = K_GRID
+    lo = max(-1.0, 1 - 40 / kappa)
+    x, w = np.polynomial.legendre.leggauss(4000)
+    mu = 0.5 * (1 - lo) * x + 0.5 * (1 + lo)
+    density = kappa * np.exp(kappa * (mu - 1)) / (1 - np.exp(-2 * kappa))
+    a = moments(mu, ell, 0.5 * (1 - lo) * w * density)
+    np.testing.assert_allclose(a, vmf_moments(kappa, ell), atol=1e-10)
+    hankel = np.exp(-((ell + 0.5) ** 2) / (2 * kappa))
+    assert np.abs(a - hankel).max() < 0.13 / kappa
+
+
+def test_forward_weights():
+    l_max = 30
+    c = forward_weights(l_max)
+    ref = [
+        (2 * ell + 1) / 2 * quad(sp.legendre(ell), 0, 1)[0] for ell in range(l_max + 1)
+    ]
+    np.testing.assert_allclose(c, ref, atol=1e-12)
+    np.testing.assert_allclose(hemisphere_projection(l_max)[0], c, atol=1e-12)
+
+
+def _quad_coupling(ell, lp, g, lo=0.0, points=None):
+    def f(mu):
+        return sp.eval_legendre(ell, mu) * g(mu) * sp.eval_legendre(lp, mu)
+
+    return (2 * lp + 1) / 2 * quad(f, lo, 1, points=points, limit=400)[0]
+
+
+def test_hemisphere_projection():
+    """Entries by direct quadrature, and the action on a polynomial: the
+    moments of ``f 1(mu > 0)`` for every ``ell <= l_max``."""
+    l_max = 40
+    b = hemisphere_projection(l_max)
+    for ell, lp in [(0, 0), (1, 0), (0, 1), (5, 8), (17, 40), (40, 39)]:
+        ref = _quad_coupling(ell, lp, np.ones_like)
+        assert b[ell, lp] == pytest.approx(ref, abs=1e-12)
+    x, w = np.polynomial.legendre.leggauss(64)
+
+    def f(mu):
+        return 1 + mu + 3 * mu**3 - mu**5
+
+    a = moments(x, np.arange(l_max + 1), w * f(x))
+    ref = moments(0.5 * x + 0.5, np.arange(l_max + 1), 0.5 * w * f(0.5 * x + 0.5))
+    np.testing.assert_allclose(b @ a, ref, atol=1e-12)
+
+
+@pytest.mark.parametrize("cap", [60.0, 75.0, 89.0])
+def test_secant_coupling(cap):
+    """``G`` against direct quadrature of ``P_l g P_l'`` with the kink at
+    ``mu_cap``, and its action on a polynomial."""
+    l_max = 48
+    g_mat = secant_coupling(l_max, cap)
+    mu_cap = np.cos(np.radians(cap))
+
+    def g(mu):
+        return 1 / np.maximum(mu, mu_cap)
+
+    for ell, lp in [(0, 0), (0, 1), (1, 0), (3, 9), (20, 21), (48, 48), (2, 48)]:
+        ref = _quad_coupling(ell, lp, g, lo=-1.0, points=[mu_cap])
+        assert g_mat[ell, lp] == pytest.approx(ref, rel=1e-9, abs=1e-11)
+    x, w = np.polynomial.legendre.leggauss(64)
+
+    def f(mu):
+        return 2 - mu + mu**4
+
+    a = moments(x, np.arange(l_max + 1), w * f(x))
+    ref = [
+        quad(lambda mu, ell=ell: sp.eval_legendre(ell, mu) * g(mu) * f(mu), -1, 1,
+             points=[mu_cap], limit=400)[0]
+        for ell in range(l_max + 1)
+    ]  # fmt: skip
+    np.testing.assert_allclose(g_mat @ a, ref, atol=1e-10)
+
+
+def test_secant_without_elongation_is_identity():
+    np.testing.assert_allclose(secant_coupling(30, 0.0), np.eye(31), atol=1e-13)
+    with pytest.raises(ValueError):
+        secant_coupling(30, 90.0)
+
+
+def test_secant_on_collimated_state():
+    """A beam along the axis (``a_l = 1`` for all ``ell``) is not elongated,
+    ``g(1) = 1``: the low moments of the truncated ``G 1`` converge to 1."""
+    err = []
+    for l_max in (64, 256, 1024):
+        ga = secant_coupling(l_max, 75.0) @ np.ones(l_max + 1)
+        err.append(np.abs(ga[:11] - 1).max())
+    assert err[0] < 1e-2
+    assert err[1] < err[0] / 4
+    assert err[2] < 1e-3

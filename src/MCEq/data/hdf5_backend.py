@@ -147,6 +147,11 @@ class HDF5Backend:
             else:
                 self.n_k = 1
                 self.k_grid = np.asarray([0])
+            # "legendre": the modes are <P_l(cos theta)> with l = k_grid.
+            basis = ca.get("angular_basis", "hankel")
+            self.angular_basis = (
+                basis.decode() if isinstance(basis, bytes) else str(basis)
+            )
 
             # Full CSR dimension: in 2D it spans n_k Hankel modes * energy grid.
             if self.is_2d:

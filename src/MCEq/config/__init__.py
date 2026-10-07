@@ -357,6 +357,10 @@ secant_theta_transport = "auto"
 #: coupling operator; below ~50 the operator's eigenbasis is
 #: numerically defective and the build raises. Valid range [50, 90).
 secant_theta_cap_deg = 75.0
+#: Legendre 2D databases only: remove produced particles moving backward
+#: (no albedo) with :func:`MCEq.operators.legendre.backward_removal`. Off
+#: transports them as if they moved downward at the cap angle.
+legendre_backward_removal = True
 #: zero coupling-matrix rows with kappa > this. The correction has no
 #: support at narrow angular scales (high kappa); raising the limit
 #: only adds inversion ringing, lowering it truncates the operator.

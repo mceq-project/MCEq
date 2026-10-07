@@ -36,6 +36,7 @@ __all__ = [
     "LAMBDA_S",
     "MUON_MASS",
     "mode_damping",
+    "mode_scales",
     "screened_coulomb_rate",
     "muon_state_offsets",
     "theta_s_squared",
@@ -89,6 +90,19 @@ def mode_damping(theta_s_sq, kappa):
     rather than adding a row of zeros to it.
     """
     return -(kappa**2) * np.asarray(theta_s_sq) / 4.0
+
+
+def mode_scales(k_grid, layout):
+    """The planar scale ``kappa`` of every mode of ``layout``'s database.
+
+    ``k_grid`` for Hankel modes; ``l + 1/2`` for Legendre modes, the
+    small-angle limit ``P_l(cos t) -> J0((l + 1/2) t)``, which holds per
+    collision for the forward-peaked Coulomb scattering.
+    """
+    k = np.asarray(k_grid, dtype=float)
+    if getattr(layout, "angular_basis", "hankel") == "legendre":
+        return np.where(k > 0, k + 0.5, 0.0)
+    return k
 
 
 def muon_state_offsets(pdg2pref):

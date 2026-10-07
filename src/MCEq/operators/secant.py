@@ -188,8 +188,23 @@ def secant_coupling_matrix(
     return T
 
 
+def legendre_coupling(l_grid, theta_cap_deg):
+    """``T = G - 1`` on the dense Legendre block, zero elsewhere.
+
+    ``G`` is the exact multiplication by ``1 / max(mu, mu_cap)`` of
+    :func:`MCEq.operators.legendre.secant_coupling`; the sparse high-l modes
+    describe narrow cones, which are not elongated.
+    """
+    from MCEq.operators.legendre import dense_count, secant_coupling
+
+    n_d = dense_count(l_grid)
+    T = np.zeros((len(l_grid), len(l_grid)))
+    T[:n_d, :n_d] = secant_coupling(n_d - 1, theta_cap_deg) - np.eye(n_d)
+    return T
+
+
 def build_secant_kernel_ops(
-    k_grid, e_centers, n_species, spec, theta_cap_deg=None, paths=None
+    k_grid, e_centers, n_species, spec, theta_cap_deg=None, paths=None, basis="hankel"
 ):
     """Assemble the constant data the secant ETD2RK kernel needs.
 
@@ -212,16 +227,22 @@ def build_secant_kernel_ops(
     if theta_cap_deg is None:
         theta_cap_deg = spec.cap_deg
     theta_cap_deg = float(theta_cap_deg)
-    T = secant_coupling_matrix(
-        np.asarray(k_grid, dtype=np.float64),
-        theta_cap_deg=theta_cap_deg,
-        row_kmax=spec.row_kmax,
-        lam_rel=spec.lam_rel,
-        w_flat=spec.w_flat,
-        paths=paths,
-    )
+    if basis == "legendre":
+        from MCEq.operators.legendre import dense_count
+
+        T = legendre_coupling(k_grid, theta_cap_deg)
+        P = np.arange(dense_count(k_grid))
+    else:
+        T = secant_coupling_matrix(
+            np.asarray(k_grid, dtype=np.float64),
+            theta_cap_deg=theta_cap_deg,
+            row_kmax=spec.row_kmax,
+            lam_rel=spec.lam_rel,
+            w_flat=spec.w_flat,
+            paths=paths,
+        )
+        P = np.where(np.asarray(k_grid, dtype=np.float64) <= spec.row_kmax)[0]
     k_grid = np.asarray(k_grid, dtype=np.float64)
-    P = np.where(k_grid <= spec.row_kmax)[0]
     T_P = T[P, :]
     T_PP = T[np.ix_(P, P)]
     S_P = np.eye(len(P)) + T_PP

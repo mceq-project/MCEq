@@ -160,6 +160,7 @@ GROUPS = {
         "lam_rel": "secant_theta_lam_rel",
         "w_flat": "secant_theta_w_flat",
         "e_max": "secant_theta_e_max",
+        "legendre_removal": "legendre_backward_removal",
     },
     # X_start and etd2_path are read when a path is planned. They are NOT
     # picked up by a later solve() on a live instance: _calculate_integration_path

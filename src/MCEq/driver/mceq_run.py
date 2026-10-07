@@ -5,7 +5,7 @@ import numpy as np
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.driver import batch, observables, paths, results
+from MCEq.driver import angular, batch, observables, paths, results
 from MCEq.driver.initial_state import InitialState
 from MCEq.driver.system import CascadeSystem
 from MCEq.misc import info
@@ -858,14 +858,9 @@ class MCEqRun:
     decay_z_factor = observables.decay_z_factor
 
     def _resolve_secant(self):
-        """The sec(theta) operator set for a solve, or ``None`` for the
-        paraxial transport.
-
-        One constant set serves every column of every batch (the cap is
-        not zenith dependent). The coupled route is driver code plus the
-        ``apply_off`` binding, so every kernel carries it at every
-        precision; only ``config.secant_mode`` decides.
-        """
+        """The sec(theta) operator set for a solve, or ``None`` (paraxial).
+        One constant set serves every column of every batch; only
+        ``config.secant_mode`` decides, on every kernel and precision."""
         # getattr fallback: test objects without `_cfg` use the process config.
         cfg = getattr(self, "_cfg", config)
         if cfg.secant_mode(self._mceq_db.is_2d) == "off":
@@ -882,7 +877,9 @@ class MCEqRun:
         k_grid = np.asarray(self._mceq_db.k_grid)
         e_centers = np.asarray(self._energy_grid.c)
         n_species = self.dim_states // self.dim
+        basis = getattr(self._mceq_db, "angular_basis", "hankel")
         key = (
+            basis,
             hash(k_grid.tobytes()),
             hash(e_centers.tobytes()),
             n_species,
@@ -901,6 +898,7 @@ class MCEqRun:
                 self._cfg.secant,
                 theta_cap_deg=self._cfg.secant_theta_cap(),
                 paths=self._cfg.paths,
+                basis=basis,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]
@@ -918,7 +916,9 @@ class MCEqRun:
             or entry[1] is not self.dec_m
             or entry[2] is not sec_ops
         ):
-            op = compile_operator(self.int_m, self.dec_m, sec_ops)
+            op = compile_operator(
+                *angular.inputs(self), sec_ops, **angular.extras(self)
+            )
             cache[coupled] = entry = (self.int_m, self.dec_m, sec_ops, op)
         return entry[3]
 

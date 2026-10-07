@@ -123,10 +123,27 @@ class CompiledOperator:
       coupling: :func:`secant_coupling` namespace, or ``None`` (paraxial).
       sec_ops: the operator set the coupling was built from (identity is
         the cache key of the device copies), or ``None``.
+      band_off, mode_mix: with a Legendre database, the continuous-loss
+        off-diagonal (kept out of ``int_off``) and the ``(n_D, n_D)``
+        removal of backward production applied to the leading modes of
+        ``int_off x + ri dec_off x``; ``None`` otherwise.
     """
 
-    def __init__(self, d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops):
+    def __init__(
+        self,
+        d_int,
+        d_dec,
+        int_off,
+        dec_off,
+        layout,
+        coupling,
+        sec_ops,
+        band_off=None,
+        mode_mix=None,
+    ):
         self.dim = int(d_int.shape[0])
+        self.band_off = band_off
+        self.mode_mix = mode_mix
         self.d_int = np.ascontiguousarray(d_int, dtype=np.float64)
         self.d_dec = np.ascontiguousarray(d_dec, dtype=np.float64)
         self.int_off = int_off
@@ -173,7 +190,7 @@ class CompiledOperator:
         return (lam * d_int0 + damping, lam * d_dec0)
 
 
-def compile_operator(int_m, dec_m, sec_ops=None):
+def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
     """Assemble the ETD2RK operator from the matrices of ``MatrixBuilder``.
 
     Args:
@@ -181,22 +198,36 @@ def compile_operator(int_m, dec_m, sec_ops=None):
       sec_ops: sec(theta) operator set of :mod:`MCEq.operators.secant`; the
         split is then permuted into the layout of :func:`secant_layout` and
         the coupling operators attached. ``None``: paraxial transport.
+      band, mode_mix: Legendre databases only. ``int_m`` is then the
+        hadronic part (``MatrixBuilder.int_m_hadr``) and ``band`` the
+        continuous-loss band; the band's diagonal joins ``d_int`` and its
+        off-diagonal bypasses ``mode_mix``, since energy loss does not
+        change the direction.
 
     Pure function of its inputs; :class:`MCEq.core.MCEqRun` caches the
     result against the identity of the matrices and the operator set.
     """
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
+    band_off = None
+    if band is not None:
+        d_band, _, band_off, _ = split_diagonal(band, band)
+        d_int = d_int + d_band
     dim = int(d_int.shape[0])
     if sec_ops is None:
         layout, coupling = identity_layout(dim), None
         int_off, dec_off = int_off.tocsr(), dec_off.tocsr()
+        band_off = None if band_off is None else band_off.tocsr()
     else:
         layout, coupling = secant_layout(sec_ops, dim), secant_coupling(sec_ops)
         perm, inv_perm = layout.perm, layout.inv_perm
         d_int, d_dec = d_int[perm], d_dec[perm]
         int_off = _permute_csr(int_off, perm, inv_perm)
         dec_off = _permute_csr(dec_off, perm, inv_perm)
-    return CompiledOperator(d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops)
+        if band_off is not None:
+            band_off = _permute_csr(band_off, perm, inv_perm)
+    return CompiledOperator(
+        d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops, band_off, mode_mix
+    )
 
 
 def em_step_scale(int_m, particles, dense_eig_max=4000):

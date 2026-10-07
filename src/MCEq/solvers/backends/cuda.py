@@ -414,6 +414,12 @@ class CudaBackend:
     def state_buffers(self, dim, K):
         return self._state
 
+    def apply_band(self, x, out):
+        raise NotImplementedError(
+            "Legendre backward removal (mode_mix) is not implemented on CUDA; "
+            "use a host backend"
+        )
+
     def apply_off(self, x, out, ri):
         """``out = int_off x + ri dec_off x`` in one launch. ``ri`` is a
         device array in the state dtype, 0-d for a shared path or ``(K,)``

@@ -556,6 +556,17 @@ def convert_to_theta_space(
     k_grid = run._mceq_db.k_grid
     n_e = len(run.e_grid)
     ref = run.pman.pdg2mceqidx[(pdg_id, hel)] * n_e
+    if getattr(run._mceq_db, "angular_basis", "hankel") == "legendre":
+        from MCEq.operators.legendre import theta_density
+
+        # Same contract: f in the planar measure theta dtheta; the moments
+        # stand in for the oversampled amplitudes.
+        f = [
+            list(theta_density(s[:, ref : ref + n_e].T, k_grid, theta_range))
+            for s in hankel_transf
+        ]
+        amps = [list(s[:, ref : ref + n_e].T) for s in hankel_transf]
+        return np.asarray(k_grid), amps, theta_range, f
     oversample_pts = int(np.max(k_grid) * oversample_res)
     oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
 

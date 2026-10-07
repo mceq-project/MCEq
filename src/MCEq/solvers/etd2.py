@@ -125,9 +125,25 @@ def etd2_driver(
     ri_64 = be.asarray(rho_inv, np.float64)
     ri_b = ri_64 if fp64 else be.asarray(rho_inv)
 
+    lmm = be.left_matmul
+    mix = be.op.mode_mix
+    if mix is not None:
+        # Legendre: produced particles moving backward leave the downward
+        # flux; the band (energy loss) keeps the direction.
+        M_mix = be.asarray(mix.M)
+        mix_out = xp.empty((mix.n_D, mix.N * K), dtype=dtype)
+
+        def apply_off(x, F, ri):
+            be.apply_off(x, F, ri)
+            lead = F[: mix.n_D * mix.N].reshape(mix.n_D, mix.N * K)
+            lmm(M_mix, lead, out=mix_out)
+            xp.copyto(lead, mix_out)
+            be.apply_band(x, F)
+    else:
+        apply_off = be.apply_off
+
     if coupled:
         W, V, Vi = be.coupling()
-        lmm = be.left_matmul
 
         def corner(x):
             return coupled_corner(lay, x)
@@ -161,7 +177,7 @@ def etd2_driver(
             # the corner of the operand S x, in place of Psi around the SpMM
             lmm(W, low_e(x), out=work)
             xp.copyto(xc, work)
-            be.apply_off(x, F, ri)
+            apply_off(x, F, ri)
             # Vi (F_c + Df C(S x)) - lam_j D0_i Psi
             xp.multiply(Df, xc, out=work)
             xp.add(Fc, work, out=work)
@@ -174,7 +190,7 @@ def etd2_driver(
     else:
 
         def eval_F(x, F, ri):
-            be.apply_off(x, F, ri)
+            apply_off(x, F, ri)
 
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
@@ -290,6 +306,8 @@ def solve_etd2(
     phi0_per_pixel=None,
     device_id=0,
     fp_precision=64,
+    band=None,
+    mode_mix=None,
 ):
     """Integrate ``dPhi/dX`` with :func:`etd2_driver` on one backend.
 
@@ -314,6 +332,9 @@ def solve_etd2(
         the schedule's own ``T`` and ``nsteps`` is ignored; the return is the
         harvested ``(dim, K_total)`` pixel matrix rather than a pair.
       device_id: CUDA device index; ignored by the host backends.
+      band, mode_mix: Legendre databases: the continuous-loss band kept out
+        of ``int_m`` and the backward removal of
+        :func:`MCEq.operators.compiled.compile_operator`.
       fp_precision: 32 or 64, the state precision on every backend — the
         state, the scratch buffers and the off-diagonal operator are
         stored in it while the diagonals and the phi factors stay fp64.
@@ -329,7 +350,8 @@ def solve_etd2(
             f"solve_etd2: unknown backend {backend!r}; "
             f"choose one of {', '.join(sorted(_BACKENDS))}"
         ) from None
-    be = make_backend(compile_operator(int_m, dec_m, sec_ops), device_id, fp_precision)
+    op = compile_operator(int_m, dec_m, sec_ops, band=band, mode_mix=mode_mix)
+    be = make_backend(op, device_id, fp_precision)
     try:
         return etd2_driver(
             schedule.T if schedule is not None else nsteps,
