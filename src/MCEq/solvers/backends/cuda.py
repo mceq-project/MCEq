@@ -1,11 +1,11 @@
-"""CUDA backend: one CSR SpMM RawKernel and cupy ElementwiseKernels.
+"""CUDA backend: CSR SpMM RawKernels and cupy ElementwiseKernels.
 
 :class:`CudaOperator` uploads a compiled operator's split to the device
 once, :class:`CudaBackend` runs the stages of
 :func:`MCEq.solvers.etd2.etd2_driver` against it, and :func:`cuda_backend`
-builds the pair. The off-diagonal SpMM is the CSR kernel of
-:data:`_CSR_SPMM_SRC`; the fused elementwise stages are the kernel set of
-:func:`_build_cuda_etd2_kernels`. Both compile on first use.
+builds the pair. The off-diagonal SpMM and the Legendre band are the CSR
+kernels of :data:`_CSR_SPMM_SRC`; the fused elementwise stages are the
+kernel set of :func:`_build_cuda_etd2_kernels`. All compile on first use.
 
 Everything that needs a device belongs here. cupy is imported inside the
 functions that use it and the CUDA runtime libraries are dlopened there
@@ -79,7 +79,8 @@ def _preload_nvidia_pip_libs():
 # ``S * C`` lanes of a warp: slice ``s`` strides the row's nonzeros, column
 # group ``c`` owns ``K / C`` contiguous columns of the ``(dim, K)`` C-ordered
 # state, so a group reads a state row as one coalesced segment; the slices
-# are summed with warp shuffles.
+# are summed with warp shuffles. ``csr_spmm_acc`` adds one operator's
+# product to ``out`` on the same lane layout (the Legendre band).
 # :func:`_lane_map` picks ``(S, C)``.
 # --------------------------------------------------------------------
 _CSR_SPMM_SRC = r"""
@@ -171,6 +172,27 @@ __global__ void csr_spmm_off(const int n_rows,
         }
     }
 }
+
+// y += A x: the continuous-loss band of a Legendre operator.
+template <typename T, int K, int S, int C>
+__global__ void csr_spmm_acc(const int n_rows,
+                             const int* __restrict__ ipA,
+                             const int* __restrict__ idxA,
+                             const T* __restrict__ dA,
+                             const T* __restrict__ x,
+                             T* __restrict__ y)
+{
+    constexpr int LPR = S * C, KC = K / C;
+    const int lane = threadIdx.x & (LPR - 1);
+    const int row = (blockIdx.x * blockDim.x + threadIdx.x) / LPR;
+    const bool active = row < n_rows;
+    T acc[KC];
+    row_dot<T, K, S, C>(ipA, idxA, dA, x, row, active, lane, acc);
+    if (active && lane < C) {
+        #pragma unroll
+        for (int i = 0; i < KC; ++i) y[(size_t)row * K + lane * KC + i] += acc[i];
+    }
+}
 """
 
 #: Threads per block of the SpMM kernel; ``S * C`` divides it.
@@ -201,24 +223,29 @@ _LANE_MAPS = {
 }
 
 
-def _lane_map(K, itemsize):
+def _lane_map(K, itemsize, kernel="csr_spmm_off"):
     """``(S, C)`` of the SpMM kernel for ``K`` state columns: the tuned entry
     of :data:`_LANE_MAPS`, or one column group of 16 slices for any other
-    ``K`` (each lane then holds all K accumulators)."""
-    return _LANE_MAPS[itemsize].get(K, (16, 1))
+    ``K`` (each lane then holds all K accumulators). The band kernel
+    ``csr_spmm_acc`` keeps the column groups and takes one slice: its rows
+    hold about two nonzeros (S = 1 is within 3 % of the best S on the 2D
+    Legendre band)."""
+    S, C = _LANE_MAPS[itemsize].get(K, (16, 1))
+    return (1, C) if kernel == "csr_spmm_acc" else (S, C)
 
 
 _SPMM_KERNELS = {}
 
 
-def _spmm_kernel(cp, dtype, K):
-    """The compiled ``csr_spmm_off<T, K, S, C>`` for the state ``dtype`` and
-    ``K``, with its lanes per row; compiled once per process."""
-    key = (np.dtype(dtype), int(K))
+def _spmm_kernel(cp, dtype, K, kernel="csr_spmm_off"):
+    """The compiled ``kernel<T, K, S, C>`` of :data:`_CSR_SPMM_SRC` for the
+    state ``dtype`` and ``K``, with its lanes per row; compiled once per
+    process."""
+    key = (np.dtype(dtype), int(K), kernel)
     if key not in _SPMM_KERNELS:
         T = {8: "double", 4: "float"}[key[0].itemsize]
-        S, C = _lane_map(key[1], key[0].itemsize)
-        name = f"csr_spmm_off<{T},{key[1]},{S},{C}>"
+        S, C = _lane_map(key[1], key[0].itemsize, kernel)
+        name = f"{kernel}<{T},{key[1]},{S},{C}>"
         mod = cp.RawModule(
             code=_CSR_SPMM_SRC, options=("-std=c++17",), name_expressions=(name,)
         )
@@ -314,15 +341,18 @@ def _cuda_etd2_kernels():
 class CudaOperator:
     """Device copy of a compiled operator's split for the CUDA backend.
 
-    Owns the device CSR arrays of ``int_off`` / ``dec_off``
-    (:class:`_DeviceCsr`) in the state dtype of ``fp_precision`` (32 or 64),
-    and the diagonals in fp64 whatever the precision (see
+    Owns the device CSR arrays of ``int_off`` / ``dec_off`` and, for a
+    Legendre operator, ``band_off`` (:class:`_DeviceCsr`) in the state dtype
+    of ``fp_precision`` (32 or 64), and the diagonals in fp64 whatever the
+    precision (see
     :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). The state and
     scratch buffers are allocated per solve by :class:`CudaBackend`; one
     device operator serves every K.
     """
 
-    def __init__(self, int_off, dec_off, d_int, d_dec, device_id, fp_precision):
+    def __init__(
+        self, int_off, dec_off, d_int, d_dec, device_id, fp_precision, band_off=None
+    ):
         # CuPy 13.x does not auto-discover the nvidia-* pip packages that
         # ship the CUDA 12 runtime libs; dlopen them before the first JIT
         # (a no-op where the libs are already on the loader path).
@@ -343,6 +373,7 @@ class CudaOperator:
         self.dim = int(d_int.shape[0])
         self.cu_int_off = _DeviceCsr(cp, int_off, fl_pr)
         self.cu_dec_off = _DeviceCsr(cp, dec_off, fl_pr)
+        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, fl_pr)
         self.cu_d_int = cp.asarray(d_int, dtype=cp.float64)
         self.cu_d_dec = cp.asarray(d_dec, dtype=cp.float64)
 
@@ -374,6 +405,7 @@ class CudaBackend:
         self.d_dec = dev.cu_d_dec
         self._kernels = _cuda_etd2_kernels()
         self._coupling = None
+        self._band = None
 
     def bind(self, dim, K, per_lane, nsteps):
         cp, dtype = self.cp, self.dtype
@@ -387,6 +419,11 @@ class CudaBackend:
             for m in (self.dev.cu_int_off, self.dev.cu_dec_off)
             for a in ("indptr", "indices", "data")
         )
+        band = self.dev.cu_band_off
+        if band is not None:
+            kern, lanes = _spmm_kernel(cp, dtype, K, "csr_spmm_acc")
+            grid = ((dim * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
+            self._band = (kern, grid, (band.indptr, band.indices, band.data))
         # (dim, 1) for one shared integration path, (dim, K) for one per lane;
         # either broadcasts over the state in the two elementwise stages.
         self._factors = tuple(
@@ -415,10 +452,10 @@ class CudaBackend:
         return self._state
 
     def apply_band(self, x, out):
-        raise NotImplementedError(
-            "Legendre backward removal (mode_mix) is not implemented on CUDA; "
-            "use a host backend"
-        )
+        """``out += band_off x``: the continuous-loss off-diagonal of a
+        Legendre operator, from the device copy uploaded with the operator."""
+        kern, grid, args = self._band
+        kern(grid, (_SPMM_BLOCK,), (np.int32(x.shape[0]), *args, x, out))
 
     def apply_off(self, x, out, ri):
         """``out = int_off x + ri dec_off x`` in one launch. ``ri`` is a
@@ -470,12 +507,18 @@ class CudaBackend:
 
     def close(self):
         self._state = self._factors = self._diag = self._corner_diag = None
-        self._spmm = self._spmm_args = self._coupling = None
+        self._spmm = self._spmm_args = self._coupling = self._band = None
 
 
 def cuda_backend(op, device_id=0, fp_precision=64):
     """Device backend; uploads the compiled operator's split once."""
     dev = CudaOperator(
-        op.int_off, op.dec_off, op.d_int, op.d_dec, device_id, fp_precision
+        op.int_off,
+        op.dec_off,
+        op.d_int,
+        op.d_dec,
+        device_id,
+        fp_precision,
+        band_off=op.band_off,
     )
     return CudaBackend(dev, op)
