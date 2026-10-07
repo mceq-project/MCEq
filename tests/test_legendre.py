@@ -256,10 +256,11 @@ def test_wide_secant_coupling_on_narrow_cones():
     )
 
 
-@pytest.mark.parametrize("cap", [50.0, 55.0, 75.0, 89.0])
+@pytest.mark.parametrize("cap", [0.0, 0.5, 1.0, 5.0, 20.0, 45.0, 50.0, 75.0, 89.0])
 def test_wide_secant_eigenbasis(cap):
-    """``S_P = I + T_PP`` has the eigenvalue ``1/mu_cap`` ~30-fold; the real
-    eigenbasis stays well conditioned and reproduces ``S_P``."""
+    """``S_P = I + T_PP`` has eigenvalues near ``1/mu_cap`` ~30-fold; the
+    real eigenbasis stays well conditioned and reproduces ``S_P`` at every
+    cap, down to ``S_P = I`` at cap 0."""
     ops = build_secant_kernel_ops(
         L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
     )
@@ -267,6 +268,11 @@ def test_wide_secant_eigenbasis(cap):
     s_p = np.eye(len(lam)) + ops["T_PP"]
     assert np.linalg.cond(v) < 1e4
     np.testing.assert_allclose((v * lam) @ ops["Vi"], s_p, rtol=0, atol=1e-9)
+    # g lies in [1, 1/mu_cap]; truncated to the dense block, the spectrum
+    # overshoots 1/mu_cap by 0.4 % at most (cap 20 deg).
+    assert 1 - 1e-9 < lam.min() <= lam.max() < 1.005 / np.cos(np.radians(cap))
+    if cap == 0.0:
+        assert np.abs(ops["T_P"]).max() < 1e-7
 
 
 @pytest.mark.parametrize(

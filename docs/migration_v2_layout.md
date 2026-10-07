@@ -74,10 +74,7 @@ isolated from later global writes.
 | `legendre_backward_removal` | `config.secant.legendre_removal` |
 | `secant_theta_cap_deg` | `config.secant.cap_deg` |
 | `secant_theta_e_max` | `config.secant.e_max` |
-| `secant_theta_lam_rel` | `config.secant.lam_rel` |
-| `secant_theta_row_kmax` | `config.secant.row_kmax` |
 | `secant_theta_transport` | `config.secant.transport` |
-| `secant_theta_w_flat` | `config.secant.w_flat` |
 | `X_start` | `config.solver.X_start` |
 | `etd2_path` | `config.solver.etd2_path` |
 

@@ -34,6 +34,7 @@ _UNSNAPSHOTTED = (
     "muon_helicity_dependence",
     "muon_multiple_scattering",
     "secant_theta_transport",
+    "secant_theta_cap_deg",
 )
 
 
@@ -65,7 +66,7 @@ def base_config():
     )
 
 
-def _solve(kernel, base, secant=False):
+def _solve(kernel, base, secant=False, cap=75.0):
     """Build an MCEqRun on the 2D DB, set ``kernel`` and solve over a fixed
     grid using a deterministic non-trivial initial state."""
     fn = base["mceq_db_fname"]
@@ -80,6 +81,7 @@ def _solve(kernel, base, secant=False):
     config.muon_multiple_scattering = base["muon_multiple_scattering"]
     config.kernel_config = kernel
     config.secant_theta_transport = secant
+    config.secant_theta_cap_deg = cap
     mceq = MCEqRun(
         interaction_model=base["interaction_model"],
         primary_model=None,
@@ -133,3 +135,16 @@ def test_2d_cuda_matches_numpy(base_config):
     assert np.isfinite(sol_cuda).all()
     # cuSPARSE may reorder partial sums vs scipy CSR; widen tolerance.
     np.testing.assert_allclose(sol_numpy, sol_cuda, rtol=1e-9, atol=1e-10)
+
+
+@pytest.mark.parametrize("cap", [0.0, 1.0, 10.0])
+def test_2d_coupled_route_at_small_caps(base_config, cap):
+    """The coupled route runs at small caps; its distance to the paraxial
+    solve grows with the cap from the ETD2 difference of the two routes at
+    cap 0, where ``S_P = I`` (measured 1.6e-5 of the peak on a single
+    proton), to the elongation itself."""
+    paraxial = _solve("numpy_etd2", base_config)
+    coupled = _solve("numpy_etd2", base_config, "require", cap)
+    assert np.isfinite(coupled).all()
+    dist = np.abs(coupled - paraxial).max() / np.abs(paraxial).max()
+    assert dist < {0.0: 1e-4, 1.0: 1e-4, 10.0: 1e-2}[cap]

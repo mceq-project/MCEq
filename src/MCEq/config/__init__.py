@@ -346,7 +346,7 @@ muon_scattering_model = "screened-coulomb"
 #: production/loss equilibrium (sub-GeV hadrons and muons) by
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.operators.secant`. All angles are relative to the shower axis (like
-#: the Hankel modes), independent of the axis' zenith angle.
+#: the angular modes), independent of the axis' zenith angle.
 #: "auto" (default) and True both apply it on every solve with a 2D
 #: database — every entry point, every kernel, fp32 and fp64. False: off.
 #: Ignored on 1D databases.
@@ -354,24 +354,12 @@ secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
 #: elongation at wide angles at the price of a worse-conditioned
-#: coupling operator; below ~50 the operator's eigenbasis is
-#: numerically defective and the build raises. Valid range [50, 90).
+#: coupling operator; 0 switches the elongation off. Valid range [0, 90).
 secant_theta_cap_deg = 75.0
 #: Legendre 2D databases only: remove produced particles moving backward
 #: (no albedo) with :func:`MCEq.operators.legendre.backward_removal`. Off
 #: transports them as if they moved downward at the cap angle.
 legendre_backward_removal = True
-#: zero coupling-matrix rows with kappa > this. The correction has no
-#: support at narrow angular scales (high kappa); raising the limit
-#: only adds inversion ringing, lowering it truncates the operator.
-secant_theta_row_kmax = 50.0
-#: ridge strength of the operator fit, relative to the top singular
-#: value of the Gram matrix. Increase only if the operator build
-#: reports conditioning problems.
-secant_theta_lam_rel = 1e-9
-#: weight of the S @ 1 = 1 constraint (kappa-flat = collimated states
-#: are not elongated).
-secant_theta_w_flat = 1.0
 #: apply the coupling only to state columns with E_kin (GeV) below this
 #: threshold. The correction is 30-60% at 0.1 GeV, ~1% at 2-4 GeV and
 #: <0.1% above 10 GeV, so the default excludes energies where it is
@@ -607,16 +595,15 @@ config = MCEqConfigCompatibility(globals())
 def secant_theta_cap():
     """Validated float value of :data:`secant_theta_cap_deg`.
 
-    The cap is defined relative to the shower axis (like the Hankel
-    modes themselves) and must lie in [50, 90): sec(theta) diverges at
-    90 deg, and below ~50 deg the coupling operator's eigenbasis is
-    numerically defective so it cannot be built (see :mod:`MCEq.operators.secant`).
+    The cap is defined relative to the shower axis (like the angular
+    modes themselves) and must lie in [0, 90): sec(theta) diverges at
+    90 deg (see :mod:`MCEq.operators.secant`).
     """
     cap = float(secant_theta_cap_deg)
-    if not 50.0 <= cap < 90.0:
+    if not 0.0 <= cap < 90.0:
         raise ValueError(
             f"config.secant_theta_cap_deg = {cap:g} is outside the "
-            "supported range [50, 90)."
+            "supported range [0, 90)."
         )
     return cap
 
