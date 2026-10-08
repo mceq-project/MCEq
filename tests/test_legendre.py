@@ -286,7 +286,7 @@ def test_wide_secant_eigenbasis(cap):
 @pytest.mark.slow
 def test_wide_secant_cap_sweep():
     """Every cap in [0, 90) on a 0.1 deg lattice builds on the 90-mode grid
-    (about 15 min)."""
+    (about 5 min)."""
     for cap in np.arange(0.0, 90.0, 0.1):
         ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
         assert np.linalg.cond(ops["V"]) < 1e4
