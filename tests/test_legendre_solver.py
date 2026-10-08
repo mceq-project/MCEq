@@ -282,3 +282,40 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
     assert threads(seen[0][0], "openblas") == ({1} if serial else {2})
     assert seen[0][1] == after[1]
     assert threads(after[0], "openblas") == {2}
+
+
+def test_skewed_cluster_basis_falls_back_to_schur():
+    """``S_P = 1.1 I`` on the coupled modes: every basis is an eigenbasis.
+    A skewed one turns the l-dependent damping into an exactly integrated
+    growth (diagonal weights 10 and -9); ``compile_operator`` replaces it by
+    the orthogonal Schur basis and the step stays on the exponential."""
+    from MCEq.operators.compiled import compile_operator, secant_coupling
+
+    n, n_k = 2, 3
+    blk = np.diag([-1.0, -2.0]) + np.diag([0.3], -1)
+    damp = [0.0, 5.0, 5.0]  # multiple-scattering damping of modes l = 0, 1, 2
+    int_m = sl.block_diag(*[blk - d * np.eye(n) for d in damp])
+    dec_m = 0.1 * sl.block_diag(*[np.diag([-1.0, -0.5])] * n_k)
+    T_P = np.array([[0.1, 0.0, 0.05], [0.0, 0.1, 0.02]])
+    V = np.array([[1.0, 3.0], [0.3, 1.0]])
+    ops = {"P": np.arange(2), "low_e_idx": np.arange(n), "n_k": n_k, "T_P": T_P,
+           "T_PP": T_P[:, :2], "V": V, "Vi": np.linalg.inv(V), "lam": np.full(2, 1.1)}  # fmt: skip
+    op = compile_operator(sp.csr_matrix(int_m), sp.csr_matrix(dec_m), ops)
+    c = op.coupling
+    np.testing.assert_allclose(c.V.T @ c.V, np.eye(2), atol=1e-14)
+    assert op.exact_slot_diagonals[0].max() <= 0
+    op.coupling = secant_coupling(ops)
+    assert op.exact_slot_diagonals[0].max() > 40  # the skewed eigenbasis
+
+    T = np.zeros((n_k, n_k))
+    T[:2] = T_P
+    S = np.eye(n_k * n) + np.kron(T, np.eye(n))
+    phi0 = np.random.default_rng(4).random(n_k * n)
+    ref = sl.expm((int_m + 0.5 * dec_m) @ S * 2.0) @ phi0
+    nsteps = 400
+    dX = np.full(nsteps, 2.0 / nsteps)
+    sol, _ = solve_etd2(
+        nsteps, dX, np.full(nsteps, 0.5), sp.csr_matrix(int_m), sp.csr_matrix(dec_m),
+        phi0, sec_ops=ops,
+    )  # fmt: skip
+    np.testing.assert_allclose(sol, ref, rtol=1e-4)

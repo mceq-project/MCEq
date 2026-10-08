@@ -323,6 +323,18 @@ map is 0.50 at :math:`h = 2` g/cm² and 0.42 at :math:`h = 3`; with all of
 :math:`\Delta` in the remainder it is 1.0 at :math:`h = 2` and 1.36 at
 :math:`h = 2.37` (measured with the planar Hankel modes, the small-angle
 limit of the Legendre operator).
+The eigenvectors of the near-degenerate cluster at :math:`1/\mu_\mathrm{cap}`
+are arbitrary within their span, and a skewed choice gives
+:math:`V^{-1}_{jl} V_{lj} < 0` weights that turn part of :math:`\Delta`
+into an exactly integrated growth (:math:`L_{j,i} > 0`; at caps 0.5–10°,
+25° and 85° on the 90-mode grid, with a blow-up at 7.3°).
+:func:`~MCEq.operators.compiled.compile_operator` then uses the orthogonal
+real Schur basis :math:`S_P = Q R Q^T` (:math:`V = Q`,
+:math:`\lambda = \mathrm{diag}\,R`), in which every damping weight
+:math:`Q_{lj}^2` is non-negative; the strictly upper part of :math:`R`
+joins the remainder. The eigenbasis stays the default, being the more
+accurate splitting where it is safe (at the production cap of 75°, a quarter to a half
+of the step error of the Schur basis).
 The corner therefore receives the same elementwise factors as the rest of
 the state and the predictor and corrector :eq:`etd2` apply unchanged. Only
 the remainder needs the coupling. The operand of the transport operator is

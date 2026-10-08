@@ -36,9 +36,10 @@ stiff-limit update is then a Jacobi-like iteration with matrix
 stitched iteration diverges there. Instead the step loop
 (``MCEq.solvers.etd2_driver``, on any backend, once this operator set is
 compiled into the ETD2 operator) treats the coupled same-(species,E) block
-``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
-(constant, shared by every state), which is stable at any cap and
-reproduces the S-corrected equilibrium exactly in the stiff limit.
+``d_i * S_P`` exactly in the eigenbasis of ``S_P`` (constant, shared by
+every state; the orthogonal Schur basis where a skewed eigenbasis would
+turn damping into growth, see :func:`MCEq.operators.compiled.compile_operator`),
+which reproduces the S-corrected equilibrium exactly in the stiff limit.
 """
 
 import numpy as np

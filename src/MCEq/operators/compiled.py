@@ -5,7 +5,7 @@
 the optional sec(theta) operator set of :mod:`MCEq.operators.secant` into
 one read-only :class:`CompiledOperator`: the diagonal / off-diagonal split
 in the state layout of the step loop and the mode-coupling operators in
-their eigenbasis. :func:`em_step_scale` is the EM stiffness scale that caps
+a real basis of the coupled block. :func:`em_step_scale` is the EM stiffness scale that caps
 ``dX``. The math is in :ref:`solver-math`.
 
 The off-diagonals are CSR with every row's nonzeros kept in their build
@@ -16,6 +16,7 @@ products in the same order.
 from types import SimpleNamespace
 
 import numpy as np
+import scipy.linalg
 import scipy.sparse as sp
 
 
@@ -85,18 +86,23 @@ def coupled_corner(layout, a):
     return a.reshape((layout.n_k, layout.N) + a.shape[1:])[: layout.n_P, : layout.n_g]
 
 
-def secant_coupling(sec_ops):
-    """The mode-coupling operators of the coupled corner in the eigenbasis of
+def secant_coupling(sec_ops, schur=False):
+    """The mode-coupling operators of the coupled corner in a real basis of
     ``S_P = I + T_PP`` (see :mod:`MCEq.operators.secant`), as contiguous fp64
-    arrays: ``V``, ``Vi``, ``lam`` (the real basis, its inverse and the
-    exactly integrated diagonal) and ``W = [S_P V | T_P[:, P^c]]`` of shape
+    arrays: ``V``, ``Vi``, ``lam`` (the basis, its inverse and the exactly
+    integrated diagonal) and ``W = [S_P V | T_P[:, P^c]]`` of shape
     ``(n_P, n_k)``, which maps the low-E block of the state onto the corner
-    of the operand ``S Phi``."""
+    of the operand ``S Phi``. The basis is the eigenbasis of ``sec_ops``, or
+    with ``schur=True`` the orthogonal real Schur basis ``S_P = V R V^T``,
+    ``lam = diag(R)``, whose strictly upper part joins the remainder."""
     V, Vi, lam, T_P = (
         np.ascontiguousarray(sec_ops[k], dtype=np.float64)
         for k in ("V", "Vi", "lam", "T_P")
     )
     n_P = V.shape[0]
+    if schur:
+        R, V = scipy.linalg.schur(np.eye(n_P) + T_P[:, :n_P], output="real")
+        Vi, lam = np.ascontiguousarray(V.T), np.diag(R).copy()
     W = np.hstack([V + T_P[:, :n_P] @ V, T_P[:, n_P:]])
     return SimpleNamespace(V=V, Vi=Vi, lam=lam, W=np.ascontiguousarray(W))
 
@@ -172,9 +178,9 @@ class CompiledOperator:
     @property
     def exact_slot_diagonals(self):
         """``(L_int, L_dec)``, ``(n_P, n_g)`` fp64 arrays: the diagonal of
-        the exactly integrated coupled operator in the eigenbasis.
+        the exactly integrated coupled operator in the coupling basis.
         ``L_dec = lam_j d_dec_0i`` with ``D0`` the l = 0 row of the
-        diagonals; ``L_int = lam_j d_int_0i`` plus the eigenbasis diagonal
+        diagonals; ``L_int = lam_j d_int_0i`` plus the basis diagonal
         of the l-dependent part of ``d_int`` on the corner (the muon
         multiple-scattering damping), so that only its mode mixing is left
         to the remainder (:ref:`solver-math`)."""
@@ -225,9 +231,19 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
         dec_off = _permute_csr(dec_off, perm, inv_perm)
         if band_off is not None:
             band_off = _permute_csr(band_off, perm, inv_perm)
-    return CompiledOperator(
+    op = CompiledOperator(
         d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops, band_off, mode_mix
     )
+    if op.coupled and op.exact_slot_diagonals[0].max() > 0:
+        # The eigenvectors of a near-degenerate cluster of S_P are arbitrary;
+        # a skewed basis turns part of the multiple-scattering damping into
+        # an exactly integrated growth. In the orthogonal Schur basis the
+        # damping slot is a convex combination of the mode damping.
+        eig_max = op.exact_slot_diagonals[0].max()
+        op.coupling = secant_coupling(sec_ops, schur=True)
+        if op.exact_slot_diagonals[0].max() >= eig_max:
+            op.coupling = coupling
+    return op
 
 
 def em_step_scale(int_m, particles, dense_eig_max=4000):

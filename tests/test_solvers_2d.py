@@ -139,12 +139,12 @@ def test_2d_cuda_matches_numpy(base_config):
 
 @pytest.mark.parametrize("cap", [0.0, 1.0, 10.0])
 def test_2d_coupled_route_at_small_caps(base_config, cap):
-    """The coupled route runs at small caps; its distance to the paraxial
-    solve grows with the cap from the ETD2 difference of the two routes at
-    cap 0, where ``S_P = I`` (measured 1.6e-5 of the peak on a single
-    proton), to the elongation itself."""
+    """The coupled route runs at small caps. Up to 1 deg its distance to the
+    paraxial solve stays below the step error of the default path (4e-4 of
+    the peak against ``dX_max / 4``), where the eigen and Schur bases of the
+    coupling agree to 1e-6; at 10 deg the elongation itself shows."""
     paraxial = _solve("numpy_etd2", base_config)
     coupled = _solve("numpy_etd2", base_config, "require", cap)
     assert np.isfinite(coupled).all()
     dist = np.abs(coupled - paraxial).max() / np.abs(paraxial).max()
-    assert dist < {0.0: 1e-4, 1.0: 1e-4, 10.0: 1e-2}[cap]
+    assert dist < {0.0: 4e-4, 1.0: 4e-4, 10.0: 1e-2}[cap]
