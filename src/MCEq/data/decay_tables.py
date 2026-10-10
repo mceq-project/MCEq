@@ -40,6 +40,8 @@ class Decays:
         self.relations = index["relations"]
         self.index_d = index["index_d"]
         self.description = index["description"]
+        #: {pdg: within-bin index g on the run grid}; empty without the dataset
+        self.rate_index = index.get("rate_index", {})
         # Advanced options
         regenerate_index = False
         if parent_list:

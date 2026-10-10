@@ -121,6 +121,7 @@ GROUPS = {
         "muon_scattering_model",
         "enable_default_tracking",
         "prompt_ctau",
+        "bin_averaged_decay_rate",
         "minimal_primary_energy",
         "standard_particles",
         "use_isospin_sym",

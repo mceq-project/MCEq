@@ -12,6 +12,20 @@ from MCEq.misc import average_A_target, getAZN, info
 from MCEq.species.constants import ATOMIC_MASS_UNIT_G, _pdata, _pname
 
 
+def bin_average_inverse_energy(gamma, h=0.1, n=64):
+    """``<E_j/E>`` over a bin of ``h`` decades for a flux ``E^-gamma`` in the bin.
+
+    The decay source of bin j is the bin integral of ``phi/lambda_dec``; with
+    ``lambda_dec`` proportional to E the table value ``Phi_j/lambda_dec(E_j)`` is
+    low by this factor (1.004 for gamma = 1.5, 1.012 for gamma = 3.2). Midpoint
+    rule in log E; ``gamma`` per bin.
+    """
+    gamma = np.atleast_1d(np.asarray(gamma, dtype=float))
+    u = -h / 2 + (np.arange(n) + 0.5) * h / n
+    w = 10.0 ** np.outer(1.0 - gamma, u)
+    return (w * 10.0**-u).sum(1) / w.sum(1)
+
+
 class MCEqParticle:
     """Bundles different particle properties for simplified
     availability of particle properties in :class:`MCEq.core.MCEqRun`.
@@ -304,6 +318,10 @@ class MCEqParticle:
         self.children, self.decay_dists = self._set_channels(
             decay_db, pmanager, decay_db.children(self.pdg_id)
         )
+        g = getattr(decay_db, "rate_index", {}).get(self.pdg_id[0])
+        self._decay_rate_factor = (
+            None if g is None else bin_average_inverse_energy(np.asarray(g) - 1.0)
+        )
 
     def track_decays(self, tracking_particle):
         children_d = {}
@@ -395,9 +413,11 @@ class MCEqParticle:
         try:
             e_tot = self._energy_grid.c + self.mass
             p_lab = np.sqrt(e_tot**2 - self.mass**2)
-            return self.mass / self.ctau / p_lab
+            rate = self.mass / self.ctau / p_lab
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.c) * np.inf
+        factor = getattr(self, "_decay_rate_factor", None)
+        return rate if factor is None else rate * factor
 
     def prod_cross_section(self, mbarn=False):
         """Returns production cross section.
