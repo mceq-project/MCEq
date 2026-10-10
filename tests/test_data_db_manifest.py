@@ -88,6 +88,7 @@ def _backend(db_fname, data_dir, manifest=MANIFEST):
         fallback_to_air_cs=True,
         interaction_medium="air",
         muon_helicity_dependence=False,
+        bin_averaged_decay_rate=True,
         generic_losses_all_charged=False,
     )
     em = SimpleNamespace(air_density=None)

@@ -470,6 +470,16 @@ class HDF5Backend:
         dec_index = self._gen_db_dictionary(
             self._had.read_channel_pack("decays", decay_dset_name),
         )
+        # Within-bin index g per parent (bin-averaged decay tables). One row
+        # per PDG ID on the database grid; cut to the run grid like any table.
+        dec_index["rate_index"] = {}
+        path = "decays/bin_average_index"
+        if self._physics.bin_averaged_decay_rate and self._had.has(path):
+            g = self._had.read_dataset(path)
+            pdg_ids = self._had.attrs(path)["pdg_ids"]
+            dec_index["rate_index"] = {
+                int(p): np.asarray(g[i])[self._cuts] for i, p in enumerate(pdg_ids)
+            }
         return dec_index
 
     def cs_db(self, interaction_model_name):
