@@ -5,7 +5,7 @@ and ``species/manager.py``. ``_pdata`` is the same particle-table object used
 by the species and DDM implementations; see
 ``test_ddm_and_particlemanager_share_pdata``.
 """
-
+#anfe: check if this entire module can be removed. I assume that only the BSM example showed how to use the particle manager. 
 from MCEq.misc import average_A_target, getAZN, info, print_in_rows  # noqa: F401
 from MCEq.species.constants import (  # noqa: F401
     ATOMIC_MASS_UNIT_G,

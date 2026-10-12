@@ -9,10 +9,10 @@ import numpy as np
 #: ``MCEq.config`` statically -- util sits below config in the layering, and
 #: the C5 ledger line for this module dies with this mechanism. The lazy
 #: path goes through :func:`importlib.import_module`, mirroring the
-#: ``sys.modules`` indirection ``config/groups.py`` already uses.
+#: ``sys.modules`` indirection ``config/groups.py`` already uses. #anfe: comment includes references to unrelated codebase "C5"
 _DEBUG = None
 _PHYSICS = None
-
+#anfe: why do we need this mechanism at all?
 
 def _views():
     global _DEBUG, _PHYSICS
@@ -37,7 +37,7 @@ _MOVED_TO_DATA = {
     "_xmat": "MCEq.data.energy_grid",
     "normalize_hadronic_model_name": "MCEq.data.model_names",
 }
-
+# These symbols were never in misc, so we don't need any compatibility shim in this module?
 
 #: Memo of the resolved submodules, so that only the FIRST access to a moved
 #: name executes an import. See :func:`_moved_to_data` on why `sys.modules` is
@@ -45,7 +45,7 @@ _MOVED_TO_DATA = {
 _RESOLVED = {}
 
 
-def _moved_to_data(name):
+def _moved_to_data(name): #anfe: looks totally boilerplate to me.
     """Resolve a moved name from its implementation module and retain the module.
 
     Read out of `sys.modules` rather than bound by the import statements:
@@ -72,7 +72,7 @@ def _moved_to_data(name):
     return module
 
 
-class _MiscCompatModule(ModuleType):
+class _MiscCompatModule(ModuleType): 
     """Forward reads, writes, deletes, and `dir()` for the names in `_MOVED_TO_DATA`.
 
     Forwarding writes is necessary because `__getattr__` alone would let an
@@ -112,6 +112,8 @@ class _MiscCompatModule(ModuleType):
 
 sys.modules[__name__].__class__ = _MiscCompatModule
 
+#anfe: IMO, everything above is unnecessary, and is some sort of misunderstanding.
+
 _target_masses = {
     # <A> must be the ATOM-number-weighted mean mass so that the
     # interaction rate per grammage N_A/<A> * <sigma> (with <sigma> the
@@ -129,18 +131,18 @@ _target_masses = {
             n * f
             for f, _, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
         )
-    ),
+    ),#anfe: doesn't look elegant because of air mixture typed twice.
     "water": 1.0 / 3.0 * (2.0 + 16.0),
     "ice": 1.0 / 3.0 * (2.0 + 16.0),
     "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
     "rock": 22.0,
     "hydrogen": 1.0,
     # Atomic mass of iron, not atomic number
-    "iron": 55.845,
+    "iron": 55.845, #why we have this exception only for iron
 }
 
 
-def average_A_target(mat="auto", physics=None):
+def average_A_target(mat="auto", physics=None): #anfe: this function is kind of crazy for just reading the number from the dictionary, no?
     """Average target mass number.
 
     For air <A> = 14.5431: the atom-number-weighted mean mass of dry
@@ -182,9 +184,9 @@ def average_A_target(mat="auto", physics=None):
     )
 
 
-def theta_deg(cos_theta):
+def theta_deg(cos_theta): #anfe: doesn't seem to be used
     """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
-    return np.rad2deg(np.arccos(cos_theta))
+    return np.rad2deg(np.arccos(cos_theta)) 
 
 
 def print_in_rows(min_dbg_level, str_list, n_cols=5):
@@ -209,10 +211,10 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
 
 #: Photons, electrons and pi0 -- the species that exist only as part of the
 #: electromagnetic cascade. pi0 decays into photons and nothing else.
-EM_PDG_IDS = (22, 11, -11, 111)
+EM_PDG_IDS = (22, 11, -11, 111) #anfe: funny to find this in the middle of the misc module 
 
 
-def strip_em_species(particle_list, physics):
+def strip_em_species(particle_list, physics): #anfe: this function is used twice, but it should be handled rather not by stripping the EM species later. The list should be build without EM species if EM is not switched on. So remove this module and work carefully the disabled em logic into particle manager. 
     """Leave the electromagnetic species out unless the cascade is on.
 
     Without EM interactions photons and electrons have no transport, and pi0
@@ -225,7 +227,7 @@ def strip_em_species(particle_list, physics):
     return [p for p in particle_list if p[0] not in EM_PDG_IDS]
 
 
-def is_charm_pdgid(pdgid):
+def is_charm_pdgid(pdgid): #anfe: used onoly once! no need function
     """Returns True if particle ID belongs to a heavy (charm) hadron."""
 
     return (abs(pdgid) > 400 and abs(pdgid) < 500) or (
@@ -233,7 +235,7 @@ def is_charm_pdgid(pdgid):
     )
 
 
-def _get_closest(value, in_list):
+def _get_closest(value, in_list): #anfe:not used
     """Returns the index and value of the nearest element of ``in_list``."""
 
     minindex = np.argmin(np.abs(in_list - value * np.ones(len(in_list))))
@@ -265,10 +267,10 @@ def getAZN(pdg_id):
         A = (pdg_id % 1000) // 10
         Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
-    return 1, 0, 0
+    return 1, 0, 0 #anfe: this doesn't make sense as default case, A=1 but Z=0 and N=0
 
 
-def getAZN_corsika(corsikaid):
+def getAZN_corsika(corsikaid): #anfe: Used only once. I don't think it's needed. We can convert cka to pdg id or itnerpret in place. 
     """Returns mass number :math:`A`, charge :math:`Z` and neutron
     number :math:`N` of ``corsikaid``.
 
@@ -304,7 +306,7 @@ def corsikaid2pdg(corsika_id):
     return pdg_id
 
 
-def pdg2corsikaid(pdg_id):
+def pdg2corsikaid(pdg_id): #anfe: not used.
     """Conversion from nuclear PDG ID to CORSIKA ID.
 
     Note::
@@ -331,7 +333,7 @@ def caller_name(skip=2):
     The frame is fetched with :func:`sys._getframe` rather than
     :func:`inspect.stack`, which materialises `FrameInfo` records with source
     context for the whole stack: 0.08 us against 192 us on a typical stack, and
-    :func:`info` reaches this on every call while an override list is active.
+    :func:`info` reaches this on every call while an override list is active. #anfe: this last paragraph is AI slop, no need this info.
 
     From https://gist.github.com/techtonik/2151727
     """
@@ -398,7 +400,7 @@ def info(min_dbg_level, *message, **kwargs):
         print(cname + " ".join(message))
 
 
-def reset_plt(ticksize, fontsize):
+def reset_plt(ticksize, fontsize): #anfe: no need
     # Lazy-import: matplotlib is not a required dependency.
     import matplotlib.pyplot as plt
 
@@ -412,7 +414,7 @@ def reset_plt(ticksize, fontsize):
     plt.rcParams["axes.linewidth"] = 2.25
 
 
-def put_ticks(this_fig, this_ax):
+def put_ticks(this_fig, this_ax): #anfe: no need
     # Lazy-import: matplotlib is not a required dependency.
     import matplotlib
 

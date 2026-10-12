@@ -39,7 +39,7 @@ name (``tests/test_phase4_surface.py``).
 
 No config, no HDF5, no numpy: the module reads only :mod:`MCEq.data.model_names`
 and ``misc.info``.
-"""
+""" #anfe: crazy docstring! AI talking to itself. This module should joined with the model_names to form soem kind of model "settings" or hadr_model_[xomething, missing a word] 
 
 from collections import defaultdict
 
@@ -240,7 +240,7 @@ def apply_equivalences(
         )
 
 
-def family_fallback(projectile):
+def family_fallback(projectile): #anfe: the docstring is crazy for this function. I think a few inline comments would be easire to read what this function does.
     """Sign-preserving family representatives to try for ``projectile``.
 
     A negative projectile tries the antiparticle representative first

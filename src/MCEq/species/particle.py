@@ -4,7 +4,7 @@ One particle's bookkeeping, the species layer's counterpart to the manager.
 Reads the shared particle table from :mod:`MCEq.species.constants` and uses
 the required, injected ``physics`` settings; there is no configuration
 fallback.
-"""
+""" #anfe: prose horrible AI style, doesn't tell anything about the module. If nothing to say, just write one line, no need subpagaraph.
 
 import numpy as np
 
@@ -37,7 +37,7 @@ class MCEqParticle:
         A_target=None,
         *,
         physics,
-    ):
+    ): #anfe: the init looks really boilerplate. Isn't there a better way to design this class?
         #: settings group this particle reads its filters from
         self._physics = physics
         if A_target is None:
@@ -47,7 +47,7 @@ class MCEqParticle:
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
         self.helicity = helicity
         #: (bool) particle is a nucleus (not yet implemented)
-        self.is_nucleus = False
+        self.is_nucleus = False 
         #: (bool) particle is a hadron
         self.is_hadron = False
         #: (bool) particle is a lepton
@@ -118,7 +118,7 @@ class MCEqParticle:
             #: interaction cross section in cm²
             self.set_cs(cs_db)
 
-    def _init_defaults_from_pythia_database(self):
+    def _init_defaults_from_pythia_database(self): #anfe: also boiler plate. Looks to me like the class' design is missing something (as commented in __init__ )
         """Init some particle properties from :mod:`particletools.tables`."""
         #: (bool) particle is a nucleus (not yet implemented)
         self.is_nucleus = _pdata.is_nucleus(self.pdg_id[0])
@@ -150,7 +150,7 @@ class MCEqParticle:
             or self.pdg_id[0] in self._physics.filters["disable_decays"]
         )
 
-    def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
+    def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs): #anfe: same here also looks quite boilerplate
         """Add custom particle type. (Incomplete and not debugged)"""
         #: `(PDG ID, helicity)` particle identifier
         self.pdg_id = (pdg_id, helicity)
@@ -173,7 +173,7 @@ class MCEqParticle:
         #: (bool) particle is stable
         self.is_stable = not self.ctau < np.inf
 
-    def set_cs(self, cs_db):
+    def set_cs(self, cs_db): #anfe: shouldn't be a public function
         """Set cross section adn recalculate the dependent variables"""
         info(11, "Obtaining cross sections for", self.pdg_id)
         self.current_cross_sections = cs_db.iam
@@ -186,7 +186,7 @@ class MCEqParticle:
         self._critical_energy()
         self._apply_force_resonance()
 
-    def _set_channels(self, channel_table, pmanager, child_keys, keep_tracking=False):
+    def _set_channels(self, channel_table, pmanager, child_keys, keep_tracking=False): #anfe: why do we need this function exactly? It doesn't do anything special. and it is simply used below? No need.
         """One wiring routine for every channel table.
 
         ``channel_table`` is a ``MCEq.data.protocols.ChannelTable``:
@@ -207,7 +207,7 @@ class MCEqParticle:
         secondaries/children list and yield dict (rebinding, not
         clearing: tracking-particle copies share these dict objects
         until the first re-wire).
-        """
+        """#anfe: prose too long! and useless for a private function
         refs = []
         for key in child_keys:
             try:
@@ -311,7 +311,7 @@ class MCEqParticle:
             decay_db, pmanager, decay_db.children(self.pdg_id)
         )
 
-    def track_decays(self, tracking_particle):
+    def track_decays(self, tracking_particle): #anfe: can we unify the tracking decays or interactions, the codes are almost the same.
         children_d = {}
         for c in self.children:
             children_d[c.pdg_id] = c
@@ -330,7 +330,7 @@ class MCEqParticle:
         ]
         return True
 
-    def track_interactions(self, tracking_particle):
+    def track_interactions(self, tracking_particle): #anfe: see above
         secondaries_d = {}
         for s in self.hadr_secondaries:
             secondaries_d[s.pdg_id] = s
@@ -349,7 +349,7 @@ class MCEqParticle:
         ]
         return True
 
-    def is_secondary(self, particle_ref):
+    def is_secondary(self, particle_ref): #anfe: is_secondary and is_child are used only in a very few places. We should rather overload the operator to check for "sec in proj.decay_children" and "proj.prod_children" or so 
         """`True` if this projectile and produces particle `particle_ref`."""
         if not isinstance(particle_ref, self.__class__):
             raise Exception("Argument not of MCEqParticle type.")
@@ -388,7 +388,7 @@ class MCEqParticle:
         momentum (:math:`p = \beta\gamma m c`). Using the total energy
         :math:`E = E_{kin} + m` in place of :math:`p` drops the factor
         :math:`1/\beta` and understates decay of slow (:math:`\beta<1`)
-        particles; the momentum form is exact at all energies.
+        particles; the momentum form is exact at all energies. #anfe: this paragraph is too verbose. not even needed.
 
         A stable particle (``ctau = inf``) returns zeros — the physical
         inverse length; ``inf`` is what the ``ctau == 0`` path returns, as a
@@ -480,7 +480,7 @@ class MCEqParticle:
         m_target = self.A_target * ATOMIC_MASS_UNIT_G  # <A> * m_u [g]
         return self.cs / m_target
 
-    def _assign_hadr_dist(self, child, cmat):
+    def _assign_hadr_dist(self, child, cmat): #anfe: do we actually need this function and the one below?
         """Copies the full ``hadr_yields[child]`` matrix into ``cmat``.
 
         Args:
@@ -598,6 +598,8 @@ class MCEqParticle:
         elab_dist = col[: eidx + 1] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
+    #anfe: For the dN_d.... functions above, it should be sufficient to just use one provate function with arguments specifying the variables, and three short functions just call this private function with correct argument to avoid copy/paste in multiple places.
+
     def _critical_energy(self):
         """Set the approximate atmospheric critical energy ``E_crit``.
 
@@ -609,7 +611,7 @@ class MCEqParticle:
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
 
-    def _apply_force_resonance(self):
+    def _apply_force_resonance(self): #anfe: why do we need a function for that? Isn't it just somewhere in the init clear that it is a resonance? 
         """Flag this particle as a resonance if it appears in
         ``physics.filters["force_resonance"]`` and is not in
         ``physics.standard_particles``.
@@ -625,7 +627,7 @@ class MCEqParticle:
             and pid not in self._physics.standard_particles
         )
 
-    def __eq__(self, other):
+    def __eq__(self, other): #anfe: danger. We shouldn't use that. same for __neq__ and __hash__ only by name is not good. avoid in downstream.
         """Checks name for equality"""
         if isinstance(other, MCEqParticle):
             return self.name == other.name

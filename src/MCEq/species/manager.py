@@ -155,13 +155,13 @@ class ParticleManager:
                 # Compute beta*gamma from kinetic energy
                 betagamma_p = (
                     np.sqrt((self._energy_grid.c + p.mass) ** 2 - p.mass**2) / p.mass
-                )
+                ) # should be pobably assigned in Particle class instead of here?
                 ln_boost = np.log(betagamma_p)
                 if generic_table is not None:
                     # Clamp the spline argument to the tabulated boost interval
                     # instead of extrapolating the k=1 log-log spline off its
                     # high end (a 35x overestimate at the top of a wide grid;
-                    # the low end never leaves the table on any realistic grid).
+                    # the low end never leaves the table on any realistic grid). #anfe: long story. just "clip dEdX spline to its range without extrapolating"
                     ln_boost = np.clip(
                         ln_boost,
                         np.log(generic_table[0][0]),

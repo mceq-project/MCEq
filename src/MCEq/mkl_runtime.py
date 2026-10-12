@@ -15,14 +15,14 @@ Behaviour is unchanged from when the memo lived in ``config``: one cdll for
 the process lifetime, ``os.fspath`` at the boundary (the Windows loader on
 Python 3.10/3.11 cannot take a ``Path``), silent ``None`` when MKL is not
 installed.
-"""
+""" #anfe: horrible prose! "the one owner, the one memo", wtf? Rewrite the module description in a technical, short non-AI slop style.
 
 from __future__ import annotations
 
 import os
 
 _LIB = None
-_has = lambda: False  # noqa: E731 - replaced by set_resolver()
+_has = lambda: False  # noqa: E731 - replaced by set_resolver() #anfe: if replaced, why it's still here?
 _path = lambda: None  # noqa: E731
 
 
@@ -38,7 +38,7 @@ def load(path=None):
 
     ``path`` overrides the resolver (a run's ``backend.mkl_path`` from its
     config group); an override wins only while nothing is loaded yet, the
-    same single-handle rule as before.
+    same single-handle rule as before. #anfe: this paragraph doesn't add anything, omit.
     """
     global _LIB
     if _LIB is not None or not _has():
@@ -46,10 +46,10 @@ def load(path=None):
     from ctypes import cdll
 
     target = _path() if path is None else path
-    _LIB = cdll.LoadLibrary(os.fspath(target))
+    _LIB = cdll.LoadLibrary(os.fspath(target)) #anfe: linter on Windows complains here
     return _LIB
 
 
 def lib():
-    """The handle if already loaded, else None — read-only, never loads."""
+    """The handle if already loaded, else None — read-only, never loads.""" #anfe: prose longer than function.
     return _LIB

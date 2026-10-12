@@ -6,7 +6,7 @@ The module imports ``numpy``, ``MCEq.misc.info`` and nothing else from
 ``MCEq`` (data -> misc is the permitted direction); it reads no
 configuration -- the requested air density is passed in as a value, and
 where it comes from is the caller's business.
-"""
+""" #anfe: this entire module is sort of meaningless, since we retired rho_slices and stuff like medium_for_em is pathetic, it must be derived from exactly the same functionality as the hadronic showers.
 
 from collections import defaultdict
 from itertools import product
@@ -69,7 +69,7 @@ def select_em_rho_slice(store, medium, air_density):
     return idx
 
 
-def emca_group_path(store, medium, caller, air_density):
+def emca_group_path(store, medium, caller, air_density): #anfe: deprecate the rho_slice stuff.
     """Group path holding the ``emca_mats`` pack, honoring the ρ-stack."""
     idx = select_em_rho_slice(store, medium, air_density)
     if idx is None:
@@ -78,16 +78,16 @@ def emca_group_path(store, medium, caller, air_density):
     return em_group_path(medium, idx)
 
 
-def em_cs_group_path(store, medium, caller, air_density):
+def em_cs_group_path(store, medium, caller, air_density): #anfe: we deprecated rho_slices, so remove all of the functionality.
     """Group path holding the ``cs`` table, honoring the ρ-stack."""
-    idx = select_em_rho_slice(store, medium, air_density)
+    idx = select_em_rho_slice(store, medium, air_density) 
     if idx is None:
         return em_group_path(medium)
     info(3, f"[{caller}] using ρ slice {idx} of /electromagnetic/{medium}/")
     return em_group_path(medium, idx)
 
 
-def helicity_duplicate(em_index):
+def helicity_duplicate(em_index): #Good function, but can live somewhere else, and I believe, we have something like that already in a different place for hadronic path, so this opne can be the same? 
     """Copy bremsstrahlung and photon emission to polarised e± and μ±.
 
     Reuse each original channel array for the corresponding helicity

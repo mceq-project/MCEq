@@ -40,7 +40,7 @@ every assembled CSR is built in -- is mapped into the grid group as
 ``grid.dtype`` rather than into ``losses`` or ``physics``; the constraint on
 this layer is that no new spec dataclass appears, and three existing views
 satisfy it.
-"""
+""" #anfe: too verbose. Do not write a story what was, what you have done, how it ran. Write only what the modules is about and what it contains now.
 
 from itertools import product
 
@@ -280,7 +280,7 @@ class MatrixBuilder:
         EM species return 0 -- their block runs under the
         Cure-B cap of ``operators/compiled.py`` and its documented caveat is
         separate; the instability this covers is the hadron blocks.
-        """
+        """#anfe: looong story. what is the function doing.
         particle = self._pman[pdg_id]
         if getattr(particle, "is_em", False):
             return 0
@@ -398,7 +398,7 @@ class MatrixBuilder:
         cached on first request; separating overlapping damping and loss terms
         changes low-precision rounding because floating-point addition is not
         associative, so recomputing it per read would not be stable.
-        """
+        """ #anfe: noooo story please. it's just 5 lines.
         self._require_live_assembly("int_m_hadr")
         if self._int_m_hadr is None:
             blocks = dict(self.C_blocks)

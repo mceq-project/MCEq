@@ -5,7 +5,7 @@ without their monotone upwind closure rows and scaled by the largest
 sec(theta) eigenvalue, is the rate that caps the step at
 ``LOSS_STEP_SAFETY / rate`` (:ref:`solver-math`, the loss cap). A
 conservative step policy, not an error estimator.
-"""
+""" #anfe: can't we merge this with a different module? Just for this here?
 
 import numpy as np
 

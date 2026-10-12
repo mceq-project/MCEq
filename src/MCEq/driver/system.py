@@ -130,7 +130,7 @@ class CascadeSystem:
         # Initialize matrix builder (initialized in reload_for_model)
         self.matrix_builder = None
 
-    def reload_for_model(self, interaction_model, particle_list, update_particle_list):
+    def reload_for_model(self, interaction_model, particle_list, update_particle_list): #anfe: this function exposes a weakness in the design and is awkward, has to take care of special cases, and shows that ownership is not correctly maintained. Why should my controller own and push data such as decays...?
         """Load tables and (re)build the pman/matrix_builder for one model.
 
         Handles the model-loading branches from the normalize-and-load point

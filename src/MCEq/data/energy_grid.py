@@ -6,7 +6,7 @@ forwards the compatibility names.
 :func:`gen_xmat` caches by matrix shape: grids of equal ``d`` share one
 array and the return value *is* the cache, so mutating it affects later
 calls. See ``tests/test_data_bug_pins.py``.
-"""
+"""#anfe: module docstring explains what's in function docstrings? ??? If nothing important to say, leave it as one line. 
 
 from collections import namedtuple
 

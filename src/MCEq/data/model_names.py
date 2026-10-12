@@ -11,7 +11,7 @@ the *PDG -> family representative* fallback: that logic lives separately in
 ``InteractionCrossSections.get_cs``, and the rules differ -- they disagree on
 10313/10323 and on leptons, so unifying them would change blended cross
 sections. See ``tests/test_data_model_names.py``.
-"""
+"""  #anfe: aaaah. It's enough to bundle all model links/setup in a single file with little prose. also equivalences 
 
 #: Model-name substrings that select an equivalence table, in matching
 #: priority order. These are the keys of ``MCEq.data.equivalences``; a name
