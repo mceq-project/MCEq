@@ -93,8 +93,8 @@ def _solve(s, sec_ops, ri, X, phi0, nsteps=4000, backend="numpy", fp=64):
 
 @pytest.mark.parametrize("backend", ["numpy", "mkl", CUDA])
 def test_paraxial_route_matches_expm(system, backend):
-    if backend == "mkl":
-        pytest.importorskip("MCEq.solvers.backends.mkl")
+    if backend == "mkl" and not config.has_mkl:
+        pytest.skip("MKL runtime not available")
     phi0 = np.random.default_rng(1).random(N_K * N)
     ref = _reference(system, 0.7, np.eye(N_K * N), 1.5, phi0)
     try:
@@ -243,8 +243,8 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
     import MCEq.solvers.etd2 as etd2
     from MCEq import mkl_runtime
 
-    if backend == "mkl":
-        pytest.importorskip("MCEq.solvers.backends.mkl")
+    if backend == "mkl" and not config.has_mkl:
+        pytest.skip("MKL runtime not available")
     seen = []
     make = etd2._BACKENDS[backend]
 

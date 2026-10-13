@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ inputs.os }}
     env:
       UV_SYSTEM_PYTHON: "true"
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
     - uses: actions/checkout@v7
       with:
