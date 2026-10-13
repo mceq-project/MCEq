@@ -365,7 +365,9 @@ def cli_main(argv=None):
         help="package file to fetch (repeatable)",
     )
     parser.add_argument(
-        "--defaults", action="store_true", help="fetch the default 1D and 2D packages"
+        "--defaults",
+        action="store_true",
+        help="fetch the default package of each grid family in the manifest",
     )
     parser.add_argument(
         "--all",

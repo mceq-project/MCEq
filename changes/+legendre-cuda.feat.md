@@ -1,0 +1,1 @@
+The CUDA backend solves Legendre-mode 2D databases: the continuous-loss band is uploaded with the operator and added by a CSR kernel (`csr_spmm_acc`) after the backward removal, which runs as a cuBLAS GEMM. A `cuda13` extra installs `cupy-cuda13x` for CUDA 13 drivers; `cuda` keeps `cupy-cuda12x`.

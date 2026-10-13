@@ -23,9 +23,6 @@ docs/examples/H3a_theta_60_sib23c.txt
 # gtracr geomagnetic-cutoff runtime caches (generated per installation)
 src/MCEq/data/gtracr_cutoffs/
 
-# runtime-built sec(theta) operator cache (MCEq/secant.py)
-src/MCEq/data/secant_cache/
-
 # CI data set fetched (or symlinked) into the package data dir; never shipped
 src/MCEq/data/mceq_db_manifest_ci_v2.yaml
 

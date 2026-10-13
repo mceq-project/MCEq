@@ -71,7 +71,7 @@ IMPORT_TABLE = [
     ("MCEq.geometry.registry", "MCEq.environment.registry", "removed"),
     ("MCEq.ddm", "MCEq.models.ddm.ddm", "removed-rr"),
     ("MCEq.ddm_utils", "MCEq.models.ddm.ddm_utils", "removed"),
-    ("MCEq.hankel", "MCEq.driver.results.inverse_hankel_legacy", "removed"),
+    ("MCEq.hankel", "MCEq.operators.legendre.theta_density", "legendre"),
     ("MCEq.download", "MCEq.data.download", "removed"),
     ("MCEq.secant", "MCEq.operators.secant", "removed"),
     ("MCEq.operator_assembly", "MCEq.operators.compiled", "removed"),
@@ -90,6 +90,7 @@ STATUS_NOTE = {
     "kept20": "kept at 2.0, removed in the next follow-up release",
     "gone": "removed at 2.0 (M14; census saw no external users)",
     "moved": "old name gone (private module)",
+    "legendre": "removed with the Hankel modes; the Legendre readout replaces it",
 }
 
 

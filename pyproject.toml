@@ -36,7 +36,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# One cupy wheel per CUDA major: cuda12 runs on any driver >= 525, cuda13
+# needs a CUDA 13 driver (>= 580) and matches a CUDA 13 toolkit's headers.
 cuda = ["cupy-cuda12x>=12.0.0"]
+cuda13 = ["cupy-cuda13x>=14.0.0"]
 
 [dependency-groups]
 test = [
@@ -79,6 +82,10 @@ docs = [
     "matplotlib>=3.10", # common for gallery images
 ]
 
+
+# Both wheels install the module cupy; never resolve them together.
+[tool.uv]
+conflicts = [[{ extra = "cuda" }, { extra = "cuda13" }]]
 
 # IPython 9 in the docs group requires Python 3.11 or newer. Keep the
 # runtime and test groups available on Python 3.10 during uv resolution.

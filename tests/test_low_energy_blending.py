@@ -499,10 +499,10 @@ def test_weight_broadcasts_along_the_last_axis_of_a_matrix():
     assert np.allclose(blended, np.array([[0.9, 0.5, 0.1]] * 3))
 
 
-def test_weight_broadcasts_along_the_last_axis_of_a_hankel_tensor():
+def test_weight_broadcasts_along_the_last_axis_of_a_2d_tensor():
     # Same weight against an (n_k, n_e, n_e) 2D channel: (1, n_e) broadcasts as
     # (1, 1, n_e), so it still varies along the parent axis and is applied
-    # identically to every kappa mode. A rewrite that indexed the first axis
+    # identically to every angular mode. A rewrite that indexed the first axis
     # would pass the matrix test above and fail here.
     w = he_le_weight(transition_window(), 80.0, 0.4, dtype=None)
     channel = ((2212, 0), (211, 0))

@@ -2,9 +2,9 @@
 ``tests/data/2d_baseline_solution.npz``.
 
 The fixture (see ``tests/data/make_2d_baseline_fixture.py``) is a snapshot
-of the production 2D configuration: FLUKA 2D database (48 Hankel modes),
+of the production 2D configuration on the 2D CI database (16 Legendre modes):
 sec(theta) transport at the default cap, muon multiple scattering and
-helicity-dependent decays, a single 100 GeV proton at theta=30 deg, solved
+helicity-dependent decays, a single 50 GeV proton at theta=30 deg, solved
 with the numpy ETD2 kernel with the current default settings (eps=0.01, requested dX_max=2),
 further limited by the assembled loss-stencil and secant guard.
 
@@ -72,8 +72,8 @@ def mceq_2d(baseline):
     try:
         # Mirror the configuration the stored solution was generated with.
         config.mceq_db_fname = fn
-        config.e_min = 1e-1
-        config.e_max = 1e4
+        config.e_min = float(baseline["e_min"])
+        config.e_max = float(baseline["e_max"])
         config.kernel_config = str(baseline["kernel_config"])
         config.muon_helicity_dependence = bool(baseline["muon_helicity_dependence"])
         config.muon_multiple_scattering = bool(baseline["muon_multiple_scattering"])
@@ -106,41 +106,35 @@ def mceq_2d(baseline):
 
 def test_2d_dim_states_match_baseline(mceq_2d, baseline):
     """Same code + same database must produce the same state-vector layout."""
-    assert mceq_2d._mceq_db.n_k == baseline["phi_hankel"].shape[1]
-    assert mceq_2d.dim_states == baseline["phi_hankel"].shape[2]
+    assert mceq_2d._mceq_db.n_k == baseline["phi_modes"].shape[1]
+    assert mceq_2d.dim_states == baseline["phi_modes"].shape[2]
 
 
-def test_2d_matches_baseline_phi_hankel(mceq_2d, baseline):
-    """Per-mode Hankel-space state agrees with the fixture at every stored
-    depth within the regression bound."""
+def test_2d_matches_baseline_phi_modes(mceq_2d, baseline):
+    """Per-mode state agrees with the fixture at every stored depth within
+    the regression bound."""
     n_k = mceq_2d._mceq_db.n_k
     N = mceq_2d.dim_states
 
     for j, snap in enumerate(mceq_2d.grid_sol):
         snap_now = snap.reshape(n_k, N)
-        snap_ref = baseline["phi_hankel"][j]
+        snap_ref = baseline["phi_modes"][j]
         for k in range(n_k):
             denom = np.linalg.norm(snap_ref[k])
             if denom < 1e-30:
                 continue
             rel_l2 = np.linalg.norm(snap_now[k] - snap_ref[k]) / denom
-            assert rel_l2 < REL_L2_MAX, f"depth #{j}, k-mode {k}: rel-L2 = {rel_l2:.3e}"
+            assert rel_l2 < REL_L2_MAX, f"depth #{j}, mode {k}: rel-L2 = {rel_l2:.3e}"
 
 
 def test_2d_matches_baseline_numu_theta_space(mceq_2d, baseline):
-    """Helicity-summed nu_mu angular density from the inverse Hankel
-    readout agrees with the fixture (same quadrature on both sides)."""
+    """The nu_mu angular density from the Legendre readout agrees with the
+    fixture (same readout on both sides)."""
     n_k = mceq_2d._mceq_db.n_k
     N = mceq_2d.dim_states
-    hankel_history = [snap.reshape(n_k, N) for snap in mceq_2d.grid_sol]
+    history = [snap.reshape(n_k, N) for snap in mceq_2d.grid_sol]
 
-    res = mceq_2d.convert_to_theta_space(
-        hankel_history,
-        pdg_id=14,
-        hel=0,
-        oversample_res=5,
-        theta_res=600,
-    )
+    res = mceq_2d.convert_to_theta_space(history, pdg_id=14, hel=0, theta_res=600)
     f_theta_now = np.asarray(res[3])
     f_theta_ref = baseline["f_theta_14_0"]
     assert f_theta_now.shape == f_theta_ref.shape

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import h5py
 import numpy as np
 import pytest
+from scipy.special import k1
 
 from MCEq.data.hdf5_backend import HDF5Backend
 from MCEq.data.hdf5_store import HDF5Store
@@ -18,7 +19,7 @@ AIR_INTEGER_A = [[7, 14.0, 0.7847874810295787], [8, 16.0, 0.210518910117893],
 #: CODATA 2018 muon mass [GeV], used by that generator.
 MUON_MASS = 0.1056583755
 
-#: (kinetic energy [GeV], kappa [1/rad], rate [cm2/g]) from the generator.
+#: (kinetic energy [GeV], kappa [1/rad], planar rate [cm2/g]) from the generator.
 REFERENCE = [
     (0.011220184543019636, 1, 0.006631083974020151),
     (0.011220184543019636, 43, 7.2701139234472745),
@@ -32,17 +33,43 @@ REFERENCE = [
 ]
 
 
+def _one_minus_z_k1(z):
+    """``1 - z K_1(z)``, with its series below ``z = 1e-3``; zero at ``z = 0``."""
+    out = np.zeros_like(z)
+    small = (z > 0) & (z < 1e-3)
+    x = z[small]
+    log = np.log(x / 2) + np.euler_gamma
+    out[small] = -x * x / 2 * (log - 0.5) - x**4 / 16 * (log - 1.25)
+    large = z >= 1e-3
+    out[large] = 1 - z[large] * k1(z[large])
+    return out
+
+
+def _planar_rate(e_kin, kappa, composition, muon_mass=scattering.MUON_MASS):
+    """Small-angle limit of the screened Coulomb rate on the flat sky,
+    ``sum_i R_i [1 - kappa a_i K_1(kappa a_i)]`` with ``a_i = 2 sqrt(A_i)``,
+    from the element parameters of ``scattering._elements``."""
+    e_kin, kappa = np.asarray(e_kin, dtype=float), np.asarray(kappa, dtype=float)
+    rate = np.zeros((kappa.size, e_kin.size))
+    for n, screening, strength in scattering._elements(e_kin, composition, muon_mass):
+        z = kappa[:, None] * (2 * np.sqrt(screening))
+        rate += np.pi * n * strength / screening * _one_minus_z_k1(z)
+    return rate
+
+
 @pytest.mark.parametrize(("e_kin", "kappa", "expected"), REFERENCE)
-def test_rate_matches_reference(e_kin, kappa, expected):
-    rate = scattering.screened_coulomb_rate([e_kin], [kappa], AIR_INTEGER_A, MUON_MASS)
+def test_element_parameters_match_generator(e_kin, kappa, expected):
+    """Screening and strength per element against the mceq-EM generator,
+    through the planar limit it tabulated."""
+    rate = _planar_rate([e_kin], [kappa], AIR_INTEGER_A, MUON_MASS)
     np.testing.assert_allclose(rate[0, 0], expected, rtol=1e-9)
 
 
 def test_rate_zero_mode_and_monotone():
     e_kin = np.geomspace(1e-2, 1e6, 30)
-    kappa = np.concatenate([[0.0], np.geomspace(1e-3, 1e4, 40)])
-    rate = scattering.screened_coulomb_rate(e_kin, kappa, AIR_INTEGER_A)
-    assert rate.shape == (kappa.size, e_kin.size)
+    ls = np.array([0, 1, 2, 3, 5, 8, 13, 21, 34, 64, 102, 486, 2000])
+    rate = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A)
+    assert rate.shape == (ls.size, e_kin.size)
     assert np.all(rate[0] == 0)
     assert np.all(np.diff(rate, axis=0) > 0)
     assert np.all(np.diff(rate[1:], axis=1) < 0)
@@ -111,7 +138,9 @@ def test_all_muon_charges_helicities_and_operator_placement(db):
     pman.pdg2pref, pman.dim_states, pman.dim = particles, 12, 2
     builder._pman = pman
     matrix = builder._csr_from_blocks({}, apply_muon_scattering=True)
-    rate = scattering.screened_coulomb_rate(e_kin, k_grid, AIR_INTEGER_A, MUON_MASS)
+    rate = scattering.screened_coulomb_rate_legendre(
+        e_kin, k_grid, AIR_INTEGER_A, MUON_MASS
+    )
     expected = np.zeros(24)
     expected[12:24] = np.tile(-rate[1], 6)
     np.testing.assert_allclose(matrix.diagonal(), expected, rtol=1e-15)
@@ -146,3 +175,157 @@ def test_scattering_model_invalidates_split_assembly():
     old_key = builder._current_assembly_key()
     builder._physics.muon_scattering_model = "screened-coulomb"
     assert old_key != builder._current_assembly_key()
+
+
+# Legendre modes: Goudsmit-Saunderson rates of the Wentzel kernel.
+
+
+def _quadrature_sigma(screening, ls, panels, order=32):
+    """``2 int (1 - P_l(mu)) / (1 - mu + 2A)^2 dmu`` by composite Gauss-Legendre
+    in ``u = ln(1 - mu + 2A)``, with ``1 - P_l`` from its own recurrence."""
+    xg, wg = np.polynomial.legendre.leggauss(order)
+    edges = np.linspace(np.log(2 * screening), np.log(2 + 2 * screening), panels + 1)
+    half = np.diff(edges)[:, None] / 2
+    u = (half * xg + (edges[1:] + edges[:-1])[:, None] / 2).ravel()
+    w = (half * wg).ravel()
+    y = np.exp(u)
+    t = y - 2 * screening
+    d_prev, d, out = np.zeros_like(t), t.copy(), {}
+    for n in range(1, max(ls) + 1):
+        if n in ls:
+            out[n] = 2 * np.sum(w * d / y)
+        d_prev, d = d, ((2 * n + 1) * (t + (1 - t) * d) - n * d_prev) / (n + 1)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("screening", "l_max", "panels"),
+    [
+        (1e-12, 500, 1000),
+        (1e-8, 500, 1000),
+        (1e-4, 500, 1000),
+        (1e-2, 1000, 4000),
+        (0.3, 2000, 4000),
+    ],
+)
+def test_transport_cross_sections_match_quadrature(screening, l_max, panels):
+    """Both branches (``l sqrt(A)`` below and above one) against quadrature."""
+    sigma = scattering.transport_cross_sections(screening, l_max)
+    ls = {1, 2, 5, 64, l_max // 4, l_max}
+    for ell, value in _quadrature_sigma(screening, ls, panels).items():
+        np.testing.assert_allclose(sigma[ell], value, rtol=1e-9, err_msg=f"l={ell}")
+
+
+def test_transport_cross_sections_l1_and_zero_mode():
+    """``sigma_0 = 0`` and the textbook ``2 ln((1+A)/A) - 2/(1+A)`` at l = 1."""
+    a = np.geomspace(1e-30, 1.0, 61)
+    sigma = scattering.transport_cross_sections(a, 3)
+    assert np.all(sigma[0] == 0)
+    np.testing.assert_allclose(
+        sigma[1], 2 * np.log1p(1 / a) - 2 / (1 + a), rtol=4e-16, atol=0
+    )
+    assert np.all(np.diff(sigma, axis=0) > 0)
+
+
+def test_transport_cross_sections_branches_agree():
+    """Where the polynomial form is still accurate (``l sqrt(A) <= 1``) the
+    Neumann form with Miller ratios gives the same values, and a mixed batch
+    of screenings equals the screenings taken one by one."""
+    a = np.array([1e-4])
+    r = scattering._q_ratios(a, 100)
+    q_prev = np.log1p(1 / a) / 2 * np.cumprod(np.vstack([[1.0], r[:-1]]), axis=0)
+    ls = np.arange(1, 101)[:, None]
+    neumann = (1 - ls * q_prev * (1 - (1 + 2 * a) * r)) / (a * (1 + a))
+    poly = scattering.transport_cross_sections(a, 100)[1:]
+    np.testing.assert_allclose(poly[9:], neumann[9:], rtol=1e-11)
+    mixed = np.array([1e-12, 1e-5, 3e-3, 0.3])
+    batch = scattering.transport_cross_sections(mixed, 1000)
+    for j, value in enumerate(mixed):
+        single = scattering.transport_cross_sections(value, 1000)
+        np.testing.assert_array_equal(batch[:, j], single)
+
+
+def test_single_scattering_moments_mc():
+    """``<P_l> = 1 - sigma_l / sigma_tot`` against samples of the Wentzel
+    kernel (inverse CDF ``mu = 1 - 2 A u / (1 + A - u)``)."""
+    from MCEq.operators.legendre import moments
+
+    a, n = 1e-3, 400_000
+    u = np.random.default_rng(7).random(n)
+    mu = 1 - 2 * a * u / (1 + a - u)
+    ls = np.array([1, 2, 5, 10, 30, 64])
+    mc = moments(mu, ls) / n
+    exact = 1 - scattering.transport_cross_sections(a, 64)[ls] * a * (1 + a)
+    assert np.all(np.abs(mc - exact) < 5 / np.sqrt(n)), mc - exact
+
+
+def test_legendre_rate_small_angle_limit_and_l1_pin():
+    """The planar rate at ``kappa = l + 1/2`` is the small-angle limit of the
+    exact rate: equal to 2e-4 at l = 64 and 1e-5 from l = 256. At l = 1 it is
+    12.7 % high in air, nearly independent of energy (regression pin)."""
+    e_kin = np.geomspace(0.1, 10.0, 7)
+    ls = np.array([0, 1, 2, 64, 256, 1000, 2000])
+    exact = scattering.screened_coulomb_rate_legendre(
+        e_kin, ls, AIR_INTEGER_A, MUON_MASS
+    )
+    planar = _planar_rate(e_kin, ls[1:] + 0.5, AIR_INTEGER_A, MUON_MASS)
+    assert np.all(exact[0] == 0)
+    ratio = planar / exact[1:]
+    np.testing.assert_allclose(ratio[0], 1.127, atol=0.002)
+    np.testing.assert_allclose(ratio[1], 1.042, atol=0.002)
+    assert np.all((ratio[2] >= 1) & (ratio[2] <= 1 + 2e-4))
+    assert np.all(np.abs(ratio[3:] - 1) < 1e-5)
+
+
+def test_legendre_rate_composition_sum_and_integer_modes():
+    e_kin, ls = np.array([0.01, 1.0, 1e4]), np.array([0, 1, 7, 64, 500])
+    total = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A)
+    mean_a = sum(row[1] * row[2] for row in AIR_INTEGER_A)
+    parts = sum(
+        scattering.screened_coulomb_rate_legendre(
+            e_kin, ls, [[z, mass, 1.0]]
+        ) * fraction * mass / mean_a
+        for z, mass, fraction in AIR_INTEGER_A
+    )  # fmt: skip
+    np.testing.assert_allclose(total, parts, rtol=1e-13)
+    with pytest.raises(ValueError, match="integer"):
+        scattering.screened_coulomb_rate_legendre(e_kin, [0, 1.5], AIR_INTEGER_A)
+
+
+def test_gaussian_mode_rates():
+    """The diffusion eigenvalue ``l (l + 1) theta_s^2 / 4``."""
+    e_kin, ell = np.array([0.3, 3.0]), np.array([0.0, 1.0, 4.0])
+    theta2 = scattering.theta_s_squared(e_kin, MUON_MASS)
+    rate = scattering.mode_rates("gaussian", e_kin, ell, None, MUON_MASS)
+    np.testing.assert_allclose(rate, np.outer(ell * (ell + 1), theta2) / 4, rtol=1e-15)
+
+
+@pytest.mark.parametrize("model", ["screened-coulomb", "gaussian"])
+def test_legendre_operator_placement(db, model):
+    """The muon diagonals carry the exact per-l rate of either model."""
+    l_grid, e_kin = np.array([0.0, 1.0, 67.0]), np.array([0.5, 50.0])
+    builder = MatrixBuilder.__new__(MatrixBuilder)
+    builder.is_2d, builder.n_k, builder.k_grid = True, 3, l_grid
+    builder._layout = _backend(db)
+    builder._physics = SimpleNamespace(
+        muon_multiple_scattering=True, muon_scattering_model=model
+    )
+    builder._grid = SimpleNamespace(dtype=np.float64)
+    builder._energy_grid = SimpleNamespace(c=e_kin, d=2)
+    muon = SimpleNamespace(lidx=0, mceqidx=0, mass=MUON_MASS)
+
+    class Pman(dict):
+        pass
+
+    pman = Pman({(13, 0): muon})
+    pman.pdg2pref, pman.dim_states, pman.dim = {(13, 0): muon}, 2, 2
+    builder._pman = pman
+    matrix = builder._csr_from_blocks({}, apply_muon_scattering=True)
+    if model == "gaussian":
+        theta2 = scattering.theta_s_squared(e_kin, MUON_MASS)
+        rate = np.outer(l_grid * (l_grid + 1), theta2) / 4
+    else:
+        rate = scattering.screened_coulomb_rate_legendre(
+            e_kin, l_grid, AIR_INTEGER_A, MUON_MASS
+        )
+    np.testing.assert_allclose(matrix.diagonal(), -rate.ravel(), rtol=1e-15)

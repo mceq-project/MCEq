@@ -200,16 +200,29 @@ Two-dimensional transport
 =========================
 
 In the two-dimensional version the state carries the angular distribution
-with respect to the shower axis as :math:`n_k` Hankel modes
-:math:`\kappa_k`; every mode obeys :eq:`linear` with its own kernels
-:math:`A(\kappa_k)`, :math:`B(\kappa_k)`, and the modes are decoupled in
-the paraxial approximation. The mode :math:`\kappa = 0` is the
-angle-integrated flux. The only :math:`\kappa`-dependent diagonal entry is
-the multiple-scattering damping of the muons,
-:math:`-\kappa^2\theta_s^2(E)/4` (:mod:`MCEq.operators.scattering`), which
-enters :math:`D` and is integrated exactly. The :math:`n_k` mode systems
-are one block-diagonal system of dimension :math:`n_k N`, integrated as one
-state array with the diagonal factors computed once.
+with respect to the shower axis as :math:`n_k` Legendre moments
+:math:`a_l = \langle P_l(\cos\theta)\rangle` on a grid of degrees
+:math:`l_k`, dense from 0 and sparse above (:mod:`MCEq.operators.legendre`).
+A production, decay or scattering kernel that depends only on the angle
+between parent and secondary acts on the moments diagonally (Funk-Hecke
+theorem), so every mode obeys :eq:`linear` with its own kernels
+:math:`A(l_k)`, :math:`B(l_k)`, and the modes are decoupled in the paraxial
+approximation. For :math:`\theta \to 0` at fixed :math:`(l + 1/2)\theta`,
+:math:`P_l(\cos\theta) \to J_0((l + 1/2)\theta)`: planar Hankel modes are the
+small-angle limit with :math:`\kappa = l + 1/2`. The mode :math:`l = 0` is
+the angle-integrated flux. The only :math:`l`-dependent diagonal entry is
+the multiple-scattering rate of the muons, :math:`-\Gamma(E, l)`
+(:mod:`MCEq.operators.scattering`), which enters :math:`D` and is
+integrated exactly. The :math:`n_k` mode systems are one block-diagonal
+system of dimension :math:`n_k N`, integrated as one state array with the
+diagonal factors computed once.
+
+Secondaries produced into the backward hemisphere are removed
+(``config.legendre_backward_removal``): a mode-mixing stage applies
+:math:`I - R` on the dense block to the off-diagonal production and decay
+terms, with :math:`R` the backward part of the Jackson-smoothed
+distribution (:func:`~MCEq.operators.legendre.backward_removal`). The
+continuous-loss band bypasses it, since energy loss keeps the direction.
 
 The :math:`\sec\theta` path elongation in the eigenbasis
 =========================================================
@@ -221,19 +234,30 @@ equilibrium (sub-GeV hadrons, muons) the paraxial equations overestimate
 the wide-angle density by that factor. The correction multiplies the flux
 entering the transport operator by :math:`g(\theta) = \min(\sec\theta,
 \sec\theta_{\mathrm{cap}})`, a constant matrix :math:`S = I + T` on the
-mode index in Hankel space:
+mode index,
+
+.. math::
+
+   S_{ll'} = M[g]_{ll'} = \frac{2l' + 1}{2} \int_{-1}^{1} P_l(\mu)\,
+   g(\mu)\, P_{l'}(\mu)\,\mathrm{d}\mu,
+
+exact by Gauss-Legendre quadrature on the two smooth pieces of
+:math:`g` (:func:`~MCEq.operators.legendre.path_elongation`):
 
 .. math::
    :label: secant
 
    \frac{\mathrm{d}\tilde\Phi_k}{\mathrm{d}X}
-   = \bigl[A(\kappa_k) + \rho^{-1}(X) B(\kappa_k)\bigr]
+   = \bigl[A(l_k) + \rho^{-1}(X) B(l_k)\bigr]
      \sum_{k'} S_{kk'}\,\tilde\Phi_{k'} .
 
-:mod:`MCEq.operators.secant` builds :math:`T` by a regularised
-least-squares fit and restricts it to the modes :math:`P` (:math:`\kappa
-\le` ``row_kmax``) and to the state columns :math:`g` with :math:`E_{\rm
-kin} <` ``config.secant_theta_e_max``. The elongation acts on the parent's
+:mod:`MCEq.operators.secant` restricts :math:`T` to the rows :math:`P` of
+the dense block of the :math:`l` grid, whose columns reach every mode
+through the cubic interpolation in :math:`l`
+(:func:`~MCEq.operators.legendre.l_interpolation`), and to the state
+columns :math:`g` with :math:`E_{\rm kin} <`
+``config.secant_theta_e_max``. The cap may lie anywhere in
+:math:`[0, 90)` degrees; at 0, :math:`S = I`. The elongation acts on the parent's
 path length, not on the daughter's emission angle, so it must cover all
 loss channels of a species or none; loss-free daughters such as neutrinos
 are preserved.
@@ -260,11 +284,18 @@ I + T_{PP}` the diagonal term of :eq:`secant` on the corner is
    \frac{\mathrm{d}\Phi_{j,i}}{\mathrm{d}X}\Big|_{\mathrm{exact}}
    = D^0_i \sum_{j' \in P} (S_P)_{jj'}\,\Phi_{j',i}, \qquad j \in P,\ i \in g,
 
-where :math:`D^0` is the diagonal of the :math:`\kappa = 0` operator,
+where :math:`D^0` is the diagonal of the :math:`l = 0` operator,
 common to all modes. :math:`S_P` acts on the mode index and :math:`D^0_i`
 on the energy index, so they commute, and the eigendecomposition
 :math:`S_P = V \mathrm{diag}(\lambda) V^{-1}` diagonalises the coupled
-block. The corner of the state is carried in the eigenbasis,
+block. :math:`S_P` is not normal: its cluster of eigenvalues at
+:math:`1/\mu_\mathrm{cap}` can split into conjugate pairs
+:math:`a \pm ib` with :math:`b/a` up to :math:`2.4\times10^{-7}` (caps
+7.4–7.8° on the 90-mode grid). Such a pair is kept as the real plane
+:math:`[\mathrm{Re}\,v, \mathrm{Im}\,v]` with :math:`\lambda = a`; the
+rotation :math:`\pm b` stays in the remainder below, and pairs with
+:math:`b/a > 10^{-5}` are refused. The corner of the state is carried in
+the eigenbasis,
 
 .. math::
 
@@ -279,18 +310,31 @@ where the exactly integrated operator is the diagonal
            + \bigl[V^{-1}\mathrm{diag}(\Delta_{\cdot,i})\,V\mathrm{diag}(\lambda)\bigr]_{jj},
    \qquad \Delta_{j,i} = D^f_{j,i} - D^0_i,
 
-with :math:`D^f` the full, :math:`\kappa`-dependent diagonal on the
-coupled plane and :math:`\Delta` its :math:`\kappa`-dependent part, the
+with :math:`D^f` the full, :math:`l`-dependent diagonal on the
+coupled plane and :math:`\Delta` its :math:`l`-dependent part, the
 multiple-scattering damping of the muons
 (:attr:`~MCEq.operators.compiled.CompiledOperator.exact_slot_diagonals`).
 :math:`\Delta` does not commute with :math:`S_P`, so it cannot be
 integrated exactly in this basis; its eigenbasis diagonal goes into
 :math:`L` and only its mode mixing stays in the remainder. This matters
-for stability: for the lowest muon bin of the production configuration
-(:math:`E = 45` MeV, :math:`\kappa_{\max} = 2000`, :math:`\sec\theta` capped
-at 3.86) the spectral radius of the one-step map is 0.50 at :math:`h = 2`
-g/cm² and 0.42 at :math:`h = 3`; with all of :math:`\Delta` in the remainder
-it is 1.0 at :math:`h = 2` and 1.36 at :math:`h = 2.37`.
+for stability: for the lowest muon bin (:math:`E = 45` MeV, modes up to
+2000, :math:`\sec\theta` capped at 3.86) the spectral radius of the one-step
+map is 0.50 at :math:`h = 2` g/cm² and 0.42 at :math:`h = 3`; with all of
+:math:`\Delta` in the remainder it is 1.0 at :math:`h = 2` and 1.36 at
+:math:`h = 2.37` (measured with the planar Hankel modes, the small-angle
+limit of the Legendre operator).
+The eigenvectors of the near-degenerate cluster at :math:`1/\mu_\mathrm{cap}`
+are arbitrary within their span, and a skewed choice gives
+:math:`V^{-1}_{jl} V_{lj} < 0` weights that turn part of :math:`\Delta`
+into an exactly integrated growth (:math:`L_{j,i} > 0`; at caps 0.5–10°,
+25° and 85° on the 90-mode grid, with a blow-up at 7.3°).
+:func:`~MCEq.operators.compiled.compile_operator` then uses the orthogonal
+real Schur basis :math:`S_P = Q R Q^T` (:math:`V = Q`,
+:math:`\lambda = \mathrm{diag}\,R`), in which every damping weight
+:math:`Q_{lj}^2` is non-negative; the strictly upper part of :math:`R`
+joins the remainder. The eigenbasis stays the default, being the more
+accurate splitting where it is safe (at the production cap of 75°, a quarter to a half
+of the step error of the Schur basis).
 The corner therefore receives the same elementwise factors as the rest of
 the state and the predictor and corrector :eq:`etd2` apply unchanged. Only
 the remainder needs the coupling. The operand of the transport operator is
@@ -298,9 +342,9 @@ the remainder needs the coupling. The operand of the transport operator is
 
 .. math::
 
-   \mathcal{C}(w) = V\mathrm{diag}(\lambda)\,\Psi + T_{P,P^c}\,\Phi_{P^c,g}
+   \mathcal{C}(w) = S_P V\,\Psi + T_{P,P^c}\,\Phi_{P^c,g}
                   = W\,\mathcal{L}(\Phi), \qquad
-   W = \bigl[\,V\mathrm{diag}(\lambda)\ \big|\ T_{P,P^c}\,\bigr],
+   W = \bigl[\,S_P V\ \big|\ T_{P,P^c}\,\bigr],
 
 with :math:`\mathcal{L}(\Phi) = \Phi_{\cdot,g}` the low-energy block over
 every mode. :math:`V`,
@@ -375,8 +419,8 @@ worst relative step error :math:`|\Phi/\Phi_{\mathrm{ref}} - 1|` of
 :math:`E^3\Phi` over the conventional and prompt muon and neutrino spectra
 above 0.15, 1 and 10 GeV, in units of :math:`10^{-3}`. One dimension:
 DPMJET-III 19.3, 60°, reference at :math:`h_{\max} = 0.25` g/cm². Two
-dimensions: FLUKA, Hankel mode 0, :math:`\sec\theta` transport, 60°,
-reference at 0.5 g/cm².
+dimensions: FLUKA, mode 0, :math:`\sec\theta` transport, 60°,
+reference at 0.5 g/cm² (measured on the planar Hankel-mode database).
 
 .. list-table::
    :header-rows: 1

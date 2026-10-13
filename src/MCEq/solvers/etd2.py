@@ -15,6 +15,8 @@ particular library or device belongs in :mod:`MCEq.solvers.backends`; the
 scalar formulas it calls belong in :mod:`MCEq.solvers.numerics`.
 """
 
+from contextlib import nullcontext
+
 import numpy as np
 
 from MCEq.misc import info
@@ -44,6 +46,22 @@ def _fp32_scale(phi, phi0_per_pixel=None):
     return 2.0 ** (_FP32_PEAK_EXP - int(np.ceil(np.log2(peak))))
 
 
+def _serial_dense_blas(be):
+    """Context of the step loop: OpenBLAS and BLIS at one thread when the
+    SpMM runs on MKL's threads, MKL's own pool as set.
+
+    MKL's threads spin between the sparse calls, and the small dense GEMMs
+    that numpy sends to another BLAS on the same cores wait for them: 30-90 ms
+    per call instead of ~1 ms, a 3-5x slower step at 8 threads.
+    """
+    if be.name != "mkl":
+        return nullcontext()
+    from threadpoolctl import ThreadpoolController
+
+    blas = ThreadpoolController().select(internal_api=["openblas", "blis"])
+    return blas.limit(limits=1)
+
+
 def etd2_driver(
     nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
 ):
@@ -55,7 +73,8 @@ def etd2_driver(
     paraxial transport; with the sec(theta) transport the coupled corner
     of the state is carried in the eigenbasis of the mode coupling, rotated
     in once before the loop and back once after it. Formulas and stage
-    order: :ref:`solver-math`.
+    order: :ref:`solver-math`. On the MKL backend the loop runs the other
+    BLAS pools at one thread (:func:`_serial_dense_blas`).
 
     Args:
       nsteps: number of steps.
@@ -125,9 +144,25 @@ def etd2_driver(
     ri_64 = be.asarray(rho_inv, np.float64)
     ri_b = ri_64 if fp64 else be.asarray(rho_inv)
 
+    lmm = be.left_matmul
+    mix = be.op.mode_mix
+    if mix is not None:
+        # Legendre: produced particles moving backward leave the downward
+        # flux; the band (energy loss) keeps the direction.
+        M_mix = be.asarray(mix.M)
+        mix_out = xp.empty((mix.n_D, mix.N * K), dtype=dtype)
+
+        def apply_off(x, F, ri):
+            be.apply_off(x, F, ri)
+            lead = F[: mix.n_D * mix.N].reshape(mix.n_D, mix.N * K)
+            lmm(M_mix, lead, out=mix_out)
+            xp.copyto(lead, mix_out)
+            be.apply_band(x, F)
+    else:
+        apply_off = be.apply_off
+
     if coupled:
         W, V, Vi = be.coupling()
-        lmm = be.left_matmul
 
         def corner(x):
             return coupled_corner(lay, x)
@@ -161,7 +196,7 @@ def etd2_driver(
             # the corner of the operand S x, in place of Psi around the SpMM
             lmm(W, low_e(x), out=work)
             xp.copyto(xc, work)
-            be.apply_off(x, F, ri)
+            apply_off(x, F, ri)
             # Vi (F_c + Df C(S x)) - lam_j D0_i Psi
             xp.multiply(Df, xc, out=work)
             xp.add(Fc, work, out=work)
@@ -174,7 +209,7 @@ def etd2_driver(
     else:
 
         def eval_F(x, F, ri):
-            be.apply_off(x, F, ri)
+            apply_off(x, F, ri)
 
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
@@ -193,7 +228,7 @@ def etd2_driver(
     start = time()
 
     # See :data:`MCEq.solvers.path._EM_BLOWUP_CAVEAT` for the errstate contract.
-    with np.errstate(over="ignore", invalid="ignore"):
+    with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
             h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64
@@ -290,6 +325,8 @@ def solve_etd2(
     phi0_per_pixel=None,
     device_id=0,
     fp_precision=64,
+    band=None,
+    mode_mix=None,
 ):
     """Integrate ``dPhi/dX`` with :func:`etd2_driver` on one backend.
 
@@ -314,6 +351,9 @@ def solve_etd2(
         the schedule's own ``T`` and ``nsteps`` is ignored; the return is the
         harvested ``(dim, K_total)`` pixel matrix rather than a pair.
       device_id: CUDA device index; ignored by the host backends.
+      band, mode_mix: Legendre databases: the continuous-loss band kept out
+        of ``int_m`` and the backward removal of
+        :func:`MCEq.operators.compiled.compile_operator`.
       fp_precision: 32 or 64, the state precision on every backend — the
         state, the scratch buffers and the off-diagonal operator are
         stored in it while the diagonals and the phi factors stay fp64.
@@ -329,7 +369,8 @@ def solve_etd2(
             f"solve_etd2: unknown backend {backend!r}; "
             f"choose one of {', '.join(sorted(_BACKENDS))}"
         ) from None
-    be = make_backend(compile_operator(int_m, dec_m, sec_ops), device_id, fp_precision)
+    op = compile_operator(int_m, dec_m, sec_ops, band=band, mode_mix=mode_mix)
+    be = make_backend(op, device_id, fp_precision)
     try:
         return etd2_driver(
             schedule.T if schedule is not None else nsteps,

@@ -66,6 +66,7 @@ class HostBackend:
         self.dtype = np.dtype(dtype).type
         self.d_int, self.d_dec = op.d_int, op.d_dec
         self._apply_off = apply_off
+        self._band = None
         self._coupling = None
         self._ptr_cache = {}
 
@@ -112,6 +113,13 @@ class HostBackend:
 
     def apply_off(self, x, out, ri):
         self._apply_off(x, out, ri)
+
+    def apply_band(self, x, out):
+        """``out += band_off x``: the continuous-loss off-diagonal of a
+        Legendre operator (scipy SpMM on every host backend)."""
+        if self._band is None:
+            self._band = self.op.band_off.astype(self.dtype)
+        out += self._band @ x
 
     def _cast_factors(self, *factors):
         """The one cast of the fp64 factors to the state dtype; identity at

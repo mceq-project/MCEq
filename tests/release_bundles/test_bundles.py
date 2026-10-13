@@ -88,6 +88,16 @@ def _configure(monkeypatch, primary, data_dir, **extra):
         monkeypatch.setattr(config, name, value)
 
 
+def test_2d_default_is_legendre():
+    """The release's default 2D package is booked in Legendre moments, the
+    only 2D basis MCEq reads; a Hankel package fails the release gate."""
+    with h5py.File(package("2d")) as f:
+        basis = f["common"].attrs.get("angular_basis")
+    assert (basis.decode() if isinstance(basis, bytes) else basis) == "legendre", (
+        f"{package('2d').name}: angular_basis = {basis!r}"
+    )
+
+
 def _finite_positive(run, species):
     for s in species:
         flux = run.get_solution(s)

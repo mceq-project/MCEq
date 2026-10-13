@@ -91,12 +91,12 @@ def decode_decays(path, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_base_air_2d_v2.h5"]
+    "db_fname", ["mceq_ci_base_air_1d_v2.h5", "mceq_ci_base_air_2d_legendre_v2.h5"]
 )
 def test_shipped_databases_are_four_column(db_fname):
     """Justifies the fixtures: no real file reaches the 2-column branch.
 
-    Both the reduced 1D database and the production 2D one store
+    Both the reduced 1D database and the 2D CI database store
     ``tuple_idcs`` as ``(n_channels, 4)`` -- ``(parent, helicity, child,
     helicity)``.
     """
@@ -120,30 +120,32 @@ def test_shipped_databases_are_four_column(db_fname):
     assert widths == {4}, f"{db_fname} carries tuple_idcs of widths {sorted(widths)}"
 
 
-def test_fixture_kappa_grid_is_a_subsample_of_the_production_grid():
-    """Guards the constant the 2D fixture is built from against DB drift.
+def test_fixture_l_grid_is_a_subsample_of_the_production_grid():
+    """Guards the constants the 2D fixture is built from against DB drift.
 
-    ``make_hdf5_fixtures.K_GRID_PRODUCTION`` is a hand-copy of the 2D base
-    ``/common`` ``k_grid``; the 8-mode fixture grid is an evenly spaced
-    subsample of it. A head truncation instead loads but then fails
-    ``build_secant_kernel_ops`` with an error blaming ``theta_cap_deg`` -- see
-    the generator docstring.
+    ``make_hdf5_fixtures.L_GRID_PRODUCTION`` is a hand-copy of the production
+    Legendre grid, of which the 2D CI database keeps a dense head and a
+    sparse tail. The 8-mode fixture grid has the same shape: a dense head
+    ``l = 0..4`` and sparse modes of the CI grid up to its last one.
     """
     from MCEq import config
+    from MCEq.operators.legendre import dense_count
 
-    path = pathlib.Path(config.data_dir) / "mceq_base_air_2d_v2.h5"
+    path = pathlib.Path(config.data_dir) / "mceq_ci_base_air_2d_legendre_v2.h5"
     if not path.exists():
-        pytest.skip("mceq_base_air_2d_v2.h5 not available")
+        pytest.skip("mceq_ci_base_air_2d_legendre_v2.h5 not available")
 
     with h5py.File(path, "r") as db:
-        production = np.asarray(db["common"].attrs["k_grid"])
+        common = db["common"].attrs
+        ci_grid = np.asarray(common["k_grid"])
+        basis = common["angular_basis"]
 
-    assert np.array_equal(production, fixtures.K_GRID_PRODUCTION)
-    assert set(fixtures.K_GRID) <= set(production)
-    assert fixtures.K_GRID[0] == production[0]
-    assert fixtures.K_GRID[-1] == production[-1]
-    # Not a head truncation: the fixture spans the whole kappa range.
-    assert not np.array_equal(fixtures.K_GRID, production[: fixtures.N_K])
+    assert (basis.decode() if isinstance(basis, bytes) else str(basis)) == "legendre"
+    assert set(ci_grid) <= set(fixtures.L_GRID_PRODUCTION)
+    assert ci_grid[-1] == fixtures.L_GRID_PRODUCTION[-1]
+    assert set(fixtures.K_GRID) <= set(ci_grid)
+    assert fixtures.K_GRID[-1] == ci_grid[-1]
+    assert dense_count(fixtures.K_GRID) == 5 < fixtures.N_K
 
 
 def test_fixture_pack_matches_the_shipped_pack_layout(hdf5_fixture_dbs):
@@ -272,10 +274,50 @@ def test_one_dimensional_channel_decodes_to_the_stored_block(hdf5_fixture_dbs):
     assert np.array_equal(decoded, fixtures.channel_block(NEXT_CH))
 
 
+def _hankel_copy(path, basis):
+    """The 2D fixture with ``angular_basis`` removed (``basis=None``) or set."""
+    with h5py.File(path, "r+") as db:
+        del db["common"].attrs["angular_basis"]
+        if basis is not None:
+            db["common"].attrs["angular_basis"] = basis
+    return path
+
+
+def test_angular_basis_of_the_fixtures(hdf5_fixture_dbs):
+    """2D files are Legendre, 1D files have no angular basis."""
+    assert backend(hdf5_fixture_dbs["two_d_width4"]).angular_basis == "legendre"
+    assert backend(hdf5_fixture_dbs["one_d_width4"]).angular_basis is None
+
+
+@pytest.mark.parametrize("basis", [None, "hankel", b"hankel"])
+def test_two_dimensional_database_without_legendre_basis_is_refused(tmp_path, basis):
+    """2D files are read as Legendre moments only. A file without
+    ``angular_basis = "legendre"`` -- the Hankel-mode packages -- is refused
+    with an error naming the file, instead of being solved in the wrong basis.
+    """
+    path = fixtures.build_database(tmp_path / "hankel_2d.h5", n_k=fixtures.N_K)
+    _hankel_copy(path, basis)
+    with pytest.raises(ValueError, match=r"hankel_2d\.h5 is a 2D database.*Legendre"):
+        backend(path)
+
+
+def test_two_dimensional_model_package_without_legendre_basis_is_refused(tmp_path):
+    """A 2D model package found through the manifest passes the same check."""
+    from MCEq.data import db_manifest, hdf5_store
+
+    path = fixtures.build_database(tmp_path / "hankel_model.h5", n_k=fixtures.N_K)
+    _hankel_copy(path, None)
+    cache = db_manifest.ModelStoreCache.__new__(db_manifest.ModelStoreCache)
+    cache._e_grid = np.ascontiguousarray(fixtures.E_GRID)
+    cache._paths = SimpleNamespace(mceq_db_fname="primary.h5")
+    with pytest.raises(ValueError, match="Legendre moments only"):
+        cache._check_grid(hdf5_store.HDF5Store(str(path)), path.name)
+
+
 def test_two_dimensional_channel_decodes_to_one_block_per_mode(hdf5_fixture_dbs):
     """2D channels come back as ``(n_k, n_e, n_e)``, mode block by mode block.
 
-    The stored matrix is block-diagonal in kappa; the decode slices the
+    The stored matrix is block-diagonal in the mode; the decode slices the
     ``ik``-th diagonal block out of the ``(dim_full, dim_full)`` CSR. Blocks
     differ between modes in the fixture, so a decode that collapsed them would
     not pass.
@@ -320,7 +362,7 @@ def test_a_skipped_2d_channel_advances_the_cursor_by_n_k_times_len_data(
     """Same contract in 2D, where one channel occupies ``n_k * len_data[i]``.
 
     ``expand_len`` is ``n_k`` on a 2D database, so a skipped channel must
-    advance the cursor over all of its Hankel-mode blocks. Getting this wrong
+    advance the cursor over all of its mode blocks. Getting this wrong
     by a factor ``n_k`` would still decode to finite matrices.
     """
     path = hdf5_fixture_dbs["two_d_width4"]

@@ -2,9 +2,8 @@
 tri-state.
 
 The tri-state resolution is a pure function of (config flag, is_2d) and is
-tested unbound with a stub. End-to-end secant solves are covered by the
-2026-08-10 secant runs, not the unit suite (the operator build is
-minutes-scale without its disk cache).
+tested unbound with a stub. End-to-end secant solves on the 2D CI database
+are in ``tests/test_solvers_2d.py``.
 
 (The former FLUKA-only 2D model restriction and its refusal tests were
 removed when runtime per-kappa HE/LE blending on multi-model 2D databases
@@ -26,22 +25,27 @@ def _mode_for(flag, is_2d):
         config.secant_theta_transport = saved
 
 
-def test_secant_cap_validation():
-    """The cap is a plain float in [50, 90): sec(theta) diverges at 90
-    deg, and below ~45-50 deg the S_P eigenbasis is numerically defective
-    (near-nilpotent coupling), so out-of-range values are rejected."""
+@pytest.mark.parametrize("snapshot", [False, True], ids=["module", "RunConfig"])
+def test_secant_cap_validation(snapshot):
+    """The cap is a plain float in [0, 90): sec(theta) diverges at 90 deg,
+    and the Legendre coupling is well defined down to 0 (no elongation).
+    The module helper and a RunConfig snapshot apply the same rule."""
+    from MCEq.config.run import RunConfig
 
     def cap_for(value):
         config.secant_theta_cap_deg = value
+        if snapshot:
+            return RunConfig.snapshot().secant_theta_cap()
         return config.secant_theta_cap()
 
     saved = config.secant_theta_cap_deg
     try:
         assert cap_for(75.0) == 75.0  # the default
         assert cap_for(62.5) == 62.5  # any float in range passes through
-        assert cap_for(50.0) == 50.0  # lower edge included
-        for bad in (45.0, 90.0, 120.0):
-            with pytest.raises(ValueError):
+        for small in (0.0, 1.0, 10.0, 45.0):  # lower edge included
+            assert cap_for(small) == small
+        for bad in (-1.0, 90.0, 120.0):
+            with pytest.raises(ValueError, match=r"\[0, 90\)"):
                 cap_for(bad)
     finally:
         config.secant_theta_cap_deg = saved

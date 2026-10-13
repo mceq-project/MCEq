@@ -12,7 +12,7 @@ from MCEq.core import MCEqRun
 
 @pytest.fixture(scope="module")
 def mceq_2d():
-    fn = "mceq_base_air_2d_v2.h5"
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
@@ -25,7 +25,7 @@ def mceq_2d():
     }
     config.mceq_db_fname = fn
     config.e_min = 1e-1
-    config.e_max = 1e4
+    config.e_max = 1e2
     config.muon_helicity_dependence = True
     try:
         yield MCEqRun(

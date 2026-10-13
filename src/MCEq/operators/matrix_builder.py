@@ -21,7 +21,7 @@ diagonal of inverse interaction / decay lengths.
 :class:`MatrixBuilder` fills ``C`` and ``D`` per (child, parent) channel from
 the yields a :class:`~MCEq.particlemanager.ParticleManager` carries, folds
 resonances into their parents, adds the continuous-loss band and the
-:math:`\kappa^2` muon multiple-scattering damping, and assembles the result
+per-mode muon multiple-scattering rate, and assembles the result
 into the two constant sparse matrices ``int_m`` and ``dec_m`` that
 :mod:`MCEq.operators.compiled` turns into a compiled operator for the solvers.
 
@@ -69,7 +69,7 @@ class MatrixBuilder:
     ``pman`` is the particle manager holding the cascade species, their
     tabulated yields and the energy grid. ``layout`` supplies the mode layout
     of the database (``is_2d``, ``n_k``, ``k_grid``), which decides whether a
-    per-channel block is ``(dim, dim)`` or one slab per Hankel mode.
+    per-channel block is ``(dim, dim)`` or one slab per Legendre mode.
 
     ``grid``, ``losses`` and ``physics`` are the settings groups this builder
     reads (see the module docstring); they are required, injected by the
@@ -372,8 +372,8 @@ class MatrixBuilder:
         r"""``int_m`` without the continuous-loss band, assembled on demand.
 
         Hadronic production, the :math:`-\boldsymbol{1}` main diagonal, the
-        :math:`\boldsymbol{\Lambda}_{int}` scaling and the
-        :math:`-\kappa^2\theta_s^2(E)/4` muon damping, which belongs to neither
+        :math:`\boldsymbol{\Lambda}_{int}` scaling and the muon scattering
+        rate (:mod:`~MCEq.operators.scattering`), which belongs to neither
         name: ``int_m == int_m_hadr + dEdx_band``, the sum taken in the band's
         fp64 and rounded once to ``grid.dtype``.
 
@@ -420,7 +420,7 @@ class MatrixBuilder:
         fp64, the dtype ``cont_loss_operator`` produces: a band cast to
         ``grid.dtype`` first would round twice, where ``block += band`` rounds
         the promoted sum once. The band is mode-independent -- added to every
-        Hankel slab of a species through ``band[None, :, :]`` -- so the 2D
+        mode slab of a species through ``band[None, :, :]`` -- so the 2D
         operator is ``n_k`` copies of the one-mode matrix. No ``(row, column)``
         is written twice, the species blocks being disjoint, so the COO
         conversion has no duplicates to sum in an unspecified order.
@@ -458,7 +458,7 @@ class MatrixBuilder:
         """Returns a new square zero valued matrix with dimensions of grid.
 
         For 2D databases the per-channel block carries an extra leading
-        ``n_k`` axis (one slab per Hankel mode), so the returned shape is
+        ``n_k`` axis (one slab per Legendre mode), so the returned shape is
         ``(n_k, dim, dim)`` instead of ``(dim, dim)``.
         """
         if self.is_2d:
@@ -483,27 +483,16 @@ class MatrixBuilder:
             mu_mass = float(self._pman[(13, 0)].mass)
         except (KeyError, AttributeError):
             mu_mass = scattering.MUON_MASS
-        theta_s_sq = scattering.theta_s_squared(self._energy_grid.c, mu_mass)
         muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
-        model = getattr(self._physics, "muon_scattering_model", "gaussian")
-        if model == "gaussian":
-            damping = np.asarray(
-                [scattering.mode_damping(theta_s_sq, kappa) for kappa in self.k_grid]
-            )
-        elif model == "screened-coulomb":
-            damping = -scattering.screened_coulomb_rate(
-                self._energy_grid.c,
-                self.k_grid,
-                self._layout.scattering_composition(),
-                mu_mass,
-            )
-        else:
-            raise ValueError(
-                f"Unknown muon_scattering_model {model!r}; "
-                "use 'screened-coulomb' or 'gaussian'."
-            )
+        damping = -scattering.mode_rates(
+            getattr(self._physics, "muon_scattering_model", "gaussian"),
+            self._energy_grid.c,
+            self.k_grid,
+            getattr(self, "_layout", None),
+            mu_mass,
+        )
         return muon_lidcs, damping
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
@@ -514,9 +503,9 @@ class MatrixBuilder:
         without a dense global matrix.
 
         For 2D databases each block carries a leading ``n_k`` axis (one
-        slab per Hankel mode, shape ``(n_k, dim, dim)``). The Hankel modes
+        slab per Legendre mode, shape ``(n_k, dim, dim)``). The modes
         are mutually decoupled, so the operator is block-diagonal in
-        kappa: per mode, the nonzero entries of every channel slab are
+        l: per mode, the nonzero entries of every channel slab are
         scattered (with their global row/column offsets) into one COO
         triplet set and converted to CSR in one shot — no dense
         ``(dim_states, dim_states)`` intermediate. ``scipy.sparse.
