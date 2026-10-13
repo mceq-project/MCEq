@@ -1,0 +1,93 @@
+schema: 1
+release: v2.0.0
+url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
+created: '2026-10-14T01:10:55'
+defaults:
+  1d: mceq_base_air_1d_v2.h5
+  2d: mceq_base_air_2d_legendre_v2.h5
+grids:
+  1d-150:
+    e_dim: 150
+    k_dim: null
+    e_grid_sha256: 2473ed6abf350b53072cd34fa4e0047d3c74d8e1aa689ac77c495c0726b3d158
+  2d-150x90:
+    e_dim: 150
+    k_dim: 90
+    e_grid_sha256: 2473ed6abf350b53072cd34fa4e0047d3c74d8e1aa689ac77c495c0726b3d158
+    k_grid_sha256: 4bb0b69088252aa6355e8af54d2e40ed2f0a1648df08cdd1a9a180f746cc79d2
+files:
+  mceq_base_air_1d_v2.h5:
+    sha256: 428f1fa7bab3183595f0e256ab7d3bd708baa49ad71c05b78fdb99413196d988
+    size: 77088658
+    grid: 1d-150
+    spine: true
+    models:
+      air:
+      - FLUKA20251
+      - SIBYLL23E
+      hydrogen:
+      - SIBYLL23E
+    source:
+      key: 1d
+      file: mceq_db_v2_1d.h5
+      sha256: 588b426ca7bb8988a160610aa6bd9f51090c7f46ac0c42fe0c915b5a84087f93
+      verbatim: false
+    note: default 1D package; models used for the paper's 1D figures
+  mceq_extra_models_air_1d_v2.h5:
+    sha256: dd3d811a28012352c1d82a8cab8d18babb0eb384e462f3a68f0c7e14973bfba3
+    size: 276713522
+    grid: 1d-150
+    spine: true
+    models:
+      air:
+      - DPMJETIII193
+      - EPOSLHC
+      - EPOSLHCR
+      - PYTHIA8ANGANTYR
+      - PYTHIA8CASCADE
+      - QGSJETII04
+      - QGSJETIII
+      - SIBYLL21
+      - SIBYLL23D
+      - SIBYLL23ESTARBAR
+      - SIBYLL23ESTARMIXED
+      - SIBYLL23ESTARRHO
+      - SIBYLL23ESTARSTRANGE
+    source:
+      key: 1d
+      file: mceq_db_v2_1d.h5
+      sha256: 588b426ca7bb8988a160610aa6bd9f51090c7f46ac0c42fe0c915b5a84087f93
+      verbatim: false
+    note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
+      SIBYLL21/23D/23ESTAR*)
+  mceq_base_air_2d_legendre_v2.h5:
+    sha256: 0f16c0d5e2b4921b9f8a9b7934eb6899854482b0708e936fe7b8481e3c2dd136
+    size: 410431758
+    grid: 2d-150x90
+    spine: true
+    models:
+      air:
+      - FLUKA20251
+    source:
+      key: 2d
+      file: mceq_db_legendre_native.h5
+      sha256: 9d3432f9c2cc02c8cfadbaa3688c1ec319da01171c9a5bb15888da88206243c0
+      verbatim: false
+    values_dtype: float32
+    note: default 2D package, 150 bins x 90 Legendre modes (FLUKA20251 native Legendre,
+      both hemispheres); air composition for muon scattering
+  mceq_model_SIBYLL23E_air_2d_legendre_v2.h5:
+    sha256: 4e4cb7920d561d68e4ef9a603f7d2c4dba9b5a42e6c5b319d4ea6937acfdb4a0
+    size: 952623743
+    grid: 2d-150x90
+    spine: false
+    models:
+      air:
+      - SIBYLL23E
+    source:
+      key: 2d
+      file: mceq_db_legendre_native.h5
+      sha256: 9d3432f9c2cc02c8cfadbaa3688c1ec319da01171c9a5bb15888da88206243c0
+      verbatim: false
+    values_dtype: float32
+    note: SIBYLL 2.3e Legendre yields (m2m SIBYLL23E_legendre_20261008); needs mceq_base_air_2d_legendre_v2.h5

@@ -28,10 +28,15 @@ print_module = False
 data_dir = pathlib.Path(base_path) / "data"
 
 #: File name of the MCEq database
-mceq_db_fname = "mceq_db_lext_dpm193_v142.h5"
+mceq_db_fname = "mceq_base_air_1d_v2.h5"
 
 #: File name of the MCEq database
 em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
+
+#: Data-release manifest (YAML) listing each database file with its energy
+#: grid, checksum and the hadronic models it carries. Additional or updated
+#: model files are registered here.
+mceq_db_manifest = "mceq_db_manifest_v2.yaml"
 
 # =================================================================
 # Atmosphere and geometry settings
@@ -135,17 +140,29 @@ cuda_fp_precision = 64
 #: Floating point precision (is set automatically)
 floatlen = None
 
-#: BLAS thread limit, defaulting to ``min(16, os.cpu_count() or 1)``.
-#: Irrelevant for GPU integrators, but can affect initialization speed if
-#: numpy is linked to MKL. Sparse products and narrow dense products can be
-#: limited by memory bandwidth or thread contention: MKL's sparse SpMV scales
-#: near-linearly to ~16 threads, then plateaus or regresses on most servers,
-#: and the dense mode-coupling GEMMs of the secant routes are skinny
-#: ((n_P, n_k) @ (n_k, n_g*K)) so an all-cores fan-out on those shapes is pure
-#: contention. :func:`set_mkl_threads` applies the limit to supported, loaded
-#: BLAS libraries, OpenBLAS (what most numpy wheels link) included. Override
-#: after import for full control: ``MCEq.config.set_mkl_threads(n)``.
-mkl_threads = min(16, os.cpu_count() or 1)
+
+#: BLAS thread limit. Matrix products plateau beyond ~16 threads, so more
+#: cores do not buy speed. Override with
+#: ``MCEq.config.set_mkl_threads(n)``.
+def _available_cpus():
+    """CPUs this process may run on (the affinity mask, else ``cpu_count``)."""
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return os.cpu_count() or 1
+
+
+def _default_threads():
+    """BLAS threads to use: an explicit thread count in the environment,
+    else ``min(16, cpus)`` over the CPUs this process may run on.
+    """
+    for var in ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        value = os.environ.get(var, "")
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+    return min(16, _available_cpus())
+
+
+mkl_threads = _default_threads()
 
 # =========================================================================
 # Advanced settings
@@ -313,12 +330,21 @@ use_isospin_sym = True
 #: dataset defect.
 muon_helicity_dependence = True
 
-#: Gaussian multiple Coulomb scattering of muons in the 2D transport,
-#: applied as per-mode diagonal damping -kappa^2 theta_s^2(E)/4 with the
-#: CORSIKA Gauss-approximation theta_s (E_s = 21 MeV, lambda_s = 37.7
-#: g/cm2; Gaussian core only, no Moliere tail). Disable only to compare
-#: against MC runs with scattering switched off.
+#: Coulomb scattering of muons in the 2D transport (see
+#: :mod:`MCEq.operators.scattering`). Disable only to compare against MC runs
+#: with scattering switched off.
 muon_multiple_scattering = True
+
+#: Muon scattering model: "screened-coulomb" (screened Rutherford, with the
+#: single-scattering tail; needs the medium composition in the database) or
+#: "gaussian" (CORSIKA Gauss approximation, Gaussian core only).
+muon_scattering_model = "screened-coulomb"
+
+#: Screened Coulomb only: nuclear form factor and electron kinematic limit as
+#: in Geant4's WentzelVI cross section (see :mod:`MCEq.operators.scattering`).
+#: False restores point nuclei, whose Rutherford tail over-populates large
+#: angles above ~1 GeV.
+muon_scattering_finite_nuclei = True
 
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
@@ -326,7 +352,7 @@ muon_multiple_scattering = True
 #: production/loss equilibrium (sub-GeV hadrons and muons) by
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.operators.secant`. All angles are relative to the shower axis (like
-#: the Hankel modes), independent of the axis' zenith angle.
+#: the angular modes), independent of the axis' zenith angle.
 #: "auto" (default) and True both apply it on every solve with a 2D
 #: database — every entry point, every kernel, fp32 and fp64. False: off.
 #: Ignored on 1D databases.
@@ -334,20 +360,12 @@ secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
 #: elongation at wide angles at the price of a worse-conditioned
-#: coupling operator; below ~50 the operator's eigenbasis is
-#: numerically defective and the build raises. Valid range [50, 90).
+#: coupling operator; 0 switches the elongation off. Valid range [0, 90).
 secant_theta_cap_deg = 75.0
-#: zero coupling-matrix rows with kappa > this. The correction has no
-#: support at narrow angular scales (high kappa); raising the limit
-#: only adds inversion ringing, lowering it truncates the operator.
-secant_theta_row_kmax = 50.0
-#: ridge strength of the operator fit, relative to the top singular
-#: value of the Gram matrix. Increase only if the operator build
-#: reports conditioning problems.
-secant_theta_lam_rel = 1e-9
-#: weight of the S @ 1 = 1 constraint (kappa-flat = collimated states
-#: are not elongated).
-secant_theta_w_flat = 1.0
+#: Legendre 2D databases only: remove produced particles moving backward
+#: (no albedo) with :func:`MCEq.operators.legendre.backward_removal`. Off
+#: transports them as if they moved downward at the cap angle.
+legendre_backward_removal = True
 #: apply the coupling only to state columns with E_kin (GeV) below this
 #: threshold. The correction is 30-60% at 0.1 GeV, ~1% at 2-4 GeV and
 #: <0.1% above 10 GeV, so the default excludes energies where it is
@@ -382,14 +400,12 @@ adv_set = {
     #: Might be different for yields (set_single_primary_particle)
     #: For full precision or if in doubt, use []
     "allowed_projectiles": [],  # [2212, 2112, 211, 321, 130, 11, 22],
-    #: Disable particle (production)
-    #: Default disables both e- (PDG 11) and e+ (PDG -11). Until a
-    #: validated EM database is shipped, the ETD2 EM cascade can blow up
-    #: at extreme zenith — see the "EM cascade caveat" in
-    #: docs/mceq_v1.x_v2_diff.md. The HDF5 reader checks absolute particle
-    #: IDs against this list, so a positive ID excludes both signs there;
-    #: later interaction-table filtering uses literal IDs.
-    "disabled_particles": [11, -11],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
+    #: Disable particle (production). Photons and electrons need not be
+    #: listed: they are excluded automatically whenever ``enable_em`` is
+    #: off, and included when it is on. The HDF5 reader checks absolute
+    #: particle IDs against this list, so a positive ID excludes both signs
+    #: there; later interaction-table filtering uses literal IDs.
+    "disabled_particles": [],  # 20, 19, 18, 17, 97, 98, 99, 101, 102, 103
     #: Disable leptons coming from prompt hadron decays at the vertex
     "disable_direct_leptons": False,
     #: Switch off decays. E.g., disable muon decay with [13,-13]
@@ -501,8 +517,9 @@ def set_mkl_threads(nthreads):
     MKL through ``mkl_set_num_threads`` (loading ``libmkl_rt`` on the first
     call) and, when threadpoolctl is available, every other pool it finds —
     OpenBLAS above all, which is what numpy links against in most wheels.
-    One process-wide setting, applied once: the solver never adjusts a pool
-    around an individual step loop.
+    One process-wide setting; only the step loop on the MKL backend runs
+    OpenBLAS and BLIS at one thread
+    (:func:`MCEq.solvers.etd2.etd2_driver`).
 
     Idempotent on the library side: reuse the loaded MKL handle. Each call
     updates the thread environment and reapplies limits to supported, loaded
@@ -584,16 +601,15 @@ config = MCEqConfigCompatibility(globals())
 def secant_theta_cap():
     """Validated float value of :data:`secant_theta_cap_deg`.
 
-    The cap is defined relative to the shower axis (like the Hankel
-    modes themselves) and must lie in [50, 90): sec(theta) diverges at
-    90 deg, and below ~50 deg the coupling operator's eigenbasis is
-    numerically defective so it cannot be built (see :mod:`MCEq.operators.secant`).
+    The cap is defined relative to the shower axis (like the angular
+    modes themselves) and must lie in [0, 90): sec(theta) diverges at
+    90 deg (see :mod:`MCEq.operators.secant`).
     """
     cap = float(secant_theta_cap_deg)
-    if not 50.0 <= cap < 90.0:
+    if not 0.0 <= cap < 90.0:
         raise ValueError(
             f"config.secant_theta_cap_deg = {cap:g} is outside the "
-            "supported range [50, 90)."
+            "supported range [0, 90)."
         )
     return cap
 

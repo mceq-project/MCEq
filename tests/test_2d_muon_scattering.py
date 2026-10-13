@@ -16,6 +16,7 @@ def _saved_config():
         "e_max": config.e_max,
         "muon_helicity_dependence": config.muon_helicity_dependence,
         "muon_multiple_scattering": config.muon_multiple_scattering,
+        "muon_scattering_model": config.muon_scattering_model,
     }
 
 
@@ -26,17 +27,18 @@ def _restore(saved):
 
 @pytest.fixture(scope="module")
 def mceq_2d_with_scattering():
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     saved = _saved_config()
     config.mceq_db_fname = fn
     config.e_min = 1e-1
-    config.e_max = 1e4
+    config.e_max = 1e2
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = True
+    config.muon_scattering_model = "gaussian"
     try:
         yield MCEqRun(
             interaction_model="FLUKA20251",
@@ -50,17 +52,42 @@ def mceq_2d_with_scattering():
 
 @pytest.fixture(scope="module")
 def mceq_2d_no_scattering():
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     saved = _saved_config()
     config.mceq_db_fname = fn
     config.e_min = 1e-1
-    config.e_max = 1e4
+    config.e_max = 1e2
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False
+    try:
+        yield MCEqRun(
+            interaction_model="FLUKA20251",
+            primary_model=None,
+            theta_deg=0.0,
+            density_model=("CORSIKA", ("USStd", None)),
+        )
+    finally:
+        _restore(saved)
+
+
+@pytest.fixture(scope="module")
+def mceq_2d_coulomb():
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
+    if not os.path.exists(
+        os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
+    ):
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
+    saved = _saved_config()
+    config.mceq_db_fname = fn
+    config.e_min = 1e-1
+    config.e_max = 1e2
+    config.muon_helicity_dependence = True
+    config.muon_multiple_scattering = True
+    config.muon_scattering_model = "screened-coulomb"
     try:
         yield MCEqRun(
             interaction_model="FLUKA20251",
@@ -98,8 +125,8 @@ def _muon_lidcs(mceq):
     return out
 
 
-def test_kappa_zero_block_unchanged(mceq_2d_with_scattering, mceq_2d_no_scattering):
-    """The k=0 block has kappa^2 = 0, so multiple scattering adds nothing.
+def test_l_zero_block_unchanged(mceq_2d_with_scattering, mceq_2d_no_scattering):
+    """The l = 0 block has a zero rate, so multiple scattering adds nothing.
     Diagonal entries on muon rows must be identical with and without scattering."""
     N = mceq_2d_with_scattering.dim_states
     M_with = mceq_2d_with_scattering.int_m.tocsr()
@@ -109,14 +136,12 @@ def test_kappa_zero_block_unchanged(mceq_2d_with_scattering, mceq_2d_no_scatteri
     np.testing.assert_allclose(diag_with, diag_no, atol=1e-30)
 
 
-def test_high_kappa_muon_row_extra_damping(
-    mceq_2d_with_scattering, mceq_2d_no_scattering
-):
-    """At k=k_max, muon rows must have extra negative diagonal contribution
-    matching exactly -kappa^2 * theta_s^2(E) / 4."""
+def test_high_l_muon_row_extra_damping(mceq_2d_with_scattering, mceq_2d_no_scattering):
+    """At the last mode l_max, muon rows must have an extra negative diagonal
+    contribution of exactly -l_max (l_max + 1) theta_s^2(E) / 4."""
     n_k = mceq_2d_with_scattering._mceq_db.n_k
     k_grid = mceq_2d_with_scattering._mceq_db.k_grid
-    k_max = float(k_grid[-1])
+    l_max = float(k_grid[-1])
     N = mceq_2d_with_scattering.dim_states
     diag_with = mceq_2d_with_scattering.int_m.tocsr().diagonal()
     diag_no = mceq_2d_no_scattering.int_m.tocsr().diagonal()
@@ -129,7 +154,7 @@ def test_high_kappa_muon_row_extra_damping(
             E = e_grid[ie]
             row_idx = offset + lidx + ie
             extra = diag_with[row_idx] - diag_no[row_idx]
-            expected = -(k_max**2) * _theta_s_sq(E) / 4.0
+            expected = -l_max * (l_max + 1) * _theta_s_sq(E) / 4.0
             np.testing.assert_allclose(
                 extra,
                 expected,
@@ -144,7 +169,7 @@ def test_high_kappa_muon_row_extra_damping(
 
 
 def test_non_muon_rows_unchanged(mceq_2d_with_scattering, mceq_2d_no_scattering):
-    """Non-muon rows must be identical across all k-blocks."""
+    """Non-muon rows must be identical across all mode blocks."""
     n_k = mceq_2d_with_scattering._mceq_db.n_k
     N = mceq_2d_with_scattering.dim_states
     diag_with = mceq_2d_with_scattering.int_m.tocsr().diagonal()
@@ -184,10 +209,10 @@ def test_off_diagonal_muon_rows_unchanged(
         assert np.abs(diff.diagonal()).max() > 0, (
             "expected nonzero diagonal difference, got zero"
         )
-    # And the difference is confined to k>=1 blocks (k=0 is unchanged).
+    # And the difference is confined to l >= 1 blocks (l = 0 is unchanged).
     diag_diff = diff.diagonal()
     assert np.allclose(diag_diff[:N], 0.0, atol=1e-30), (
-        "k=0 diagonal block changed unexpectedly"
+        "l = 0 diagonal block changed unexpectedly"
     )
 
 
@@ -195,3 +220,26 @@ def sparse_diag_from(values, shape):
     from scipy.sparse import diags
 
     return diags(values, 0, shape=shape, format="csr")
+
+
+def test_coulomb_muon_rows_match_rate(mceq_2d_coulomb, mceq_2d_no_scattering):
+    """With the screened Coulomb model the extra muon diagonal is ``-Gamma``,
+    computed from the air composition stored in the database."""
+    from MCEq.operators.scattering import screened_coulomb_rate_legendre
+
+    db = mceq_2d_coulomb._mceq_db
+    rate = screened_coulomb_rate_legendre(
+        mceq_2d_coulomb.e_grid,
+        db.k_grid,
+        db.scattering_composition(),
+        mceq_2d_coulomb.pman[(13, 0)].mass,
+    )
+    N = mceq_2d_coulomb.dim_states
+    extra = (
+        mceq_2d_coulomb.int_m.tocsr().diagonal()
+        - mceq_2d_no_scattering.int_m.tocsr().diagonal()
+    ).reshape(db.n_k, N)
+    for _pdg_hel, lidx, dim in _muon_lidcs(mceq_2d_coulomb):
+        np.testing.assert_allclose(
+            extra[:, lidx : lidx + dim], -rate, rtol=1e-6, atol=1e-30
+        )

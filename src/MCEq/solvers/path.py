@@ -31,19 +31,16 @@ def _live_config():
     return import_module("MCEq.config")
 
 
-#: Documented contract for the EM-row blowup at extreme zenith. Referenced
-#: from each ETD2 kernel; see ``docs/mceq_v1.x_v2_diff.md`` "EM cascade
-#: caveat" for the full derivation. Until a validated EM database ships,
-#: ``config.adv_set["disabled_particles"]`` defaults to ``[11, -11]`` so
-#: this branch is never entered for production runs.
+#: The EM-row blowup at extreme zenith; see ``docs/mceq_v1.x_v2_diff.md``
+#: "EM cascade caveat". Photons and electrons are out of the system unless
+#: ``enable_em`` is set, so this branch is not reached by default.
 _EM_BLOWUP_CAVEAT = """\
 At extreme zenith the e± semi-Lagrangian L/R rows produce ``inf`` in
 ``F_phi`` / ``F_a`` (no diagonal damping). Each ETD2 kernel wraps its loop
 with ``np.errstate(over='ignore', invalid='ignore')`` to suppress the
 resulting overflow / NaN warnings; that suppression does not establish
-that the returned lepton spectra are finite or unaffected. To exclude the
-EM block entirely, set
-``config.adv_set['disabled_particles'] = [11, -11]`` (the default).
+that the returned lepton spectra are finite or unaffected. The EM block is
+absent unless ``config.enable_em`` is set.
 """
 
 

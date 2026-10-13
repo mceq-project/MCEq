@@ -12,14 +12,16 @@ Layout
 ------
 Written from what the reader actually requires (``HDF5Backend.__init__`` and
 ``_gen_db_dictionary``), cross-checked against
-``src/MCEq/data/mceq_db_v140reduced_compact.h5`` (1D, v1.4.0) and
-``mceq_db_v2_fluka2d_rc7.h5`` (2D, 48 modes) with h5py:
+``src/MCEq/data/mceq_ci_base_air_1d_v2.h5`` (1D) and
+``mceq_ci_base_air_2d_legendre_v2.h5`` (2D, 16 Legendre modes) with h5py:
 
 * ``/common`` carries the grid entirely in **attributes**, not datasets:
   ``e_grid`` (n_e,), ``e_bins`` (n_e+1,), ``widths`` (n_e,), scalar
   ``e_dim``; a 2D file adds scalar ``k_dim`` and ``k_grid`` (n_k,).
   ``e_grid`` is the geometric centre of ``e_bins`` and ``widths`` is
-  ``diff(e_bins)`` (verified on the reduced database).
+  ``diff(e_bins)`` (verified on the reduced database). A 2D file also
+  carries ``angular_basis = "legendre"``: the modes are ``<P_l(cos theta)>``
+  with ``l = k_grid``, and the reader refuses a 2D file without it.
 * A channel pack is a ``(2, N)`` float dataset (float64 in every shipped
   file and by default here; ``build_database(pack_dtype=...)`` writes another
   dtype) -- row 0 CSR ``data``, row 1 CSR ``indices`` **stored in the pack
@@ -27,11 +29,11 @@ Written from what the reader actually requires (``HDF5Backend.__init__`` and
   ``tuple_idcs`` (n_ch, width) int64, ``len_data`` (n_ch,) int64 and an
   optional ``description``; the sibling dataset ``<NAME>_indptrs`` has shape
   (n_ch, dim_full+1).
-* ``len_data[i]`` is the nnz of **one Hankel-mode block**, not of the whole
-  channel: on the rc7 2D file ``data.shape[1] == len_data.sum() * n_k``
-  (``decays/polarized``: 13721232 == 285859 * 48; ``decays/unpolarized``:
-  11822448 == 246301 * 48) and each channel's indptr rises by exactly
-  ``len_data[i]`` across every one of the 48 mode blocks. Both invariants
+* ``len_data[i]`` is the nnz of **one mode block**, not of the whole
+  channel: on a 2D file ``data.shape[1] == len_data.sum() * n_k``
+  (2D CI file, ``decays/polarized``: 1389376 == 86836 * 16) and each
+  channel's indptr rises by exactly ``len_data[i]`` across every one of the
+  mode blocks. Both invariants
   are asserted below, so a malformed fixture fails here rather than
   decoding to a wrong-but-finite matrix.
 * ``/cross_sections/<medium>/<MODEL>`` is ``(n_e, n_parents)`` with a
@@ -57,14 +59,10 @@ Facts verified while building this, worth not rediscovering
   flux model can not be used.')``, the fixture having no nucleon channels in
   its decay pack. Nothing here builds an ``MCEqRun``; the tests drive
   ``HDF5Backend`` directly.
-* The 8-mode kappa grid is a **subsample** of the 48-value rc7 production
-  grid, not its head. A head truncation (``kappa = 0..7``) loads fine but
-  then fails ``MCEq.operators.secant.build_secant_kernel_ops`` with
-  ``RuntimeError: secant coupling: S_P eigenvalues not positive-real (min
-  real -1.384e+01, ...)`` -- whose text blames ``theta_cap_deg`` even though
-  the cap was the default 75. The subsample in :data:`K_GRID` builds
-  successfully (eig(S_P) in [1.00006, 1.0547] at cap 75; ~40 s, so no test
-  here does it).
+* The 8-mode ``l`` grid has the shape of the production grid: a dense head
+  ``l = 0..4`` (``MCEq.operators.legendre.dense_count`` is 5), on which the
+  secant coupling and the backward removal act, and three sparse modes of the
+  production tail up to its last mode, ``l = 2000``.
 
 Usage (writes the four variants into a directory, for eyeballing with h5py)::
 
@@ -83,20 +81,17 @@ E_BINS = 10.0 ** (np.arange(N_E + 1) / 10.0)
 E_GRID = np.sqrt(E_BINS[:-1] * E_BINS[1:])
 WIDTHS = np.diff(E_BINS)
 
-#: The 48 kappa values of the production 2D database
-#: ``mceq_db_v2_fluka2d_rc7.h5`` (``/common`` attr ``k_grid``).
-# fmt: off
-K_GRID_PRODUCTION = np.array([
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28, 33, 38, 43,
-    50, 58, 67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422,
-    486, 560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000,
-], dtype=np.int64)
-# fmt: on
+#: The 90 Legendre degrees of the production 2D grid: dense ``l = 0..64`` and a
+#: sparse tail to 2000 (``/common`` attr ``k_grid`` of the pilot Legendre
+#: database and of the 2D CI cut's source).
+L_GRID_PRODUCTION = np.concatenate([
+    np.arange(65),
+    [67, 77, 89, 102, 118, 136, 156, 180, 208, 239, 276, 318, 366, 422, 486,
+     560, 645, 743, 856, 986, 1136, 1308, 1507, 1736, 2000],
+]).astype(np.int64)  # fmt: skip
 N_K = 8
-#: Evenly spaced *subsample* of the production grid -- both endpoints kept.
-K_GRID = K_GRID_PRODUCTION[
-    np.linspace(0, len(K_GRID_PRODUCTION) - 1, N_K).round().astype(int)
-]
+#: Dense head ``l = 0..4`` and three sparse production modes.
+K_GRID = L_GRID_PRODUCTION[[0, 1, 2, 3, 4, 68, 79, 89]]
 
 MEDIUM = "air"
 #: A name ``_interaction_db_single`` can map to an equivalence table. SIBYLL21
@@ -191,7 +186,7 @@ EM_CS_PARENTS = [11, -11, 22, 13, -13]
 
 
 def channel_block(channel_index, mode_index=0):
-    """The ``(N_E, N_E)`` matrix stored for one channel and Hankel mode.
+    """The ``(N_E, N_E)`` matrix stored for one channel and angular mode.
 
     Analytic rather than random so a test can assert the decoded matrix
     element by element. Every entry of the band is strictly positive, so the
@@ -419,6 +414,7 @@ def build_database(
             # The only 2D marker the backend looks at.
             common.attrs["k_dim"] = n_k
             common.attrs["k_grid"] = K_GRID[:n_k]
+            common.attrs["angular_basis"] = "legendre"
 
         interactions = db.create_group(f"hadronic_interactions/{medium}")
         _write_pack(

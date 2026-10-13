@@ -139,7 +139,7 @@ def test_the_environment_golden_labels_each_tail_with_the_form_it_uses():
     ``set_theta`` has established the mode, so the count is cheap and the two
     azimuth modes of the detector-centred models are both reachable.
     """
-    from tests.golden.gen_environment import h_form
+    from tests.helpers.atmosphere import h_form
 
     cases = (
         ("CorsikaAtmosphere", dp.CorsikaAtmosphere("BK_USStd", None), (60.0,)),

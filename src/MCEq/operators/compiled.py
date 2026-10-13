@@ -1,31 +1,22 @@
-"""Operator assembly for the ETD2RK solvers.
+"""Operator assembly for the ETD2RK step loop.
 
-:class:`~MCEq.operators.matrix_builder.MatrixBuilder` produces the cascade
-operator as two constant sparse matrices, ``A = int_m`` and ``B = dec_m``.
-The ETD2RK step loop does not consume them directly: it integrates the
-diagonal of ``A + ri B`` exactly and the off-diagonal explicitly, in a state
-layout of its choosing, and with the sec(theta) transport it needs the
-constant mode-coupling operators of :mod:`MCEq.operators.secant` alongside.
-This module is the layer in between — host-only and backend-agnostic.
-:func:`compile_operator` turns the matrices (and the optional coupling
-operator set) into one :class:`CompiledOperator`, to be treated as read-only
-while a backend or cache uses it; the backends in
-:mod:`MCEq.solvers` place that object onto their library handles or device
-and execute the step loop of :func:`MCEq.solvers.etd2_driver` against it.
-:func:`em_step_scale` is the other property of ``A`` the step loop needs and
-the matrices do not carry: the stiffness scale that caps ``dX``.
+:func:`compile_operator` turns the constant matrices ``A = int_m`` and
+``B = dec_m`` of :class:`~MCEq.operators.matrix_builder.MatrixBuilder` and
+the optional sec(theta) operator set of :mod:`MCEq.operators.secant` into
+one read-only :class:`CompiledOperator`: the diagonal / off-diagonal split
+in the state layout of the step loop and the mode-coupling operators in
+a real basis of the coupled block. :func:`em_step_scale` is the EM stiffness scale that caps
+``dX``. The math is in :ref:`solver-math`.
 
-Numerics: the off-diagonals are CSR with every row's nonzeros kept in
-their build order, also after the layout permutation (the column indices
-are then no longer sorted within a row — deliberately: sorting would change
-the summation order). Every backend therefore sums the same products in
-the same order, and the cross-backend agreement of the kernels is a
-property of this object.
+The off-diagonals are CSR with every row's nonzeros kept in their build
+order, also after the layout permutation, so every backend sums the same
+products in the same order.
 """
 
 from types import SimpleNamespace
 
 import numpy as np
+import scipy.linalg
 import scipy.sparse as sp
 
 
@@ -52,9 +43,9 @@ def identity_layout(dim):
 def secant_layout(sec_ops, dim):
     """Low-E-first state layout of the secant kernels.
 
-    The state is ``(n_k, N)`` row-major over (Hankel mode, species x
-    energy). The coupling acts on the modes ``P`` — a leading block, since
-    kappa is sorted — and on the low-E columns ``g``. Moving ``g`` to the
+    The state is ``(n_k, N)`` row-major over (Legendre mode, species x
+    energy). The coupling acts on the modes ``P`` — the leading dense block
+    of the l grid — and on the low-E columns ``g``. Moving ``g`` to the
     front of every mode block, ``x' = x[perm]``, makes the coupled plane
     the corner block ``x'.reshape(n_k, N)[:n_P, :n_g]``: a strided view,
     so the step needs no gather and no scatter. Returns a namespace with
@@ -88,16 +79,32 @@ def secant_layout(sec_ops, dim):
     )
 
 
-def secant_coupling(sec_ops):
-    """The constant mode-coupling operators as contiguous fp64 arrays:
-    ``T_P`` (n_P, n_k), ``T_PP`` (n_P, n_P), the eigenbasis ``V``, ``Vi`` and
-    eigenvalues ``lam`` of ``S_P = I + T_PP`` (see :mod:`MCEq.operators.secant`)."""
-    return SimpleNamespace(
-        **{
-            k: np.ascontiguousarray(sec_ops[k], dtype=np.float64)
-            for k in ("T_P", "T_PP", "V", "Vi", "lam")
-        }
+def coupled_corner(layout, a):
+    """The coupled plane of a state-shaped array ``a`` as a strided view:
+    ``a.reshape(n_k, N, ...)[:n_P, :n_g]`` for ``a`` of shape ``(dim,)`` or
+    ``(dim, K)``."""
+    return a.reshape((layout.n_k, layout.N) + a.shape[1:])[: layout.n_P, : layout.n_g]
+
+
+def secant_coupling(sec_ops, schur=False):
+    """The mode-coupling operators of the coupled corner in a real basis of
+    ``S_P = I + T_PP`` (see :mod:`MCEq.operators.secant`), as contiguous fp64
+    arrays: ``V``, ``Vi``, ``lam`` (the basis, its inverse and the exactly
+    integrated diagonal) and ``W = [S_P V | T_P[:, P^c]]`` of shape
+    ``(n_P, n_k)``, which maps the low-E block of the state onto the corner
+    of the operand ``S Phi``. The basis is the eigenbasis of ``sec_ops``, or
+    with ``schur=True`` the orthogonal real Schur basis ``S_P = V R V^T``,
+    ``lam = diag(R)``, whose strictly upper part joins the remainder."""
+    V, Vi, lam, T_P = (
+        np.ascontiguousarray(sec_ops[k], dtype=np.float64)
+        for k in ("V", "Vi", "lam", "T_P")
     )
+    n_P = V.shape[0]
+    if schur:
+        R, V = scipy.linalg.schur(np.eye(n_P) + T_P[:, :n_P], output="real")
+        Vi, lam = np.ascontiguousarray(V.T), np.diag(R).copy()
+    W = np.hstack([V + T_P[:, :n_P] @ V, T_P[:, n_P:]])
+    return SimpleNamespace(V=V, Vi=Vi, lam=lam, W=np.ascontiguousarray(W))
 
 
 def _permute_csr(off, perm, inv_perm):
@@ -122,10 +129,27 @@ class CompiledOperator:
       coupling: :func:`secant_coupling` namespace, or ``None`` (paraxial).
       sec_ops: the operator set the coupling was built from (identity is
         the cache key of the device copies), or ``None``.
+      band_off, mode_mix: with a Legendre database, the continuous-loss
+        off-diagonal (kept out of ``int_off``) and the ``(n_D, n_D)``
+        removal of backward production applied to the leading modes of
+        ``int_off x + ri dec_off x``; ``None`` otherwise.
     """
 
-    def __init__(self, d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops):
+    def __init__(
+        self,
+        d_int,
+        d_dec,
+        int_off,
+        dec_off,
+        layout,
+        coupling,
+        sec_ops,
+        band_off=None,
+        mode_mix=None,
+    ):
         self.dim = int(d_int.shape[0])
+        self.band_off = band_off
+        self.mode_mix = mode_mix
         self.d_int = np.ascontiguousarray(d_int, dtype=np.float64)
         self.d_dec = np.ascontiguousarray(d_dec, dtype=np.float64)
         self.int_off = int_off
@@ -142,29 +166,84 @@ class CompiledOperator:
     def split(self):
         return self.d_int, self.d_dec, self.int_off, self.dec_off
 
+    @property
+    def corner_diagonals(self):
+        """``(d_int, d_dec)`` on the coupled plane, ``(n_P, n_g)`` fp64
+        arrays: the l-dependent diagonal of the coupled modes."""
+        return tuple(
+            np.ascontiguousarray(coupled_corner(self.layout, d))
+            for d in (self.d_int, self.d_dec)
+        )
 
-def compile_operator(int_m, dec_m, sec_ops=None):
+    @property
+    def exact_slot_diagonals(self):
+        """``(L_int, L_dec)``, ``(n_P, n_g)`` fp64 arrays: the diagonal of
+        the exactly integrated coupled operator in the coupling basis.
+        ``L_dec = lam_j d_dec_0i`` with ``D0`` the l = 0 row of the
+        diagonals; ``L_int = lam_j d_int_0i`` plus the basis diagonal
+        of the l-dependent part of ``d_int`` on the corner (the muon
+        multiple-scattering damping), so that only its mode mixing is left
+        to the remainder (:ref:`solver-math`)."""
+        lay, c = self.layout, self.coupling
+        lam = c.lam[:, None]
+        d_int0, d_dec0 = (
+            d.reshape(lay.n_k, lay.N)[0, : lay.n_g][None, :]
+            for d in (self.d_int, self.d_dec)
+        )
+        delta = coupled_corner(lay, self.d_int) - d_int0
+        # diagonal of Vi diag(delta_i) V for every column i
+        damping = (c.Vi * c.V.T) @ delta * lam
+        return (lam * d_int0 + damping, lam * d_dec0)
+
+
+def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
     """Assemble the ETD2RK operator from the matrices of ``MatrixBuilder``.
 
-    Without ``sec_ops`` this is the diagonal / off-diagonal split in the
-    state's own order (paraxial transport). With ``sec_ops`` the split is
-    permuted once into the low-E-first layout of :func:`secant_layout`
-    and the coupling operators are attached. Pure function of its inputs;
-    :class:`MCEq.core.MCEqRun` caches the result against the identity of
-    the matrices and the operator set.
+    Args:
+      int_m, dec_m: interaction and decay matrices in the state's own order.
+      sec_ops: sec(theta) operator set of :mod:`MCEq.operators.secant`; the
+        split is then permuted into the layout of :func:`secant_layout` and
+        the coupling operators attached. ``None``: paraxial transport.
+      band, mode_mix: Legendre databases only. ``int_m`` is then the
+        hadronic part (``MatrixBuilder.int_m_hadr``) and ``band`` the
+        continuous-loss band; the band's diagonal joins ``d_int`` and its
+        off-diagonal bypasses ``mode_mix``, since energy loss does not
+        change the direction.
+
+    Pure function of its inputs; :class:`MCEq.core.MCEqRun` caches the
+    result against the identity of the matrices and the operator set.
     """
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
+    band_off = None
+    if band is not None:
+        d_band, _, band_off, _ = split_diagonal(band, band)
+        d_int = d_int + d_band
     dim = int(d_int.shape[0])
     if sec_ops is None:
         layout, coupling = identity_layout(dim), None
         int_off, dec_off = int_off.tocsr(), dec_off.tocsr()
+        band_off = None if band_off is None else band_off.tocsr()
     else:
         layout, coupling = secant_layout(sec_ops, dim), secant_coupling(sec_ops)
         perm, inv_perm = layout.perm, layout.inv_perm
         d_int, d_dec = d_int[perm], d_dec[perm]
         int_off = _permute_csr(int_off, perm, inv_perm)
         dec_off = _permute_csr(dec_off, perm, inv_perm)
-    return CompiledOperator(d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops)
+        if band_off is not None:
+            band_off = _permute_csr(band_off, perm, inv_perm)
+    op = CompiledOperator(
+        d_int, d_dec, int_off, dec_off, layout, coupling, sec_ops, band_off, mode_mix
+    )
+    if op.coupled and op.exact_slot_diagonals[0].max() > 0:
+        # The eigenvectors of a near-degenerate cluster of S_P are arbitrary;
+        # a skewed basis turns part of the multiple-scattering damping into
+        # an exactly integrated growth. In the orthogonal Schur basis the
+        # damping slot is a convex combination of the mode damping.
+        eig_max = op.exact_slot_diagonals[0].max()
+        op.coupling = secant_coupling(sec_ops, schur=True)
+        if op.exact_slot_diagonals[0].max() >= eig_max:
+            op.coupling = coupling
+    return op
 
 
 def em_step_scale(int_m, particles, dense_eig_max=4000):
@@ -186,7 +265,7 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
     ``particles`` are the cascade species, read for ``is_em`` and for the
     ``lidx``/``uidx`` of those that are. Those offsets index one ``dim_states``
     block, so on the ``(n_k * dim_states)`` operator the 2D assembly stitches
-    this reads Hankel mode 0 alone. See the corresponding test in
+    this reads mode l = 0 alone. See the corresponding test in
     ``tests/test_operators_pin.py``.
     """
     col_ranges = [

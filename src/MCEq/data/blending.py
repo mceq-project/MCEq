@@ -13,7 +13,7 @@ their stored arrays and dtype.
 
 The weight is applied as ``w_he[np.newaxis, :]``, i.e. along the LAST axis, so
 one ``(1, n_e)`` array serves both the 1D ``(n_e, n_e)`` channel matrix and the
-2D ``(n_k, n_e, n_e)`` Hankel-mode tensor (it broadcasts as ``(1, 1, n_e)``).
+2D ``(n_k, n_e, n_e)`` angular-mode tensor (it broadcasts as ``(1, 1, n_e)``).
 Indexing the first axis instead would still pass a square-matrix test.
 """
 
@@ -53,10 +53,10 @@ def blend_yields(he_index, le_index, he_name, le_name, w_he, transition, trwidth
     extension. Model-specific projectile equivalences have already been
     applied by ``_gen_db_dictionary`` before this step.
 
-    On 2D databases the channel matrices are ``(n_k, n_e, n_e)`` Hankel-
-    mode tensors and the ``(1, n_e)`` column weights broadcast over every
+    On 2D databases the channel matrices are ``(n_k, n_e, n_e)`` tensors of
+    Legendre moments and the ``(1, n_e)`` column weights broadcast over every
     mode: the blend weight depends on the projectile energy only, so
-    blending commutes with the Hankel transform and applies per kappa.
+    blending is linear in the angular distribution and applies per mode.
     Both models must be stored on the database's common grid (a model's
     blocks are zero outside its production range, so the transition
     window must lie inside both models' coverage — the multi-model 2D

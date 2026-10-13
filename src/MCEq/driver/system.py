@@ -18,7 +18,7 @@ here. ``MCEqRun`` drives load -> resize -> build through
 import MCEq.data
 from MCEq import config
 from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.misc import info
+from MCEq.misc import info, strip_em_species
 from MCEq.operators.matrix_builder import MatrixBuilder
 from MCEq.species.manager import ParticleManager
 
@@ -164,7 +164,9 @@ class CascadeSystem:
                 self._interactions.load(interaction_model, parent_list=particle_list)
 
             self._decays.load(parent_list=self._interactions.particles)
-            self._particle_list = self._interactions.particles + self._decays.particles
+            self._particle_list = strip_em_species(
+                self._interactions.particles + self._decays.particles, self._physics
+            )
             # Create particle database
             self.pman = ParticleManager(
                 self._particle_list,
@@ -192,7 +194,9 @@ class CascadeSystem:
             else:
                 self._interactions.load(interaction_model, parent_list=particle_list)
             self._decays.load(parent_list=self._interactions.particles)
-            self._particle_list = self._interactions.particles + self._decays.particles
+            self._particle_list = strip_em_species(
+                self._interactions.particles + self._decays.particles, self._physics
+            )
             self.pman.set_interaction_model(
                 self._int_cs,
                 self._interactions,

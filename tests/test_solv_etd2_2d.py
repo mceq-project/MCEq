@@ -40,14 +40,14 @@ def _restore_2d_config():
 
 @pytest.fixture(scope="module")
 def mceq_2d():
-    fn = "mceq_db_v2_fluka2d_rc7.h5"
+    fn = "mceq_ci_base_air_2d_legendre_v2.h5"
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
     config.e_min = 1e-1
-    config.e_max = 1e4
+    config.e_max = 1e2
     config.muon_helicity_dependence = True
     config.muon_multiple_scattering = False  # keep this test pure to the splitting
     # The end-to-end solve checks the paraxial per-mode equivalence.

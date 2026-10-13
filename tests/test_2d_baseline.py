@@ -1,34 +1,49 @@
 """Loader test for the 2D regression fixture.
 
 The fixture at ``tests/data/2d_baseline_solution.npz`` is a snapshot of the
-production 2D configuration — FLUKA 2D database (48 Hankel modes), secant
-transport, muon multiple scattering, helicity-dependent decays — produced
+production 2D configuration on the 2D CI database (16 Legendre modes) --
+secant transport, muon multiple scattering, helicity-dependent decays -- produced
 by ``tests/data/make_2d_baseline_fixture.py``. This test only verifies that
 the fixture file is well-formed and loadable so that
 ``test_2d_baseline_validation.py`` can rely on its presence and structure.
 """
 
+import importlib.util
 import pathlib
 
 import numpy as np
+import pytest
 
-FIXTURE = pathlib.Path(__file__).parent / "data" / "2d_baseline_solution.npz"
+_spec = importlib.util.spec_from_file_location(
+    "baseline_asset", pathlib.Path(__file__).parent / "data" / "baseline_asset.py"
+)
+baseline_asset = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(baseline_asset)
 
 
-def test_baseline_fixture_loads():
+@pytest.fixture(scope="module")
+def FIXTURE():
+    path = baseline_asset.ensure()
+    if path is None:
+        pytest.skip("stored 2D solution is not available and could not be fetched")
+    return path
+
+
+def test_baseline_fixture_loads(FIXTURE):
     d = np.load(FIXTURE, allow_pickle=True)
-    assert "phi_hankel" in d.files
+    assert "phi_modes" in d.files
     assert "f_theta" in d.files
     assert "save_depths" in d.files
     assert "k_grid" in d.files
     assert "e_grid" in d.files
     assert "theta_grid" in d.files
-    assert d["k_grid"].shape == (48,)
-    assert d["phi_hankel"].size > 0
+    assert d["k_grid"].shape == (16,)
+    assert str(d["angular_basis"]) == "legendre"
+    assert d["phi_modes"].size > 0
     assert d["f_theta"].size > 0
 
 
-def test_baseline_fixture_shapes_consistent():
+def test_baseline_fixture_shapes_consistent(FIXTURE):
     """Cross-check that the saved arrays' shapes line up with each other."""
     d = np.load(FIXTURE, allow_pickle=True)
     n_depths = d["save_depths"].shape[0]
@@ -36,10 +51,10 @@ def test_baseline_fixture_shapes_consistent():
     n_e = d["e_grid"].shape[0]
     n_theta = d["theta_grid"].shape[0]
 
-    # phi_hankel: (n_depths, n_k, dim_states); dim_states is a multiple of n_e
-    assert d["phi_hankel"].shape[0] == n_depths
-    assert d["phi_hankel"].shape[1] == n_k
-    assert d["phi_hankel"].shape[2] % n_e == 0
+    # phi_modes: (n_depths, n_k, dim_states); dim_states is a multiple of n_e
+    assert d["phi_modes"].shape[0] == n_depths
+    assert d["phi_modes"].shape[1] == n_k
+    assert d["phi_modes"].shape[2] % n_e == 0
 
     # f_theta: (n_depths, n_e, n_theta) for the canonical (numu, hel=0) entry
     assert d["f_theta"].shape == (n_depths, n_e, n_theta)
@@ -56,10 +71,10 @@ def test_baseline_fixture_shapes_consistent():
         assert d[key].shape == (n_depths, n_e, n_theta), key
 
 
-def test_baseline_fixture_metadata():
+def test_baseline_fixture_metadata(FIXTURE):
     """The provenance baked into the fixture pins the production 2D setup."""
     d = np.load(FIXTURE, allow_pickle=True)
-    assert str(d["db_fname"]) == "mceq_db_v2_fluka2d_rc7.h5"
+    assert str(d["db_fname"]) == "mceq_ci_base_air_2d_legendre_v2.h5"
     assert str(d["interaction_model"]) == "FLUKA20251"
     assert str(d["kernel_config"]) == "numpy_etd2"
     assert float(d["theta_deg"]) == 30.0

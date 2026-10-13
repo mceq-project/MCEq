@@ -2,17 +2,27 @@
 fixture used by ``tests/test_2d_baseline.py`` and
 ``tests/test_2d_baseline_validation.py``.
 
-The fixture is a snapshot of the production 2D configuration: FLUKA 2D
-database (48 Hankel modes), sec(theta) transport at the default cap, muon
-multiple scattering and helicity-dependent decays on. A single 100 GeV
-proton at theta=30 deg is solved with the numpy ETD2 kernel (pinned for
-cross-machine determinism) on a tight step schedule, and the Hankel-space
-state history plus the theta-space readouts are stored together with the
-full provenance needed to reproduce the run.
+The fixture is a snapshot of the production 2D configuration on the 2D CI
+database (FLUKA, 31 energy bins, 16 Legendre modes): sec(theta) transport at
+the default cap with backward removal, muon multiple scattering and
+helicity-dependent decays on. A single 50 GeV proton at theta=30 deg is
+solved with the numpy ETD2 kernel (pinned for cross-machine determinism) on
+a tight step schedule, and the per-mode state history plus the theta-space
+readouts are stored together with the full provenance needed to reproduce
+the run.
 
-Usage (from the repo root)::
+The file is not kept in the repository: it lives on the
+``ci-assets`` release and ``tests/data/baseline_asset.py`` fetches it. After
+regenerating, publish it and update the digest that file pins::
 
     .venv/bin/python tests/data/make_2d_baseline_fixture.py
+    sha256sum tests/data/2d_baseline_solution.npz     # -> baseline_asset.SHA256
+    cp tests/data/2d_baseline_solution.npz 2d_baseline_solution_<sha[:12]>.npz
+    gh release upload ci-assets 2d_baseline_solution_<sha[:12]>.npz \
+        --repo mceq-project/MCEq
+
+The cache key in .github/workflows/_run_tests.yml carries the digest too, so
+bump it and the download name in the same change.
 """
 
 import pathlib
@@ -22,15 +32,15 @@ import numpy as np
 
 from MCEq import config
 
-DB_FNAME = "mceq_db_v2_fluka2d_rc7.h5"
+DB_FNAME = "mceq_ci_base_air_2d_legendre_v2.h5"
 INTERACTION_MODEL = "FLUKA20251"
 THETA_DEG = 30.0
-PRIMARY_ENERGY_GEV = 100.0
+PRIMARY_ENERGY_GEV = 50.0
 PRIMARY_PDG = 2212
 SAVE_ALTITUDES_KM = (15.0, 5.0, 0.2, 0.0)
-E_MIN, E_MAX = 1e-1, 1e4
+E_MIN, E_MAX = 1e-1, 1e2
 EPS, DX_MAX = 0.01, 2.0
-OVERSAMPLE_RES, THETA_RES = 5, 600
+THETA_RES = 600
 
 OUTFILE = pathlib.Path(__file__).parent / "2d_baseline_solution.npz"
 
@@ -56,14 +66,17 @@ def main():
 
     n_k = mceq._mceq_db.n_k
     N = mceq.dim_states
-    phi_hankel = np.array([snap.reshape(n_k, N) for snap in mceq.grid_sol])
-    hankel_history = [snap.reshape(n_k, N) for snap in mceq.grid_sol]
+    phi_modes = np.array([snap.reshape(n_k, N) for snap in mceq.grid_sol])
+    history = list(phi_modes)
 
     out = {
-        "phi_hankel": phi_hankel,
+        "phi_modes": phi_modes,
         "save_depths": save_depths,
         "k_grid": np.asarray(mceq._mceq_db.k_grid),
+        "angular_basis": str(mceq._mceq_db.angular_basis),
         "e_grid": np.asarray(mceq.e_grid),
+        "e_min": E_MIN,
+        "e_max": E_MAX,
         "db_fname": DB_FNAME,
         "interaction_model": INTERACTION_MODEL,
         "theta_deg": THETA_DEG,
@@ -77,6 +90,7 @@ def main():
         "secant_theta_transport": str(config.secant_theta_transport),
         "secant_theta_cap_deg": float(config.secant_theta_cap_deg),
         "muon_multiple_scattering": bool(config.muon_multiple_scattering),
+        "muon_scattering_model": str(config.muon_scattering_model),
         "muon_helicity_dependence": bool(config.muon_helicity_dependence),
         "mceq_commit": subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -97,11 +111,7 @@ def main():
         summed = None
         for hel in hels:
             res = mceq.convert_to_theta_space(
-                hankel_history,
-                pdg_id=pdg,
-                hel=hel,
-                oversample_res=OVERSAMPLE_RES,
-                theta_res=THETA_RES,
+                history, pdg_id=pdg, hel=hel, theta_res=THETA_RES
             )
             theta_grid = np.asarray(res[2])
             f_theta = np.asarray(res[3])
@@ -116,7 +126,7 @@ def main():
     np.savez_compressed(OUTFILE, **out)
     size_mb = OUTFILE.stat().st_size / 1e6
     print(f"wrote {OUTFILE} ({size_mb:.1f} MB)")
-    print(f"phi_hankel shape: {phi_hankel.shape}, theta_grid: {theta_grid.shape}")
+    print(f"phi_modes shape: {phi_modes.shape}, theta_grid: {theta_grid.shape}")
 
 
 if __name__ == "__main__":

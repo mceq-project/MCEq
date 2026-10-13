@@ -2,12 +2,11 @@
 ``tests/data/2d_baseline_solution.npz``.
 
 The fixture (see ``tests/data/make_2d_baseline_fixture.py``) is a snapshot
-of the production 2D configuration: FLUKA 2D database (48 Hankel modes),
+of the production 2D configuration on the 2D CI database (16 Legendre modes):
 sec(theta) transport at the default cap, muon multiple scattering and
-helicity-dependent decays, a single 100 GeV proton at theta=30 deg, solved
+helicity-dependent decays, a single 50 GeV proton at theta=30 deg, solved
 with the numpy ETD2 kernel with the current default settings (eps=0.01, requested dX_max=2),
-further limited by the assembled loss-stencil and secant guard. The fixture
-was refreshed after the September 2026 step-controller correction.
+further limited by the assembled loss-stencil and secant guard.
 
 This module re-runs the identical configuration and asserts agreement with
 the stored solution. Because fixture and test share the code path, kernel
@@ -17,6 +16,7 @@ intentional change to the 2D transport requires regenerating the fixture
 and documenting why.
 """
 
+import importlib.util
 import os
 import pathlib
 
@@ -26,7 +26,11 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
-FIXTURE = pathlib.Path(__file__).parent / "data" / "2d_baseline_solution.npz"
+_spec = importlib.util.spec_from_file_location(
+    "baseline_asset", pathlib.Path(__file__).parent / "data" / "baseline_asset.py"
+)
+baseline_asset = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(baseline_asset)
 
 # Per-mode rel-L2 regression bounds. The re-run reproduces the fixture
 # solve exactly up to floating-point differences in the BLAS/LAPACK builds
@@ -41,6 +45,7 @@ _CONFIG_KEYS = (
     "kernel_config",
     "muon_helicity_dependence",
     "muon_multiple_scattering",
+    "muon_scattering_model",
     "secant_theta_transport",
     "secant_theta_cap_deg",
 )
@@ -48,31 +53,33 @@ _CONFIG_KEYS = (
 
 @pytest.fixture(scope="module")
 def baseline():
-    if not FIXTURE.exists():
+    path = baseline_asset.ensure()
+    if path is None:
         pytest.skip(
-            "baseline fixture missing — run tests/data/make_2d_baseline_fixture.py"
+            "stored 2D solution is not available and could not be fetched; "
+            "regenerate it with tests/data/make_2d_baseline_fixture.py"
         )
-    return np.load(FIXTURE, allow_pickle=True)
+    return np.load(path, allow_pickle=True)
 
 
 @pytest.fixture(scope="module")
 def mceq_2d(baseline):
     fn = str(baseline["db_fname"])
     if not os.path.exists(os.path.join(config.data_dir, fn)):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
 
     saved = {k: getattr(config, k) for k in _CONFIG_KEYS}
-    saved_disabled = list(config.adv_set["disabled_particles"])
     try:
-        # Mirror the fixture-generation configuration exactly. The generator
-        # sets no ``disabled_particles``, so it ran with the config default.
-        config.adv_set["disabled_particles"] = [11, -11]
+        # Mirror the configuration the stored solution was generated with.
         config.mceq_db_fname = fn
-        config.e_min = 1e-1
-        config.e_max = 1e4
+        config.e_min = float(baseline["e_min"])
+        config.e_max = float(baseline["e_max"])
         config.kernel_config = str(baseline["kernel_config"])
         config.muon_helicity_dependence = bool(baseline["muon_helicity_dependence"])
         config.muon_multiple_scattering = bool(baseline["muon_multiple_scattering"])
+        config.muon_scattering_model = str(
+            baseline.get("muon_scattering_model", "gaussian")
+        )
         config.secant_theta_transport = str(baseline["secant_theta_transport"])
         config.secant_theta_cap_deg = float(baseline["secant_theta_cap_deg"])
 
@@ -95,46 +102,39 @@ def mceq_2d(baseline):
     finally:
         for k, v in saved.items():
             setattr(config, k, v)
-        config.adv_set["disabled_particles"] = saved_disabled
 
 
 def test_2d_dim_states_match_baseline(mceq_2d, baseline):
     """Same code + same database must produce the same state-vector layout."""
-    assert mceq_2d._mceq_db.n_k == baseline["phi_hankel"].shape[1]
-    assert mceq_2d.dim_states == baseline["phi_hankel"].shape[2]
+    assert mceq_2d._mceq_db.n_k == baseline["phi_modes"].shape[1]
+    assert mceq_2d.dim_states == baseline["phi_modes"].shape[2]
 
 
-def test_2d_matches_baseline_phi_hankel(mceq_2d, baseline):
-    """Per-mode Hankel-space state agrees with the fixture at every stored
-    depth within the regression bound."""
+def test_2d_matches_baseline_phi_modes(mceq_2d, baseline):
+    """Per-mode state agrees with the fixture at every stored depth within
+    the regression bound."""
     n_k = mceq_2d._mceq_db.n_k
     N = mceq_2d.dim_states
 
     for j, snap in enumerate(mceq_2d.grid_sol):
         snap_now = snap.reshape(n_k, N)
-        snap_ref = baseline["phi_hankel"][j]
+        snap_ref = baseline["phi_modes"][j]
         for k in range(n_k):
             denom = np.linalg.norm(snap_ref[k])
             if denom < 1e-30:
                 continue
             rel_l2 = np.linalg.norm(snap_now[k] - snap_ref[k]) / denom
-            assert rel_l2 < REL_L2_MAX, f"depth #{j}, k-mode {k}: rel-L2 = {rel_l2:.3e}"
+            assert rel_l2 < REL_L2_MAX, f"depth #{j}, mode {k}: rel-L2 = {rel_l2:.3e}"
 
 
 def test_2d_matches_baseline_numu_theta_space(mceq_2d, baseline):
-    """Helicity-summed nu_mu angular density from the inverse Hankel
-    readout agrees with the fixture (same quadrature on both sides)."""
+    """The nu_mu angular density from the Legendre readout agrees with the
+    fixture (same readout on both sides)."""
     n_k = mceq_2d._mceq_db.n_k
     N = mceq_2d.dim_states
-    hankel_history = [snap.reshape(n_k, N) for snap in mceq_2d.grid_sol]
+    history = [snap.reshape(n_k, N) for snap in mceq_2d.grid_sol]
 
-    res = mceq_2d.convert_to_theta_space(
-        hankel_history,
-        pdg_id=14,
-        hel=0,
-        oversample_res=5,
-        theta_res=600,
-    )
+    res = mceq_2d.convert_to_theta_space(history, pdg_id=14, hel=0, theta_res=600)
     f_theta_now = np.asarray(res[3])
     f_theta_ref = baseline["f_theta_14_0"]
     assert f_theta_now.shape == f_theta_ref.shape

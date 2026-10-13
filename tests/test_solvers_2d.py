@@ -9,7 +9,7 @@ dimension-agnostic, so equality holds to round-off.
 Each backend gates on the capability probe the rest of the suite uses:
 ``config.has_accelerate`` (macOS), ``config.has_mkl`` (``libmkl_rt`` under the
 prefix) and ``config.has_cuda`` (an importable cupy *and* a visible device).
-Every test needs the 329 MB FLUKA 2D database and skips without it.
+Every test needs the 2D CI database (Legendre, 25 MB) and skips without it.
 """
 
 import os
@@ -20,9 +20,9 @@ import pytest
 from MCEq import config
 from MCEq.core import MCEqRun
 
-#: Keep this module's tests on one ``--dist loadgroup`` worker; the database
-#: costs 329 MB per process. Five other modules open the same file and are not
-#: in the group, so this bounds one module rather than the whole suite.
+#: Keep this module's tests on one ``--dist loadgroup`` worker, so the decoded
+#: 2D operators live in one process. Five other modules open the same file and
+#: are not in the group, so this bounds one module rather than the whole suite.
 pytestmark = pytest.mark.xdist_group("fluka2d")
 
 #: Globals :func:`_solve` sets that ``conftest._restore_global_config_state``
@@ -34,6 +34,7 @@ _UNSNAPSHOTTED = (
     "muon_helicity_dependence",
     "muon_multiple_scattering",
     "secant_theta_transport",
+    "secant_theta_cap_deg",
 )
 
 
@@ -53,9 +54,10 @@ def _restore_2d_config():
 def base_config():
     """Common 2D-database config used by every backend in this module."""
     return dict(
-        mceq_db_fname="mceq_db_v2_fluka2d_rc7.h5",
+        mceq_db_fname="mceq_ci_base_air_2d_legendre_v2.h5",
+        mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         e_min=1e-1,
-        e_max=1e4,
+        e_max=1e2,
         muon_helicity_dependence=True,
         muon_multiple_scattering=False,
         theta_deg=60.0,
@@ -64,14 +66,14 @@ def base_config():
     )
 
 
-def _solve(kernel, base, secant=False):
+def _solve(kernel, base, secant=False, cap=75.0):
     """Build an MCEqRun on the 2D DB, set ``kernel`` and solve over a fixed
     grid using a deterministic non-trivial initial state."""
     fn = base["mceq_db_fname"]
     if not os.path.exists(
         os.path.join(os.path.dirname(__file__), "..", "src", "MCEq", "data", fn)
     ):
-        pytest.skip(f"{fn} not available; symlink it into src/MCEq/data/")
+        pytest.skip(f"{fn} not available; python -m MCEq.data.download --file {fn}")
     config.mceq_db_fname = fn
     config.e_min = base["e_min"]
     config.e_max = base["e_max"]
@@ -79,6 +81,7 @@ def _solve(kernel, base, secant=False):
     config.muon_multiple_scattering = base["muon_multiple_scattering"]
     config.kernel_config = kernel
     config.secant_theta_transport = secant
+    config.secant_theta_cap_deg = cap
     mceq = MCEqRun(
         interaction_model=base["interaction_model"],
         primary_model=None,
@@ -132,3 +135,16 @@ def test_2d_cuda_matches_numpy(base_config):
     assert np.isfinite(sol_cuda).all()
     # cuSPARSE may reorder partial sums vs scipy CSR; widen tolerance.
     np.testing.assert_allclose(sol_numpy, sol_cuda, rtol=1e-9, atol=1e-10)
+
+
+@pytest.mark.parametrize("cap", [0.0, 1.0, 10.0])
+def test_2d_coupled_route_at_small_caps(base_config, cap):
+    """The coupled route runs at small caps. Up to 1 deg its distance to the
+    paraxial solve stays below the step error of the default path (4e-4 of
+    the peak against ``dX_max / 4``), where the eigen and Schur bases of the
+    coupling agree to 1e-6; at 10 deg the elongation itself shows."""
+    paraxial = _solve("numpy_etd2", base_config)
+    coupled = _solve("numpy_etd2", base_config, "require", cap)
+    assert np.isfinite(coupled).all()
+    dist = np.abs(coupled - paraxial).max() / np.abs(paraxial).max()
+    assert dist < {0.0: 4e-4, 1.0: 4e-4, 10.0: 1e-2}[cap]

@@ -195,3 +195,41 @@ def test_download_publishes_only_complete_file(tmp_path, monkeypatch, failure):
         download._download_file("https://example.invalid/database", outfile)
         assert outfile.read_bytes() == b"new db"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["custom.h5"]
+
+
+# ---------------------------------------------------------------------------
+# BLAS thread default follows the environment
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({"MKL_NUM_THREADS": "3"}, 3),
+        ({"OMP_NUM_THREADS": "5"}, 5),
+        ({}, None),  # no setting: min(16, available cpus)
+    ],
+)
+def test_default_thread_count_honours_the_environment(env, expected):
+    """A ``*_NUM_THREADS`` set in the environment is the BLAS thread count
+    MCEq uses; without one it is ``min(16, cpus)``."""
+    import os
+    import subprocess
+    import sys
+
+    clean = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+    }
+    clean.update(env)
+    out = subprocess.run(
+        [sys.executable, "-c", "from MCEq import config; print(config.mkl_threads)"],
+        env=clean,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    if expected is None:
+        expected = min(16, cfg._available_cpus())
+    assert int(out) == expected

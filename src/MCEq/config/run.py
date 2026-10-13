@@ -142,9 +142,9 @@ class RunConfig:
 
 def _cap_or_raise(cap_deg):
     cap = float(cap_deg)
-    if not 50.0 <= cap < 90.0:
+    if not 0.0 <= cap < 90.0:
         raise ValueError(
             f"config.secant_theta_cap_deg = {cap:g} is outside the "
-            "supported range [50, 90)."
+            "supported range [0, 90)."
         )
     return cap

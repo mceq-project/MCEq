@@ -16,7 +16,7 @@ from MCEq import config
 
 _SCRIPT = """
 import MCEq.config as config
-config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
 
 import crflux.models as pm
 from MCEq.core import MCEqRun
@@ -32,7 +32,7 @@ mceq.solve()
 # Variant that forces the accelerate ETD2 (spacc) kernel explicitly.
 _SCRIPT_ACCELERATE = """
 import MCEq.config as config
-config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
 config.kernel_config = "accelerate_etd2"
 
 import crflux.models as pm
@@ -50,7 +50,7 @@ mceq.solve()
 # re-allocation path and the __del__ guard when matrices are replaced.
 _SCRIPT_MULTI_SOLVE = """
 import MCEq.config as config
-config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
 config.kernel_config = "accelerate_etd2"
 
 import crflux.models as pm
@@ -70,7 +70,7 @@ for angle in (0.0, 30.0, 60.0):
 # double-free guard without going through MCEqRun.
 _SCRIPT_SPACC_MATRIX_DEL = """
 import MCEq.config as config
-config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
 
 import numpy as np
 from scipy.sparse import eye
@@ -122,7 +122,7 @@ except Exception as e:
 # while the interpreter was still ordered.
 _SCRIPT_CLOSE_RELEASES = """
 import MCEq.config as config
-config.mceq_db_fname = "mceq_db_v140reduced_compact.h5"
+config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
 
 import gc
 

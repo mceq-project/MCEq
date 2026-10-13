@@ -5,7 +5,7 @@ import numpy as np
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.driver import batch, observables, paths, results
+from MCEq.driver import angular, batch, observables, paths, results
 from MCEq.driver.initial_state import InitialState
 from MCEq.driver.system import CascadeSystem
 from MCEq.misc import info
@@ -493,13 +493,12 @@ class MCEqRun:
         else:
             self.density_model = density_model_or_config
 
+        self.integration_path = None  # the angle cache cannot see a model switch
         if self.theta_deg is not None and isinstance(
             self.density_model, EarthsAtmosphere
         ):
             self.set_zenith_azimuth(self.theta_deg)
-        elif isinstance(self.density_model, GeneralizedTarget):
-            self.integration_path = None
-        else:
+        elif not isinstance(self.density_model, GeneralizedTarget):
             raise ValueError(f"Density model {self.density_model} not supported.")
 
     def set_zenith_azimuth(self, zenith_deg, azimuth_deg=None):
@@ -741,8 +740,8 @@ class MCEqRun:
             info(2, "Warning: integration path calculation skipped.")
 
         # If the initial angular density is a delta function (e.g. a single
-        # cosmic-ray shower incident at some angle theta), all Hankel modes
-        # k are populated with the same amplitude as the 1D initial
+        # cosmic-ray shower incident along the axis), all Legendre modes
+        # (P_l(1) = 1) carry the same amplitude as the 1D initial
         # condition. The stitched ETD2 path operates on a length
         # ``n_k * dim_states`` state vector — broadcast ``_phi0`` across
         # the n_k blocks via ``np.tile`` so block-k of the stacked state
@@ -859,14 +858,9 @@ class MCEqRun:
     decay_z_factor = observables.decay_z_factor
 
     def _resolve_secant(self):
-        """The sec(theta) operator set for a solve, or ``None`` for the
-        paraxial transport.
-
-        One constant set serves every column of every batch (the cap is
-        not zenith dependent). The coupled route is driver code plus the
-        ``apply_off`` binding, so every kernel carries it at every
-        precision; only ``config.secant_mode`` decides.
-        """
+        """The sec(theta) operator set for a solve, or ``None`` (paraxial).
+        One constant set serves every column of every batch; only
+        ``config.secant_mode`` decides, on every kernel and precision."""
         # getattr fallback: test objects without `_cfg` use the process config.
         cfg = getattr(self, "_cfg", config)
         if cfg.secant_mode(self._mceq_db.is_2d) == "off":
@@ -888,9 +882,6 @@ class MCEqRun:
             hash(e_centers.tobytes()),
             n_species,
             self._cfg.secant_theta_cap(),
-            self._cfg.secant.row_kmax,
-            self._cfg.secant.lam_rel,
-            self._cfg.secant.w_flat,
             self._cfg.secant.e_max,
         )
         cached = getattr(self, "_secant_ops_cache", None)
@@ -901,7 +892,6 @@ class MCEqRun:
                 n_species,
                 self._cfg.secant,
                 theta_cap_deg=self._cfg.secant_theta_cap(),
-                paths=self._cfg.paths,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]
@@ -919,7 +909,9 @@ class MCEqRun:
             or entry[1] is not self.dec_m
             or entry[2] is not sec_ops
         ):
-            op = compile_operator(self.int_m, self.dec_m, sec_ops)
+            op = compile_operator(
+                *angular.inputs(self), sec_ops, **angular.extras(self)
+            )
             cache[coupled] = entry = (self.int_m, self.dec_m, sec_ops, op)
         return entry[3]
 

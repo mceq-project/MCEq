@@ -1,10 +1,9 @@
 """Closure tests for the batched (multi-RHS / carousel) secant ETD2 driver.
 
-The synthetic fixture has 48 logical Hankel modes with a tiny per-mode
-state, so it exercises the production tensor layout, all modes,
-independent initial columns, carousel harvest/reset and frozen-lane
-pinning without the minutes-scale fitted operator or the external
-production database. The batched kernels must reproduce independent
+The synthetic fixture has 48 logical angular modes with a tiny per-mode
+state and a synthetic coupling, so it exercises the production tensor
+layout, all modes, independent initial columns, carousel harvest/reset and
+frozen-lane pinning without the external production database. The batched kernels must reproduce independent
 single-axis :func:`solve_etd2` solves; tolerances are
 ~1e-11 relative — SpMM and K-fold SpMV need not agree to round-off
 across BLAS implementations (the production fp64 CUDA carousel
@@ -166,6 +165,17 @@ def test_secant_layout_and_split(secant_48mode_problem):
         np.testing.assert_array_equal((off @ xp)[lay.inv_perm], ref)
     # (Caching of the compiled operator is MCEqRun._compiled_operator's
     # job; compile_operator is pure.)
+
+    # The operand matrix W maps the low-E block, corner in the eigenbasis,
+    # onto the corner of S x = x + T_P x[:, g].
+    c = compile_operator(p["int_m"], p["dec_m"], ops).coupling
+    low_e = xp.reshape(lay.n_k, lay.N, p["K"])[:, : lay.n_g].copy()
+    low_e[: lay.n_P] = np.einsum("jk,kgl->jgl", c.Vi, low_e[: lay.n_P])
+    x_low = x.reshape(lay.n_k, lay.N, p["K"])[:, ops["low_e_idx"]]
+    operand = corner + np.einsum("jk,kgl->jgl", ops["T_P"], x_low)
+    np.testing.assert_allclose(
+        np.einsum("jk,kgl->jgl", c.W, low_e), operand, rtol=1e-13, atol=1e-15
+    )
 
     bad = dict(ops, P=np.array([0, 2, 3]))
     with pytest.raises(ValueError):

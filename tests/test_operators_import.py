@@ -8,11 +8,11 @@ owned by the operators module, `MCEq.solvers` still re-exports the subset
 callers outside the package use, and importing the operators package stays
 free of numerics.
 
-`OWNER` lists the surface as of d3f06c2, the commit before the move. Not part
-of it, and deliberately not re-exported: the incidental module aliases the
+`OWNER` lists the public names of the two modules. Not part of it, and
+deliberately not re-exported: the incidental module aliases the
 implementations import (`np`, `sp`, `SimpleNamespace`, `info`) and the private
-helpers (`_permute_csr`, `_readout_matrix`, `_T_CACHE`). Nothing in the tree or
-in the documented API reaches those through the flat path.
+helper `_permute_csr`. Nothing in the tree or in the documented API reaches
+those through the flat path.
 """
 
 import ast
@@ -34,7 +34,7 @@ OWNER = {
     ),
     "MCEq.operators.secant": (
         "build_secant_kernel_ops",
-        "secant_coupling_matrix",
+        "legendre_coupling",
     ),
 }
 

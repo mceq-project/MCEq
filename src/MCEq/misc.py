@@ -52,9 +52,8 @@ def _moved_to_data(name):
     `from MCEq.data import energy_grid` resolves the *attribute* of the
     package, which a later re-export of the namedtuple under its lowercase
     name would silently turn into the tuple type. The statements are still
-    written out so that `grimp` -- and `tests/golden/gen_structure.py`,
-    which parses the same text -- sees the two `MCEq.misc -> MCEq.data.*`
-    edges.
+    written out so that static import analysis (`grimp`) sees the two
+    `MCEq.misc -> MCEq.data.*` edges.
 
     Only the FIRST access imports; later ones come out of `_RESOLVED`. The
     memo matters at interpreter shutdown, when an `import` can fail and
@@ -206,6 +205,24 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
 
     print(print_str.strip()[:-1])
+
+
+#: Photons, electrons and pi0 -- the species that exist only as part of the
+#: electromagnetic cascade. pi0 decays into photons and nothing else.
+EM_PDG_IDS = (22, 11, -11, 111)
+
+
+def strip_em_species(particle_list, physics):
+    """Leave the electromagnetic species out unless the cascade is on.
+
+    Without EM interactions photons and electrons have no transport, and pi0
+    has nothing to decay into; energy going into them leaves the cascade. The
+    databases carry the channels either way; this decides only what the
+    solver propagates.
+    """
+    if physics.enable_em:
+        return particle_list
+    return [p for p in particle_list if p[0] not in EM_PDG_IDS]
 
 
 def is_charm_pdgid(pdgid):

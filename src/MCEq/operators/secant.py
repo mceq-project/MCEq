@@ -1,4 +1,4 @@
-"""Hankel-space sec(theta) path-elongation operator for the 2D transport.
+"""sec(theta) path-elongation operator for the 2D transport.
 
 Problem: the 2D solver books interaction, decay and continuous losses per
 unit AXIS-projected slant depth X, while a particle travelling at angle
@@ -7,11 +7,12 @@ paraxial approximation). For populations in local production/loss
 equilibrium (sub-GeV hadrons and muons) this over-predicts the wide-angle
 density by exactly ``sec(theta)``.
 
-Solution: multiplication by ``g(theta) = min(sec theta, sec theta_cap)``
-in angle space is a constant mode-coupling matrix ``S = I + T`` in Hankel
-space. The corrected transport right-multiplies the per-mode blocks::
+Solution: multiplication by ``g(mu) = 1 / max(mu, cos theta_cap)`` in angle
+space is the constant mode-coupling matrix ``S = I + T = M[g]`` on the
+Legendre moments (:func:`MCEq.operators.legendre.path_elongation`, exact by
+quadrature). The corrected transport right-multiplies the per-mode blocks::
 
-    dF_k/dX = M_k  sum_k' (I + T)_{kk'} F_k'
+    da_l/dX = M_l  sum_l' (I + T)_{ll'} a_l'
 
 so the elongation acts on the flux entering the transport operator: it
 rescales the parent's path length, not the daughter's emission angle. In
@@ -23,221 +24,164 @@ Consequently the correction must cover ALL loss channels of a species or
 none: elongating the ionization path but not the decay path would change
 the mu -> nu balance by cos(theta).
 
-All angles are relative to the shower axis, like the Hankel modes
+All angles are relative to the shower axis, like the angular modes
 themselves, so the operator and the choice of ``theta_cap`` are
 independent of the axis' zenith angle.
 
-Construction of ``T`` (per-column ridge with a flat-state damping term)::
-
-    obj(T) = || W (R T - diag(g-1) R) ||_F^2
-             + || T (lam2 I + w_f 1 1^T)^(1/2) ||_F^2
-
-with ``R`` the readout linear map (cubic kappa-oversampling + trapz, the
-same convention as :func:`MCEq.driver.results.inverse_hankel_legacy`) on a dense
-theta grid, ``W`` the sqrt(theta dtheta) measure, and the rank-one term
-damping ``T @ 1`` (kappa-flat = collimated states are not elongated).
-Rows with ``kappa > row_kmax`` are zeroed: the correction has no support
-at narrow angular scales. Accuracy of the operator: rms 1-2 % on
-near-isotropic profiles, angle-integrated action exact to 0.1 %,
-S@1 = 1 to 0.15 %, eig(S) real and positive.
-
-Solver integration: NOT via the matrices. Stitching ``M_k S`` into the
+Solver integration: NOT via the matrices. Stitching ``M_l S`` into the
 block CSR puts stiff mode-coupled loss terms (short-lived species at
 altitude, ``rate/rho`` unbounded) into ETD2RK's explicit part; the
 stiff-limit update is then a Jacobi-like iteration with matrix
-``D_S^-1 (S - D_S)``. Its spectral radius grows monotonically with the
-cap and exceeds 1 at production settings, so the stitched iteration
-diverges there and shows transient blow-ups at moderate stiffness even
-below the rho = 1 crossover (~70 deg). Instead the step loop
+``D_S^-1 (S - D_S)``, whose spectral radius exceeds 1 at wide caps, so the
+stitched iteration diverges there. Instead the step loop
 (``MCEq.solvers.etd2_driver``, on any backend, once this operator set is
 compiled into the ETD2 operator) treats the coupled same-(species,E) block
-``d_i * S_P`` exactly through the eigendecomposition of ``S_P``
-(constant, shared by every state), which is stable at any cap and
-reproduces the S-corrected equilibrium exactly in the stiff limit.
+``d_i * S_P`` exactly in the eigenbasis of ``S_P`` (constant, shared by
+every state; the orthogonal Schur basis where a skewed eigenbasis would
+turn damping into growth, see :func:`MCEq.operators.compiled.compile_operator`),
+which reproduces the S-corrected equilibrium exactly in the stiff limit.
 """
 
 import numpy as np
 
 from MCEq.misc import info
 
-_T_CACHE = {}
+#: Largest ``|imag| / real`` accepted for an eigenvalue of ``S_P``. The dense
+#: block is not normal, and its ~60-fold cluster at ``1/mu_cap`` splits
+#: into conjugate pairs; on the 90-mode grid the split reaches 2.4e-7
+#: (caps 7.4-7.8 deg). In the stiff limit the rotation of a pair is a
+#: fixed-point iteration of spectral radius ``|imag| / real``, which this
+#: bound keeps far below one.
+_PAIR_SPLIT_MAX = 1e-5
+
+#: Eigenvalues of ``S_P`` whose consecutive gaps (sorted by real part) are
+#: below this, relative, form one cluster. It covers the conjugate pairs
+#: the bound above admits and the ill-conditioned spread they sit in at
+#: small caps; a cluster's spread stays off the diagonal, which in the stiff
+#: limit is a fixed-point iteration of spectral radius ~ spread / lam.
+_CLUSTER_RTOL = 3 * _PAIR_SPLIT_MAX
 
 
-def _readout_matrix(k_grid, theta, oversample_res=10, chunk=1000):
-    """Linear map of ``convert_to_theta_space``: F(k_grid) -> f(theta)."""
-    import scipy.special
-    from scipy.interpolate import interp1d
+def _canonical_basis(S_P, lam, V, l_P):
+    """A real basis of ``S_P`` that does not depend on round-off.
 
-    n_k = len(k_grid)
-    pts = int(np.max(k_grid) * oversample_res)
-    k_ov = np.linspace(k_grid.min(), k_grid.max(), pts)
-    interp_cols = np.empty((pts, n_k))
-    for i in range(n_k):
-        e = np.zeros(n_k)
-        e[i] = 1.0
-        interp_cols[:, i] = interp1d(k_grid, e, kind="cubic")(k_ov)
-    # Trapezoidal integration holds several (kappa, theta, mode) arrays.
-    # Bound their combined workspace to 64 MiB instead of letting a fixed
-    # angle chunk allocate tens of GiB on production Hankel grids.
-    bytes_per_angle = 3 * pts * n_k * interp_cols.dtype.itemsize
-    chunk = min(chunk, max(1, (64 * 1024**2) // max(1, bytes_per_angle)))
-    R = np.empty((len(theta), n_k))
-    for lo in range(0, len(theta), chunk):
-        hi = min(lo + chunk, len(theta))
-        j0 = scipy.special.j0(np.outer(k_ov, theta[lo:hi])) * k_ov[:, None]
-        R[lo:hi, :] = np.trapezoid(
-            j0[:, :, None] * interp_cols[:, None, :], k_ov, axis=0
-        )
-    return R
+    Directions beyond the cap all see the same ``sec(theta_cap)``, so a large
+    cluster of ``S_P`` is degenerate (33 of 65 eigenvalues on the 90-mode
+    grid at 75 deg) and LAPACK returns an arbitrary basis of it, which
+    changes with the BLAS thread count; so does the phase of a complex
+    eigenvector, and with it the ``[Re v, Im v]`` basis of a conjugate pair.
+    The basis decides how the mode damping of the muons splits into the
+    exactly integrated diagonal and the remainder, so it changed the solution
+    by up to 2 %.
 
+    Each cluster of eigenvalues (``_CLUSTER_RTOL``: degenerate clusters,
+    conjugate pairs and the near-degenerate spread around them at small caps)
+    is spanned instead by the
+    orthonormal invariant subspace of an ordered real Schur form, rotated to
+    diagonalise its orthogonal projection of ``diag(l (l + 1))`` -- the
+    shape of the multiple-scattering damping. That rotation is unique when
+    the projected values are distinct. Columns have unit norm and their
+    largest component positive; the order is by eigenvalue. The spread
+    within a cluster (a pair's rotation ``b``, and up to ~3e-5 relative at
+    small caps) stays off the diagonal.
 
-def secant_coupling_matrix(
-    k_grid,
-    theta_cap_deg=75.0,
-    row_kmax=50.0,
-    lam_rel=1e-9,
-    w_flat=1.0,
-    n_theta=24001,
-    entry_tol=1e-4,
-    paths=None,
-):
-    """Return ``T`` such that ``S = I + T`` represents multiplication by
-    ``min(sec theta, sec theta_cap)`` on the Hankel mode amplitudes.
-
-    Rows with ``k_grid > row_kmax`` and entries below ``entry_tol`` are
-    zeroed. The result is cached per (k_grid, parameters).
-
-    ``paths`` is the ``paths`` config group; its ``data_dir`` holds the
-    on-disk operator cache. Without it only the in-process cache applies.
+    Returns ``(V, Vi, lam)`` with ``lam = diag(Vi S_P V)``.
     """
-    key = (
-        tuple(np.asarray(k_grid, dtype=float)),
-        theta_cap_deg,
-        row_kmax,
-        lam_rel,
-        w_flat,
-        n_theta,
-        entry_tol,
-    )
-    if key in _T_CACHE:
-        return _T_CACHE[key]
+    import scipy.linalg
 
-    # Disk cache under paths.data_dir: the dense-grid construction takes
-    # ~4 minutes. The MCEq version is part of the hash so a version bump
-    # invalidates stale operators. Without paths there is nowhere to put
-    # it and only the in-process cache applies.
-    cache_dir = cache_file = None
-    if paths is not None:
-        import hashlib
+    n = len(lam)
+    order = np.lexsort((lam.imag, lam.real))
+    lam, V = lam[order], V[:, order]
+    breaks = np.flatnonzero(np.abs(np.diff(lam)) > _CLUSTER_RTOL * np.abs(lam[:-1]))
+    Vr = np.empty((n, n))
+    damping = l_P * (l_P + 1.0)
+    for g in np.split(np.arange(n), breaks + 1):
+        if len(g) == 1:
+            Vr[:, g[0]] = V[:, g[0]].real
+            continue
+        c = lam[g].real.mean()
+        reach = np.abs(lam[g] - c).max() * (1 + 1e-6) + 1e-12 * c
+        _, Z, sdim = scipy.linalg.schur(
+            S_P, output="real", sort=lambda re, im: abs(complex(re, im) - c) <= reach
+        )
+        if sdim != len(g):
+            raise RuntimeError(
+                f"secant coupling: cluster at {c:.6f} has {len(g)} eigenvalues "
+                f"but a {sdim}-dimensional invariant subspace"
+            )
+        Q = Z[:, :sdim]
+        _, U = np.linalg.eigh(Q.T @ (damping[:, None] * Q))
+        Vr[:, g] = Q @ U
+    Vr /= np.linalg.norm(Vr, axis=0)
+    Vr *= np.sign(Vr[np.abs(Vr).argmax(axis=0), np.arange(n)])
+    Vi = np.linalg.inv(Vr)
+    return Vr, Vi, np.einsum("ij,ji->i", Vi, S_P @ Vr)
 
-        from MCEq.version import __version__
 
-        digest = hashlib.sha256(repr((__version__, key)).encode()).hexdigest()[:16]
-        cache_dir = paths.data_dir / "secant_cache"
-        cache_file = cache_dir / f"T_{digest}.npy"
-        if cache_file.exists():
-            T = np.load(cache_file)
-            _T_CACHE[key] = T
-            return T
+def legendre_coupling(l_grid, theta_cap_deg):
+    """``T = G - 1`` on the dense rows of the Legendre grid, zero elsewhere.
 
-    k_grid = np.asarray(k_grid, dtype=np.float64)
-    n_k = len(k_grid)
-    theta = np.linspace(0, np.pi / 2, n_theta)
-    g = 1.0 / np.cos(np.minimum(theta, np.radians(theta_cap_deg)))
+    ``G`` is the exact multiplication by ``1 / max(mu, mu_cap)`` of
+    :func:`MCEq.operators.legendre.path_elongation`. Its dense rows reach
+    far beyond the dense block (``g`` has a kink at ``mu_cap``), so they are
+    taken against every ``l <= l_grid[-1]`` and mapped onto all modes by the
+    cubic interpolation in ``l`` of
+    :func:`MCEq.operators.legendre.l_interpolation`. The sparse rows stay
+    zero: the sparse high-l modes describe narrow cones, which are not
+    elongated.
+    """
+    from MCEq.operators.legendre import dense_count, l_interpolation, path_elongation
 
-    info(
-        2,
-        f"Building sec(theta) coupling operator: cap {theta_cap_deg} deg,"
-        f" rows kappa <= {row_kmax}, lam_rel {lam_rel:g}",
-    )
-    R = _readout_matrix(k_grid, theta)
-    w = np.gradient(theta)
-    w[0] *= 0.5
-    w[-1] *= 0.5
-    sqw = np.sqrt(theta * w)
-    R_w = sqw[:, None] * R
-    Y_w = sqw[:, None] * ((g - 1.0)[:, None] * R)
-    G = R_w.T @ R_w
-    lam2 = lam_rel * np.linalg.svd(G, compute_uv=False).max()
-
-    # Sylvester form G T + T (lam2 I + w_f 1 1^T) = R_w^T Y_w: rotate the
-    # column space so the rank-one flat-damping term diagonalizes.
-    ones = np.ones(n_k)
-    RHS = R_w.T @ Y_w
-    Q = np.eye(n_k)
-    Q[:, 0] = ones / np.sqrt(n_k)
-    Q, _ = np.linalg.qr(Q)
-    if Q[0, 0] < 0:
-        Q[:, 0] *= -1
-    dvals = np.full(n_k, lam2)
-    dvals[0] = lam2 + w_flat * n_k
-    RHSQ = RHS @ Q
-    Tp = np.empty((n_k, n_k))
-    for j in range(n_k):
-        Tp[:, j] = np.linalg.solve(G + dvals[j] * np.eye(n_k), RHSQ[:, j])
-    T = Tp @ Q.T
-    T[k_grid > row_kmax, :] = 0.0
-    T[np.abs(T) < entry_tol] = 0.0
-    _T_CACHE[key] = T
-    if cache_file is not None:
-        try:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            np.save(cache_file, T)
-        except OSError:
-            pass
+    l_grid = np.asarray(l_grid)
+    n_d = dense_count(l_grid)
+    l_int = np.arange(int(l_grid[-1]) + 1)
+    T = np.zeros((len(l_grid), len(l_grid)))
+    G = path_elongation(len(l_int) - 1, theta_cap_deg, n_rows=n_d)
+    T[:n_d] = G @ l_interpolation(l_grid, l_int)
+    T[:n_d, :n_d] -= np.eye(n_d)
     return T
 
 
-def build_secant_kernel_ops(
-    k_grid, e_centers, n_species, spec, theta_cap_deg=None, paths=None
-):
+def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=None):
     """Assemble the constant data the secant ETD2RK kernel needs.
 
-    ``spec`` is the ``secant`` config group (``cap_deg``, ``row_kmax``,
-    ``lam_rel``, ``w_flat``, ``e_max``); ``paths`` is the ``paths`` group,
-    forwarded to :func:`secant_coupling_matrix` for its disk cache.
+    ``spec`` is the ``secant`` config group (``cap_deg``, ``e_max``);
+    ``theta_cap_deg`` overrides ``spec.cap_deg`` and must lie in [0, 90).
 
-    ``theta_cap_deg`` overrides ``spec.cap_deg``; it must be a number in
-    [50, 90) (see the config docstring).
+    Returns a dict with::
 
-    Returns a dict with:
-      P          -- indices of the coupled modes (kappa <= row_kmax)
+      P          -- indices of the coupled modes (the dense block of l_grid)
       T_P        -- T restricted to coupled rows, all columns (n_P, n_k)
       T_PP       -- the (n_P, n_P) same-subspace block
-      V, Vi, lam -- eigendecomposition of S_P = I + T_PP (real)
+      V, Vi, lam -- real basis of S_P = I + T_PP, ``lam = diag(Vi S_P V)``:
+                    the eigenbasis, with every eigenvalue cluster (and
+                    near-real pair a ± ib) spanned by a canonical basis of
+                    its invariant subspace (:func:`_canonical_basis`); the
+                    cluster spread and pair rotation stay off-diagonal
       low_e_idx  -- state columns (species x energy) with
                     E_kin < spec.e_max
-      n_k        -- number of Hankel modes
+      n_k        -- number of angular modes
     """
+    from MCEq.operators.legendre import dense_count
+
     if theta_cap_deg is None:
         theta_cap_deg = spec.cap_deg
     theta_cap_deg = float(theta_cap_deg)
-    T = secant_coupling_matrix(
-        np.asarray(k_grid, dtype=np.float64),
-        theta_cap_deg=theta_cap_deg,
-        row_kmax=spec.row_kmax,
-        lam_rel=spec.lam_rel,
-        w_flat=spec.w_flat,
-        paths=paths,
-    )
-    k_grid = np.asarray(k_grid, dtype=np.float64)
-    P = np.where(k_grid <= spec.row_kmax)[0]
+    T = legendre_coupling(l_grid, theta_cap_deg)
+    P = np.arange(dense_count(l_grid))
     T_P = T[P, :]
     T_PP = T[np.ix_(P, P)]
     S_P = np.eye(len(P)) + T_PP
     lam, V = np.linalg.eig(S_P)
-    if np.abs(lam.imag).max() > 1e-9 or lam.real.min() <= 0:
+    split = np.abs(lam.imag) / np.abs(lam.real)
+    if split.max() > _PAIR_SPLIT_MAX or lam.real.min() <= 0:
         raise RuntimeError(
             "secant coupling: S_P eigenvalues not positive-real "
             f"(min real {lam.real.min():.3e}, "
-            f"max |imag| {np.abs(lam.imag).max():.3e}). This happens "
-            f"for small caps (theta_cap_deg = {theta_cap_deg:g}): below "
-            "~45 deg the coupling is nearly nilpotent and S_P becomes "
-            "numerically defective. Use theta_cap_deg >= 50."
+            f"max |imag|/real {split.max():.3e}) at "
+            f"theta_cap_deg = {theta_cap_deg:g}."
         )
-    lam = lam.real
-    V = V.real
-    Vi = np.linalg.inv(V)
+    V, Vi, lam = _canonical_basis(S_P, lam, V, l_grid[P])
     info(
         2,
         f"secant kernel ops: {len(P)} coupled modes, eig(S_P) in "
@@ -262,5 +206,5 @@ def build_secant_kernel_ops(
         "Vi": np.ascontiguousarray(Vi),
         "lam": lam,
         "low_e_idx": low_e_idx,
-        "n_k": len(k_grid),
+        "n_k": len(l_grid),
     }

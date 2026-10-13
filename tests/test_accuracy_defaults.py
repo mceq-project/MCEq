@@ -24,7 +24,7 @@ def path_run(is_2d=False, electrons=False):
         pman=SimpleNamespace(
             all_particles=[SimpleNamespace(pdg_id=(11 if electrons else 13, 0))]
         ),
-        matrix_builder=SimpleNamespace(_contloss_bands={}),
+        matrix_builder=SimpleNamespace(_contloss_bands={}, _contloss_upwind_rows={}),
         int_m=object(),
         _resolve_secant=lambda: None,
         _em_cascade_step_scale=lambda: 0.0,

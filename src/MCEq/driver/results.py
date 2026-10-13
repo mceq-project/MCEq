@@ -1,37 +1,23 @@
-"""Batch results, spectrum extraction, and the Hankel-mode back-transform.
+"""Batch results, spectrum extraction, and the angular readout.
 
 ``MCEqBatchResult`` is what :meth:`MCEqRun.solve_batch` and
 :meth:`MCEqRun.solve_fullsky` return; the :func:`get_solution` family
 here is the extraction backend behind both that class and ``MCEqRun``,
 which binds the functions as methods
 (``get_solution = results.get_solution`` etc. in ``mceq_run.py``).
-:func:`inverse_hankel_legacy` maps 2D Hankel-mode amplitudes F(kappa)
-back to angular densities f(theta).
 
-In 2-D runs the state vector stacks the Hankel modes; the ``k=0``
-mode is the angle-integrated flux, so :func:`get_solution` (and
+In 2-D runs the state vector stacks the Legendre modes
+``a_l = <P_l(cos theta)>``; the ``l = 0`` mode is the angle-integrated
+flux, so :func:`get_solution` (and
 ``MCEqBatchResult.get_solution``) on a 2-D result return exactly the
 angle-integrated spectrum — see ``docs/mceq_v1.x_v2_diff.md`` §11.9.
 Per-mode / per-angle readout is :func:`convert_to_theta_space`.
 """
 
-from importlib import import_module
-
 import numpy as np
-import scipy.special
-from scipy.interpolate import interp1d
 
+from MCEq import config
 from MCEq.misc import info
-
-#: ``get_solution``'s default ``return_as`` below captures the process
-#: default when this function is defined (v1 semantics, pinned by the
-#: solve1d golden's signature probe); pass ``None`` to resolve the
-#: setting from the run. The module is fetched dynamically rather than
-#: with a static import: the driver may import config either way (C5
-#: exempts it), but the AST-based structure golden sees only static
-#: import statements, and the dynamic form keeps the golden's import
-#: graph the shape it was pinned with.
-config = import_module("MCEq.config")
 
 
 class MCEqBatchResult:
@@ -278,52 +264,13 @@ class MCEqBatchResult:
         return f"MCEqBatchResult({', '.join(parts)})"
 
 
-def inverse_hankel_legacy(
-    F_k, k_grid, theta, oversample_res=5, return_oversampled=False
-):
-    """Inverse zeroth-order Hankel transform via cubic interpolation +
-    trapezoidal rule on a uniform oversampled k-grid.
-
-    Args:
-        F_k: shape ``(..., n_k)`` — Hankel amplitudes at ``k_grid``;
-            leading axes are transformed independently.
-        k_grid: shape ``(n_k,)`` — non-negative, strictly increasing.
-            Non-integer grids are supported; the oversampled point count
-            is ``int(max(k_grid) * oversample_res)``.
-        theta: shape ``(n_theta,)`` — angles to recover at.
-        oversample_res: oversampling factor for the k-grid.
-        return_oversampled: also return the oversampled k-grid and
-            interpolated amplitudes.
-
-    Returns:
-        ``f_theta``: shape ``(..., n_theta)`` — recovered real-space
-        amplitudes; with ``return_oversampled=True`` the tuple
-        ``(k_oversampled, F_oversampled, f_theta)``.
-    """
-    F_k = np.asarray(F_k, dtype=np.float64)
-    k_grid = np.asarray(k_grid, dtype=np.float64)
-    theta = np.asarray(theta, dtype=np.float64)
-    oversample_pts = int(np.max(k_grid) * oversample_res)
-    k_oversampled = np.linspace(k_grid.min(), k_grid.max(), oversample_pts)
-    F_oversampled = interp1d(k_grid, F_k, kind="cubic", axis=-1)(k_oversampled)
-    j0_kth = scipy.special.j0(np.outer(k_oversampled, theta))
-    # trapezoidal rule as a weighted matrix product so batched inputs
-    # reduce to one GEMM: integral J0(k theta) F(k) k dk
-    w = np.gradient(k_oversampled) * k_oversampled
-    w[0] *= 0.5
-    w[-1] *= 0.5
-    f_theta = (F_oversampled * w) @ j0_kth
-    if return_oversampled:
-        return k_oversampled, F_oversampled, f_theta
-    return f_theta
-
-
 def get_solution(
     run,
     particle_name,
     mag=0.0,
     grid_idx=None,
     integrate=False,
+    # Default fixed at import time (v1 behaviour); None uses the run's setting.
     return_as=config.return_as,
     dont_sum_helicities=False,
 ):
@@ -525,66 +472,39 @@ def _get_solution_from_state(
     )
 
 
-def convert_to_theta_space(
-    run,
-    hankel_transf,
-    pdg_id,
-    hel,
-    oversample_res=10,
-    theta_res=1200,
-    log_theta=False,
-):
-    """Convert Hankel-space amplitudes from the 2D MCEq solver to real
-    (angular) space.
+def convert_to_theta_space(run, modes, pdg_id, hel, theta_res=1200, log_theta=False):
+    """Angular densities of one species from the 2D solver's mode amplitudes.
 
-    The transform itself is :func:`MCEq.driver.results.inverse_hankel_legacy`
-    (the same module); this method adds the state-vector indexing and the
-    theta grid.
+    The moments are interpolated in ``l`` between the sparse modes and summed
+    as a Legendre series with Jackson damping
+    (:func:`MCEq.operators.legendre.theta_density`).
 
     Args:
-        hankel_transf (list of np.arrays): Hankel-space amplitudes at the
-            requested slant depths, each reshaped to ``(n_k, dim_states)``
+        modes (list of np.arrays): mode amplitudes at the requested slant
+            depths, each reshaped to ``(n_k, dim_states)``
         pdg_id (int): PDG ID of the particle whose angular density is being
             requested (e.g. 14 for NuMu)
         hel (int): helicity of the particle whose angular density is being
             requested (e.g. 0 or ±1 for polarized muons)
-        oversample_res (int): resolution of the Hankel grid oversampling
-            (used to approximate the continuous inverse Hankel transform)
-        theta_res (int): resolution of the angular (theta) grid where the
-            inverse Hankel transform will output the densities
+        theta_res (int): number of points of the angular (theta) grid
         log_theta (bool): whether to return logarithmic angular grid
             (True=logarithmic, False=linear)
 
     Returns:
-        tuple: ``(k_oversampled, oversampled_amps, theta_range,
-        f_theta)`` with the list entries indexed ``[depth][eidx]``.
+        tuple: ``(l_grid, amps, theta_range, f_theta)``. ``amps[depth][eidx]``
+        are the moments of the species on ``l_grid``; ``f_theta[depth][eidx]``
+        is the density in the planar measure ``theta dtheta``, normalised as
+        ``int_0^pi f theta dtheta = a_0``.
     """
+    from MCEq.operators.legendre import theta_density
+
     if log_theta:
         theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
     else:
         theta_range = np.linspace(0, np.pi / 2, theta_res)
-    k_grid = run._mceq_db.k_grid
+    l_grid = np.asarray(run._mceq_db.k_grid)
     n_e = len(run.e_grid)
     ref = run.pman.pdg2mceqidx[(pdg_id, hel)] * n_e
-    oversample_pts = int(np.max(k_grid) * oversample_res)
-    oversampled_k_arr = np.linspace(np.min(k_grid), np.max(k_grid), oversample_pts)
-
-    store_oversampled_hankel_amps = []
-    store_inverse_hankel_transfs = []
-    for sol in hankel_transf:
-        _, F_ov, f_theta = inverse_hankel_legacy(
-            sol[:, ref : ref + n_e].T,
-            k_grid,
-            theta_range,
-            oversample_res=oversample_res,
-            return_oversampled=True,
-        )
-        store_oversampled_hankel_amps.append(list(F_ov))
-        store_inverse_hankel_transfs.append(list(f_theta))
-
-    return (
-        oversampled_k_arr,
-        store_oversampled_hankel_amps,
-        theta_range,
-        store_inverse_hankel_transfs,
-    )
+    amps = [list(s[:, ref : ref + n_e].T) for s in modes]
+    f = [list(theta_density(np.asarray(a), l_grid, theta_range)) for a in amps]
+    return l_grid, amps, theta_range, f
