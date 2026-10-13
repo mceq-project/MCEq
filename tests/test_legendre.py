@@ -15,7 +15,11 @@ from MCEq.operators.legendre import (
     series,
     theta_density,
 )
-from MCEq.operators.secant import build_secant_kernel_ops, legendre_coupling
+from MCEq.operators.secant import (
+    _CLUSTER_RTOL,
+    build_secant_kernel_ops,
+    legendre_coupling,
+)
 
 # Sparse grid from 0 to 2000 (48 modes); its tail above 64 is the sparse part
 # of the production grid.
@@ -263,8 +267,9 @@ def test_wide_secant_coupling_on_narrow_cones():
 def test_wide_secant_eigenbasis(cap):
     """``S_P = I + T_PP`` has eigenvalues near ``1/mu_cap`` ~60-fold. At caps
     7.4-7.8 deg the cluster splits into conjugate pairs ``a ± ib`` with
-    ``b/a`` up to 2.4e-7; the real basis keeps their 2x2 rotation and stays
-    well conditioned, down to ``S_P = I`` at cap 0."""
+    ``b/a`` up to 2.4e-7; the real basis keeps their 2x2 rotation, and the
+    spread of a cluster, off the diagonal and stays well conditioned, down to
+    ``S_P = I`` at cap 0."""
     ops = build_secant_kernel_ops(
         L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
     )
@@ -273,7 +278,7 @@ def test_wide_secant_eigenbasis(cap):
     assert np.linalg.cond(v) < 1e4
     np.testing.assert_allclose(v @ vi, np.eye(len(lam)), rtol=0, atol=1e-12)
     rest = vi @ s_p @ v - np.diag(lam)
-    assert np.abs(rest).max() < 1e-6 * lam.max()
+    assert np.abs(rest).max() < _CLUSTER_RTOL * lam.max()
     if cap == 7.5:
         assert np.abs(rest).max() > 1e-8  # a split pair is present
     # g lies in [1, 1/mu_cap]; truncated to the dense block, the spectrum
@@ -281,6 +286,22 @@ def test_wide_secant_eigenbasis(cap):
     assert 1 - 1e-9 < lam.min() <= lam.max() < 1.005 / np.cos(np.radians(cap))
     if cap == 0.0:
         assert np.abs(ops["T_P"]).max() < 1e-7
+
+
+@pytest.mark.parametrize("cap", [7.5, 75.0])
+def test_secant_basis_independent_of_blas_threads(cap):
+    """The degenerate cluster at ``1/mu_cap`` (33 of 65 modes at 75 deg) and
+    the conjugate pairs at 7.5 deg get a canonical basis: one and four BLAS
+    threads give the same ``V`` to round-off. LAPACK's own eigenvectors
+    differed by O(1), which moved 2D solutions by up to 2 %."""
+    from threadpoolctl import threadpool_limits
+
+    bases = []
+    for threads in (1, 4):
+        with threadpool_limits(limits=threads):
+            ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+        bases.append(ops["V"])
+    np.testing.assert_allclose(bases[0], bases[1], rtol=0, atol=1e-9)
 
 
 @pytest.mark.slow

@@ -54,6 +54,69 @@ from MCEq.misc import info
 #: bound keeps far below one.
 _PAIR_SPLIT_MAX = 1e-5
 
+#: Eigenvalues of ``S_P`` whose consecutive gaps (sorted by real part) are
+#: below this, relative, form one cluster. It covers the conjugate pairs
+#: the bound above admits and the ill-conditioned spread they sit in at
+#: small caps; a cluster's spread stays off the diagonal, which in the stiff
+#: limit is a fixed-point iteration of spectral radius ~ spread / lam.
+_CLUSTER_RTOL = 3 * _PAIR_SPLIT_MAX
+
+
+def _canonical_basis(S_P, lam, V, l_P):
+    """A real basis of ``S_P`` that does not depend on round-off.
+
+    Directions beyond the cap all see the same ``sec(theta_cap)``, so a large
+    cluster of ``S_P`` is degenerate (33 of 65 eigenvalues on the 90-mode
+    grid at 75 deg) and LAPACK returns an arbitrary basis of it, which
+    changes with the BLAS thread count; so does the phase of a complex
+    eigenvector, and with it the ``[Re v, Im v]`` basis of a conjugate pair.
+    The basis decides how the mode damping of the muons splits into the
+    exactly integrated diagonal and the remainder, so it changed the solution
+    by up to 2 %.
+
+    Each cluster of eigenvalues (``_CLUSTER_RTOL``: degenerate clusters,
+    conjugate pairs and the near-degenerate spread around them at small caps)
+    is spanned instead by the
+    orthonormal invariant subspace of an ordered real Schur form, rotated to
+    diagonalise its orthogonal projection of ``diag(l (l + 1))`` -- the
+    shape of the multiple-scattering damping. That rotation is unique when
+    the projected values are distinct. Columns have unit norm and their
+    largest component positive; the order is by eigenvalue. The spread
+    within a cluster (a pair's rotation ``b``, and up to ~3e-5 relative at
+    small caps) stays off the diagonal.
+
+    Returns ``(V, Vi, lam)`` with ``lam = diag(Vi S_P V)``.
+    """
+    import scipy.linalg
+
+    n = len(lam)
+    order = np.lexsort((lam.imag, lam.real))
+    lam, V = lam[order], V[:, order]
+    breaks = np.flatnonzero(np.abs(np.diff(lam)) > _CLUSTER_RTOL * np.abs(lam[:-1]))
+    Vr = np.empty((n, n))
+    damping = l_P * (l_P + 1.0)
+    for g in np.split(np.arange(n), breaks + 1):
+        if len(g) == 1:
+            Vr[:, g[0]] = V[:, g[0]].real
+            continue
+        c = lam[g].real.mean()
+        reach = np.abs(lam[g] - c).max() * (1 + 1e-6) + 1e-12 * c
+        _, Z, sdim = scipy.linalg.schur(
+            S_P, output="real", sort=lambda re, im: abs(complex(re, im) - c) <= reach
+        )
+        if sdim != len(g):
+            raise RuntimeError(
+                f"secant coupling: cluster at {c:.6f} has {len(g)} eigenvalues "
+                f"but a {sdim}-dimensional invariant subspace"
+            )
+        Q = Z[:, :sdim]
+        _, U = np.linalg.eigh(Q.T @ (damping[:, None] * Q))
+        Vr[:, g] = Q @ U
+    Vr /= np.linalg.norm(Vr, axis=0)
+    Vr *= np.sign(Vr[np.abs(Vr).argmax(axis=0), np.arange(n)])
+    Vi = np.linalg.inv(Vr)
+    return Vr, Vi, np.einsum("ij,ji->i", Vi, S_P @ Vr)
+
 
 def legendre_coupling(l_grid, theta_cap_deg):
     """``T = G - 1`` on the dense rows of the Legendre grid, zero elsewhere.
@@ -90,9 +153,11 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
       P          -- indices of the coupled modes (the dense block of l_grid)
       T_P        -- T restricted to coupled rows, all columns (n_P, n_k)
       T_PP       -- the (n_P, n_P) same-subspace block
-      V, Vi, lam -- real basis of S_P = I + T_PP: Vi S_P V = diag(lam),
-                    up to the rotation ±b of near-real pairs a ± ib
-                    (``V = [Re v, Im v]``, ``lam = a``)
+      V, Vi, lam -- real basis of S_P = I + T_PP, ``lam = diag(Vi S_P V)``:
+                    the eigenbasis, with every eigenvalue cluster (and
+                    near-real pair a ± ib) spanned by a canonical basis of
+                    its invariant subspace (:func:`_canonical_basis`); the
+                    cluster spread and pair rotation stay off-diagonal
       low_e_idx  -- state columns (species x energy) with
                     E_kin < spec.e_max
       n_k        -- number of angular modes
@@ -116,16 +181,7 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
             f"max |imag|/real {split.max():.3e}) at "
             f"theta_cap_deg = {theta_cap_deg:g}."
         )
-    # A near-real conjugate pair a ± ib spans its invariant plane with
-    # Re v and Im v, on which S_P acts as [[a, b], [-b, a]]. The step loop
-    # integrates a exactly and leaves the rotation b to the explicit
-    # remainder (the operand uses S_P V, not V diag(lam)).
-    pair = np.flatnonzero(lam.imag > 0)
-    V = V.copy()
-    V[:, pair + 1] = V[:, pair].imag
-    lam = lam.real
-    V = V.real
-    Vi = np.linalg.inv(V)
+    V, Vi, lam = _canonical_basis(S_P, lam, V, l_grid[P])
     info(
         2,
         f"secant kernel ops: {len(P)} coupled modes, eig(S_P) in "

@@ -289,13 +289,23 @@ common to all modes. :math:`S_P` acts on the mode index and :math:`D^0_i`
 on the energy index, so they commute, and the eigendecomposition
 :math:`S_P = V \mathrm{diag}(\lambda) V^{-1}` diagonalises the coupled
 block. :math:`S_P` is not normal: its cluster of eigenvalues at
-:math:`1/\mu_\mathrm{cap}` can split into conjugate pairs
+:math:`1/\mu_\mathrm{cap}` is degenerate (all directions beyond the cap
+see the same :math:`\sec\theta_\mathrm{cap}`; 33 of 65 eigenvalues at 75°
+on the 90-mode grid) and at small caps splits into conjugate pairs
 :math:`a \pm ib` with :math:`b/a` up to :math:`2.4\times10^{-7}` (caps
-7.4–7.8° on the 90-mode grid). Such a pair is kept as the real plane
-:math:`[\mathrm{Re}\,v, \mathrm{Im}\,v]` with :math:`\lambda = a`; the
-rotation :math:`\pm b` stays in the remainder below, and pairs with
-:math:`b/a > 10^{-5}` are refused. The corner of the state is carried in
-the eigenbasis,
+7.4–7.8°); pairs with :math:`b/a > 10^{-5}` are refused. LAPACK returns an
+arbitrary basis of a degenerate eigenspace, and it changes with the BLAS
+thread count; since the basis decides how the muon damping splits between
+the exact diagonal and the remainder (below), that moved 2D solutions by up
+to 2 %. Eigenvalues whose consecutive gaps are below :math:`3\times10^{-5}`
+(relative) therefore form one cluster, spanned by the orthonormal invariant
+subspace of an ordered real Schur form and rotated to diagonalise its
+projection of :math:`\mathrm{diag}(l(l+1))`, the shape of the
+multiple-scattering damping (:func:`MCEq.operators.secant._canonical_basis`).
+:math:`\lambda` is the diagonal of :math:`V^{-1} S_P V`; the spread within a
+cluster (a pair's rotation :math:`\pm b`, up to :math:`2\times10^{-5}`
+relative at small caps) stays in the remainder below. The corner of the
+state is carried in this basis,
 
 .. math::
 
