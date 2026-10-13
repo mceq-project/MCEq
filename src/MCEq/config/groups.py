@@ -119,6 +119,7 @@ GROUPS = {
         "muon_helicity_dependence",
         "muon_multiple_scattering",
         "muon_scattering_model",
+        "muon_scattering_finite_nuclei",
         "enable_default_tracking",
         "prompt_ctau",
         "bin_averaged_decay_rate",

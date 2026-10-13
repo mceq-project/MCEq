@@ -340,7 +340,8 @@ class MatrixBuilder:
     def _current_assembly_key(self):
         """The settings an assembly reads that the blocks do not carry: the
         CSR dtype (``np.dtype`` normalises the ``floatlen = None`` spelling of
-        fp64), whether muon damping applies, and the selected scattering model."""
+        fp64), whether muon damping applies, and the selected scattering model and
+        its finite-nuclei switch."""
         damping = self.is_2d and getattr(
             self._physics, "muon_multiple_scattering", False
         )
@@ -348,6 +349,9 @@ class MatrixBuilder:
             np.dtype(self._grid.dtype),
             bool(damping),
             getattr(self._physics, "muon_scattering_model", "gaussian")
+            if damping
+            else None,
+            bool(getattr(self._physics, "muon_scattering_finite_nuclei", True))
             if damping
             else None,
         )
@@ -492,6 +496,7 @@ class MatrixBuilder:
             self.k_grid,
             getattr(self, "_layout", None),
             mu_mass,
+            getattr(self._physics, "muon_scattering_finite_nuclei", True),
         )
         return muon_lidcs, damping
 

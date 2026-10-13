@@ -345,6 +345,12 @@ muon_multiple_scattering = True
 #: "gaussian" (CORSIKA Gauss approximation, Gaussian core only).
 muon_scattering_model = "screened-coulomb"
 
+#: Screened Coulomb only: nuclear form factor and electron kinematic limit as
+#: in Geant4's WentzelVI cross section (see :mod:`MCEq.operators.scattering`).
+#: False restores point nuclei, whose Rutherford tail over-populates large
+#: angles above ~1 GeV.
+muon_scattering_finite_nuclei = True
+
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
 #: over-predicting the wide-angle density of species in local

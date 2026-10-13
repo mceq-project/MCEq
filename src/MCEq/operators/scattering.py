@@ -20,8 +20,19 @@ Two models:
   ``Z(Z + 1)``. ``Gamma`` is the sum of the exact transport cross sections
   ``sigma_l`` (:func:`transport_cross_sections`); its small-angle limit at
   ``kappa = l + 1/2`` is ``sum_i R_i [1 - kappa a_i K_1(kappa a_i)]``.
-  Point nuclei, no recoil, no charge or helicity dependence. The angular
-  distribution has no finite second moment.
+  No recoil, no charge or helicity dependence.
+
+  Finite nuclei and electron kinematics (default, as Geant4's
+  ``G4WentzelOKandVIxSection``): the nuclear part ``Z^2`` carries the form
+  factor ``1 / (1 + b (1 - cos chi))^2``, ``b = c_n A^0.54 p^2`` with
+  ``c_n = 6.937e-6 / MeV^2`` (``q^2 R^2 / 12``, ``R = 1.27 A^0.27 fm``), and
+  the electron part ``Z`` stops at the largest angle a free electron can
+  deflect the muon, ``1 - cos chi_e = m_e T_max / p^2``. The corrections to
+  the point-nucleus ``sigma_l`` are integrated numerically
+  (:func:`_finite_size_losses`). Without them (``finite_nuclei=False``) the
+  kernel is the point-nucleus Wentzel form, whose Rutherford tail reaches
+  momentum transfers far above ``hbar c / R`` and over-populates large
+  angles above ~1 GeV.
 
 Only muons are treated. Hadrons interact before scattering matters, and the
 e+- angular distribution is set by the EM cascade kinematics.
@@ -48,6 +59,13 @@ LAMBDA_S = 37.7
 
 #: Scattering energy of the CORSIKA Gauss approximation, GeV (21 MeV).
 E_S = 0.021
+
+#: Geant4 nuclear form-factor constant ``c_n`` (``G4WentzelOKandVIxSection``,
+#: ``6.937e-6 / MeV^2``), GeV^-2.
+NUCLEAR_FORM_FACTOR = 6.937
+
+#: Electron mass, GeV.
+ELECTRON_MASS = constants.physical_constants["electron mass energy equivalent in MeV"][0] * 1e-3
 
 #: PDG muon mass, GeV. Fallback only -- a caller that has a particle manager
 #: passes the mass the tables were built with.
@@ -82,19 +100,19 @@ def theta_s_squared(e_kin, muon_mass=MUON_MASS):
     return (1.0 / LAMBDA_S) * (E_S / (e_lab * beta**2)) ** 2
 
 
-def mode_rates(model, e_kin, l_grid, layout, muon_mass=MUON_MASS):
+def mode_rates(model, e_kin, l_grid, layout, muon_mass=MUON_MASS, finite_nuclei=True):
     """Rate ``Gamma >= 0`` [cm^2/g] of ``model``, shape ``(n_l, n_energy)``,
     at the Legendre degrees ``l_grid``.
 
-    ``layout.scattering_composition()`` is read only by the screened Coulomb
-    model.
+    ``layout.scattering_composition()`` and ``finite_nuclei`` are read only by
+    the screened Coulomb model.
     """
     ell = np.asarray(l_grid, dtype=float)
     if model == "gaussian":
         return (ell * (ell + 1))[:, None] * theta_s_squared(e_kin, muon_mass) / 4.0
     if model == "screened-coulomb":
         return screened_coulomb_rate_legendre(
-            e_kin, ell, layout.scattering_composition(), muon_mass
+            e_kin, ell, layout.scattering_composition(), muon_mass, finite_nuclei
         )
     raise ValueError(
         f"Unknown muon_scattering_model {model!r}; "
@@ -121,8 +139,9 @@ def muon_state_offsets(pdg2pref):
 
 
 def _elements(e_kin, composition, muon_mass):
-    """Per element: atoms per gram ``n``, Wentzel screening ``A`` and strength
-    ``C`` [cm^2/sr] of ``dsigma/dOmega = C / (1 - cos chi + 2 A)^2``.
+    """Per element: atoms per gram ``n``, Wentzel screening ``A``, strength
+    per unit charge ``c`` [cm^2/sr] (``dsigma/dOmega = c Z(Z + 1) / (1 - cos
+    chi + 2 A)^2`` for point nuclei), ``Z`` and ``A`` [g/mol].
 
     ``composition`` has rows ``(Z, A [g/mol], atom fraction)``; the fractions
     give ``N_A f / sum(f A)`` atoms per gram.
@@ -132,27 +151,105 @@ def _elements(e_kin, composition, muon_mass):
     p2 = e_kin * (e_kin + 2 * muon_mass)
     beta2 = p2 / (e_kin + muon_mass) ** 2
     mean_a = np.sum(comp[:, 1] * comp[:, 2])
-    for z, _, fraction in comp:
+    for z, mass, fraction in comp:
         a_tf = 0.5 * (3 * np.pi / 4) ** (2 / 3) * _BOHR / z ** (1 / 3)
         chi2 = _HBARC**2 / (p2 * a_tf**2) * (1.13 + 3.76 * (z * alpha) ** 2 / beta2)
-        strength = (alpha * _HBARC) ** 2 * z * (z + 1) / (p2 * beta2)
-        yield constants.Avogadro * fraction / mean_a, chi2 / 4, strength
+        strength = (alpha * _HBARC) ** 2 / (p2 * beta2)
+        yield constants.Avogadro * fraction / mean_a, chi2 / 4, strength, z, mass
 
 
-def screened_coulomb_rate_legendre(e_kin, l_grid, composition, muon_mass=MUON_MASS):
+def screened_coulomb_rate_legendre(
+    e_kin, l_grid, composition, muon_mass=MUON_MASS, finite_nuclei=True
+):
     """Screened Coulomb rate ``sum_i n_i sigma_l,i`` [cm^2/g], shape
     ``(n_l, n_energy)``, at the integer degrees ``l_grid``. ``e_kin`` is the
-    kinetic energy in GeV, ``composition`` as in :func:`_elements`."""
+    kinetic energy in GeV, ``composition`` as in :func:`_elements`.
+    ``finite_nuclei`` applies the nuclear form factor and the electron
+    kinematic limit (module docstring); False gives point nuclei."""
     e_kin = np.asarray(e_kin, dtype=float)
     l_grid = np.asarray(l_grid, dtype=float)
     ls = np.rint(l_grid).astype(int)
     if np.any(ls != l_grid) or np.any(ls < 0):
         raise ValueError(f"Legendre modes need integer degrees l >= 0, got {l_grid}")
+    l_max = int(ls.max(initial=0))
+    p2 = e_kin * (e_kin + 2 * muon_mass)
+    e_tot = e_kin + muon_mass
+    me = ELECTRON_MASS
+    # 1 - cos chi_e = m_e T_max / p^2, T_max = 2 m_e p^2 / (M^2 + m_e^2 + 2 m_e E)
+    z_elec = np.minimum(2 * me**2 / (muon_mass**2 + me**2 + 2 * me * e_tot), 2.0)
     rate = np.zeros((ls.size, e_kin.size))
-    for n, screening, strength in _elements(e_kin, composition, muon_mass):
-        sigma = transport_cross_sections(screening, int(ls.max(initial=0)))
+    for n, screening, strength, z, mass in _elements(e_kin, composition, muon_mass):
+        sigma = transport_cross_sections(screening, l_max)
+        if finite_nuclei:
+            b = NUCLEAR_FORM_FACTOR * mass**0.54 * p2
+            nuc, elec = _finite_size_losses(screening, b, z_elec, l_max)
+            sigma = z * z * (sigma - nuc) + z * (sigma - elec)
+        else:
+            sigma = z * (z + 1) * sigma
         rate += np.pi * n * strength * sigma[ls]
     return rate
+
+
+#: Gauss-Legendre nodes per panel of :func:`_finite_size_losses`.
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(8)
+
+
+def _panels(edges):
+    """Nodes and weights of 8-point Gauss-Legendre on the panels ``edges``
+    (shape ``(n_edges, ...)``), shape ``(n_nodes, ...)``."""
+    lo, hi = edges[:-1], edges[1:]
+    half, mid = (hi - lo) / 2, (hi + lo) / 2
+    x = mid[:, None] + half[:, None] * _GL_X.reshape((1, -1) + (1,) * (edges.ndim - 1))
+    w = half[:, None] * _GL_W.reshape((1, -1) + (1,) * (edges.ndim - 1))
+    return x.reshape((-1,) + edges.shape[1:]), w.reshape((-1,) + edges.shape[1:])
+
+
+def _finite_size_losses(screening, b, z_elec, l_max):
+    r"""What the form factor and the electron limit remove from
+    :func:`transport_cross_sections`, both as ``sigma_l / (pi C)``, shape
+    ``(l_max + 1, n_energy)``:
+
+    - nucleus ``2 int_0^2 D_l(z) [1 - (1 + b z)^-2] / (z + 2A)^2 dz``,
+    - electrons ``2 int_{z_e}^2 D_l(z) / (z + 2A)^2 dz``,
+
+    with ``z = 1 - cos chi`` and ``D_l = 1 - P_l(1 - z)`` by the cancellation-
+    free recurrence of :func:`transport_cross_sections`. Quadrature in
+    ``chi``: logarithmic panels from far below both the screening angle and
+    ``b^-1/2`` up to ``1 / (l_max + 1)``, then panels of ``0.5 / l_max`` up to
+    pi so the oscillation of ``P_l`` is resolved. The electron part is the
+    analytic total minus the ``[0, z_e]`` integral on logarithmic panels.
+    """
+    a = np.atleast_1d(np.asarray(screening, dtype=float))
+    b = np.broadcast_to(np.asarray(b, dtype=float), a.shape)
+    z_e = np.broadcast_to(np.asarray(z_elec, dtype=float), a.shape)
+    l_out, l_max = int(l_max), max(int(l_max), 1)
+    chi_lo = 1e-4 * np.minimum(np.sqrt(a), 1 / np.sqrt(b))
+    chi_mid = 1.0 / (l_max + 1)
+    # nucleus: log panels chi_lo..chi_mid, linear chi_mid..pi
+    log_edges = np.exp(np.linspace(np.log(chi_lo), np.log(chi_mid), 61))
+    n_lin = int(np.ceil((np.pi - chi_mid) * 2 * l_max))
+    lin_edges = np.broadcast_to(np.linspace(chi_mid, np.pi, n_lin + 1)[:, None], (n_lin + 1, a.size))
+    chi, w = _panels(np.vstack([log_edges, lin_edges[1:]]))
+    z = 2 * np.sin(chi / 2) ** 2
+    nuc_w = w * np.sin(chi) * (b * z * (2 + b * z) / (1 + b * z) ** 2) / (z + 2 * a) ** 2
+    # electrons: [0, z_e] on log panels in chi
+    chi_e = 2 * np.arcsin(np.sqrt(z_e / 2))
+    chi_e_lo = 1e-4 * np.minimum(np.sqrt(a), chi_e)
+    chi_s, w_s = _panels(np.exp(np.linspace(np.log(chi_e_lo), np.log(chi_e), 61)))
+    zs = 2 * np.sin(chi_s / 2) ** 2
+    el_w = w_s * np.sin(chi_s) / (zs + 2 * a) ** 2
+
+    nuc = np.zeros((l_max + 1, a.size))
+    inner = np.zeros((l_max + 1, a.size))
+    for zz, ww, out in ((z, nuc_w, nuc), (zs, el_w, inner)):
+        d_prev, d = np.zeros_like(zz), zz.copy()  # D_0, D_1
+        out[1] = 2 * np.sum(ww * d, axis=0)
+        for n in range(1, l_max):
+            d_prev, d = d, ((2 * n + 1) * (zz + (1 - zz) * d) - n * d_prev) / (n + 1)
+            out[n + 1] = 2 * np.sum(ww * d, axis=0)
+    elec = transport_cross_sections(a, l_max) - inner
+    shape = (l_out + 1,) + np.shape(screening)
+    return nuc[: l_out + 1].reshape(shape), elec[: l_out + 1].reshape(shape)
 
 
 def transport_cross_sections(screening, l_max):

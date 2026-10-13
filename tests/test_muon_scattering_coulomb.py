@@ -51,7 +51,8 @@ def _planar_rate(e_kin, kappa, composition, muon_mass=scattering.MUON_MASS):
     from the element parameters of ``scattering._elements``."""
     e_kin, kappa = np.asarray(e_kin, dtype=float), np.asarray(kappa, dtype=float)
     rate = np.zeros((kappa.size, e_kin.size))
-    for n, screening, strength in scattering._elements(e_kin, composition, muon_mass):
+    for n, screening, c, charge, _ in scattering._elements(e_kin, composition, muon_mass):
+        strength = c * charge * (charge + 1)
         z = kappa[:, None] * (2 * np.sqrt(screening))
         rate += np.pi * n * strength / screening * _one_minus_z_k1(z)
     return rate
@@ -266,7 +267,7 @@ def test_legendre_rate_small_angle_limit_and_l1_pin():
     e_kin = np.geomspace(0.1, 10.0, 7)
     ls = np.array([0, 1, 2, 64, 256, 1000, 2000])
     exact = scattering.screened_coulomb_rate_legendre(
-        e_kin, ls, AIR_INTEGER_A, MUON_MASS
+        e_kin, ls, AIR_INTEGER_A, MUON_MASS, finite_nuclei=False
     )
     planar = _planar_rate(e_kin, ls[1:] + 0.5, AIR_INTEGER_A, MUON_MASS)
     assert np.all(exact[0] == 0)
@@ -275,6 +276,61 @@ def test_legendre_rate_small_angle_limit_and_l1_pin():
     np.testing.assert_allclose(ratio[1], 1.042, atol=0.002)
     assert np.all((ratio[2] >= 1) & (ratio[2] <= 1 + 2e-4))
     assert np.all(np.abs(ratio[3:] - 1) < 1e-5)
+
+
+def _d_l(ell, z):
+    """``1 - P_l(1 - z)`` by the forward recurrence, precise at small ``z``."""
+    d_prev, d = 0.0, z
+    for n in range(1, ell):
+        d_prev, d = d, ((2 * n + 1) * (z + (1 - z) * d) - n * d_prev) / (n + 1)
+    return d if ell else 0.0
+
+
+@pytest.mark.parametrize("e_kin", [0.1, 2.0, 1e4])
+def test_finite_nuclei_rate_matches_quadrature(e_kin):
+    """Form factor ``(1 + b z)^-2`` on Z^2 and the electron limit z <= z_e on Z,
+    against adaptive quadrature of the cross section in log(chi)."""
+    from scipy import integrate
+
+    mu, me = MUON_MASS, scattering.ELECTRON_MASS
+    p2, e_tot = e_kin * (e_kin + 2 * mu), e_kin + mu
+    z_e = 2 * me**2 / (mu**2 + me**2 + 2 * me * e_tot)
+    ls = np.array([1, 5, 40])
+    rate = scattering.screened_coulomb_rate_legendre([e_kin], ls, AIR_INTEGER_A, mu)
+    for j, ell in enumerate(ls):
+        total = 0.0
+        for n, a, c, charge, mass in scattering._elements(np.array([e_kin]), AIR_INTEGER_A, mu):
+            a, c = a[0], c[0]
+            b = scattering.NUCLEAR_FORM_FACTOR * mass**0.54 * p2
+
+            def f(u, part):
+                chi = np.exp(u)
+                z = 2 * np.sin(chi / 2) ** 2
+                w = charge**2 / (1 + b * z) ** 2 if part else charge * (z <= z_e)
+                return 2 * np.pi * c * _d_l(ell, z) / (z + 2 * a) ** 2 * np.sin(chi) * chi * w
+
+            cuts = [np.log(np.sqrt(a)) - 14, np.log(np.sqrt(a)), np.log(2 * np.arcsin(np.sqrt(z_e / 2))),
+                    np.log(min(1.0, np.sqrt(2 / b))), np.log(1 / (ell + 1)), np.log(np.pi)]  # fmt: skip
+            cuts = sorted(set(cuts) | set(np.log(np.linspace(1 / (ell + 1), np.pi, 60))))
+            for part in (True, False):
+                for lo, hi in zip(cuts[:-1], cuts[1:]):
+                    total += n * integrate.quad(f, lo, hi, args=(part,), limit=200, epsrel=1e-11)[0]
+        np.testing.assert_allclose(rate[j, 0], total, rtol=1e-8)
+
+
+def test_finite_nuclei_limits():
+    """Below the point-nucleus rate everywhere, approaching it where the form
+    factor and electron limit only touch the large-angle tail (low E, l = 1 is
+    most affected); finite_nuclei=False is the point-nucleus kernel."""
+    e_kin, ls = np.geomspace(0.05, 1e6, 12), np.array([0, 1, 10, 89])
+    fin = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A)
+    pt = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A, finite_nuclei=False)
+    assert np.all(fin[0] == 0)
+    ratio = fin[1:] / pt[1:]
+    assert np.all((ratio > 0.3) & (ratio < 1))
+    above = e_kin[1:] > 1.0  # below, the electron limit keeps l = 89 flat to 0.4 %
+    assert np.all(np.diff(ratio, axis=1)[:, above] < 0)  # tail cut grows with energy
+    assert np.all(np.diff(ratio, axis=0) > 0)  # high l is set by small angles
 
 
 def test_legendre_rate_composition_sum_and_integer_modes():
