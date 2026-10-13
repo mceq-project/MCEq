@@ -14,7 +14,7 @@ import pathlib
 import urllib.request
 
 NAME = "2d_baseline_solution.npz"
-SHA256 = "8f6bc4cc381134de5de50086546cbad5403f15a159af0f5bd7c8d890aa196c47"
+SHA256 = "27b0786e89984f22baeb649ea19d54b462a360bfa60cded71a36f7f7234d6448"
 #: Published under a digest-stamped name, so an older commit keeps its file.
 URL = (
     "https://github.com/mceq-project/MCEq/releases/download/ci-assets/"
