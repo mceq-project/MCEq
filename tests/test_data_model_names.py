@@ -188,7 +188,6 @@ def _backend_on(path):
         fallback_to_air_cs=True,
         interaction_medium=fixtures.MEDIUM,
         muon_helicity_dependence=False,
-        bin_averaged_decay_rate=True,
     )
     em = SimpleNamespace(air_density=None)
     return HDF5Backend(

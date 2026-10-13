@@ -66,11 +66,6 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 # cm (everything shorter-lived than K0s will be considered prompt)
 prompt_ctau = 2.6842
 
-#: Scale each decay rate by its bin average <E_j/E>, using the within-bin index
-#: the database stores in ``decays/bin_average_index`` (parent decay-spectrum
-#: index g; the parent flux index is g - 1). No effect for databases without it.
-bin_averaged_decay_rate = True
-
 #: Approximate value for the maximum density expected. Used by the
 #: atmosphere model. Default value: air at the surface.
 max_density = 0.001225

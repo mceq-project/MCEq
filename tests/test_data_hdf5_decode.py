@@ -73,7 +73,6 @@ def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
         fallback_to_air_cs=True,
         interaction_medium=medium,
         muon_helicity_dependence=False,
-        bin_averaged_decay_rate=True,
     )
     # `em` is only read when `physics.enable_em` is set; injecting a stand-in
     # keeps `__init__` from binding `config.em` off the process-wide module.
