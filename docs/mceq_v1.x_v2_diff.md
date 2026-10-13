@@ -890,55 +890,60 @@ frequency space. This section documents (a) the math the PR is solving,
 which is structurally cleaner and substantially faster than the PR's
 sequential per-mode loop — and (d) what is still open.
 
-> The planar Hankel modes of this section are no longer used: 2D databases
-> now carry Legendre moments ⟨P_l(cos θ)⟩, of which the Hankel modes are the
-> small-angle limit at κ = l + ½ (`MCEq.operators.legendre`, the 2D
-> sections of `docs/solver_math.rst`). The functions this section names for
-> the Hankel readout and the fitted secant operator are removed; the stacked
-> ETD2RK state and the eigenbasis secant step carry over unchanged.
+> MCEq v2 solves the 2D problem in Legendre modes ⟨P_l(cos θ)⟩ (§11.1–11.2,
+> `MCEq.operators.legendre`, the 2D sections of `docs/solver_math.rst`). PR #48
+> and the first v2 port used planar Hankel modes, the small-angle limit
+> `J₀(κθ)` of `P_l(cos θ)` at κ = l + ½. §11.3–11.8 record that port and are kept
+> as history: the Hankel readout (`inverse_hankel_legacy`, the Filon study), the
+> fitted secant operator and `tests/test_hankel.py` are removed, and Hankel
+> databases are refused on load. The stacked ETD2RK state, the block-diagonal
+> stitch and the path control carry over unchanged to the Legendre modes.
 
-### 11.1 Hankel-space cascade equation
+### 11.1 Legendre-mode cascade equation
 
 The 2D state is a particle density `η_h(E, X, θ)` parameterised by
 energy `E`, slant depth `X`, and the polar angle `θ` between the
-particle and the shower axis. Under axisymmetry, the zeroth-order
-Hankel transform
+particle and the shower axis. Under axisymmetry the Legendre moments
 
 ```
-η̃_h(E, X, κ) = ∫₀^∞ η_h(E, X, θ) · J₀(κ·θ) · θ dθ                    (21)
+η_l(E, X) = 2π ∫₀^π η_h(E, X, θ) · P_l(cos θ) · sin θ dθ               (21)
 ```
 
-turns the angular convolution against the production kernel into an
-elementwise product over `κ` (Hankel convolution theorem). Each `κ` mode
-then satisfies an independent cascade equation of the same shape as (1):
+turn the angular convolution against a production or decay kernel `K(χ)`
+into a product over `l` (addition theorem of the spherical harmonics):
+`(K ∗ η)_l = K_l · η_l` with `K_l = 2π ∫ K(χ) P_l(cos χ) sin χ dχ`, with no
+small-angle approximation and both hemispheres included. Each `l` mode then satisfies
+a cascade equation of the same shape as (1):
 
 ```
-dη̃_κ/dX = [ A(κ) + ρ⁻¹(X) · B(κ) ] η̃_κ ,            for κ ∈ k_grid    (22)
+dη_l/dX = [ A(l) + ρ⁻¹(X) · B(l) ] η_l ,              for l ∈ l_grid    (22)
 ```
 
-Crucially, **k-modes are exactly decoupled** in (22): the off-block
-entries between modes are zero by the convolution theorem, and the
-authors confirm this in §III of the paper. We verified the structure
-empirically against `mceq_db_URQMD_150GeV_2D.h5`: the per-channel
-matrices stored as a `(n_k·n_E, n_k·n_E)` block-diagonal have
-*exactly* zero off-block entries (max-abs `0.0`) for both the hadronic
-and decay groups, and the per-block values fall off smoothly with `κ`
-(SIBYLL-2.3D Λ̄→Λ̄ block-diagonal entries: 4.50 at `κ=0` to 0.19 at
-`κ=2000`).
+The modes are decoupled by the addition theorem, except for the sec θ
+dependence of the density path at large zenith, which couples them; that
+coupling is a separate, exactly computed step (`MCEq.operators.secant`;
+`docs/solver_math.rst`). The readout inverts (21) on the mode grid with
+cubic interpolation in `l` (`MCEqRun.convert_to_theta_space`).
 
-### 11.2 What is and isn't k-dependent
+### 11.2 What is and isn't l-dependent
 
-| Quantity                                             | k-dependent? |
+| Quantity                                             | l-dependent? |
 | ---------------------------------------------------- | ------------ |
-| Hadronic off-diagonal `A_off(κ) = int_off(κ)`        | **yes** (Hankel of angular kernel) |
-| Decay off-diagonal `B_off(κ) = dec_off(κ)`           | **yes** (parent→daughter angle from kinematics) |
+| Hadronic off-diagonal `A_off(l) = int_off(l)`        | **yes** (Legendre moments of the angular kernel) |
+| Decay off-diagonal `B_off(l) = dec_off(l)`           | **yes** (parent→daughter angle from kinematics) |
 | Cross-section diagonal `−σ_inel/λ_int`                | no  |
 | Decay-rate diagonal `−1/(γ τ ρ)`                     | no  |
 | Continuous-loss FD stencil `M_loss` (acts on E only) | no  |
-| Multiple Coulomb scattering damping (muon rows)      | **yes**, diagonal: `−κ²·θ_s²(E)/4` per step |
+| Multiple Coulomb scattering (muon rows)              | **yes**, diagonal: transport rate `−σ_l(E)` |
 
-So `D = diag(A) + ρ⁻¹·diag(B) + δ_MS(κ)` has only one κ-dependent
-piece — the multiple-scattering damping on muon rows — and that piece
+The scattering rate is `σ_l = n ∫ dσ/dΩ (1 − P_l(cos χ)) dΩ`
+(Goudsmit–Saunderson): for the default screened Coulomb model it is computed
+from the medium composition, with Geant4 WentzelVI finite nuclei
+(`MCEq.operators.scattering.screened_coulomb_rate_legendre`); the Gaussian
+model uses the spherical diffusion eigenvalue `l(l+1)·θ_s²(E)/4`.
+
+So `D = diag(A) + ρ⁻¹·diag(B) + δ_MS(l)` has only one l-dependent
+piece — the multiple-scattering rate on muon rows — and that piece
 is purely diagonal. This is the structural insight that makes ETD2RK
 batch cleanly across modes (§11.4).
 
@@ -1182,7 +1187,8 @@ Per-step structure:
   schedule serves all modes.
 
 * **Multiple scattering.** With ETD2RK, the muon scattering damping
-  `−κ²·θ_s²(E)/4` is just a contribution to `D` on muon rows. The
+  (`−κ²·θ_s²(E)/4` in the Hankel port, `−σ_l(E)` on Legendre modes) is
+  just a contribution to `D` on muon rows. The
   integrating factor `e^{h·D}` then absorbs it exactly — no operator
   splitting, no `O(h)` extra error. This removes the standalone
   `phc[k][muon] *= exp(...)` factor in the PR's loop. (Sanity check:
@@ -1471,8 +1477,8 @@ downstream work.
 * Kozynets T., Fedynitch A., Koskinen J,, 2023.
   *Atmospheric lepton fluxes via two-dimensional matrix cascade
   equations.* arXiv:2306.15263. The 2D (Hankel-mode) extension of
-  MCEq (§11): equation (15) in the paper is (22) here, the inverse
-  Hankel transform is (21).
+  MCEq (§11): equation (15) in the paper is the small-angle limit of
+  (22) here, its Hankel transform the limit of (21).
 * Guizar-Sicairos M., Gutiérrez-Vega J. C., 2004. *Computation of
   quasi-discrete Hankel transforms of integer order for propagating
   optical wave fields.* JOSA A **21**, 53–58. Reference DHT for a
