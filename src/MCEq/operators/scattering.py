@@ -65,7 +65,9 @@ E_S = 0.021
 NUCLEAR_FORM_FACTOR = 6.937
 
 #: Electron mass, GeV.
-ELECTRON_MASS = constants.physical_constants["electron mass energy equivalent in MeV"][0] * 1e-3
+ELECTRON_MASS = (
+    constants.physical_constants["electron mass energy equivalent in MeV"][0] * 1e-3
+)
 
 #: PDG muon mass, GeV. Fallback only -- a caller that has a particle manager
 #: passes the mass the tables were built with.
@@ -228,10 +230,14 @@ def _finite_size_losses(screening, b, z_elec, l_max):
     # nucleus: log panels chi_lo..chi_mid, linear chi_mid..pi
     log_edges = np.exp(np.linspace(np.log(chi_lo), np.log(chi_mid), 61))
     n_lin = int(np.ceil((np.pi - chi_mid) * 2 * l_max))
-    lin_edges = np.broadcast_to(np.linspace(chi_mid, np.pi, n_lin + 1)[:, None], (n_lin + 1, a.size))
+    lin_edges = np.broadcast_to(
+        np.linspace(chi_mid, np.pi, n_lin + 1)[:, None], (n_lin + 1, a.size)
+    )
     chi, w = _panels(np.vstack([log_edges, lin_edges[1:]]))
     z = 2 * np.sin(chi / 2) ** 2
-    nuc_w = w * np.sin(chi) * (b * z * (2 + b * z) / (1 + b * z) ** 2) / (z + 2 * a) ** 2
+    nuc_w = (
+        w * np.sin(chi) * (b * z * (2 + b * z) / (1 + b * z) ** 2) / (z + 2 * a) ** 2
+    )
     # electrons: [0, z_e] on log panels in chi
     chi_e = 2 * np.arcsin(np.sqrt(z_e / 2))
     chi_e_lo = 1e-4 * np.minimum(np.sqrt(a), chi_e)

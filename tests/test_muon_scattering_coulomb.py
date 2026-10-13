@@ -51,7 +51,9 @@ def _planar_rate(e_kin, kappa, composition, muon_mass=scattering.MUON_MASS):
     from the element parameters of ``scattering._elements``."""
     e_kin, kappa = np.asarray(e_kin, dtype=float), np.asarray(kappa, dtype=float)
     rate = np.zeros((kappa.size, e_kin.size))
-    for n, screening, c, charge, _ in scattering._elements(e_kin, composition, muon_mass):
+    for n, screening, c, charge, _ in scattering._elements(
+        e_kin, composition, muon_mass
+    ):
         strength = c * charge * (charge + 1)
         z = kappa[:, None] * (2 * np.sqrt(screening))
         rate += np.pi * n * strength / screening * _one_minus_z_k1(z)
@@ -299,7 +301,9 @@ def test_finite_nuclei_rate_matches_quadrature(e_kin):
     rate = scattering.screened_coulomb_rate_legendre([e_kin], ls, AIR_INTEGER_A, mu)
     for j, ell in enumerate(ls):
         total = 0.0
-        for n, a, c, charge, mass in scattering._elements(np.array([e_kin]), AIR_INTEGER_A, mu):
+        for n, a, c, charge, mass in scattering._elements(
+            np.array([e_kin]), AIR_INTEGER_A, mu
+        ):
             a, c = a[0], c[0]
             b = scattering.NUCLEAR_FORM_FACTOR * mass**0.54 * p2
 
@@ -307,14 +311,30 @@ def test_finite_nuclei_rate_matches_quadrature(e_kin):
                 chi = np.exp(u)
                 z = 2 * np.sin(chi / 2) ** 2
                 w = charge**2 / (1 + b * z) ** 2 if part else charge * (z <= z_e)
-                return 2 * np.pi * c * _d_l(ell, z) / (z + 2 * a) ** 2 * np.sin(chi) * chi * w
+                return (
+                    2
+                    * np.pi
+                    * c
+                    * _d_l(ell, z)
+                    / (z + 2 * a) ** 2
+                    * np.sin(chi)
+                    * chi
+                    * w
+                )
 
             cuts = [np.log(np.sqrt(a)) - 14, np.log(np.sqrt(a)), np.log(2 * np.arcsin(np.sqrt(z_e / 2))),
                     np.log(min(1.0, np.sqrt(2 / b))), np.log(1 / (ell + 1)), np.log(np.pi)]  # fmt: skip
-            cuts = sorted(set(cuts) | set(np.log(np.linspace(1 / (ell + 1), np.pi, 60))))
+            cuts = sorted(
+                set(cuts) | set(np.log(np.linspace(1 / (ell + 1), np.pi, 60)))
+            )
             for part in (True, False):
                 for lo, hi in zip(cuts[:-1], cuts[1:]):
-                    total += n * integrate.quad(f, lo, hi, args=(part,), limit=200, epsrel=1e-11)[0]
+                    total += (
+                        n
+                        * integrate.quad(
+                            f, lo, hi, args=(part,), limit=200, epsrel=1e-11
+                        )[0]
+                    )
         np.testing.assert_allclose(rate[j, 0], total, rtol=1e-8)
 
 
@@ -324,7 +344,9 @@ def test_finite_nuclei_limits():
     most affected); finite_nuclei=False is the point-nucleus kernel."""
     e_kin, ls = np.geomspace(0.05, 1e6, 12), np.array([0, 1, 10, 89])
     fin = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A)
-    pt = scattering.screened_coulomb_rate_legendre(e_kin, ls, AIR_INTEGER_A, finite_nuclei=False)
+    pt = scattering.screened_coulomb_rate_legendre(
+        e_kin, ls, AIR_INTEGER_A, finite_nuclei=False
+    )
     assert np.all(fin[0] == 0)
     ratio = fin[1:] / pt[1:]
     assert np.all((ratio > 0.3) & (ratio < 1))
