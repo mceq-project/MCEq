@@ -368,15 +368,17 @@ def test_config_default_matches_download_constant():
     assert cfg.mceq_db_manifest == download.DEFAULT_MANIFEST
 
 
-def test_packaged_manifest_lists_no_hankel_2d_package(tmp_path, capsys):
-    """The installed manifest sends no user to a 2D file MCEq refuses: the
-    v2.0.0 2D packages (Hankel modes) are left out, so ``--dim 2d`` stops
-    with an error instead of fetching one."""
+def test_packaged_manifest_lists_only_legendre_2d_packages():
+    """The installed manifest sends no user to a 2D file MCEq refuses: its 2D
+    packages are the Legendre ones, the default among them; the Hankel-mode
+    files of the release are not listed."""
     manifest = db_manifest.load(download.packaged_manifest(download.DEFAULT_MANIFEST))
-    assert all(g["k_dim"] is None for g in manifest["grids"].values())
-    assert "2d" not in manifest["defaults"]
-    assert not any("_2d_" in name for name in manifest["files"])
-    argv = ["--dir", str(tmp_path), "--model", "SIBYLL23E", "--dim", "2d"]
-    with pytest.raises(SystemExit):
-        download.cli_main(argv)
-    assert "manifest names no default 2d package" in capsys.readouterr().err
+    two_d = {
+        n for n, e in manifest["files"].items() if manifest["grids"][e["grid"]]["k_dim"]
+    }
+    assert two_d == {
+        "mceq_base_air_2d_legendre_v2.h5",
+        "mceq_model_SIBYLL23E_air_2d_legendre_v2.h5",
+    }
+    assert manifest["defaults"]["2d"] == "mceq_base_air_2d_legendre_v2.h5"
+    assert all(manifest["files"][n]["values_dtype"] == "float32" for n in two_d)

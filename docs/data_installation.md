@@ -13,8 +13,8 @@ packages, listed with their checksums and models in a YAML manifest.
 |---|---|---|
 | `mceq_base_air_1d_v2.h5` | 1D, 150 bins (1 MeV–1 EeV) | decays, continuous losses (air, hydrogen, ice, rock, water), FLUKA20251, SIBYLL23E (air and hydrogen). **Default 1D database.** |
 | `mceq_extra_models_air_1d_v2.h5` | 1D, 150 bins | the same tables plus DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8CASCADE, PYTHIA8ANGANTYR, QGSJETII04, QGSJETIII, SIBYLL21, SIBYLL23D, SIBYLL23ESTAR{BAR,MIXED,RHO,STRANGE} |
-| `mceq_base_air_2d_v2.h5` | 2D, 150 bins × 48 planar (Hankel) modes | 2D decays, continuous losses, FLUKA20251, air composition for muon scattering. Not readable by this version and not in its manifest (see below). |
-| `mceq_model_SIBYLL23E_air_2d_v2.h5` | 2D, 150 × 48 | SIBYLL23E 2D yields only; used together with the 2D base file. Not readable by this version and not in its manifest. |
+| `mceq_base_air_2d_legendre_v2.h5` | 2D, 150 bins × 90 Legendre modes | 2D decays, continuous losses, FLUKA20251 (both hemispheres), air composition for muon scattering. **Default 2D database.** |
+| `mceq_model_SIBYLL23E_air_2d_legendre_v2.h5` | 2D, 150 × 90 | SIBYLL23E 2D yields only; used together with the 2D base file. |
 | `mceq_db_manifest_v2.yaml` | — | grid, sha256, size and models per medium of each file |
 
 The FLUKA20251 yields cover projectile energies up to 10^5 GeV. Use FLUKA as the
@@ -27,10 +27,11 @@ The files are assets of the `v2.0.0` release of the MCEq repository, each with a
 
 2D databases carry the angular distribution as Legendre moments
 ⟨P_l(cos θ)⟩ and declare it with the `common` attribute
-`angular_basis = "legendre"`. The 2D files of the `v2.0.0` release are booked
-in planar Hankel modes and are refused with an error. The manifest installed
-with this version lists the 1D packages only, so the download tool fetches no
-2D file; no Legendre 2D package is published yet.
+`angular_basis = "legendre"`. The yield and decay tables of the 2D packages are
+stored in single precision (`values_dtype: float32` in the manifest), which
+halves the files; MCEq reads them into its working precision. The earlier
+Hankel-mode 2D files of the release (`mceq_base_air_2d_v2.h5`,
+`mceq_model_SIBYLL23E_air_2d_v2.h5`) are refused with an error.
 
 ## How a run finds its data
 

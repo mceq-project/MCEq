@@ -22,7 +22,7 @@ import yaml
 BUNDLES = os.environ.get("MCEQ_RELEASE_BUNDLES")
 MANIFEST = "mceq_db_manifest_v2.yaml"
 EXTRA = "mceq_extra_models_air_1d_v2.h5"
-SIBYLL_2D = "mceq_model_SIBYLL23E_air_2d_v2.h5"
+SIBYLL_2D = "mceq_model_SIBYLL23E_air_2d_legendre_v2.h5"
 pytestmark = pytest.mark.skipif(not BUNDLES, reason="release bundles not staged")
 
 
