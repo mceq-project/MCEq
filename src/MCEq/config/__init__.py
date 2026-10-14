@@ -535,26 +535,15 @@ def secant_theta_cap():
     return cap
 
 
-def secant_mode(is_2d):
-    """Resolve :data:`secant_theta_transport` against the database
-    dimensionality.
-
-    Returns ``"off"`` (1D database, or the flag is False) or one of
-    ``"auto"`` (the default) and ``"require"`` (flag is True), which are
-    treated alike.
-    """
+def secant_enabled(is_2d):
+    """True if the sec(theta) coupling applies: a 2D database and
+    :data:`secant_theta_transport` set ("auto" or True)."""
     flag = secant_theta_transport
-    if not is_2d:
-        return "off"
-    if isinstance(flag, str) and flag.lower() == "auto":
-        return "auto"
-    return "require" if flag else "off"
+    auto = isinstance(flag, str) and flag.lower() == "auto"
+    return bool(is_2d and (auto or flag))
 
 
-# Grouped views over the names above. They read and write the corresponding
-# flat configuration attributes, so a component handed
-# `config.grid` still sees a later `config.e_min = ...`.
-from . import groups as _groups  # noqa: E402
-
-globals().update(_groups.build())
-GROUP_OF = _groups.FLAT_TO_GROUP
+def muon_helicity():
+    """True if helicity-dependent muon decays are used: forced off with
+    :data:`enable_em`, whose cascade the helicity rows destabilize."""
+    return muon_helicity_dependence and not enable_em

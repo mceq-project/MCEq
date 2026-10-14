@@ -27,7 +27,6 @@ from __future__ import annotations
 import importlib.util
 import itertools
 import pathlib
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -158,41 +157,38 @@ def test_family_of_reproduces_both_former_implementations(name):
     assert family_of(mname) == expected
 
 
-def _backend_on(path):
-    """An `HDF5Backend` on one synthetic file, all four config groups injected.
+def _backend_on(monkeypatch, path):
+    """An `HDF5Backend` on one synthetic file, every read setting pinned.
 
-    The idiom of `tests/test_data_hdf5_decode.py::backend`: with
-    `paths`/`grid`/`physics`/`em` all given, `HDF5Backend.__init__` takes no
-    setting from the process-wide `MCEq.config` (which it would otherwise read
-    `config.em` from, unused while `enable_em` is off); only the `info` logger
-    reads it (`debug_level`, `override_debug_fcn`/`override_max_level`,
-    `print_module`), and no `MCEqRun` is built.
+    The idiom of `tests/test_data_hdf5_decode.py::backend`: every config
+    global `HDF5Backend` reads is set via `monkeypatch`, and no `MCEqRun` is
+    built.
     """
-    paths = SimpleNamespace(
+    from MCEq import config
+
+    for name, value in dict(
         data_dir=path.parent,
         mceq_db_fname=path.name,
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         # No EM database exists for the fixtures; enable_em is False.
         em_db_fname="no_such_em_db.h5",
-    )
-    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
-    physics = SimpleNamespace(
-        filters={
-            "disabled_particles": [],
-            "forced_int_cs": None,
-            "replace_meson_cross_sections_with": None,
-        },
+        e_min=None,
+        e_max=None,
+        floatlen=None,
+        em_standalone_grid=False,
         assume_nucleon_interactions_for_exotics=True,
         enable_em=False,
         enable_cont_rad_loss=False,
         fallback_to_air_cs=True,
         interaction_medium=fixtures.MEDIUM,
         muon_helicity_dependence=False,
-    )
-    em = SimpleNamespace(air_density=None)
-    return HDF5Backend(
-        medium=fixtures.MEDIUM, paths=paths, grid=grid, physics=physics, em=em
-    )
+        em_air_density=None,
+    ).items():
+        monkeypatch.setattr(config, name, value)
+    monkeypatch.setitem(config.adv_set, "disabled_particles", [])
+    monkeypatch.setitem(config.adv_set, "forced_int_cs", None)
+    monkeypatch.setitem(config.adv_set, "replace_meson_cross_sections_with", None)
+    return HDF5Backend(medium=fixtures.MEDIUM)
 
 
 def test_unknown_family_is_none():
@@ -217,7 +213,7 @@ def test_the_two_reactions_to_an_unknown_family_stay_different(tmp_path, monkeyp
     """
     monkeypatch.setattr(fixtures, "MODEL", "URQMD34")
     path = fixtures.build_database(tmp_path / "urqmd34_1d.h5")
-    backend = _backend_on(path)
+    backend = _backend_on(monkeypatch, path)
 
     with pytest.raises(ValueError, match="Unknown equivalence table"):
         backend._interaction_db_single("URQMD34")

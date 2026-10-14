@@ -1,6 +1,5 @@
 import pytest
 
-import MCEq.config as config
 from MCEq.species.manager import ParticleManager
 from MCEq.species.particle import MCEqParticle
 
@@ -9,12 +8,7 @@ from MCEq.species.particle import MCEqParticle
 def hdf_db():
     from MCEq.data import HDF5Backend
 
-    return HDF5Backend(
-        paths=config.paths,
-        grid=config.grid,
-        physics=config.physics,
-        em=config.em,
-    )
+    return HDF5Backend()
 
 
 @pytest.fixture
@@ -33,7 +27,7 @@ def cs_db(hdf_db):
 def decay_db(hdf_db):
     from MCEq.data import Decays
 
-    return Decays(hdf_db, physics=config.physics)
+    return Decays(hdf_db)
 
 
 def test_mceqparticle_defaults(energy_grid, cs_db):
@@ -43,7 +37,6 @@ def test_mceqparticle_defaults(energy_grid, cs_db):
         energy_grid=energy_grid,
         cs_db=cs_db,
         init_pdata_defaults=False,
-        physics=config.physics,
     )
     print(p)
     assert p.pdg_id == (211, 0)
@@ -59,7 +52,6 @@ def test_mceqparticle_pythia_defaults(energy_grid, cs_db):
         energy_grid=energy_grid,
         cs_db=cs_db,
         init_pdata_defaults=True,
-        physics=config.physics,
     )
     assert p.pdg_id == (211, 0)
     assert p.helicity == 0
@@ -71,7 +63,7 @@ def test_mceqparticle_pythia_defaults(energy_grid, cs_db):
 
 def test_particle_manager_creation(energy_grid, cs_db):
     pdg_list = [(211, 0), (111, 0)]
-    pm = ParticleManager(pdg_list, energy_grid, cs_db, physics=config.physics)
+    pm = ParticleManager(pdg_list, energy_grid, cs_db)
     print(pm)
     print("1", pm.pdg2pref)
     assert len(pm.cascade_particles) == 2
@@ -83,7 +75,7 @@ def test_particle_manager_creation(energy_grid, cs_db):
 
 def test_set_cross_sections_db(energy_grid, cs_db):
     pdg_list = [(211, 0), (111, 0)]
-    pm = ParticleManager(pdg_list, energy_grid, cs_db, physics=config.physics)
+    pm = ParticleManager(pdg_list, energy_grid, cs_db)
     pm.set_cross_sections_db(cs_db)
     for p in pm.cascade_particles:
         assert p.current_cross_sections == "QGSJETII04"
@@ -95,7 +87,7 @@ def test_set_decay_channels(energy_grid, cs_db, decay_db):
     decay_db.child_map[(111, 0)] = [(211, 0)]
 
     pdg_list = [(111, 0), (211, 0)]
-    pm = ParticleManager(pdg_list, energy_grid, cs_db, physics=config.physics)
+    pm = ParticleManager(pdg_list, energy_grid, cs_db)
     pm.set_decay_channels(decay_db)
     unstable_particle = pm[(111, 0)]
     assert len(unstable_particle.children) == 1
@@ -103,7 +95,7 @@ def test_set_decay_channels(energy_grid, cs_db, decay_db):
 
 def test_add_tracking_particle(energy_grid, cs_db):
     pdg_list = [(211, 0), (13, 0)]
-    pm = ParticleManager(pdg_list, energy_grid, cs_db, physics=config.physics)
+    pm = ParticleManager(pdg_list, energy_grid, cs_db)
     pm.add_tracking_particle([(211, 0)], (13, 0), "pi_mu")
     tracking_particle = pm.pname2pref.get("pi_mu", None)
     assert tracking_particle is not None
@@ -117,7 +109,6 @@ def test_inverse_decay_length(energy_grid, cs_db):
         energy_grid=energy_grid,
         cs_db=cs_db,
         init_pdata_defaults=False,
-        physics=config.physics,
     )
     p.mass = 0.105
     p.ctau = 100.0

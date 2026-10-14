@@ -4,6 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 
+from MCEq import config
 from MCEq.data.model_names import normalize_hadronic_model_name
 from MCEq.misc import info
 
@@ -15,8 +16,7 @@ class Interactions:
     mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, *, physics):
-        self._physics = physics
+    def __init__(self, mceq_hdf_db):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
@@ -69,7 +69,7 @@ class Interactions:
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
-        filters = self._physics.filters
+        filters = config.adv_set
         disabled_particles = filters["disabled_particles"]
         self.parents = [p for p in index["parents"] if p[0] not in disabled_particles]
         self.relations = index["relations"]
@@ -181,7 +181,7 @@ class Interactions:
         mpli = self.mod_pprod
         pstup = (prim_pdg, sec_pdg)
 
-        if self._physics.use_isospin_sym and prim_pdg not in [2212, 2112]:
+        if config.use_isospin_sym and prim_pdg not in [2212, 2112]:
             raise Exception("Unsupported primary for isospin symmetries.")
 
         if (x_func.__name__, args) in mpli[(pstup)]:
@@ -213,7 +213,7 @@ class Interactions:
 
         info(5, 'modification "strength"', np.sum(kmat) / np.count_nonzero(kmat))
 
-        if not self._physics.use_isospin_sym:
+        if not config.use_isospin_sym:
             return True
 
         # the other nucleon

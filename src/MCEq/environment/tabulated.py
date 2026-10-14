@@ -19,9 +19,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    def __init__(
-        self, location, season, extrapolate=True, environment=None, *args, **kwargs
-    ):
+    def __init__(self, location, season, extrapolate=True, *args, **kwargs):
         if location != "SouthPole":
             raise Exception(
                 self.__class__.__name__
@@ -36,7 +34,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         self.season = season
         self.init_parameters(location, **kwargs)
-        EarthsAtmosphere.__init__(self, environment=environment)
+        EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, **kwargs):
         """Loads tables and prepares interpolation.

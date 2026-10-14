@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import info
 
 
@@ -32,20 +33,13 @@ class GeneralizedTarget:
         len_target=None,  # cm
         env_density=None,  # g/cm3
         env_name=None,
-        environment=None,
     ):
-        if len_target is None or env_density is None or env_name is None:
-            if environment is None:
-                from importlib import import_module
-
-                environment = import_module("MCEq.config").environment
-            env = environment
-            if len_target is None:
-                len_target = env.len_target * 1e2
-            if env_density is None:
-                env_density = env.env_density
-            if env_name is None:
-                env_name = env.env_name
+        if len_target is None:
+            len_target = config.len_target * 1e2
+        if env_density is None:
+            env_density = config.env_density
+        if env_name is None:
+            env_name = config.env_name
 
         self.len_target = len_target
         self.env_density = env_density

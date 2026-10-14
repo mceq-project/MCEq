@@ -45,25 +45,10 @@ class MCEqRun:
         including their decay products.
     """
 
-    #: Configuration of the run: the live config module, or the detached copy
-    #: passed as ``config=RunConfig.snapshot()``.
-    _cfg = config
-
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-        # Changing either config does not rebuild existing matrices or paths.
-        from MCEq.config.run import RunConfig
-
-        snapshot = kwargs.pop("config", None)
-        if snapshot is not None and not isinstance(snapshot, RunConfig):
-            raise TypeError(
-                "MCEqRun(config=...) expects a MCEq.config.run.RunConfig "
-                "(build one with RunConfig.snapshot()); got "
-                f"{type(snapshot).__name__}."
-            )
-        self._cfg = snapshot if snapshot is not None else config
-        ensure_db_available(self._cfg)
-        self.medium = kwargs.pop("medium", self._cfg.physics.interaction_medium)
-        le_config = self._cfg.physics.low_energy
+        ensure_db_available(config)
+        self.medium = kwargs.pop("medium", config.interaction_medium)
+        le_config = config.low_energy_extension
         low_energy_model = kwargs.pop("low_energy_model", le_config.get("model"))
         he_le_transition = kwargs.pop(
             "he_le_transition", le_config.get("he_le_transition", 80.0)
@@ -72,9 +57,7 @@ class MCEqRun:
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         # Save atmospheric parameters
-        self.density_model = kwargs.pop(
-            "density_model", self._cfg.environment.density_model
-        )
+        self.density_model = kwargs.pop("density_model", config.density_model)
         self.theta_deg = theta_deg
 
         self._system = CascadeSystem(
@@ -83,7 +66,6 @@ class MCEqRun:
             low_energy_model=low_energy_model,
             he_le_transition=he_le_transition,
             he_le_trwidth=he_le_trwidth,
-            cfg=self._cfg,
         )
 
         # Initialize solution vector
@@ -98,7 +80,7 @@ class MCEqRun:
         )
 
         # Default GPU device id for CUDA
-        self._cuda_device = kwargs.pop("cuda_gpu_id", self._cfg.backend.cuda_gpu_id)
+        self._cuda_device = kwargs.pop("cuda_gpu_id", config.cuda_gpu_id)
 
         # Geomagnetic rigidity cutoff: None auto-enables it for MSIS and
         # location-tagged atmospheres; True/False override.
@@ -235,12 +217,6 @@ class MCEqRun:
 
         else:
             self._phi0[:] = state_vec[:]
-
-    @property
-    def config(self):
-        """The configuration this run reads: the live module, or the detached
-        snapshot passed as ``config=RunConfig.snapshot()``."""
-        return self._cfg
 
     @property
     def _mceq_db(self):
@@ -471,9 +447,7 @@ class MCEqRun:
 
             info(1, "Setting density profile to", base_model, model_config)
 
-            self.density_model = registry.build(
-                base_model, model_config, environment=self._cfg.environment
-            )
+            self.density_model = registry.build(base_model, model_config)
         else:
             self.density_model = density_model_or_config
 
@@ -590,7 +564,7 @@ class MCEqRun:
                 ((prim, sec), (iso_part, isospin_symmetries[iso_part][sec]))
             )
 
-        if self._cfg.debug.level > 2:
+        if config.debug_level > 2:
             s = "DDM matrices injected into MCEq:\n"
             for (prim, sec), (iprim, isec) in injected:
                 s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
@@ -688,7 +662,7 @@ class MCEqRun:
             ``self.integration_path`` instead of rebuilding it.
 
         """
-        info(2, f"Launching {self._cfg.backend.kernel_config} solver")
+        info(2, f"Launching {config.kernel_config} solver")
 
         if not kwargs.pop("skip_integration_path", False):
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
@@ -763,7 +737,7 @@ class MCEqRun:
           is dumped into `grid_sol`
         """
 
-        info(2, f"Launching {self._cfg.backend.kernel_config} solver")
+        info(2, f"Launching {config.kernel_config} solver")
         info(2, f"for {nsteps} integration steps.")
 
         start = time()
@@ -814,8 +788,7 @@ class MCEqRun:
 
     def _resolve_secant(self):
         """sec(theta) operators for the solve, or None if secant mode is off."""
-        cfg = getattr(self, "_cfg", config)
-        if cfg.secant_mode(self._mceq_db.is_2d) == "off":
+        if not config.secant_enabled(self._mceq_db.is_2d):
             return None
         return self._build_secant_ops()
 
@@ -831,8 +804,8 @@ class MCEqRun:
             hash(k_grid.tobytes()),
             hash(e_centers.tobytes()),
             n_species,
-            self._cfg.secant_theta_cap(),
-            self._cfg.secant.e_max,
+            config.secant_theta_cap(),
+            config.secant_theta_e_max,
         )
         cached = getattr(self, "_secant_ops_cache", None)
         if cached is None or cached[0] != key:
@@ -840,8 +813,8 @@ class MCEqRun:
                 k_grid,
                 e_centers,
                 n_species,
-                self._cfg.secant,
-                theta_cap_deg=self._cfg.secant_theta_cap(),
+                config.secant_theta_cap(),
+                e_max=config.secant_theta_e_max,
             )
             self._secant_ops_cache = cached = (key, ops)
         return cached[1]
@@ -872,12 +845,12 @@ class MCEqRun:
         """
         import MCEq.solvers as solvers
 
-        kc = self._cfg.backend.kernel_config.lower()
+        kc = config.kernel_config.lower()
         on_cuda = kc in ("cuda", "cuda_etd2")
         fp = 32 if np.dtype(dtype) == np.float32 else 64
         op = self._compiled_operator(sec_ops)
         cache = self.__dict__.setdefault("_backend_cache", {})
-        op_fp = self._cfg.backend.cuda_operator_precision if on_cuda else None
+        op_fp = config.cuda_operator_precision if on_cuda else None
         key = (kc, fp, op.coupled, op_fp)
         be = cache.get(key)
         if be is not None and (
@@ -902,7 +875,7 @@ class MCEqRun:
                 )
             else:
                 raise Exception(
-                    f"Unsupported integrator setting '{self._cfg.backend.kernel_config}'. "
+                    f"Unsupported integrator setting '{config.kernel_config}'. "
                     "Choose one of: numpy_etd2, accelerate_etd2, mkl_etd2, cuda_etd2."
                 )
             cache[key] = be
@@ -989,7 +962,7 @@ class MCEqRun:
         r_em = em_step_scale(
             int_m,
             self.pman.all_particles,
-            dense_eig_max=self._cfg.em.step_dense_eig_max,
+            dense_eig_max=config.em_step_dense_eig_max,
         )
         self._em_step_scale_cache = (int_m, r_em)
         return r_em

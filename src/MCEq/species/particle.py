@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import average_A_target, getAZN, info
 from MCEq.species import bin_average
 from MCEq.species.constants import ATOMIC_MASS_UNIT_G, _pdata, _pname
@@ -19,9 +20,7 @@ class MCEqParticle:
              :class:`MCEq.data.InteractionCrossSections`
       init_pdata_defaults (bool): fill name, mass, ctau and charge from the
              PYTHIA particle table
-      A_target (float): average target mass number; default from ``physics``
-      physics: settings group (``config.physics``) holding the decay and
-               resonance filters. :class:`ParticleManager` passes its own.
+      A_target (float): average target mass number; default from ``config``
     """
 
     def __init__(
@@ -32,13 +31,9 @@ class MCEqParticle:
         cs_db=None,
         init_pdata_defaults=True,
         A_target=None,
-        *,
-        physics,
     ):  # anfe: the init looks really boilerplate. Isn't there a better way to design this class?
-        #: settings group this particle reads its filters from
-        self._physics = physics
         if A_target is None:
-            A_target = average_A_target(physics=self._physics)
+            A_target = average_A_target()
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
@@ -66,7 +61,7 @@ class MCEqParticle:
         #: (bool) particle is interacting projectile
         self.is_projectile = False
         #: (bool) particle is stable
-        self.is_stable = pdg_id in physics.filters["disable_decays"]
+        self.is_stable = pdg_id in config.adv_set["disable_decays"]
         #: (bool) can_interact
         self.can_interact = False
         #: (bool) has continuous losses dE/dX defined
@@ -140,8 +135,7 @@ class MCEqParticle:
         self.name = name
         #: (bool) particle is stable
         self.is_stable = (
-            not self.ctau < np.inf
-            or self.pdg_id[0] in self._physics.filters["disable_decays"]
+            not self.ctau < np.inf or self.pdg_id[0] in config.adv_set["disable_decays"]
         )
 
     def init_custom_particle_data(
@@ -580,12 +574,12 @@ class MCEqParticle:
     def _apply_force_resonance(
         self,
     ):  # anfe: why do we need a function for that? Isn't it just somewhere in the init clear that it is a resonance?
-        """Flag as resonance if in ``physics.filters["force_resonance"]`` and
-        not in ``physics.standard_particles``."""
+        """Flag as resonance if in ``config.adv_set["force_resonance"]`` and
+        not in ``config.standard_particles``."""
         pid = abs(self.pdg_id[0])
         self.is_resonance = (
-            pid in self._physics.filters["force_resonance"]
-            and pid not in self._physics.standard_particles
+            pid in config.adv_set["force_resonance"]
+            and pid not in config.standard_particles
         )
 
     def __eq__(

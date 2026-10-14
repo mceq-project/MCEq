@@ -74,14 +74,19 @@ def _paths(db_fname, data_dir, manifest=MANIFEST):
     )
 
 
-def _backend(db_fname, data_dir, manifest=MANIFEST):
-    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
-    physics = SimpleNamespace(
-        filters={
-            "disabled_particles": [],
-            "forced_int_cs": None,
-            "replace_meson_cross_sections_with": None,
-        },
+def _backend(monkeypatch, db_fname, data_dir, manifest=MANIFEST):
+    """An ``HDF5Backend`` on ``db_fname``; every config global it reads is
+    set via ``monkeypatch`` (the backend reads them at call time too)."""
+    for name, value in dict(
+        data_dir=pathlib.Path(data_dir),
+        mceq_db_fname=db_fname,
+        em_db_fname="mceq_db_EM_Tsai-Max_Z7.31.h5",
+        mceq_db_manifest=manifest,
+        debug_level=0,
+        e_min=None,
+        e_max=None,
+        floatlen=None,
+        em_standalone_grid=False,
         assume_nucleon_interactions_for_exotics=False,
         enable_em=False,
         enable_cont_rad_loss=True,
@@ -89,15 +94,13 @@ def _backend(db_fname, data_dir, manifest=MANIFEST):
         interaction_medium="air",
         muon_helicity_dependence=False,
         generic_losses_all_charged=False,
-    )
-    em = SimpleNamespace(air_density=None)
-    return HDF5Backend(
-        medium="air",
-        paths=_paths(db_fname, data_dir, manifest),
-        grid=grid,
-        physics=physics,
-        em=em,
-    )
+        em_air_density=None,
+    ).items():
+        monkeypatch.setattr(cfg, name, value)
+    monkeypatch.setitem(cfg.adv_set, "disabled_particles", [])
+    monkeypatch.setitem(cfg.adv_set, "forced_int_cs", None)
+    monkeypatch.setitem(cfg.adv_set, "replace_meson_cross_sections_with", None)
+    return HDF5Backend(medium="air")
 
 
 def _copy_release(release_dir, dest, names):
@@ -135,8 +138,10 @@ def test_fixture_is_a_release_cut(release_dir):
     assert db_manifest.files_for(manifest, other, MODEL, MEDIUM) == []
 
 
-def test_monolith_never_consults_the_manifest(release_dir, no_network):
-    backend = _backend(MONOLITH, release_dir, manifest="does-not-exist.yaml")
+def test_monolith_never_consults_the_manifest(monkeypatch, release_dir, no_network):
+    backend = _backend(
+        monkeypatch, MONOLITH, release_dir, manifest="does-not-exist.yaml"
+    )
     assert backend._packages is None
     assert backend.interaction_db(MODEL)["index_d"]
 
@@ -156,9 +161,9 @@ def _assert_packs_equal(store_a, store_b, tree, medium, model):
     assert a.description == b.description
 
 
-def test_backend_reads_equal_monolith(release_dir, no_network):
-    mono = _backend(MONOLITH, release_dir)
-    base = _backend(BASE_FILE, release_dir)
+def test_backend_reads_equal_monolith(monkeypatch, release_dir, no_network):
+    mono = _backend(monkeypatch, MONOLITH, release_dir)
+    base = _backend(monkeypatch, BASE_FILE, release_dir)
     assert base._packages is not None
     _assert_packs_equal(
         mono._had, base._had, "hadronic_interactions", MEDIUM, BASE_MODEL
@@ -211,10 +216,12 @@ def test_full_solve_bitwise_package_vs_monolith(release_dir, monkeypatch, no_net
 # ---------------------------------------------------------------------------
 
 
-def test_missing_model_error_is_actionable(release_dir, tmp_path, no_network):
+def test_missing_model_error_is_actionable(
+    monkeypatch, release_dir, tmp_path, no_network
+):
     bare = _copy_release(release_dir, tmp_path / "bare", [BASE_FILE, MODEL_FILE])
     fixtures.write_manifest(bare, {BASE_FILE: (True, {MEDIUM: [BASE_MODEL]})})
-    backend = _backend(BASE_FILE, bare)
+    backend = _backend(monkeypatch, BASE_FILE, bare)
     with pytest.raises(Exception) as exc:
         backend.interaction_db(MODEL)
     message = str(exc.value)
@@ -241,7 +248,7 @@ def test_listed_package_is_fetched_once_atomically(release_dir, tmp_path, monkey
     bare = _copy_release(release_dir, tmp_path / "bare", [BASE_FILE, MANIFEST])
     calls = []
     monkeypatch.setattr(download, "_download_file", _fake_download(release_dir, calls))
-    backend = _backend(BASE_FILE, bare)
+    backend = _backend(monkeypatch, BASE_FILE, bare)
     idx = backend.interaction_db(MODEL)
     assert idx["index_d"]
     assert calls == [fixtures.URL_BASE + MODEL_FILE]
@@ -253,7 +260,7 @@ def test_listed_package_is_fetched_once_atomically(release_dir, tmp_path, monkey
     monkeypatch.setattr(
         download, "_download_file", lambda *a, **k: pytest.fail("network")
     )
-    assert _backend(BASE_FILE, bare).interaction_db(MODEL)["index_d"]
+    assert _backend(monkeypatch, BASE_FILE, bare).interaction_db(MODEL)["index_d"]
 
 
 def test_lock_collision_fails_fast_with_cli_hint(release_dir, tmp_path, monkeypatch):
@@ -262,7 +269,7 @@ def test_lock_collision_fails_fast_with_cli_hint(release_dir, tmp_path, monkeypa
     monkeypatch.setattr(
         download, "_download_file", lambda *a, **k: pytest.fail("network")
     )
-    backend = _backend(BASE_FILE, bare)
+    backend = _backend(monkeypatch, BASE_FILE, bare)
     with pytest.raises(Exception) as exc:
         backend.interaction_db(MODEL)
     message = str(exc.value)
@@ -301,20 +308,20 @@ def test_checksum_mismatch_installs_nothing(release_dir, tmp_path, monkeypatch):
         return download._download_file_orig(url, outfile, checksum=checksum)
 
     monkeypatch.setattr(download, "_download_file", wrong_payload)
-    backend = _backend(BASE_FILE, bare)
+    backend = _backend(monkeypatch, BASE_FILE, bare)
     with pytest.raises(Exception, match="sha256"):
         backend.interaction_db(MODEL)
     assert not (bare / MODEL_FILE).exists()
     assert not list(bare.glob("*.lock")) and not list(bare.glob("*.part"))
 
 
-def test_e_grid_mismatch_is_refused(release_dir, tmp_path, no_network):
+def test_e_grid_mismatch_is_refused(monkeypatch, release_dir, tmp_path, no_network):
     bad = _copy_release(
         release_dir, tmp_path / "bad", [BASE_FILE, MODEL_FILE, MANIFEST]
     )
     with h5py.File(bad / MODEL_FILE, "a") as f:
         f["common"].attrs["e_grid"] = np.asarray(f["common"].attrs["e_grid"]) * 1.0001
-    backend = _backend(BASE_FILE, bad)
+    backend = _backend(monkeypatch, BASE_FILE, bad)
     with pytest.raises(Exception, match="different energy grid"):
         backend.interaction_db(MODEL)
 
@@ -338,13 +345,13 @@ def test_ensure_db_available_fetches_listed_primary(release_dir, tmp_path, monke
     assert calls[-1] == download.base_url + download.release_tag + "mceq_db_custom.h5"
 
 
-def test_manifest_local_override_path(release_dir, tmp_path, no_network):
+def test_manifest_local_override_path(monkeypatch, release_dir, tmp_path, no_network):
     """A hand-registered entry with a local ``path`` is used in place."""
     data_dir = _copy_release(release_dir, tmp_path / "data", [BASE_FILE])
     manifest = yaml.safe_load((release_dir / MANIFEST).read_text())
     manifest["files"][MODEL_FILE]["path"] = str(release_dir / MODEL_FILE)
     (data_dir / MANIFEST).write_text(yaml.safe_dump(manifest))
-    backend = _backend(BASE_FILE, data_dir)
+    backend = _backend(monkeypatch, BASE_FILE, data_dir)
     assert backend.interaction_db(MODEL)["index_d"]
     assert not (data_dir / MODEL_FILE).exists()
 

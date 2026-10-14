@@ -55,7 +55,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
         # Base class first: it creates self.geom, which init_parameters needs
         # when ``use_loc_altitudes`` moves the observation level.
-        EarthsAtmosphere.__init__(self, environment=environment)
+        EarthsAtmosphere.__init__(self)
 
         self.init_parameters(location, season, doy, use_loc_altitudes)
 
@@ -243,7 +243,6 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
         n_azimuth=36,
         max_theta=90.0,
         surface_elevation_m=0.0,
-        environment=None,
     ):
         from MCEq.environment.msis00_backend import cNRLMSISE00
 
@@ -259,7 +258,7 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
             self._msis.set_doy(doy)
 
         # Base class first: it creates self.geom.
-        EarthsAtmosphere.__init__(self, environment=environment)
+        EarthsAtmosphere.__init__(self)
         self._init_detector_geometry(
             longitude,
             latitude,
@@ -345,7 +344,7 @@ class MSIS00IceCubeCentered(MSIS00LocationCentered):
       season (str): Month name, e.g. ``"January"``.
     """
 
-    def __init__(self, location, season, environment=None):
+    def __init__(self, location, season):
         if location != "SouthPole":
             info(2, "location forced to the South Pole")
         super().__init__(
@@ -354,7 +353,6 @@ class MSIS00IceCubeCentered(MSIS00LocationCentered):
             season=season,
             max_theta=180.0,
             surface_elevation_m=2835.0,
-            environment=environment,
         )
 
     def _latitude(self, det_zenith_deg):
@@ -399,7 +397,7 @@ class MSIS00KM3NeTCentered(MSIS00LocationCentered):
         n_azimuth (int): Azimuth steps for averaging (default 36).
     """
 
-    def __init__(self, detector, season=None, doy=None, n_azimuth=36, environment=None):
+    def __init__(self, detector, season=None, doy=None, n_azimuth=36):
         if detector not in KM3NET_DETECTORS:
             raise ValueError(
                 f"Unknown KM3NeT detector '{detector}'. "
@@ -413,7 +411,6 @@ class MSIS00KM3NeTCentered(MSIS00LocationCentered):
             doy=doy,
             n_azimuth=n_azimuth,
             max_theta=180.0,
-            environment=environment,
         )
         self._detector_name = detector
 

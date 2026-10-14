@@ -2,14 +2,8 @@
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import info
-
-
-def _live_config():
-    """The live :mod:`MCEq.config` module, for calls that omit path settings."""
-    from importlib import import_module
-
-    return import_module("MCEq.config")
 
 
 def etd2_nonuniform_path(
@@ -21,7 +15,6 @@ def etd2_nonuniform_path(
     dX_min=None,
     fd_span=None,
     int_grid=None,
-    step=None,
 ):
     """Build a non-uniform integration path for ETD2 kernels.
 
@@ -36,31 +29,25 @@ def etd2_nonuniform_path(
     Args:
       density_model: object with ``r_X2rho(X)`` and ``max_X``.
       X_start (float | None): starting depth in g/cm^2; ``None`` →
-        ``step.X_start``.
+        ``config.X_start``.
       eps (float | None): within-step ``rho_inv`` variation tolerance;
-        ``None`` → ``step.etd2_path["eps"]``.
+        ``None`` → ``config.etd2_path["eps"]``.
       dX_max (float | None): cap on step size (off-diagonal stability
-        cliff); ``None`` → ``step.etd2_path["dX_max"]``.
+        cliff); ``None`` → ``config.etd2_path["dX_max"]``.
       dX_min (float | None): floor on step size; ``None`` →
-        ``step.etd2_path["dX_min"]``.
+        ``config.etd2_path["dX_min"]``.
       fd_span (float | None): forward-FD probe span; ``None`` →
-        ``step.etd2_path["fd_span"]``.
+        ``config.etd2_path["fd_span"]``.
       int_grid (np.ndarray | None): X values at which to record snapshots.
         Steps are truncated to land exactly on each ``int_grid`` entry.
-      step: the ``solver`` setting group (``X_start``, ``etd2_path``);
-        ``None`` → ``MCEq.config.solver``. Read here, when the path is
-        planned. Run-level path caching uses the resolved values, so changes
-        to live settings invalidate a previously built path.
 
     Returns:
       (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
       kernel-dispatch contract used by ``MCEqRun.integration_path``.
     """
-    if step is None:
-        step = _live_config().solver
     if X_start is None:
-        X_start = step.X_start
-    p = step.etd2_path
+        X_start = config.X_start
+    p = config.etd2_path
     if eps is None:
         eps = 0.01 if p["eps"] is None else p["eps"]
     if dX_max is None:
@@ -178,13 +165,13 @@ def etd2_nonuniform_path(
     return len(dXs), dXs, rho_inv, grid_idcs
 
 
-def em_cascade_dx_cap(step_scale, em):
-    """EM step cap ``em.step_safety / r_EM``, or inf when disabled or ``r_EM`` is not > 0."""
-    if not em.adaptive_step:
+def em_cascade_dx_cap(step_scale):
+    """EM step cap ``config.em_step_safety / r_EM``, or inf when disabled or ``r_EM`` is not > 0."""
+    if not config.em_adaptive_step:
         return np.inf
     if not (step_scale > 0.0):
         return np.inf
-    cap = em.step_safety / step_scale
+    cap = config.em_step_safety / step_scale
     info(
         2,
         "EM-adaptive step: r_EM={:.4g} 1/(g/cm^2) -> dX_max <= {:.4g} g/cm^2".format(

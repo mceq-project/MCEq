@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import info
 
 
@@ -59,7 +60,7 @@ class InitialState:
         self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
 
         pman = self._system.pman
-        minimal_energy = self._system._cfg.physics.minimal_primary_energy
+        minimal_energy = config.minimal_primary_energy
         if (2212, 0) not in pman or (2112, 0) not in pman:
             raise Exception(
                 "No nucleons in eqn system, primary flux model can not be used."

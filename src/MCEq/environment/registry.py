@@ -44,16 +44,11 @@ def density_model_class(name: str) -> type:
     return getattr(import_module(module_name), qualname)
 
 
-def build(name: str, model_config, environment=None):
+def build(name: str, model_config):
     """Instantiate the atmosphere *name* with *model_config*.
 
     ``model_config`` is splatted into the constructor, except for the models in
     :data:`_NO_CONFIG`, which are constructed with no arguments.
-
-    ``environment`` is the caller's ``environment`` settings group, forwarded
-    as a keyword to every model: a driver-built atmosphere then reads the
-    run's settings, not the process globals. ``None`` keeps the live-read
-    fallback for user-built models.
 
     Raises:
         KeyError: if *name* is not a registered model. The caller owns the
@@ -61,5 +56,5 @@ def build(name: str, model_config, environment=None):
     """
     cls = density_model_class(name)
     if name in _NO_CONFIG:
-        return cls(environment=environment)
-    return cls(*model_config, environment=environment)
+        return cls()
+    return cls(*model_config)

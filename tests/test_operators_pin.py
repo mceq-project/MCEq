@@ -48,19 +48,13 @@ def _stencil_stub(dim=31, e_min=1.0, e_max=1e6):
     """A `MatrixBuilder` stand-in carrying only what the stencil builder reads.
 
     ``_construct_differential_operator`` uses ``_energy_grid.b`` (the bin edges,
-    for the log spacings ``h``) and ``_energy_grid.d``, the three stencil
-    settings off the injected ``losses`` group and the dtype off ``grid``, and
-    writes ``self.op_matrix``. Nothing else of the builder is involved, so the
-    real unbound method runs against a log-uniform grid of the production
-    shape. The groups are the live views, so the flat names the tests below
-    monkeypatch still reach it.
+    for the log spacings ``h``) and ``_energy_grid.d``, the three
+    ``config.loss_stencil_*`` settings and ``config.floatlen``, and writes
+    ``self.op_matrix``. Nothing else of the builder is involved, so the real
+    unbound method runs against a log-uniform grid of the production shape.
     """
     edges = np.logspace(np.log10(e_min), np.log10(e_max), dim + 1)
-    return SimpleNamespace(
-        _energy_grid=SimpleNamespace(b=edges, d=dim),
-        _grid=config.grid,
-        _losses=config.losses,
-    )
+    return SimpleNamespace(_energy_grid=SimpleNamespace(b=edges, d=dim))
 
 
 def _op_matrix(method, stub=None):
@@ -321,13 +315,12 @@ class _BlocksStub:
     """A `MatrixBuilder` stand-in carrying only what the assembly reads.
 
     ``_csr_from_blocks`` reads ``is_2d``, the three dimensions, ``k_grid``,
-    ``_grid.dtype`` and the particle manager's ``mceqidx2pref``;
+    ``config.floatlen`` and the particle manager's ``mceqidx2pref``;
     ``_muon_scattering_damping`` additionally reads ``_energy_grid.c``,
-    ``pdg2pref`` and ``_physics.muon_multiple_scattering``. Both are borrowed
+    ``pdg2pref`` and ``config.muon_multiple_scattering``. Both are borrowed
     unbound, so the production assembly runs — including the COO scatter, the
-    ``block_diag`` stitch and the ``kappa^2`` damping — with no database. The
-    two settings groups are the live views, so `assembly_config`'s
-    monkeypatches of the flat names still reach them.
+    ``block_diag`` stitch and the ``kappa^2`` damping — with no database;
+    `assembly_config` monkeypatches the globals they read.
 
     Three species of ``dim`` bins each, one of them a muon so the damping has
     somewhere to land. ``k_grid`` starts at ``kappa = 0``, as a real one does,
@@ -338,8 +331,6 @@ class _BlocksStub:
     _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
 
     def __init__(self, is_2d, n_k=3, dim=8):
-        self._grid = config.grid
-        self._physics = config.physics
         self.is_2d = is_2d
         self.n_k = n_k if is_2d else 1
         self.k_grid = np.arange(self.n_k, dtype=np.float64)
@@ -376,7 +367,7 @@ class _BlocksStub:
 
 @pytest.fixture
 def assembly_config(monkeypatch):
-    """Fix the globals `_csr_from_blocks` reads through its groups. The stub
+    """Fix the globals `_csr_from_blocks` reads. The stub
     has no database, so the Gaussian model (no medium composition) is used."""
     monkeypatch.setattr(config, "floatlen", np.float64)
     monkeypatch.setattr(config, "muon_multiple_scattering", True)
@@ -758,7 +749,6 @@ def _em_matrix(block, dim):
 
 
 class _EmStub:
-    _cfg = config
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
 
     def __init__(self, block, n_em, dim):

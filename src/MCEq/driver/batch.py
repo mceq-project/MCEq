@@ -5,6 +5,7 @@ from time import time
 
 import numpy as np
 
+from MCEq import config
 from MCEq.driver.results import MCEqBatchResult
 from MCEq.misc import info
 
@@ -13,9 +14,8 @@ def resolve_dtype(run, dtype=None, where="solve"):
     """The state dtype of a solve: ``dtype`` if given, else float32 when the
     kernel is CUDA and ``config.cuda_fp_precision`` is 32, else float64."""
     if dtype is None:
-        backend = run.config.backend
-        on_cuda = backend.kernel_config.lower() in ("cuda", "cuda_etd2")
-        fp = int(backend.cuda_fp_precision) if on_cuda else 64
+        on_cuda = config.kernel_config.lower() in ("cuda", "cuda_etd2")
+        fp = int(config.cuda_fp_precision) if on_cuda else 64
         if fp not in (32, 64):
             raise ValueError(f"config.cuda_fp_precision must be 32 or 64, got {fp}")
         dtype = np.float32 if fp == 32 else np.float64
@@ -29,7 +29,7 @@ def _warn_low_energy_cuda_fp32(run, dtype, sec_ops):
     """Warn for the low-energy CUDA/secant precision regime, without changing it."""
     if (
         dtype != np.dtype(np.float32)
-        or run.config.backend.kernel_config.lower() not in ("cuda", "cuda_etd2")
+        or config.kernel_config.lower() not in ("cuda", "cuda_etd2")
         or not run._mceq_db.is_2d
         or sec_ops is None
         or run.e_bins[0] > 0.1 * (1.0 + 1e-12)
@@ -89,7 +89,7 @@ def solve_batch(
     restored after the path build.
 
     For 2D databases the sec(theta) transport correction follows
-    ``config.secant_mode`` as in :meth:`solve`; one operator set serves
+    ``config.secant_theta_transport`` as in :meth:`solve`; one operator set serves
     every column.
 
     Examples::
@@ -227,7 +227,7 @@ def solve_batch(
         info(
             2,
             f"solve_batch: shared-path multi-RHS route, K={K}, "
-            f"kernel={run.config.backend.kernel_config}, nsteps={nsteps}",
+            f"kernel={config.kernel_config}, nsteps={nsteps}",
         )
         phi0_typed = phi0_mat.astype(dtype, copy=True)
         sol, grid_sol = run._run_etd2(
@@ -333,7 +333,7 @@ def solve_fullsky(
         :meth:`MCEqBatchResult.skymap`); with ``return_pixel_index``, the
         tuple ``(result, pixel_index)``.
     """
-    info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
+    info(2, f"solve_fullsky: kernel={config.kernel_config}")
     start = time()
 
     # Cutoff toggle: call argument, then instance setting, then atmosphere.
@@ -411,7 +411,6 @@ def solve_fullsky(
             )
         else:
             ck = dict(cutoff_kwargs or {})
-            ck.setdefault("paths", run._cfg.paths)
             rc_grid = get_cutoff_map(
                 run.density_model,
                 zenith_grid,
@@ -425,9 +424,7 @@ def solve_fullsky(
                     f"solve_fullsky: cutoff map size {rc_flat.size} "
                     f"does not match K={K}"
                 )
-            phi0_arr = build_phi0_with_cutoff(
-                run, primary, rc_flat, physics=run.config.physics
-            )
+            phi0_arr = build_phi0_with_cutoff(run, primary, rc_flat)
             phi0_is_2d = True
             info(
                 2,

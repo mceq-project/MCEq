@@ -29,7 +29,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       season (str,optional): see :func:`init_parameters`
     """
 
-    def __init__(self, location, season=None, environment=None):
+    def __init__(self, location, season=None):
         # Check if the atmosphere is available
         available_atmospheres = list_available_corsika_atmospheres()
         if (location, season) not in available_atmospheres:
@@ -42,7 +42,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         import MCEq.environment._ext.corsikaatm as corsika_acc
 
         self.corsika_acc = corsika_acc
-        EarthsAtmosphere.__init__(self, environment=environment)
+        EarthsAtmosphere.__init__(self)
 
     def init_parameters(self, location, season):
         """Initializes :attr:`_atm_param` by fetching the parameters from

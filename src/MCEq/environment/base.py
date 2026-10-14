@@ -4,15 +4,9 @@ from abc import ABCMeta, abstractmethod
 
 import numpy as np
 
+from MCEq import config
 from MCEq.environment.column import fit_column_splines
 from MCEq.misc import info
-
-
-def _default_environment_group():
-    """Return the global ``config.environment`` group."""
-    from importlib import import_module
-
-    return import_module("MCEq.config").environment
 
 
 class EarthsAtmosphere(metaclass=ABCMeta):
@@ -48,23 +42,20 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     depends_on_azimuth: bool = False
 
     def __init__(self, *args, **kwargs):
-        environment = kwargs.pop("environment", None)
-        if environment is None:
-            environment = _default_environment_group()
         geometry = kwargs.pop("geometry", None)
         if geometry is None:
             from MCEq.environment.geometry import EarthGeometry
 
             geometry = EarthGeometry(
-                r_E=environment.r_E,
-                h_atm=environment.h_atm,
-                h_obs=environment.h_obs,
+                r_E=config.r_E,
+                h_atm=config.h_atm,
+                h_obs=config.h_obs,
             )
         self.geom = geometry
         self.thrad = None
         self.theta_deg = None
         # Replaced by the density at the atmosphere top on ``set_theta``.
-        self._max_den = environment.max_density
+        self._max_den = config.max_density
         self.max_theta = 90.0
         self.location = None
         self.season = None

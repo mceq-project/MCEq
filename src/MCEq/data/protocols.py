@@ -25,7 +25,7 @@ yield matrix, which is hadronic/decay domain.
 The protocol is ``runtime_checkable`` so tests can assert membership of
 a table object structurally (``isinstance`` checks member presence, not
 signatures).
-"""#anfe: whyyyyy this is really horribly overengineered.
+"""  # anfe: whyyyyy this is really horribly overengineered.
 
 from typing import Any, Dict, List, Protocol, runtime_checkable
 

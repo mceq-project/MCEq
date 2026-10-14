@@ -6,6 +6,7 @@ from os.path import isfile, join
 
 import numpy as np
 
+from MCEq import config
 from MCEq.data import db_manifest, download, em_tables, hdf5_store
 from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
 from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
@@ -22,9 +23,7 @@ class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
     Reads the hadronic database and, when EM interactions are enabled, a
-    separate EM database. ``paths``, ``grid``, ``physics`` and ``em`` are the
-    settings groups it reads; ``medium=None`` means
-    ``physics.interaction_medium``.
+    separate EM database. ``medium=None`` means ``config.interaction_medium``.
     """
 
     @contextmanager
@@ -32,7 +31,7 @@ class HDF5Backend:
         """Scope hadronic and enabled EM reads to one handle per file."""
         with ExitStack() as stack:
             stack.enter_context(self._had.session())
-            if self._physics.enable_em:
+            if config.enable_em:
                 stack.enter_context(self._em_store.session())
             yield
 
@@ -87,36 +86,27 @@ class HDF5Backend:
         low_energy_model=None,
         he_le_transition=80.0,
         he_le_trwidth=0.3,
-        *,
-        paths,
-        grid,
-        physics,
-        em,
     ):
-        self._grid = grid
-        self._physics = physics
-        self._em = em
-        medium = physics.interaction_medium if medium is None else medium
+        medium = config.interaction_medium if medium is None else medium
 
-        info(2, "Opening HDF5 file", paths.mceq_db_fname)
-        self.had_fname = join(paths.data_dir, paths.mceq_db_fname)
+        info(2, "Opening HDF5 file", config.mceq_db_fname)
+        self.had_fname = join(config.data_dir, config.mceq_db_fname)
         if not isfile(self.had_fname):
             raise Exception(
-                f'MCEq DB file {paths.mceq_db_fname} not found in "data" directory.'
+                f'MCEq DB file {config.mceq_db_fname} not found in "data" directory.'
             )
         self._had = hdf5_store.HDF5Store(self.had_fname)
         # A release package (root attr ``mceq_db_manifest``) resolves models
         # it lacks through the release manifest; a monolithic file does not.
-        self._paths = paths
         self._packages = (
-            db_manifest.ModelStoreCache(paths, self._had, download)
+            db_manifest.ModelStoreCache(self._had, download)
             if "mceq_db_manifest" in self._had.attrs()
             else None
         )
 
-        self.em_fname = join(paths.data_dir, paths.em_db_fname)
-        if physics.enable_em and not isfile(self.em_fname):
-            _n = paths.em_db_fname
+        self.em_fname = join(config.data_dir, config.em_db_fname)
+        if config.enable_em and not isfile(self.em_fname):
+            _n = config.em_db_fname
             raise Exception(
                 f'Electromagnetic DB file {_n} not found in "data" directory.'
             )
@@ -124,7 +114,7 @@ class HDF5Backend:
 
         with self._read_session():
             # A pure electromagnetic database may use its own energy grid.
-            self._em_standalone = bool(grid.em_standalone_grid)
+            self._em_standalone = bool(config.em_standalone_grid)
             grid_store = self._em_store if self._em_standalone else self._had
 
             self.version = self._had.attrs().get("version", "1.0.0")
@@ -132,7 +122,7 @@ class HDF5Backend:
             ca = grid_store.attrs("common")
             self._e_grid_full = np.asarray(ca["e_grid"])
             self.min_idx, self.max_idx, self._cuts = _eval_energy_cuts(
-                ca["e_grid"], grid.e_min, grid.e_max
+                ca["e_grid"], config.e_min, config.e_max
             )
 
             self._energy_grid = EnergyGrid(
@@ -181,7 +171,7 @@ class HDF5Backend:
         relations = defaultdict(list)
         particle_list = []
         description = pack.description
-        mat_data = np.asarray(pack.data, dtype=self._grid.dtype)
+        mat_data = np.asarray(pack.data, dtype=config.floatlen)
         indptr_data = np.asarray(pack.indptrs)
         len_data = pack.len_data
         tuple_idcs = pack.tuple_idcs
@@ -192,7 +182,7 @@ class HDF5Backend:
         else:
             model_particles = sorted(list(set(tuple_idcs.flatten().tolist())))
 
-        exclude = self._physics.filters["disabled_particles"]
+        exclude = config.adv_set["disabled_particles"]
         read_idx = 0
         available_parents = [(pdg, parity) for (pdg, parity) in (tuple_idcs[:, :2])]
         available_parents = sorted(list(set(available_parents)))
@@ -244,7 +234,7 @@ class HDF5Backend:
                 [p[0] for p in eqv_lookup[parent_pdg]],
                 condition=bool(eqv),
             )
-            if self._physics.assume_nucleon_interactions_for_exotics:
+            if config.assume_nucleon_interactions_for_exotics:
                 # The stand-in shares this parent's matrix and `relations` list.
                 apply_equivalences(
                     eqv_lookup,
@@ -290,7 +280,7 @@ class HDF5Backend:
         store = self._model_store(mname, self.medium, had)
         if store is not None:
             return store, self.medium
-        if self._physics.fallback_to_air_cs and self.medium != "air":
+        if config.fallback_to_air_cs and self.medium != "air":
             store = self._model_store(mname, "air", had)
             if store is not None:
                 info(
@@ -301,9 +291,7 @@ class HDF5Backend:
                     ),
                 )
                 return store, "air"
-        raise db_manifest.missing_model_error(
-            self._paths, self._packages, mname, self.medium
-        )
+        raise db_manifest.missing_model_error(self._packages, mname, self.medium)
 
     def _he_le_weight(self):
         """:func:`MCEq.data.blending.he_le_weight` on this backend's settings."""
@@ -311,7 +299,7 @@ class HDF5Backend:
             self._energy_grid.c,
             self.he_le_transition,
             self.he_le_trwidth,
-            self._grid.dtype,
+            config.floatlen,
         )
 
     def _blend_interaction_dbs(self, he_index, le_index, he_name, le_name):
@@ -359,7 +347,7 @@ class HDF5Backend:
         elif (
             not self._had.has(f"{had}/{self.medium}")
             or not self._had.has(f"{had}/{self.medium}/{mname}")
-        ) and self._physics.fallback_to_air_cs:
+        ) and config.fallback_to_air_cs:
             self._check_subgroup_exists(self._had, f"{had}/air", mname)
             info(
                 1,
@@ -395,23 +383,23 @@ class HDF5Backend:
             int_index["bin_average"] = self._bin_average_marks(
                 store.attrs(f"{had}/{medium}/{mname}"),
                 "bin_average_projectiles",
-                eqv if self._physics.assume_nucleon_interactions_for_exotics else None,
+                eqv if config.assume_nucleon_interactions_for_exotics else None,
             )
 
         # Append electromagnetic interaction matrices from the EM database
-        if self._physics.enable_em:
+        if config.enable_em:
             medium = em_tables.medium_for_em(medium)
 
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
             em_group = em_tables.emca_group_path(
-                self._em_store, self.medium, "interaction_db", self._em.air_density
+                self._em_store, self.medium, "interaction_db", config.em_air_density
             )
             em_index = self._gen_db_dictionary(
                 self._em_store.read_channel_pack(em_group, "emca_mats"),
             )
-            if self._physics.muon_helicity_dependence:
+            if config.muon_helicity():
                 em_tables.helicity_duplicate(em_index)
 
             int_index["parents"] = sorted(int_index["parents"] + em_index["parents"])
@@ -442,7 +430,7 @@ class HDF5Backend:
                 "description": None,
             }
 
-        if self._physics.muon_helicity_dependence:
+        if config.muon_helicity():
             if decay_dset_name != "polarized":
                 info(
                     0,
@@ -482,9 +470,7 @@ class HDF5Backend:
         Stand-ins of :mod:`MCEq.data.equivalences` borrow the marks of the
         parent whose tables they use.
         """
-        if not getattr(self._physics, "bin_average_rates", True) or (
-            "bin_average_radius" not in attrs
-        ):
+        if not config.bin_average_rates or ("bin_average_radius" not in attrs):
             return None
         pdgs = {int(p) for p in attrs.get(key, ())}
         for stand_in, aliases in reverse_equivalences(equivalences or {}).items():
@@ -520,7 +506,7 @@ class HDF5Backend:
             direct = self._model_store(mname, medium, cs_root) is not None
             if (
                 not direct
-                and self._physics.fallback_to_air_cs
+                and config.fallback_to_air_cs
                 and self._model_store(mname, "air", cs_root) is not None
             ):
                 medium = "air"
@@ -532,7 +518,7 @@ class HDF5Backend:
                         mname = fallback
                         break
 
-        filters = self._physics.filters
+        filters = config.adv_set
         if filters["forced_int_cs"] is not None:
             mname = filters["forced_int_cs"]
             info(1, "All interaction cross sections forced to", mname)
@@ -547,9 +533,7 @@ class HDF5Backend:
             cs_store = self._model_store(mname, medium, "cross_sections")
             if cs_store is None:
                 if self._packages is not None:
-                    raise db_manifest.missing_model_error(
-                        self._paths, self._packages, mname, medium
-                    )
+                    raise db_manifest.missing_model_error(self._packages, mname, medium)
                 self._check_subgroup_exists(self._had, "cross_sections", medium)
                 self._check_subgroup_exists(
                     self._had, f"cross_sections/{medium}", mname
@@ -575,7 +559,7 @@ class HDF5Backend:
             if mes_store is None:
                 if self._packages is not None:
                     raise db_manifest.missing_model_error(
-                        self._paths, self._packages, mname_mesons, medium
+                        self._packages, mname_mesons, medium
                     )
                 self._check_subgroup_exists(self._had, "cross_sections", medium)
                 self._check_subgroup_exists(
@@ -592,12 +576,12 @@ class HDF5Backend:
                     index_d[p] = mes_cs_data[self._cuts, ip]
 
         # Append electromagnetic interaction cross sections from the EM database
-        if self._physics.enable_em:
+        if config.enable_em:
             info(2, "Injecting EM cross sections into cs_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", medium)
             em_cs_group = em_tables.em_cs_group_path(
-                self._em_store, medium, "cs_db", self._em.air_density
+                self._em_store, medium, "cs_db", config.em_air_density
             )
             em_cs, em_cs_attrs = self._em_store.read_table(f"{em_cs_group}/cs")
             em_parents = list(em_cs_attrs["projectiles"])
@@ -612,7 +596,7 @@ class HDF5Backend:
 
     def continuous_loss_db(self):
         self._check_subgroup_exists(self._had, "continuous_losses", self.medium)
-        if self._physics.enable_em or not self._physics.enable_cont_rad_loss:
+        if config.enable_em or not config.enable_cont_rad_loss:
             loss_case = "ionization"
         else:
             loss_case = "total"

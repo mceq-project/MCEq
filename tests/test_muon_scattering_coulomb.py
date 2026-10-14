@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy.special import k1
 
+from MCEq import config
 from MCEq.data.hdf5_backend import HDF5Backend
 from MCEq.data.hdf5_store import HDF5Store
 from MCEq.operators import scattering
@@ -118,16 +119,16 @@ def test_reject_invalid_composition(tmp_path, corrupt):
         _backend(path).scattering_composition()
 
 
-def test_all_muon_charges_helicities_and_operator_placement(db):
+def test_all_muon_charges_helicities_and_operator_placement(monkeypatch, db):
     k_grid = np.array([0.0, 10.0])
     e_kin = np.array([1.0, 10.0])
     builder = MatrixBuilder.__new__(MatrixBuilder)
     builder.is_2d, builder.n_k, builder.k_grid = True, 2, k_grid
     builder._layout = _backend(db)
-    builder._physics = SimpleNamespace(
-        muon_multiple_scattering=True, muon_scattering_model="screened-coulomb"
-    )
-    builder._grid = SimpleNamespace(dtype=np.float64)
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", "screened-coulomb")
+    monkeypatch.setattr(config, "muon_scattering_finite_nuclei", True)
+    monkeypatch.setattr(config, "floatlen", np.float64)
     builder._energy_grid = SimpleNamespace(c=e_kin, d=2)
     particles = {
         (pdg, hel): SimpleNamespace(lidx=2 * i, mceqidx=i, mass=MUON_MASS)
@@ -150,12 +151,12 @@ def test_all_muon_charges_helicities_and_operator_placement(db):
     assert matrix.nnz == 12
 
 
-def test_unknown_model_raises(db):
+def test_unknown_model_raises(monkeypatch, db):
     builder = MatrixBuilder.__new__(MatrixBuilder)
     builder.is_2d, builder.k_grid = True, np.array([0.0, 10.0])
-    builder._physics = SimpleNamespace(
-        muon_multiple_scattering=True, muon_scattering_model="moliere"
-    )
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", "moliere")
+    monkeypatch.setattr(config, "muon_scattering_finite_nuclei", True)
     builder._energy_grid = SimpleNamespace(c=np.array([1.0, 10.0]))
 
     class Pman(dict):
@@ -168,15 +169,15 @@ def test_unknown_model_raises(db):
         builder._muon_scattering_damping()
 
 
-def test_scattering_model_invalidates_split_assembly():
+def test_scattering_model_invalidates_split_assembly(monkeypatch):
     builder = MatrixBuilder.__new__(MatrixBuilder)
     builder.is_2d = True
-    builder._grid = SimpleNamespace(dtype=None)
-    builder._physics = SimpleNamespace(
-        muon_multiple_scattering=True, muon_scattering_model="gaussian"
-    )
+    monkeypatch.setattr(config, "floatlen", None)
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", "gaussian")
+    monkeypatch.setattr(config, "muon_scattering_finite_nuclei", True)
     old_key = builder._current_assembly_key()
-    builder._physics.muon_scattering_model = "screened-coulomb"
+    monkeypatch.setattr(config, "muon_scattering_model", "screened-coulomb")
     assert old_key != builder._current_assembly_key()
 
 
@@ -379,16 +380,16 @@ def test_gaussian_mode_rates():
 
 
 @pytest.mark.parametrize("model", ["screened-coulomb", "gaussian"])
-def test_legendre_operator_placement(db, model):
+def test_legendre_operator_placement(monkeypatch, db, model):
     """The muon diagonals carry the exact per-l rate of either model."""
     l_grid, e_kin = np.array([0.0, 1.0, 67.0]), np.array([0.5, 50.0])
     builder = MatrixBuilder.__new__(MatrixBuilder)
     builder.is_2d, builder.n_k, builder.k_grid = True, 3, l_grid
     builder._layout = _backend(db)
-    builder._physics = SimpleNamespace(
-        muon_multiple_scattering=True, muon_scattering_model=model
-    )
-    builder._grid = SimpleNamespace(dtype=np.float64)
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "muon_scattering_model", model)
+    monkeypatch.setattr(config, "muon_scattering_finite_nuclei", True)
+    monkeypatch.setattr(config, "floatlen", np.float64)
     builder._energy_grid = SimpleNamespace(c=e_kin, d=2)
     muon = SimpleNamespace(lidx=0, mceqidx=0, mass=MUON_MASS)
 

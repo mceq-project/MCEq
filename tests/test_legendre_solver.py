@@ -68,7 +68,9 @@ def _reference(s, ri, S, X, phi0):
 
 
 def _secant_ops():
-    return build_secant_kernel_ops(L_GRID, np.logspace(-2, 1, N_E), N_SP, SPEC)
+    return build_secant_kernel_ops(
+        L_GRID, np.logspace(-2, 1, N_E), N_SP, SPEC.cap_deg, e_max=SPEC.e_max
+    )
 
 
 def _solve(s, sec_ops, ri, X, phi0, nsteps=4000, backend="numpy", fp=64):

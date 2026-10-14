@@ -71,7 +71,7 @@ def test_rate_operator_refuses_a_non_uniform_grid():
 def _particle(pdg):
     c = np.sqrt(E_BINS[1:] * E_BINS[:-1])
     grid = energy_grid(c=c, b=E_BINS, w=np.diff(E_BINS), d=len(c))
-    return MCEqParticle(pdg, 0, energy_grid=grid, physics=config.physics)
+    return MCEqParticle(pdg, 0, energy_grid=grid)
 
 
 def test_particle_operators_need_the_marks():

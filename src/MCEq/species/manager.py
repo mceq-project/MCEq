@@ -5,6 +5,7 @@ from math import copysign
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import average_A_target, info, print_in_rows
 from MCEq.species.constants import _pdata
 from MCEq.species.particle import MCEqParticle
@@ -12,9 +13,6 @@ from MCEq.species.particle import MCEqParticle
 
 class ParticleManager:
     """Database for objects of :class:`MCEqParticle`.
-
-    ``physics`` is the settings group (``config.physics``) that this manager and
-    every particle it builds read their filters and switches from.
 
     Authors:
         Anatoli Fedynitch (DESY)
@@ -27,10 +25,8 @@ class ParticleManager:
         energy_grid,
         cs_db,
         medium=None,
-        *,
-        physics,
     ):
-        medium = physics.interaction_medium if medium is None else medium
+        medium = config.interaction_medium if medium is None else medium
         #: Energy-grid object containing centers, edges, widths, and bin count
         self._energy_grid = energy_grid
         # Particle index shortcuts
@@ -58,8 +54,6 @@ class ParticleManager:
         self._cs_db = cs_db
         # Medium
         self._medium = medium
-        # Settings group, handed on to every MCEqParticle built here
-        self._physics = physics
         # Applied tracking relations, reapplied when models change
         self.tracking_relations = []
         # Requested tracking definitions, including user requests and
@@ -132,11 +126,7 @@ class ParticleManager:
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
-            elif (
-                self._physics.generic_losses_all_charged
-                and p.is_charged
-                and not p.is_em
-            ):
+            elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
                 # Stopping power dEdX is almost the same for all charged particles.
                 # What changes is gamm*beta. We interpolate the dEdX tables
                 # stored for protons to different energy grids.
@@ -366,7 +356,6 @@ class ParticleManager:
                 self._energy_grid,
                 self._cs_db,
                 A_target=average_A_target(self._medium),
-                physics=self._physics,
             )
             for pdg, hel in particles
         ]
@@ -461,7 +450,7 @@ class ParticleManager:
 
         info(10, "Restoring tracking particle setup")
 
-        if not self.tracking_relations and self._physics.enable_default_tracking:
+        if not self.tracking_relations and config.enable_default_tracking:
             self._init_default_tracking()
             return
 
@@ -498,7 +487,7 @@ class ParticleManager:
             )
 
         # Track prompt leptons
-        prompt_ctau = self._physics.prompt_ctau
+        prompt_ctau = config.prompt_ctau
         self.track_leptons_from(
             [p.pdg_id for p in self.all_particles if p.ctau < prompt_ctau],
             "prcas_",

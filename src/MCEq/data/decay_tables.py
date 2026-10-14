@@ -1,5 +1,6 @@
 """Decay yield matrices."""
 
+from MCEq import config
 from MCEq.misc import info
 
 
@@ -10,14 +11,13 @@ class Decays:
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
     """
 
-    def __init__(self, mceq_hdf_db, override_decay_db_name=None, *, physics):
-        self._physics = physics
+    def __init__(self, mceq_hdf_db, override_decay_db_name=None):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         self._default_decay_dset = override_decay_db_name
 
         if self._default_decay_dset is None:
-            if self._physics.muon_helicity_dependence:
+            if config.muon_helicity():
                 self._default_decay_dset = "polarized"
             else:
                 self._default_decay_dset = "unpolarized"

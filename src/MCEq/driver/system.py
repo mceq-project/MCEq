@@ -7,23 +7,6 @@ from MCEq.operators.matrix_builder import MatrixBuilder
 from MCEq.species.manager import ParticleManager
 
 
-def run_physics_view(cfg=None):
-    """Physics settings of a run, with muon helicity off when EM is on.
-
-    The L/R muon rows have no diagonal damping and destabilize the EM
-    cascade. The returned view is a read-only copy; the config is not written.
-    """
-    physics = config.physics if cfg is None else cfg.physics
-    if physics.enable_em and physics.muon_helicity_dependence:
-        info(
-            1,
-            "enable_em: forcing muon_helicity_dependence=False "
-            "(helicity rows destabilize the EM cascade).",
-        )
-        return physics.with_overrides(muon_helicity_dependence=False)
-    return physics
-
-
 class CascadeSystem:
     """Tables, particle manager and matrices for one interaction model.
 
@@ -44,27 +27,20 @@ class CascadeSystem:
         low_energy_model,
         he_le_transition,
         he_le_trwidth,
-        cfg=None,
     ):
-        self._cfg = config if cfg is None else cfg
         self.medium = medium
-        self._physics = run_physics_view(cfg)
+        if config.enable_em and config.muon_helicity_dependence:
+            info(1, "enable_em: helicity-dependent muon decays are switched off.")
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=medium,
             low_energy_model=low_energy_model,
             he_le_transition=he_le_transition,
             he_le_trwidth=he_le_trwidth,
-            paths=self._cfg.paths,
-            grid=self._cfg.grid,
-            physics=self._physics,
-            em=self._cfg.em,
         )
 
         with self._mceq_db._read_session():
             #: Interface to interaction tables of the HDF5 database
-            self._interactions = MCEq.data.Interactions(
-                mceq_hdf_db=self._mceq_db, physics=self._physics
-            )
+            self._interactions = MCEq.data.Interactions(mceq_hdf_db=self._mceq_db)
 
             #: Cross-section data managed by :class:`MCEq.data.InteractionCrossSections`
             self._int_cs = MCEq.data.InteractionCrossSections(
@@ -72,14 +48,10 @@ class CascadeSystem:
             )
 
             #: Continuous-energy-loss data managed by :class:`MCEq.data.ContinuousLosses`
-            self._cont_losses = MCEq.data.ContinuousLosses(
-                mceq_hdf_db=self._mceq_db, physics=self._physics
-            )
+            self._cont_losses = MCEq.data.ContinuousLosses(mceq_hdf_db=self._mceq_db)
 
             #: Interface to decay tables of the HDF5 database
-            self._decays = MCEq.data.Decays(
-                mceq_hdf_db=self._mceq_db, physics=self._physics
-            )
+            self._decays = MCEq.data.Decays(mceq_hdf_db=self._mceq_db)
 
         #: Particle manager (initialized/updated in reload_for_model)
         self.pman = None
@@ -125,7 +97,7 @@ class CascadeSystem:
 
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = strip_em_species(
-                self._interactions.particles + self._decays.particles, self._physics
+                self._interactions.particles + self._decays.particles
             )
             # Create particle database
             self.pman = ParticleManager(
@@ -133,18 +105,11 @@ class CascadeSystem:
                 self._energy_grid,
                 self._int_cs,
                 self.medium,
-                physics=self._physics,
             )
             self.pman.set_interaction_model(self._int_cs, self._interactions)
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
-            self.matrix_builder = MatrixBuilder(
-                self.pman,
-                self._mceq_db,
-                grid=self._cfg.grid,
-                losses=self._cfg.losses,
-                physics=self._physics,
-            )
+            self.matrix_builder = MatrixBuilder(self.pman, self._mceq_db)
 
         else:
             info(10, "Updating particle list.")
@@ -155,7 +120,7 @@ class CascadeSystem:
                 self._interactions.load(interaction_model, parent_list=particle_list)
             self._decays.load(parent_list=self._interactions.particles)
             self._particle_list = strip_em_species(
-                self._interactions.particles + self._decays.particles, self._physics
+                self._interactions.particles + self._decays.particles
             )
             self.pman.set_interaction_model(
                 self._int_cs,

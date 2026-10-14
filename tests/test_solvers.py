@@ -1989,7 +1989,6 @@ class _StubMCEq:
 
     # Borrow the real methods under test (unbound) so the stub exercises the
     # exact production code paths, including their internal self-calls.
-    _cfg = config
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
     _em_cascade_dx_cap = MCEqRun._em_cascade_dx_cap
     _calculate_integration_path = MCEqRun._calculate_integration_path

@@ -121,11 +121,11 @@ def legendre_coupling(l_grid, theta_cap_deg):
     return T
 
 
-def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=None):
+def build_secant_kernel_ops(l_grid, e_centers, n_species, theta_cap_deg, e_max=None):
     """Assemble the constant data the secant ETD2RK kernel needs.
 
-    ``spec`` is the ``secant`` config group (``cap_deg``, ``e_max``);
-    ``theta_cap_deg`` overrides ``spec.cap_deg`` and must lie in [0, 90).
+    ``theta_cap_deg`` lies in [0, 90); the coupling applies to state columns
+    with E_kin < ``e_max`` (all if None).
 
     Returns a dict with::
 
@@ -138,13 +138,11 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
                     its invariant subspace (:func:`_canonical_basis`); the
                     cluster spread and pair rotation stay off-diagonal
       low_e_idx  -- state columns (species x energy) with
-                    E_kin < spec.e_max
+                    E_kin < e_max
       n_k        -- number of angular modes
     """
     from MCEq.operators.legendre import dense_count
 
-    if theta_cap_deg is None:
-        theta_cap_deg = spec.cap_deg
     theta_cap_deg = float(theta_cap_deg)
     T = legendre_coupling(l_grid, theta_cap_deg)
     P = np.arange(dense_count(l_grid))
@@ -168,8 +166,6 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, spec, theta_cap_deg=No
         f"{np.linalg.cond(V):.1e}",
     )
 
-    # e_max is optional: absent or None couples every energy.
-    e_max = getattr(spec, "e_max", None)
     e_centers = np.asarray(e_centers)
     if e_max is None:
         low_e = np.ones(len(e_centers), dtype=bool)

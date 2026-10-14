@@ -331,13 +331,13 @@ def _get_solution_from_state(
       particle_name (str): see :meth:`get_solution`.
       mag, integrate, return_as, dont_sum_helicities: see
         :meth:`get_solution`. ``return_as=None`` resolves to
-        ``run._cfg.output.return_as``.
+        ``config.return_as``.
 
     Returns:
       (np.ndarray): flux of particles on energy grid :attr:`e_grid`
     """
     if return_as is None:
-        return_as = run._cfg.output.return_as
+        return_as = config.return_as
 
     res = np.zeros(run._energy_grid.d)
     ref = run.pman.pname2pref
@@ -361,7 +361,7 @@ def _get_solution_from_state(
                 continue
             result += sol[ref[prefix + ls].lidx : ref[prefix + ls].uidx]
             nsuccess += 1
-        if nsuccess == 0 and run._cfg.output.excpt_on_missing_particle:
+        if nsuccess == 0 and config.excpt_on_missing_particle:
             raise Exception(f"Requested particle {particle_name} not found.")
         return result
 
@@ -378,7 +378,7 @@ def _get_solution_from_state(
         "prcas_",
         "prres_",
     ]
-    if not run._cfg.physics.enable_default_tracking:
+    if not config.enable_default_tracking:
         for track_pref in default_tracking_prefixes:
             if particle_name.startswith(track_pref):
                 raise Exception(
@@ -417,7 +417,7 @@ def _get_solution_from_state(
         try:
             res = sum_lr(particle_name, prefix="")
         except KeyError:
-            if run._cfg.output.excpt_on_missing_particle:
+            if config.excpt_on_missing_particle:
                 raise Exception(f"Requested particle {particle_name} not found.")
             else:
                 info(1, f"Requested particle {particle_name} not found.")

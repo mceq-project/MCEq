@@ -6,17 +6,17 @@ the group exists, otherwise ``total/hadron``.
 
 import numpy as np
 
+from MCEq import config
+
 
 class ContinuousLosses:
     """Manage stopping-power arrays loaded from ``mceq_hdf_db``.
 
     Args:
       mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
-      physics: physics settings group used to select the loss case
     """
 
-    def __init__(self, mceq_hdf_db, *, physics):
-        self._physics = physics
+    def __init__(self, mceq_hdf_db):
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: Energy grid of the backend
@@ -60,10 +60,10 @@ class ContinuousLosses:
         index = self.mceq_db.continuous_loss_db()
         self.parents = index["parents"]
         self.index_d = index["index_d"]
-        if "generic" not in index and self._physics.generic_losses_all_charged:
+        if "generic" not in index and config.generic_losses_all_charged:
             raise Exception("New data file needed to support generic losses.")
         generic = index["generic"]
-        if "generic" in index and self._physics.enable_em:
+        if "generic" in index and config.enable_em:
             ionization = self._ionization_hadron_curve()
             if ionization is not None:
                 generic = ionization

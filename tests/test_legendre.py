@@ -270,9 +270,7 @@ def test_wide_secant_eigenbasis(cap):
     ``b/a`` up to 2.4e-7; the real basis keeps their 2x2 rotation, and the
     spread of a cluster, off the diagonal and stays well conditioned, down to
     ``S_P = I`` at cap 0."""
-    ops = build_secant_kernel_ops(
-        L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
-    )
+    ops = build_secant_kernel_ops(L_GRID, np.logspace(-1, 3, 5), 2, cap)
     v, vi, lam = ops["V"], ops["Vi"], ops["lam"]
     s_p = np.eye(len(lam)) + ops["T_PP"]
     assert np.linalg.cond(v) < 1e4
@@ -299,7 +297,7 @@ def test_secant_basis_independent_of_blas_threads(cap):
     bases = []
     for threads in (1, 4):
         with threadpool_limits(limits=threads):
-            ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+            ops = build_secant_kernel_ops(L_GRID, [1.0], 1, cap)
         bases.append(ops["V"])
     np.testing.assert_allclose(bases[0], bases[1], rtol=0, atol=1e-9)
 
@@ -309,7 +307,7 @@ def test_wide_secant_cap_sweep():
     """Every cap in [0, 90) on a 0.1 deg lattice builds on the 90-mode grid
     (about 5 min)."""
     for cap in np.arange(0.0, 90.0, 0.1):
-        ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+        ops = build_secant_kernel_ops(L_GRID, [1.0], 1, cap)
         assert np.linalg.cond(ops["V"]) < 1e4
 
 

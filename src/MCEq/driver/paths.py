@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from MCEq import config
 from MCEq.misc import info
 from MCEq.operators.stiffness import LOSS_STEP_SAFETY, continuous_loss_rate
 from MCEq.solvers.path import em_cascade_dx_cap as path_em_cascade_dx_cap
@@ -9,8 +10,8 @@ from MCEq.solvers.path import etd2_nonuniform_path
 
 
 def em_cascade_dx_cap(run, r_em):
-    """EM step cap for the stiffness ``r_em`` and ``run.config.em``, or np.inf."""
-    return path_em_cascade_dx_cap(r_em, run.config.em)
+    """EM step cap for the stiffness ``r_em``, or np.inf."""
+    return path_em_cascade_dx_cap(r_em)
 
 
 def continuous_loss_dx_cap(run):
@@ -54,9 +55,8 @@ def calculate_integration_path(
 
     ``dX_max`` is capped by the continuous-loss and EM stiffness limits.
     """
-    solver = run.config.solver
-    p = solver.etd2_path
-    X_start = solver.X_start if X_start is None else X_start
+    p = config.etd2_path
+    X_start = config.X_start if X_start is None else X_start
     eps = p["eps"] if eps is None else eps
     dX_max = p["dX_max"] if dX_max is None else dX_max
     if eps is None or dX_max is None:
@@ -109,7 +109,6 @@ def calculate_integration_path(
         dX_min=dX_min,
         fd_span=fd_span,
         int_grid=int_grid,
-        step=solver,
     )
 
 

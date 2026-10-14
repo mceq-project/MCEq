@@ -52,14 +52,7 @@ class FakeTable:
 
 
 def _particle(pdg_id=(2212, 0)):
-    from MCEq import config
-
-    return MCEqParticle(
-        pdg_id[0],
-        pdg_id[1],
-        init_pdata_defaults=False,
-        physics=config.physics,
-    )
+    return MCEqParticle(pdg_id[0], pdg_id[1], init_pdata_defaults=False)
 
 
 class TestProtocolMembership:

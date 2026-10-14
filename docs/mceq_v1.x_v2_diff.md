@@ -1553,7 +1553,7 @@ tables.
 ### Low-energy step safety
 
 ETD2 selects its default path settings from the assembled system. With
-`eps=None` and `dX_max=None` in `config.solver.etd2_path`, 1D hadronic/lepton
+`eps=None` and `dX_max=None` in `config.etd2_path`, 1D hadronic/lepton
 transport uses `eps=0.03`, `dX_max=5` g/cm²; a 2D database or retained electron
 states uses `eps=0.01`, `dX_max=2`. An explicit number in the configuration
 or solve call overrides that choice. Standalone path construction, which has

@@ -230,19 +230,17 @@ def test_solve_2d_sibyll_via_model_file(gh_fetch, monkeypatch):
 def test_2d_low_energy_convergence(monkeypatch, tmp_path):
     """Full production grid; finite output alone missed the previous blowup."""
     from MCEq import config
-    from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
 
-    monkeypatch.setattr(config.paths, "mceq_db_fname", str(package("2d")))
-    monkeypatch.setattr(config.paths, "data_dir", tmp_path)
-    monkeypatch.setattr(config.debug, "level", 0)
+    monkeypatch.setattr(config, "mceq_db_fname", str(package("2d")))
+    monkeypatch.setattr(config, "data_dir", tmp_path)
+    monkeypatch.setattr(config, "debug_level", 0)
     run = MCEqRun(
         interaction_model="FLUKA20251",
         low_energy_model=None,
         primary_model=None,
         theta_deg=30.0,
         density_model=("CORSIKA", ("USStd", None)),
-        config=RunConfig.snapshot(),
     )
     try:
         assert run.e_grid[0] < 0.15

@@ -15,7 +15,7 @@ from MCEq.operators.legendre import backward_removal, dense_count
 def _removal(run):
     if not getattr(getattr(run, "_mceq_db", None), "is_2d", False):
         return False
-    return bool(getattr(run, "_cfg", config).secant.legendre_removal)
+    return bool(config.legendre_backward_removal)
 
 
 def inputs(run):
@@ -27,7 +27,7 @@ def inputs(run):
 
 def extras(run):
     """``band`` and ``mode_mix`` keywords of ``compile_operator``, empty for
-    1D databases or with ``secant.legendre_removal`` off."""
+    1D databases or with ``config.legendre_backward_removal`` off."""
     if not _removal(run):
         return {}
     n_d = dense_count(run._mceq_db.k_grid)

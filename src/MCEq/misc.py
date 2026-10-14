@@ -1,27 +1,7 @@
 import sys
 from types import ModuleType
 
-#: Settings views, resolved and cached on first use by :func:`_views`.
-#: ``info``/``print_in_rows``/``caller_name`` read the ``debug`` group,
-#: ``average_A_target`` the ``physics`` one. ``misc`` never imports
-#: ``MCEq.config`` statically -- util sits below config in the layering, and
-#: the C5 ledger line for this module dies with this mechanism. The lazy
-#: path goes through :func:`importlib.import_module`, mirroring the
-#: ``sys.modules`` indirection ``config/groups.py`` already uses. #anfe: comment includes references to unrelated codebase "C5"
-_DEBUG = None
-_PHYSICS = None
-# anfe: why do we need this mechanism at all?
-
-
-def _views():
-    global _DEBUG, _PHYSICS
-    if _DEBUG is None:
-        from importlib import import_module
-
-        cfg = import_module("MCEq.config")
-        _DEBUG, _PHYSICS = cfg.debug, cfg.physics
-    return _DEBUG, _PHYSICS
-
+from MCEq import config
 
 #: Compatibility names that moved into the :mod:`MCEq.data` package and stay
 #: reachable here, each mapped to the submodule that owns it now. `misc` is
@@ -130,33 +110,23 @@ _target_masses = {
 }
 
 
-def average_A_target(
-    mat="auto", physics=None
-):  # anfe: this function is kind of crazy for just reading the number from the dictionary, no?
-    """Average target mass number of a medium.
+def average_A_target(mat="auto"):
+    """Mean target mass number per atom of medium ``mat``.
 
-    Args:
-        mat (str or float): medium name (one of ``_target_masses``), a mass
-            number, or "auto" for ``config.A_target``, which in turn may be
-            "auto" for ``config.interaction_medium``.
-        physics: settings group that "auto" reads; default the live config.
-
-    Returns:
-        float: mean mass number per target atom.
+    ``mat`` is a name from ``_target_masses``, a mass number, or "auto" for
+    ``config.A_target``, which may itself be "auto" for
+    ``config.interaction_medium``.
     """
-    if isinstance(mat, str) and mat.lower() == "auto":
-        if physics is None:
-            physics = _views()[1]
-        mat = physics.A_target
-        if isinstance(mat, str) and mat.lower() == "auto":
-            mat = physics.interaction_medium
+    if str(mat).lower() == "auto":
+        mat = config.A_target
+    if str(mat).lower() == "auto":
+        mat = config.interaction_medium
+    if isinstance(mat, (int, float)):
+        return float(mat)
     if isinstance(mat, str) and mat.lower() in _target_masses:
         return _target_masses[mat.lower()]
-    if isinstance(mat, float) or isinstance(mat, int):
-        return float(mat)
     raise ValueError(
-        "config.A_target is expected to be a "
-        + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
+        f"config.A_target must be a number, 'auto' or one of {list(_target_masses)}"
     )
 
 
@@ -164,7 +134,7 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     """Prints contents of a list in rows `n_cols`
     entries per row.
     """
-    if min_dbg_level > _views()[0].level:
+    if min_dbg_level > config.debug_level:
         return
 
     ls = len(str_list)
@@ -191,7 +161,7 @@ EM_PDG_IDS = (
 
 
 def strip_em_species(
-    particle_list, physics
+    particle_list,
 ):  # anfe: this function is used twice, but it should be handled rather not by stripping the EM species later. The list should be build without EM species if EM is not switched on. So remove this module and work carefully the disabled em logic into particle manager.
     """Leave the electromagnetic species out unless the cascade is on.
 
@@ -200,7 +170,7 @@ def strip_em_species(
     databases carry the channels either way; this decides only what the
     solver propagates.
     """
-    if physics.enable_em:
+    if config.enable_em:
         return particle_list
     return [p for p in particle_list if p[0] not in EM_PDG_IDS]
 
@@ -237,7 +207,7 @@ def caller_name(skip=2):
 
     name = []
 
-    if _views()[0].print_module:
+    if config.print_module:
         modname = frame.f_globals.get("__name__")
         if modname:
             name.append(modname + ".")
@@ -277,13 +247,12 @@ def info(min_dbg_level, *message, **kwargs):
     condition = kwargs.pop("condition", True)
     blank_caller = kwargs.pop("blank_caller", False)
     no_caller = kwargs.pop("no_caller", False)
-    dbg = _views()[0]
-    if dbg.override_fcn and min_dbg_level < dbg.override_max_level:
+    if config.override_debug_fcn and min_dbg_level < config.override_max_level:
         fcn_name = caller_name(skip=2).split("::")[-1].split("():")[0]
-        if fcn_name in dbg.override_fcn:
+        if fcn_name in config.override_debug_fcn:
             min_dbg_level = 0
 
-    if condition and min_dbg_level <= _views()[0].level:
+    if condition and min_dbg_level <= config.debug_level:
         message = [str(m) for m in message]
         cname = caller_name() if not no_caller else ""
         if blank_caller:

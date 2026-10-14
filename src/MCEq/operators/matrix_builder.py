@@ -32,6 +32,7 @@ from itertools import product
 import numpy as np
 import scipy.sparse as sp
 
+from MCEq import config
 from MCEq.misc import info
 from MCEq.operators import loss_stencil, scattering
 from MCEq.species import bin_average
@@ -52,14 +53,10 @@ class MatrixBuilder:
 
     ``pman`` holds the cascade species, their yields and the energy grid.
     ``layout`` supplies ``is_2d``, ``n_k`` and ``k_grid``: a per-channel block
-    is ``(dim, dim)`` or one slab per Legendre mode. ``grid``, ``losses`` and
-    ``physics`` are the settings groups the builder reads.
+    is ``(dim, dim)`` or one slab per Legendre mode.
     """
 
-    def __init__(self, pman, layout, *, grid, losses, physics):
-        self._grid = grid
-        self._losses = losses
-        self._physics = physics
+    def __init__(self, pman, layout):
         self._pman = pman
         self._layout = layout
         self.is_2d = layout.is_2d
@@ -128,19 +125,19 @@ class MatrixBuilder:
                     [self.max_lint, np.max(parent.inverse_interaction_length())]
                 )
                 self.C_blocks[idx] = bin_average.apply_rate(
-                    self.C_blocks[idx], parent, "int", int_rates, self._grid.dtype
+                    self.C_blocks[idx], parent, "int", int_rates, config.floatlen
                 )
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
                 pid = abs(parent.pdg_id[0])
-                if self._physics.enable_energy_loss:
+                if config.enable_energy_loss:
                     if (
                         pid == 13
-                        or (self._physics.enable_em_ion and pid == 11)
-                        or (self._physics.generic_losses_all_charged and pid != 11)
+                        or (config.enable_em_ion and pid == 11)
+                        or (config.generic_losses_all_charged and pid != 11)
                     ):
                         info(5, "Cont. loss for", parent.name)
-                        if self._physics.enable_cont_rad_loss:
+                        if config.enable_cont_rad_loss:
                             # Stash the band and the pre-band block for the
                             # int_m_hadr / dEdx_band split.
                             band = self.cont_loss_operator(parent.pdg_id)
@@ -187,7 +184,7 @@ class MatrixBuilder:
                 )
 
                 self.D_blocks[idx] = bin_average.apply_rate(
-                    self.D_blocks[idx], parent, "dec", dec_rates, self._grid.dtype
+                    self.D_blocks[idx], parent, "dec", dec_rates, config.floatlen
                 )
 
             self.dec_m = self._csr_from_blocks(self.D_blocks)
@@ -206,16 +203,16 @@ class MatrixBuilder:
 
     def _average_operator(self, op_mat):
         """Averages the continuous loss operator by performing
-        ``int(1 / losses.step_for_average)`` repeated finite updates of the
+        ``int(1 / config.loss_step_for_average)`` repeated finite updates of the
         configured size."""
 
-        n_steps = int(1.0 / self._losses.step_for_average)
+        n_steps = int(1.0 / config.loss_step_for_average)
         info(
             10,
             f"Averaging continuous loss using {n_steps} intermediate steps.",
         )
 
-        op_step = np.eye(self._energy_grid.d) + op_mat * self._losses.step_for_average
+        op_step = np.eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
         return np.linalg.matrix_power(op_step, n_steps) - np.eye(self._energy_grid.d)
 
     def cont_loss_operator(self, pdg_id):
@@ -229,7 +226,7 @@ class MatrixBuilder:
             op.dot(np.diag(self._pman[pdg_id].dEdX))
         )
 
-        if self._losses.average_operator:
+        if config.average_loss_operator:
             return self._average_operator(op_mat)
         return op_mat
 
@@ -256,7 +253,7 @@ class MatrixBuilder:
 
     def _closure_rows_for(self, pdg_id):
         """Leading upwind-closure rows of one particle's loss band (0 unless ``expfit_low_upwind*``)."""
-        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
+        method = config.loss_stencil_method
         if not str(method).startswith("expfit_low_upwind"):
             return 0
         return self._upwind_rows_for(pdg_id)
@@ -264,7 +261,7 @@ class MatrixBuilder:
     def _differential_operator_for(self, pdg_id):
         """The ``d/du`` operator for one particle: :attr:`op_matrix`, or a cached
         ``expfit_low_upwind*`` variant with that particle's upwind row count."""
-        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
+        method = config.loss_stencil_method
         if not str(method).startswith("expfit_low_upwind"):
             return self.op_matrix
         n_rows = self._upwind_rows_for(pdg_id)
@@ -276,9 +273,9 @@ class MatrixBuilder:
                 self._energy_grid.b,
                 int(self._energy_grid.d),
                 method=method,
-                alpha0=getattr(self._losses, "stencil_alpha0", 3.0),
+                alpha0=config.loss_stencil_alpha0,
                 low_upwind_rows=n_rows,
-                dtype=self._grid.dtype,
+                dtype=config.floatlen,
             )
             self._adaptive_ops[n_rows] = cached
         return cached
@@ -295,18 +292,12 @@ class MatrixBuilder:
 
     def _current_assembly_key(self):
         """Settings an assembly reads that the blocks do not carry: dtype and muon scattering."""
-        damping = self.is_2d and getattr(
-            self._physics, "muon_multiple_scattering", False
-        )
+        damping = self.is_2d and config.muon_multiple_scattering
         return (
-            np.dtype(self._grid.dtype),
+            np.dtype(config.floatlen),
             bool(damping),
-            getattr(self._physics, "muon_scattering_model", "gaussian")
-            if damping
-            else None,
-            bool(getattr(self._physics, "muon_scattering_finite_nuclei", True))
-            if damping
-            else None,
+            config.muon_scattering_model if damping else None,
+            bool(config.muon_scattering_finite_nuclei) if damping else None,
         )
 
     def _require_live_assembly(self, name):
@@ -319,7 +310,7 @@ class MatrixBuilder:
         current = self._current_assembly_key()
         if current != self._assembly_key:
             raise RuntimeError(
-                f"{name} would not be a part of the int_m in hand: (grid.dtype, "
+                f"{name} would not be a part of the int_m in hand: (config.floatlen, "
                 f"muon damping) is now {current} and int_m was assembled at "
                 f"{self._assembly_key}. Call construct_matrices() first."
             )
@@ -387,9 +378,9 @@ class MatrixBuilder:
         if self.is_2d:
             return np.zeros(
                 (self.n_k, self._pman.dim, self._pman.dim),
-                dtype=self._grid.dtype,
+                dtype=config.floatlen,
             )
-        return np.zeros((self._pman.dim, self._pman.dim), dtype=self._grid.dtype)
+        return np.zeros((self._pman.dim, self._pman.dim), dtype=config.floatlen)
 
     def _muon_scattering_damping(self):
         """Return muon offsets and negative rates, shape (n_k, n_energy).
@@ -397,9 +388,7 @@ class MatrixBuilder:
         The rate of the selected model (:mod:`MCEq.operators.scattering`)
         enters the interaction diagonal, which ETD2 integrates exactly.
         """
-        if not (
-            self.is_2d and getattr(self._physics, "muon_multiple_scattering", False)
-        ):
+        if not (self.is_2d and config.muon_multiple_scattering):
             return None
         # Prefer pman's (13, 0) mass; fall back to the PDG value.
         try:
@@ -410,12 +399,12 @@ class MatrixBuilder:
         if not muon_lidcs:
             return None
         damping = -scattering.mode_rates(
-            getattr(self._physics, "muon_scattering_model", "gaussian"),
+            config.muon_scattering_model,
             self._energy_grid.c,
             self.k_grid,
             getattr(self, "_layout", None),
             mu_mass,
-            getattr(self._physics, "muon_scattering_finite_nuclei", True),
+            config.muon_scattering_finite_nuclei,
         )
         return muon_lidcs, damping
 
@@ -458,13 +447,13 @@ class MatrixBuilder:
             if rows:
                 m = sp.coo_matrix(
                     (
-                        np.concatenate(vals).astype(self._grid.dtype),
+                        np.concatenate(vals).astype(config.floatlen),
                         (np.concatenate(rows), np.concatenate(cols)),
                     ),
                     shape=shape,
                 ).tocsr()
             else:
-                m = sp.csr_matrix(shape, dtype=self._grid.dtype)
+                m = sp.csr_matrix(shape, dtype=config.floatlen)
             m.eliminate_zeros()
             m.sort_indices()
             per_mode_csr.append(m)
@@ -501,7 +490,7 @@ class MatrixBuilder:
                 if not p.is_stable and bool(p.children) and not p.is_tracking:
                     self._follow_chains(
                         p,
-                        np.diag(np.ones(self.dim)).astype(self._grid.dtype),
+                        np.diag(np.ones(self.dim)).astype(config.floatlen),
                         p,
                         self.D_blocks,
                         reclev=0,
@@ -530,15 +519,15 @@ class MatrixBuilder:
     def _construct_differential_operator(self):
         """Build the shared ``d/du`` operator :attr:`op_matrix` (:mod:`MCEq.operators.loss_stencil`)
         and reset the cache of per-species variants."""
-        method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
-        low_upwind_rows = getattr(self._losses, "stencil_low_upwind_rows", 8)
+        method = config.loss_stencil_method
+        low_upwind_rows = config.loss_stencil_low_upwind_rows
         self.op_matrix = loss_stencil.differential_operator(
             self._energy_grid.b,
             int(self._energy_grid.d),
             method=method,
-            alpha0=getattr(self._losses, "stencil_alpha0", 3.0),
+            alpha0=config.loss_stencil_alpha0,
             low_upwind_rows=low_upwind_rows,
-            dtype=self._grid.dtype,
+            dtype=config.floatlen,
         )
         # Row count of op_matrix after the clamp of differential_operator.
         self._op_matrix_rows = min(

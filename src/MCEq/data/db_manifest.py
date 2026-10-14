@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from MCEq import config
 from MCEq.data import hdf5_store
 
 SCHEMA = 1
@@ -90,16 +91,15 @@ class ModelStoreCache:
     remembered so repeated lookups do not re-read the manifest.
     """
 
-    def __init__(self, paths, primary: hdf5_store.HDF5Store, fetcher):
-        # ``fetcher`` provides ``ensure_manifest(paths, name)`` and
-        # ``ensure_package(paths, name, manifest)`` (MCEq.data.download).
-        self._paths = paths
+    def __init__(self, primary: hdf5_store.HDF5Store, fetcher):
+        # ``fetcher`` provides ``ensure_manifest(cfg, name)`` and
+        # ``ensure_package(cfg, name, manifest)`` (MCEq.data.download).
         self._primary = primary
         self._fetch = fetcher
         # A manifest named in the package's root attributes overrides the
         # config default.
         declared = primary.attrs().get("mceq_db_manifest")
-        self.manifest_name = str(declared) if declared else paths.mceq_db_manifest
+        self.manifest_name = str(declared) if declared else config.mceq_db_manifest
         common = primary.attrs("common")
         self._grid = grid_signature(common)
         self._e_grid = np.ascontiguousarray(np.asarray(common["e_grid"]))
@@ -110,9 +110,7 @@ class ModelStoreCache:
     @property
     def manifest(self) -> dict:
         if self._manifest is None:
-            self._manifest = self._fetch.ensure_manifest(
-                self._paths, self.manifest_name
-            )
+            self._manifest = self._fetch.ensure_manifest(config, self.manifest_name)
         return self._manifest
 
     def get(self, model, medium, tree):
@@ -131,7 +129,7 @@ class ModelStoreCache:
     def _store(self, name) -> hdf5_store.HDF5Store:
         store = self._stores.get(name)
         if store is None:
-            path = self._fetch.ensure_package(self._paths, name, self.manifest)
+            path = self._fetch.ensure_package(config, name, self.manifest)
             store = hdf5_store.HDF5Store(str(path))
             self._check_grid(store, name)
             self._stores[name] = store
@@ -150,14 +148,14 @@ class ModelStoreCache:
         ):
             raise Exception(
                 f"Data package {name} ({store.fname}) has a different energy grid "
-                f"than the primary database {self._paths.mceq_db_fname}. The "
+                f"than the primary database {config.mceq_db_fname}. The "
                 "manifest lists it on the same grid, so one of the two files is "
                 "stale: delete it and fetch again with "
                 f"python -m MCEq.data.download --file {name}"
             )
 
 
-def missing_model_error(paths, cache: ModelStoreCache, model, medium) -> Exception:
+def missing_model_error(cache: ModelStoreCache, model, medium) -> Exception:
     """The error raised when neither the primary file nor any package on its
     grid can serve ``model`` in ``medium``."""
     try:
@@ -169,8 +167,8 @@ def missing_model_error(paths, cache: ModelStoreCache, model, medium) -> Excepti
         manifest_note = f"(release manifest not readable: {ex})"
     return Exception(
         f"Interaction model {model} for medium {medium!r} is not in the "
-        f"primary database {paths.mceq_db_fname} and no package of the data "
+        f"primary database {config.mceq_db_fname} and no package of the data "
         f"release provides it on the same grid. {manifest_note} To register a "
-        f"single-model file, add an entry to {Path(paths.data_dir) / cache.manifest_name} "
+        f"single-model file, add an entry to {Path(config.data_dir) / cache.manifest_name} "
         "(see the data installation docs)."
     )
