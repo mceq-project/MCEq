@@ -1,22 +1,26 @@
 """HDF5 database backend: reads, decodes and blends interaction, decay, cross-section and loss tables."""
 
+import json
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from os.path import isfile, join
+from pathlib import Path
 
 import numpy as np
 
 from MCEq import config
-from MCEq.data import db_manifest, download, em_tables, hdf5_store
-from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
-from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
-from MCEq.data.equivalences import (
-    apply_equivalences,
-    equivalences,
+from MCEq.data import download, hdf5_store
+from MCEq.data.hadronic_models import (
+    equivalences_of,
+    mapped_cross_section,
     reverse_equivalences,
 )
-from MCEq.data.model_names import family_of, normalize_hadronic_model_name
-from MCEq.misc import info
+from MCEq.misc import (
+    _eval_energy_cuts,
+    energy_grid,
+    info,
+    normalize_hadronic_model_name,
+)
 
 
 class HDF5Backend:
@@ -99,7 +103,7 @@ class HDF5Backend:
         # A release package (root attr ``mceq_db_manifest``) resolves models
         # it lacks through the release manifest; a monolithic file does not.
         self._packages = (
-            db_manifest.ModelStoreCache(self._had, download)
+            ModelStoreCache(self._had)
             if "mceq_db_manifest" in self._had.attrs()
             else None
         )
@@ -125,7 +129,7 @@ class HDF5Backend:
                 ca["e_grid"], config.e_min, config.e_max
             )
 
-            self._energy_grid = EnergyGrid(
+            self._energy_grid = energy_grid(
                 ca["e_grid"][self._cuts],
                 ca["e_bins"][self.min_idx : self.max_idx + 1],
                 ca["widths"][self._cuts],
@@ -235,17 +239,20 @@ class HDF5Backend:
                 condition=bool(eqv),
             )
             if config.assume_nucleon_interactions_for_exotics:
-                # The stand-in shares this parent's matrix and `relations` list.
-                apply_equivalences(
-                    eqv_lookup,
-                    parent_pdg,
-                    child_pdg,
-                    model_particles,
-                    available_parents,
-                    particle_list,
-                    index_d,
-                    relations,
-                )
+                # A stand-in shares this parent's matrix and `relations` list.
+                for eqv_parent in eqv_lookup[parent_pdg]:
+                    if eqv_parent[0] not in model_particles:
+                        continue
+                    if eqv_parent in available_parents:
+                        info(10, f"Parent {eqv_parent[0]} has dedicated simulation.")
+                        continue
+                    particle_list.append(eqv_parent)
+                    index_d[(eqv_parent, child_pdg)] = index_d[(parent_pdg, child_pdg)]
+                    relations[eqv_parent] = relations[parent_pdg]
+                    info(
+                        15,
+                        f"equivalence of {eqv_parent[0]} and {parent_pdg[0]} interactions",
+                    )
 
             read_idx += expand_len * len_data[tupidx]
 
@@ -291,10 +298,10 @@ class HDF5Backend:
                     ),
                 )
                 return store, "air"
-        raise db_manifest.missing_model_error(self._packages, mname, self.medium)
+        raise missing_model_error(self._packages, mname, self.medium)
 
     def _he_le_weight(self):
-        """:func:`MCEq.data.blending.he_le_weight` on this backend's settings."""
+        """:func:`he_le_weight` on this backend's settings."""
         return he_le_weight(
             self._energy_grid.c,
             self.he_le_transition,
@@ -303,7 +310,7 @@ class HDF5Backend:
         )
 
     def _blend_interaction_dbs(self, he_index, le_index, he_name, le_name):
-        """:func:`MCEq.data.blending.blend_yields` on this backend's settings."""
+        """:func:`blend_yields` on this backend's settings."""
         return blend_yields(
             he_index,
             le_index,
@@ -361,10 +368,9 @@ class HDF5Backend:
             self._check_subgroup_exists(self._had, f"{had}/{self.medium}", mname)
             medium = self.medium
 
-        family = family_of(mname)
-        if family is None:
+        eqv = equivalences_of(mname)
+        if eqv is None:
             raise ValueError("Unknown equivalence table for", mname)
-        eqv = equivalences[family]
         if self._em_standalone:
             # Hadronic matrices are on the hadronic grid and unused in a
             # γ/e± cascade on the EM grid.
@@ -388,19 +394,14 @@ class HDF5Backend:
 
         # Append electromagnetic interaction matrices from the EM database
         if config.enable_em:
-            medium = em_tables.medium_for_em(medium)
-
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
-            em_group = em_tables.emca_group_path(
-                self._em_store, self.medium, "interaction_db", config.em_air_density
-            )
             em_index = self._gen_db_dictionary(
-                self._em_store.read_channel_pack(em_group, "emca_mats"),
+                self._em_store.read_channel_pack(
+                    f"electromagnetic/{self.medium}", "emca_mats"
+                ),
             )
-            if config.muon_helicity():
-                em_tables.helicity_duplicate(em_index)
 
             int_index["parents"] = sorted(int_index["parents"] + em_index["parents"])
             int_index["particles"] = sorted(
@@ -467,8 +468,8 @@ class HDF5Backend:
     def _bin_average_marks(self, attrs, key, equivalences=None):
         """``(radius, {pdg})`` of a stencil-averaged table, ``None`` without marks.
 
-        Stand-ins of :mod:`MCEq.data.equivalences` borrow the marks of the
-        parent whose tables they use.
+        Equivalence stand-ins borrow the marks of the parent whose tables they
+        use.
         """
         if not config.bin_average_rates or ("bin_average_radius" not in attrs):
             return None
@@ -533,7 +534,7 @@ class HDF5Backend:
             cs_store = self._model_store(mname, medium, "cross_sections")
             if cs_store is None:
                 if self._packages is not None:
-                    raise db_manifest.missing_model_error(self._packages, mname, medium)
+                    raise missing_model_error(self._packages, mname, medium)
                 self._check_subgroup_exists(self._had, "cross_sections", medium)
                 self._check_subgroup_exists(
                     self._had, f"cross_sections/{medium}", mname
@@ -558,9 +559,7 @@ class HDF5Backend:
             mes_store = self._model_store(mname_mesons, medium, "cross_sections")
             if mes_store is None:
                 if self._packages is not None:
-                    raise db_manifest.missing_model_error(
-                        self._packages, mname_mesons, medium
-                    )
+                    raise missing_model_error(self._packages, mname_mesons, medium)
                 self._check_subgroup_exists(self._had, "cross_sections", medium)
                 self._check_subgroup_exists(
                     self._had, f"cross_sections/{medium}", mname_mesons
@@ -580,10 +579,9 @@ class HDF5Backend:
             info(2, "Injecting EM cross sections into cs_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", medium)
-            em_cs_group = em_tables.em_cs_group_path(
-                self._em_store, medium, "cs_db", config.em_air_density
+            em_cs, em_cs_attrs = self._em_store.read_table(
+                f"electromagnetic/{medium}/cs"
             )
-            em_cs, em_cs_attrs = self._em_store.read_table(f"{em_cs_group}/cs")
             em_parents = list(em_cs_attrs["projectiles"])
 
             for ip, p in enumerate(em_parents):
@@ -606,9 +604,12 @@ class HDF5Backend:
         cl_db = self._had.read_group_datasets(
             f"continuous_losses/{self.medium}/{loss_case}"
         )
-        # No radiative losses for hadrons implemented
-        cl_db_hadrons = self._had.read_group_datasets(
-            f"continuous_losses/{self.medium}/total"
+        # The generic hadron curve: the total loss (hadrons have no radiative
+        # part), or the ionization loss when the EM cascade is on.
+        cl_db_hadrons = (
+            cl_db
+            if config.enable_em
+            else self._had.read_group_datasets(f"continuous_losses/{self.medium}/total")
         )
         index_d = {}
         generic_dedx = None
@@ -645,3 +646,174 @@ class HDF5Backend:
                 "generic": generic_dedx,
             }
         return {"parents": sorted(list(index_d)), "index_d": index_d}
+
+
+def he_le_weight(energy, transition, trwidth, dtype):
+    """High-energy model weight on the active kinetic-energy grid.
+
+    Args:
+        energy: energy grid centers in GeV (``energy_grid.c``).
+        transition: HE/LE transition energy in GeV.
+        trwidth: full 10--90 % width of the transition in decades; ``0.0``
+            makes the weight a hard switch at ``transition``.
+        dtype: weight dtype; ``None`` gives float64.
+    """
+    energy = np.asarray(energy, dtype=float)
+    if trwidth == 0.0:
+        return (energy >= transition).astype(dtype)
+    # Define trwidth as the full 10--90% width in log10 energy.
+    arg = 2.0 * np.log(9.0) * np.log10(energy / transition) / trwidth
+    arg = np.clip(arg, -700.0, 700.0)
+    return np.asarray(1.0 / (1.0 + np.exp(-arg)), dtype=dtype)
+
+
+def blend_yields(he_index, le_index, he_name, le_name, w_he, transition, trwidth):
+    """Blend yield matrices column-wise over the HE model's channel set.
+
+    Channels absent from the LE model keep the HE matrix. The weight
+    ``w_he`` of :func:`he_le_weight` depends on the projectile energy (last
+    axis) only, so it broadcasts over the Legendre modes of 2D
+    ``(n_k, n_e, n_e)`` tensors. Both models must be on the same energy grid,
+    with the transition inside both models' coverage. ``transition`` and
+    ``trwidth`` only enter the description string.
+    """
+    w_he = w_he[np.newaxis, :]
+    w_le = 1.0 - w_he
+    he_yields = he_index["index_d"]
+    le_yields = le_index["index_d"]
+    blended = {}
+    for channel, he_matrix in he_yields.items():
+        if channel in le_yields:
+            blended[channel] = he_matrix * w_he + le_yields[channel] * w_le
+        else:
+            blended[channel] = he_matrix
+
+    relations = defaultdict(list)
+    particles = set()
+    for parent, child in blended:
+        relations[parent].append(child)
+        particles.add(parent)
+        particles.add(child)
+    return {
+        "parents": sorted(relations),
+        "particles": sorted(particles),
+        "relations": dict(relations),
+        "index_d": blended,
+        "description": (
+            f"Runtime HE/LE blend: {he_name} + {le_name}; "
+            f"transition={transition:g} GeV, "
+            f"10-90 width={trwidth:g} decades"
+        ),
+    }
+
+
+def blend_cross_sections(he_index, le_index, he_name, le_name, w_he):
+    """Blend inelastic cross sections per projectile, mapping across models.
+
+    A projectile carried by only one model is mapped onto the other model's
+    equivalent column (:func:`~MCEq.data.hadronic_models.mapped_cross_section`);
+    without an equivalent it stays unblended. ``he_name``/``le_name`` are
+    normalised model names and select the equivalence tables.
+    """
+    w_le = 1.0 - w_he
+    blended = {}
+    for projectile, he_cs in he_index["index_d"].items():
+        le_cs = mapped_cross_section(le_index["index_d"], projectile, le_name)
+        # Leave HE-only projectiles unchanged.
+        blended[projectile] = he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
+    # LE-only projectiles (e.g. FLUKA's n, nbar, K0, hyperons) are kept: own
+    # sigma below the transition, the mapped HE equivalent above it. Otherwise
+    # get_cs would fall back to the proton column and, for antibaryons, miss
+    # the annihilation part.
+    for projectile, le_cs in le_index["index_d"].items():
+        if projectile in blended:
+            continue
+        he_cs = mapped_cross_section(he_index["index_d"], projectile, he_name)
+        blended[projectile] = le_cs if he_cs is None else he_cs * w_he + le_cs * w_le
+    return {"parents": sorted(blended), "index_d": blended}
+
+
+class ModelStoreCache:
+    """Models the primary file lacks, served from release packages on its grid.
+
+    The manifest is read on the first miss, each package is opened once, and
+    models no package provides are remembered.
+    """
+
+    def __init__(self, primary):
+        # A manifest named in the package's root attributes overrides the
+        # config default.
+        declared = primary.attrs().get("mceq_db_manifest")
+        self.manifest_name = str(declared) if declared else config.mceq_db_manifest
+        common = primary.attrs("common")
+        self._grid = download.grid_signature(common)
+        self._e_grid = np.ascontiguousarray(np.asarray(common["e_grid"]))
+        self._manifest = None
+        self._stores = {}
+        self._unavailable = set()
+
+    @property
+    def manifest(self):
+        if self._manifest is None:
+            self._manifest = download.ensure_manifest(config, self.manifest_name)
+        return self._manifest
+
+    def get(self, model, medium, tree):
+        """Store holding ``tree/<medium>/<model>``, or None if no package on
+        this grid lists the model for the medium."""
+        key = (model, medium)
+        if key in self._unavailable:
+            return None
+        for name in download.files_for(self.manifest, self._grid, model, medium):
+            store = self._store(name)
+            if store.has(f"{tree}/{medium}/{model}"):
+                return store
+        self._unavailable.add(key)
+        return None
+
+    def _store(self, name):
+        store = self._stores.get(name)
+        if store is None:
+            path = download.ensure_package(config, name, self.manifest)
+            store = hdf5_store.HDF5Store(str(path))
+            self._check_grid(store, name)
+            self._stores[name] = store
+        return store
+
+    def _check_grid(self, store, name):
+        """Refuse a package whose ``common/e_grid`` is not byte-identical to
+        the primary's: the two would index each other's bins silently. A 2D
+        package must be booked in Legendre moments, like the primary."""
+        common = store.attrs("common")
+        hdf5_store.angular_basis(common, store.fname)
+        other = np.ascontiguousarray(np.asarray(common["e_grid"]))
+        if (
+            other.shape != self._e_grid.shape
+            or other.tobytes() != self._e_grid.tobytes()
+        ):
+            raise Exception(
+                f"Data package {name} ({store.fname}) has a different energy grid "
+                f"than the primary database {config.mceq_db_fname}. The "
+                "manifest lists it on the same grid, so one of the two files is "
+                "stale: delete it and fetch again with "
+                f"python -m MCEq.data.download --file {name}"
+            )
+
+
+def missing_model_error(cache, model, medium):
+    """The error raised when neither the primary file nor any package on its
+    grid can serve ``model`` in ``medium``."""
+    try:
+        offered = download.models_on_grid(cache.manifest, cache._grid)
+        manifest_note = (
+            f"Models on this grid per {cache.manifest_name}: {json.dumps(offered)}."
+        )
+    except Exception as ex:  # manifest unavailable: say so, still actionable
+        manifest_note = f"(release manifest not readable: {ex})"
+    return Exception(
+        f"Interaction model {model} for medium {medium!r} is not in the "
+        f"primary database {config.mceq_db_fname} and no package of the data "
+        f"release provides it on the same grid. {manifest_note} To register a "
+        f"single-model file, add an entry to {Path(config.data_dir) / cache.manifest_name} "
+        "(see the data installation docs)."
+    )

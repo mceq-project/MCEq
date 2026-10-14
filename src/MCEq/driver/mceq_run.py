@@ -5,7 +5,6 @@ import numpy as np
 import MCEq.solvers as solvers
 from MCEq import config
 from MCEq.data.download import ensure_db_available
-from MCEq.data.model_names import normalize_hadronic_model_name
 from MCEq.driver import angular, batch, observables, paths, results
 from MCEq.driver.initial_state import InitialState
 from MCEq.driver.system import CascadeSystem
@@ -15,7 +14,7 @@ from MCEq.environment.msis00 import MSIS00Atmosphere
 from MCEq.environment.msis21 import MSIS21Atmosphere
 from MCEq.environment.parameters import LOCATIONS
 from MCEq.environment.target import GeneralizedTarget
-from MCEq.misc import info
+from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
 from MCEq.operators.compiled import compile_operator, em_step_scale
 from MCEq.operators.secant import build_secant_kernel_ops
@@ -577,7 +576,7 @@ class MCEqRun:
 
         The production spectrum of ``sec_pdg`` in interactions of
         ``prim_pdg`` is modified according to the function passed to
-        :meth:`MCEq.data.interaction_tables.Interactions._gen_mod_matrix`
+        :meth:`MCEq.data.Interactions._gen_mod_matrix`
 
         Args:
           prim_pdg (int): interacting (primary) particle PDG ID

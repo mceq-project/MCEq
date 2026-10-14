@@ -1,12 +1,9 @@
-"""Projectile equivalences of hadronic models and cross-section mapping."""
-
-# anfe: crazy docstring! AI talking to itself. This module should joined with the model_names to form soem kind of model "settings" or hadr_model_[xomething, missing a word]
+"""Projectile equivalences of the hadronic models."""
 
 from collections import defaultdict
 
-from MCEq.data.model_names import family_of
-from MCEq.misc import info
-
+#: Per model family, projectiles without own tables and the projectile whose
+#: tables they borrow. A model belongs to the first family in its name.
 equivalences = {
     "SIBYLL23": {
         -4132: 4122,
@@ -136,56 +133,17 @@ equivalences = {
 equivalences["FLUKA"] = equivalences["DPMJET"]
 
 
-def reverse_equivalences(equivalences):
-    """``{child: stand_in}`` -> ``defaultdict {(stand_in, 0): [(child, 0), ...]}``."""
+def equivalences_of(mname):
+    """Equivalence table of the normalised model name ``mname``, or None."""
+    return next((eqv for family, eqv in equivalences.items() if family in mname), None)
+
+
+def reverse_equivalences(eqv):
+    """``{child: stand_in}`` -> ``{(stand_in, 0): [(child, 0), ...]}``."""
     eqv_lookup = defaultdict(list)
-    for k in equivalences:
-        eqv_lookup[(equivalences[k], 0)].append((k, 0))
+    for k in eqv:
+        eqv_lookup[(eqv[k], 0)].append((k, 0))
     return eqv_lookup
-
-
-def apply_equivalences(
-    eqv_lookup,
-    parent_pdg,
-    child_pdg,
-    model_particles,
-    available_parents,
-    particle_list,
-    index_d,
-    relations,
-):
-    """Give projectiles without own tables the channel of their stand-in ``parent_pdg``.
-
-    Updates ``particle_list``, ``index_d`` and ``relations`` in place. The
-    borrowing projectile shares the matrix object and the ``relations`` list of
-    ``parent_pdg`` (no copies).
-    """
-    for eqv_parent in eqv_lookup[parent_pdg]:
-        if eqv_parent[0] not in model_particles:
-            info(
-                10,
-                "No equiv. replacement needed of",
-                eqv_parent,
-                "for",
-                parent_pdg,
-                "parent.",
-            )
-            continue
-        if eqv_parent in available_parents:
-            info(
-                10,
-                f"Parent {eqv_parent[0]} has dedicated simulation.",
-            )
-            continue
-        particle_list.append(eqv_parent)
-        index_d[(eqv_parent, child_pdg)] = index_d[(parent_pdg, child_pdg)]
-        relations[eqv_parent] = relations[parent_pdg]
-        _e = eqv_parent[0]
-        _p = parent_pdg[0]
-        info(
-            15,
-            f"equivalence of {_e} and {_p} interactions",
-        )
 
 
 def family_fallback(projectile):
@@ -200,15 +158,13 @@ def family_fallback(projectile):
         return [sign * 211, 211]
     if 1000 < apid < 5000:
         return [sign * 2212, 2212]
-    # leptons, 10313/10323, nuclei: no equivalent
     return []
 
 
 def mapped_cross_section(index_d, projectile, model_name):
-    """Return a model cross section using the established equivalences."""
+    """Cross section of ``projectile`` in ``index_d``, else of its equivalent, else None."""
     candidates = [projectile, abs(projectile)]
-    family = family_of(model_name)
-    model_eqv = None if family is None else equivalences[family]
+    model_eqv = equivalences_of(model_name)
     if model_eqv is not None:
         mapped = model_eqv.get(projectile, model_eqv.get(abs(projectile)))
         if mapped is not None:

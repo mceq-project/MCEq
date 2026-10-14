@@ -372,7 +372,6 @@ def em_backend(monkeypatch, had_path, em_path, medium):
         fallback_to_air_cs=True,
         interaction_medium=medium,
         muon_helicity_dependence=False,
-        em_air_density=None,
     ).items():
         monkeypatch.setattr(config, name, value)
     monkeypatch.setitem(config.adv_set, "disabled_particles", [])

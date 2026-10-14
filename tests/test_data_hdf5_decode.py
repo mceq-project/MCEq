@@ -22,7 +22,7 @@ equivalence machinery would be noise: ``decay_db`` passes ``equivalences={}``.
 
 import importlib.util
 import pathlib
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -70,7 +70,6 @@ def backend(monkeypatch, path, *, disabled=(), medium=fixtures.MEDIUM):
         fallback_to_air_cs=True,
         interaction_medium=medium,
         muon_helicity_dependence=False,
-        em_air_density=None,
     ).items():
         monkeypatch.setattr(config, name, value)
     monkeypatch.setitem(config.adv_set, "disabled_particles", list(disabled))
@@ -310,11 +309,12 @@ def test_two_dimensional_database_without_legendre_basis_is_refused(
 
 def test_two_dimensional_model_package_without_legendre_basis_is_refused(tmp_path):
     """A 2D model package found through the manifest passes the same check."""
-    from MCEq.data import db_manifest, hdf5_store
+    from MCEq.data import hdf5_store
+    from MCEq.data.hdf5_backend import ModelStoreCache
 
     path = fixtures.build_database(tmp_path / "hankel_model.h5", n_k=fixtures.N_K)
     _hankel_copy(path, None)
-    cache = db_manifest.ModelStoreCache.__new__(db_manifest.ModelStoreCache)
+    cache = ModelStoreCache.__new__(ModelStoreCache)
     cache._e_grid = np.ascontiguousarray(fixtures.E_GRID)
     cache._paths = SimpleNamespace(mceq_db_fname="primary.h5")
     with pytest.raises(ValueError, match="Legendre moments only"):
@@ -503,28 +503,6 @@ def test_fluka_and_dpmjet_share_one_equivalence_table():
     finally:
         del equivalences["DPMJET"][probe]
     assert probe not in equivalences["FLUKA"]
-
-
-def test_the_equivalences_package_attribute_is_the_dict_not_the_submodule():
-    """``MCEq.data.equivalences`` is the table; the module is in ``sys.modules``.
-
-    The name is both a submodule of ``MCEq.data`` and the dict that submodule
-    defines. The import system binds the *module* onto the package while
-    loading it, and ``data/__init__.py``'s ``from MCEq.data.equivalences import
-    equivalences`` rebinds the name to the dict afterwards. That order is what
-    keeps ``MCEq.data.equivalences`` the object it has always been
-    (``tests/test_phase4_surface.py`` pins the name; this pins the resolution),
-    and it is fragile: dropping the dict from that import list, or reaching the
-    module through the package attribute, silently swaps the two.
-    """
-    import sys
-
-    import MCEq.data
-
-    assert isinstance(MCEq.data.equivalences, dict)
-    module = sys.modules["MCEq.data.equivalences"]
-    assert isinstance(module, ModuleType)
-    assert module.equivalences is MCEq.data.equivalences
 
 
 def test_equivalence_injection_aliases_rather_than_copies(

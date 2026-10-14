@@ -25,7 +25,6 @@ CONFIG_PINS = {
     "interaction_medium": "air",
     "A_target": "auto",
     "enable_em": False,
-    "em_air_density": None,
     "enable_em_ion": True,
     "enable_energy_loss": True,
     "enable_cont_rad_loss": True,

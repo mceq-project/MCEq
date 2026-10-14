@@ -3,7 +3,7 @@
 import numpy as np
 
 from MCEq import config
-from MCEq.data.cross_sections import InteractionCrossSections
+from MCEq.data.tables import InteractionCrossSections
 from MCEq.misc import average_A_target, getAZN, info
 from MCEq.species import bin_average
 from MCEq.species.constants import ATOMIC_MASS_UNIT_G, _pdata, _pname

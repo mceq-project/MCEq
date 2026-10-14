@@ -1,12 +1,23 @@
-"""Interaction yield matrices with channel overrides and production modifications."""
+"""Interaction, decay, cross-section and continuous-loss tables read through :class:`HDF5Backend`."""
 
 from collections import defaultdict
 
 import numpy as np
 
 from MCEq import config
-from MCEq.data.model_names import normalize_hadronic_model_name
-from MCEq.misc import info
+from MCEq.misc import gen_xmat, info, normalize_hadronic_model_name
+
+
+def _prune_relations(relations, parents):
+    """Drop the relations of non-parents in place; return the remaining particles."""
+    particles = set()
+    for p in list(relations):
+        if p not in parents:
+            del relations[p]
+            continue
+        particles.add(p)
+        particles.update(relations[p])
+    return sorted(particles)
 
 
 class Interactions:
@@ -81,11 +92,7 @@ class Interactions:
         # Advanced options
 
         if parent_list is not None:
-            self.parents = [
-                p
-                for p in self.parents
-                if p in parent_list and p[0] not in disabled_particles
-            ]
+            self.parents = [p for p in self.parents if p in parent_list]
         if filters["disable_charm_pprod"]:
             self.parents = [
                 p
@@ -101,24 +108,15 @@ class Interactions:
                 p for p in self.parents if p[0] in filters["allowed_projectiles"]
             ]
 
-        self.particles = []
-        for p in list(self.relations):
-            if p not in self.parents:
-                _ = self.relations.pop(p, None)
-                continue
-            self.particles.append(p)
-            self.particles += [
-                d for d in self.relations[p] if d not in disabled_particles
-            ]
-        self.particles = sorted(list(set(self.particles)))
+        self.particles = _prune_relations(self.relations, self.parents)
         if filters["disable_direct_leptons"]:
             for p in list(self.relations):
                 self.relations[p] = [
                     c for c in self.relations[p] if not 10 < abs(c[0]) < 20
                 ]
 
-        if len(disabled_particles) > 0:
-            for p in list(self.relations):
+        if disabled_particles:
+            for p in self.relations:
                 self.relations[p] = [
                     c for c in self.relations[p] if c[0] not in disabled_particles
                 ]
@@ -152,8 +150,6 @@ class Interactions:
         Returns:
           (numpy.array): modification matrix
         """
-        from MCEq.data.energy_grid import gen_xmat
-
         info(2, "Generating modification matrix for", x_func.__name__, args)
 
         xmat = gen_xmat(self.energy_grid)
@@ -312,3 +308,224 @@ class Interactions:
                 m *= mmat
 
         return m
+
+
+class Decays:
+    """Class for managing the dictionary of decay yield matrices.
+
+    Args:
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
+    """
+
+    def __init__(self, mceq_hdf_db, override_decay_db_name=None):
+        #: MCEq HDF5Backend reference
+        self.mceq_db = mceq_hdf_db
+        self._default_decay_dset = override_decay_db_name
+
+        if self._default_decay_dset is None:
+            if config.muon_helicity():
+                self._default_decay_dset = "polarized"
+            else:
+                self._default_decay_dset = "unpolarized"
+
+    def load(self, parent_list=None, decay_dset=None):
+        # Load tables and index from file
+        if decay_dset is None:
+            decay_dset = self._default_decay_dset
+
+        index = self.mceq_db.decay_db(decay_dset)
+
+        self.parents = index["parents"]
+        self.particles = index["particles"]
+        self.relations = index["relations"]
+        self.index_d = index["index_d"]
+        self.description = index["description"]
+        #: ``(radius, {pdg})`` of stencil-averaged decay tables, or None
+        self.bin_average = index.get("bin_average")
+        if parent_list:
+            # The listed parents and every decay product that decays further.
+            def _follow_decay_chain(p, plist):
+                if p in self.relations:
+                    plist.append(p)
+                    for d in self.relations[p]:
+                        _follow_decay_chain(d, plist)
+
+            plist = []
+            for p in parent_list:
+                _follow_decay_chain(p, plist)
+
+            self.parents = sorted(set(plist))
+            self.particles = _prune_relations(self.relations, self.parents)
+
+    def __getitem__(self, key):
+        return self.get_matrix(*key)
+
+    def __contains__(self, key):
+        """Defines the `in` operator to look for particles"""
+        return key in self.parents
+
+    def children(self, parent_pdg):
+        if parent_pdg not in self.relations:
+            raise Exception(f"Parent {parent_pdg} not in decay database.")
+
+        return self.relations[parent_pdg]
+
+    def get_matrix(self, parent, child):
+        """Return the channel array for parent and child ``(PDG ID, helicity)`` keys.
+
+        Args:
+          parent: ``(PDG ID, helicity)`` key of the parent particle
+          child: ``(PDG ID, helicity)`` key of the final-state child
+        Returns:
+          numpy.array: channel array, shaped ``(d, d)`` or ``(n_k, d, d)``
+          depending on the stored channel
+        """
+        info(20, "entering with", parent, child)
+        if child not in self.relations[parent]:
+            raise Exception(f"trying to get empty matrix {parent} -> {child}")
+
+        return self.index_d[(parent, child)]
+
+
+class InteractionCrossSections:
+    """Class for managing the dictionary of hadron-air cross-sections.
+
+    Args:
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
+      interaction_model (str): name of the interaction model
+    """
+
+    #: unit - :math:`\text{GeV} \cdot \text{fm}`
+    GeVfm = 0.19732696312541853
+    #: unit - :math:`\text{GeV} \cdot \text{cm}`
+    GeVcm = GeVfm * 1e-13
+    #: unit - :math:`\text{GeV}^2 \cdot \text{mbarn}`
+    GeV2mbarn = 10.0 * GeVfm**2
+    #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
+    mbarn2cm2 = GeVcm**2 / GeV2mbarn
+
+    def __init__(self, mceq_hdf_db, interaction_model="DPMJETIII193"):
+        #: MCEq HDF5Backend reference
+        self.mceq_db = mceq_hdf_db
+        #: reference to energy grid
+        self.energy_grid = mceq_hdf_db.energy_grid
+        #: List of active parents
+        self.parents = None
+        #: Cross-section arrays indexed by projectile
+        self.index_d = None
+        #: (str) Interaction Model name
+        self.iam = normalize_hadronic_model_name(interaction_model)
+
+    def __getitem__(self, parent):
+        """Return the cross section in :math:`\\text{cm}^2` as a dictionary
+        lookup."""
+        return self.get_cs(parent)
+
+    def __contains__(self, key):
+        """Defines the `in` operator to look for particles"""
+        return key in self.parents
+
+    def load(self, interaction_model):
+        #: (str) Interaction Model name
+        self.iam = normalize_hadronic_model_name(interaction_model)
+        # Load tables and index from file
+        index = self.mceq_db.cs_db(self.iam)
+
+        self.parents = index["parents"]
+        self.index_d = index["index_d"]
+
+    def get_cs(self, parent, mbarn=False):
+        """Returns production ``parent``-air cross-section
+        :math:`\\sigma_{prod}^{proj-Air}(E)` as vector spanned over
+        the energy grid.
+
+        Args:
+          parent (int): PDG ID of parent particle
+          mbarn (bool,optional): if ``True``, the units of the cross-section
+                                 will be :math:`mbarn`,
+                                 else :math:`\\text{cm}^2`
+
+        Returns:
+          numpy.array: cross-section in :math:`mbarn` or :math:`\\text{cm}^2`
+        """
+
+        message_templ = "replacing {0} with {1} cross section"
+        if isinstance(parent, tuple):
+            parent = parent[0]
+
+        def _family_cs(base_pdg, label):
+            # A negative parent uses the antiparticle column if the model has
+            # one (annihilation channels for antibaryons), else the particle's.
+            if parent < 0 and -base_pdg in self.index_d:
+                info(15, message_templ.format(parent, f"anti-{label}"))
+                return self.index_d[-base_pdg]
+            info(15, message_templ.format(parent, label))
+            return self.index_d[base_pdg]
+
+        if parent in self.index_d:
+            cs = self.index_d[parent]
+        elif abs(parent) in self.index_d:
+            cs = self.index_d[abs(parent)]
+        elif 100 < abs(parent) < 300 and abs(parent) != 130:
+            cs = _family_cs(211, "pi+-")
+        elif 300 < abs(parent) < 1000 or abs(parent) == 130:
+            cs = _family_cs(321, "K+-")
+        elif abs(parent) > 1000 and abs(parent) < 5000:
+            cs = _family_cs(2212, "nucleon")
+        elif 5 < abs(parent) < 23:
+            info(15, "returning 0 cross-section for lepton", parent)
+            return np.zeros(self.energy_grid.d)
+        else:
+            info(1, "Strange case for parent, using zero cross section.")
+            cs = np.zeros(self.energy_grid.d)
+
+        if not mbarn:
+            return self.mbarn2cm2 * cs
+        return cs
+
+
+class ContinuousLosses:
+    """Manage stopping-power arrays loaded from ``mceq_hdf_db``.
+
+    Args:
+      mceq_hdf_db (object): instance of :class:`MCEq.data.HDF5Backend`
+    """
+
+    def __init__(self, mceq_hdf_db):
+        #: MCEq HDF5Backend reference
+        self.mceq_db = mceq_hdf_db
+        #: Energy grid of the backend
+        self.energy_grid = mceq_hdf_db.energy_grid
+        #: List of active parents
+        self.parents = None
+        #: Stopping-power arrays indexed by particle
+        self.index_d = None
+        #: Raw ``(boost, dEdX)`` table behind :attr:`generic_spl`, used to
+        #: clamp arguments to the tabulated range.
+        self.generic_table = None
+        # Load defaults
+        self.load_db()
+
+    def __getitem__(self, parent):
+        """Return the particle's stopping-power array in GeV/(g/cm²) as
+        a dictionary lookup."""
+        return self.index_d[parent]
+
+    def __contains__(self, key):
+        """Defines the `in` operator to look for particles"""
+        return key in self.parents
+
+    def load_db(self):
+        from scipy.interpolate import InterpolatedUnivariateSpline
+
+        # Load tables and index from file
+        index = self.mceq_db.continuous_loss_db()
+        self.parents = index["parents"]
+        self.index_d = index["index_d"]
+        if "generic" not in index:
+            raise Exception("New data file needed to support generic losses.")
+        generic = index["generic"]
+        self.generic_table = np.asarray(generic, dtype=np.float64)
+        self.generic_spl = InterpolatedUnivariateSpline(
+            np.log(generic[0]), np.log(generic[1]), k=1
+        )

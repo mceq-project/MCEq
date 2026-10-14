@@ -67,7 +67,6 @@ IMPORT_TABLE = [
     ("MCEq.spacc", "MCEq.solvers._kernels.spacc", "moved"),
     ("MCEq.etd2_kernels", "MCEq.solvers._kernels.etd2", "moved"),
     ("mceq_config", "MCEq.config", "facade"),
-    ("MCEq.misc.EnergyGrid / energy_grid / gen_xmat", "MCEq.data.energy_grid", "shim"),
 ]
 
 STATUS_NOTE = {

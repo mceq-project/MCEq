@@ -1,97 +1,18 @@
+"""Shared helpers: energy grid, model names, target masses and logging."""
+
+import re
 import sys
-from types import ModuleType
+from collections import namedtuple
+
+import numpy as np
 
 from MCEq import config
 
-#: Compatibility names that moved into the :mod:`MCEq.data` package and stay
-#: reachable here, each mapped to the submodule that owns it now. `misc` is
-#: C1's bottom layer, so a top-of-file re-export would invert `util -> data`;
-#: the names are forwarded lazily instead, and C1's ledger carries the edges
-#: that creates.
-_MOVED_TO_DATA = {
-    "EnergyGrid": "MCEq.data.energy_grid",
-    "energy_grid": "MCEq.data.energy_grid",
-    "_eval_energy_cuts": "MCEq.data.energy_grid",
-    "gen_xmat": "MCEq.data.energy_grid",
-    "_xmat": "MCEq.data.energy_grid",
-    "normalize_hadronic_model_name": "MCEq.data.model_names",
-}
-# These symbols were never in misc, so we don't need any compatibility shim in this module?
+#: Energy grid: centers, bin edges, bin widths, bin count
+energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 
-#: Memo of the resolved submodules, so that only the FIRST access to a moved
-#: name executes an import. See :func:`_moved_to_data` on why `sys.modules` is
-#: not enough for this.
-_RESOLVED = {}
-
-
-def _moved_to_data(name):  # anfe: looks totally boilerplate to me.
-    """Resolve a moved name from its implementation module and retain the module.
-
-    Read out of `sys.modules` rather than bound by the import statements:
-    `from MCEq.data import energy_grid` resolves the *attribute* of the
-    package, which a later re-export of the namedtuple under its lowercase
-    name would silently turn into the tuple type. The statements are still
-    written out so that static import analysis (`grimp`) sees the two
-    `MCEq.misc -> MCEq.data.*` edges.
-
-    Only the FIRST access imports; later ones come out of `_RESOLVED`. The
-    memo matters at interpreter shutdown, when an `import` can fail and
-    `sys.modules` itself is already cleared: with the memo warm, a late read
-    of a moved name succeeds. A *cold* first access during finalization
-    still raises, because the import genuinely has to run once; nothing
-    under `src/` does that, and `tests/test_exit.py` guards the warm path.
-    """
-    target = _MOVED_TO_DATA[name]
-    module = _RESOLVED.get(target)
-    if module is None:
-        import MCEq.data.energy_grid  # noqa: F401
-        import MCEq.data.model_names  # noqa: F401
-
-        module = _RESOLVED[target] = sys.modules[target]
-    return module
-
-
-class _MiscCompatModule(ModuleType):
-    """Forward reads, writes, deletes, and `dir()` for the names in `_MOVED_TO_DATA`.
-
-    Forwarding writes is necessary because `__getattr__` alone would let an
-    assignment such as `MCEq.misc._xmat = ...` put a real attribute in this
-    namespace that shadows the hook from then on, leaving two caches where
-    `gen_xmat` has one. Modules have no `__setattr__` hook, so the shim is
-    the pre-562 idiom PEP 562 itself names -- a `ModuleType` subclass
-    installed over this module -- and `misc._xmat` stays an alias of the live
-    object (`tests/test_data_bug_pins.py::clean_xmat_cache` sets and restores
-    it, and one pin asserts identity against the returned array). All four
-    hooks keep the shim invisible: `__delattr__` preserves the previously
-    legal `del MCEq.misc._xmat`, and `__dir__` keeps `dir()`,
-    `inspect.getmembers()`, `help()` and tab completion listing the moved
-    names.
-    """
-
-    def __getattr__(self, name):
-        if name in _MOVED_TO_DATA:
-            return getattr(_moved_to_data(name), name)
-        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        if name in _MOVED_TO_DATA:
-            setattr(_moved_to_data(name), name, value)
-            return
-        super().__setattr__(name, value)
-
-    def __delattr__(self, name):
-        if name in _MOVED_TO_DATA:
-            delattr(_moved_to_data(name), name)
-            return
-        super().__delattr__(name)
-
-    def __dir__(self):
-        return sorted(set(super().__dir__()) | set(_MOVED_TO_DATA))
-
-
-sys.modules[__name__].__class__ = _MiscCompatModule
-
-# anfe: IMO, everything above is unnecessary, and is some sort of misunderstanding.
+#: Matrix with x_lab=E_child/E_parent values
+_xmat = None
 
 #: Dry air: volume fraction, mass number and atoms per molecule of N2, O2, Ar.
 _AIR = [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
@@ -128,6 +49,36 @@ def average_A_target(mat="auto"):
     raise ValueError(
         f"config.A_target must be a number, 'auto' or one of {list(_target_masses)}"
     )
+
+
+def _eval_energy_cuts(e_centers, e_min=None, e_max=None):
+    """``(min_idx, max_idx, slice)`` of the bins nearest to ``e_min`` and ``e_max``."""
+    min_idx, max_idx = 0, len(e_centers)
+    energy_slice = slice(None)
+    if e_min is not None:
+        min_idx = np.argmin(np.abs(e_centers - e_min))
+        energy_slice = slice(min_idx, None)
+    if e_max is not None:
+        max_idx = np.argmin(np.abs(e_centers - e_max)) + 1
+        energy_slice = slice(min_idx, max_idx)
+    return min_idx, max_idx, energy_slice
+
+
+def normalize_hadronic_model_name(name):
+    """Upper-case ``name`` without dashes and dots ("Sibyll-2.3d" -> "SIBYLL23D")."""
+    return re.sub("[-.]", "", name).upper()
+
+
+def gen_xmat(energy_grid):
+    """Matrix of x_lab = E_child/E_parent, cached and reused while ``energy_grid.d`` is unchanged."""
+    global _xmat
+    dims = (energy_grid.d, energy_grid.d)
+    if _xmat is None or _xmat.shape != dims:
+        _xmat = np.zeros(dims)
+        for eidx in range(energy_grid.d):
+            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
+            _xmat[: eidx + 1, eidx] = xvec
+    return _xmat
 
 
 def print_in_rows(min_dbg_level, str_list, n_cols=5):

@@ -26,7 +26,7 @@ import yaml
 
 import MCEq.config as cfg
 from MCEq.core import MCEqRun
-from MCEq.data import db_manifest, download
+from MCEq.data import download
 from MCEq.data.hdf5_backend import HDF5Backend
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -94,7 +94,6 @@ def _backend(monkeypatch, db_fname, data_dir, manifest=MANIFEST):
         interaction_medium="air",
         muon_helicity_dependence=False,
         generic_losses_all_charged=False,
-        em_air_density=None,
     ).items():
         monkeypatch.setattr(cfg, name, value)
     monkeypatch.setitem(cfg.adv_set, "disabled_particles", [])
@@ -116,7 +115,7 @@ def _copy_release(release_dir, dest, names):
 
 
 def test_fixture_is_a_release_cut(release_dir):
-    manifest = db_manifest.load(release_dir / MANIFEST)
+    manifest = download.load_manifest(release_dir / MANIFEST)
     assert set(manifest["files"]) == {BASE_FILE, MODEL_FILE}
     with h5py.File(release_dir / MONOLITH, "r") as mono:
         assert "mceq_db_manifest" not in mono.attrs
@@ -129,13 +128,13 @@ def test_fixture_is_a_release_cut(release_dir):
     with h5py.File(release_dir / MODEL_FILE, "r") as mod:
         assert f"hadronic_interactions/{MEDIUM}/{MODEL}" in mod
         assert "decays" not in mod
-        grid = db_manifest.grid_signature(mod["common"].attrs)
+        grid = download.grid_signature(mod["common"].attrs)
     assert manifest["grids"][fixtures.GRID_ID] == grid
-    assert db_manifest.files_for(manifest, grid, MODEL, MEDIUM) == [MODEL_FILE]
-    assert db_manifest.files_for(manifest, grid, BASE_MODEL, MEDIUM) == [BASE_FILE]
-    assert db_manifest.files_for(manifest, grid, MODEL, "water") == []
+    assert download.files_for(manifest, grid, MODEL, MEDIUM) == [MODEL_FILE]
+    assert download.files_for(manifest, grid, BASE_MODEL, MEDIUM) == [BASE_FILE]
+    assert download.files_for(manifest, grid, MODEL, "water") == []
     other = dict(grid, e_dim=grid["e_dim"] + 1)
-    assert db_manifest.files_for(manifest, other, MODEL, MEDIUM) == []
+    assert download.files_for(manifest, other, MODEL, MEDIUM) == []
 
 
 def test_monolith_never_consults_the_manifest(monkeypatch, release_dir, no_network):
@@ -379,7 +378,9 @@ def test_packaged_manifest_lists_only_legendre_2d_packages():
     """The installed manifest sends no user to a 2D file MCEq refuses: its 2D
     packages are the Legendre ones, the default among them; the Hankel-mode
     files of the release are not listed."""
-    manifest = db_manifest.load(download.packaged_manifest(download.DEFAULT_MANIFEST))
+    manifest = download.load_manifest(
+        download.packaged_manifest(download.DEFAULT_MANIFEST)
+    )
     two_d = {
         n for n, e in manifest["files"].items() if manifest["grids"][e["grid"]]["k_dim"]
     }

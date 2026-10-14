@@ -118,14 +118,6 @@ e_max = 1e11
 #: (``em_db_fname``)
 enable_em = False
 
-#: Air density in g/cm³ used to select a density slice from a
-#: ρ-stratified EM database (one produced by
-#: ``mceq-maintenance-tools/database_generator/5_assemble_em_db.py``
-#: with ``--air-density-grid``). The loader chooses the nearest stored
-#: density in log10 space; ``None`` selects the legacy single-density
-#: slice for back-compat with un-stratified EM databases.
-em_air_density = None
-
 #: ETD2RK kernel implementation. Choices:
 #:   "auto"            — pick the best available ETD2 kernel (see below).
 #:   "numpy_etd2"      — pure-numpy ETD2RK (always available).

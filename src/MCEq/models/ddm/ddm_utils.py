@@ -9,7 +9,7 @@ from jacobi import propagate
 from scipy.integrate import quad
 from scipy.interpolate import splev
 
-from MCEq.misc import info
+from MCEq.misc import _eval_energy_cuts, energy_grid, info
 
 _LIMIT_PROPAGATE = np.inf
 _PROPAGATE_PARAMS = dict(maxiter=10, maxgrad=1, method=0)
@@ -58,8 +58,6 @@ def _generate_DDM_matrix(
     edge) are replaced by the DDM spectrum, interpolated linearly in log
     beam energy between the splines; ``average`` uses bin-averaged dN/dx.
     """
-    from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
-
     projectile = channel.projectile
     secondary = channel.secondary
     # Definitions of particles and energy grid
@@ -67,7 +65,7 @@ def _generate_DDM_matrix(
     e_max = mceq._energy_grid.b[-1] if e_max < 0 else e_max
     mceq_egr = mceq._energy_grid
     min_idx, max_idx, _cuts = _eval_energy_cuts(mceq_egr.c, e_min, e_max)
-    _energy_grid = EnergyGrid(
+    _energy_grid = energy_grid(
         mceq_egr.c[_cuts],
         mceq_egr.b[min_idx : max_idx + 1],
         mceq_egr.w[_cuts],

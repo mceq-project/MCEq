@@ -15,12 +15,3 @@ Reference/API
 =============
 .. automodapi:: MCEq.data
   :inherited-members:
-  :skip: EnergyGrid
-
-.. autoclass:: MCEq.data.energy_grid.EnergyGrid
-   :show-inheritance:
-
-   ``EnergyGrid`` is a namedtuple (fields ``c``, ``b``, ``w``, ``d``) —
-   documented explicitly because automodsumm would otherwise document
-   the namedtuple fields and inherited tuple methods as if they were
-   class attributes.

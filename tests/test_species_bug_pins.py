@@ -175,7 +175,7 @@ def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
     """
     import inspect
 
-    from MCEq.data.cross_sections import InteractionCrossSections
+    from MCEq.data.tables import InteractionCrossSections
     from MCEq.species.particle import MCEqParticle as _C
 
     src = inspect.getsource(_C.prod_cross_section)

@@ -19,8 +19,6 @@ layers =
     data
     misc
     config
-ignore_imports =
-    MCEq.misc -> MCEq.data.*
 
 [importlinter:contract:environment]
 name = environment does not import the cascade stack
@@ -34,8 +32,6 @@ forbidden_modules =
     MCEq.operators
     MCEq.species
     MCEq.data
-ignore_imports =
-    MCEq.misc -> MCEq.data.*
 
 [importlinter:contract:legacy]
 name = nothing imports the legacy mceq_config module

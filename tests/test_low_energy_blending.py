@@ -1,7 +1,7 @@
 """The runtime HE/LE blend, tested on the pure functions of the module.
 
 Every blend property is pinned by calling the free functions of
-``MCEq.data.blending`` -- ``he_le_weight``, ``blend_yields`` and
+``MCEq.data.hdf5_backend`` -- ``he_le_weight``, ``blend_yields`` and
 ``blend_cross_sections`` -- directly with explicit arguments, no backend at
 all. Only two things are about ``HDF5Backend`` itself and go through a REAL
 backend: the ``interaction_db`` and ``cs_db`` dispatch (blend on / blend off /
@@ -24,7 +24,11 @@ import pytest
 
 from MCEq import config
 from MCEq.data import HDF5Backend
-from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
+from MCEq.data.hdf5_backend import (
+    blend_cross_sections,
+    blend_yields,
+    he_le_weight,
+)
 
 _SPEC = importlib.util.spec_from_file_location(
     "make_hdf5_fixtures",
@@ -93,7 +97,6 @@ def fixture_backend(monkeypatch, path, *, low_energy_model=None):
         fallback_to_air_cs=True,
         interaction_medium=fixtures.MEDIUM,
         muon_helicity_dependence=False,
-        em_air_density=None,
     ).items():
         monkeypatch.setattr(cfg, name, value)
     monkeypatch.setitem(cfg.adv_set, "disabled_particles", [])
@@ -430,7 +433,7 @@ def test_float32_yields_upcast_to_float64_through_the_blend():
 def test_float32_pack_asymmetry_survives_the_real_blend(monkeypatch, tmp_path):
     """The read hands the blend float32 matrices and the blend upcasts only
     the shared channels; this checks the two compose as claimed in the
-    ``MCEq.data.blending`` module docstring."""
+    ``blend_cross_sections`` docstring."""
     path = fixtures.build_database(
         tmp_path / "pack_float32.h5", pack_dtype=np.float32, low_energy_model=LE_MODEL
     )
