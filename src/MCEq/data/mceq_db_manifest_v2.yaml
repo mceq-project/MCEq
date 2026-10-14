@@ -1,7 +1,7 @@
 schema: 1
 release: v2.0.0
 url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
-created: '2026-10-14T09:19:36'
+created: '2026-10-14T21:22:15'
 defaults:
   1d: mceq_base_air_1d_v2.h5
   2d: mceq_base_air_2d_legendre_v2.h5
@@ -61,8 +61,8 @@ files:
     note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
       SIBYLL21/23D/23ESTAR*); stencil bin-averaged
   mceq_base_air_2d_legendre_v2.h5:
-    sha256: e78c4dfd746e369ee431ee214a10d825b376306f001a5f8c7646569e05efb5d2
-    size: 455698047
+    sha256: a97f043d477241279f7f92d1b705fee2c8dca1c679cdacbe15be9617dcf37bbe
+    size: 455798944
     grid: 2d-150x90
     spine: true
     models:
@@ -71,13 +71,14 @@ files:
     source:
       key: 2d
       file: mceq_db_legendre_native_stencil.h5
-      sha256: c9153b92d1dc2e3aff789e7ba3c20a983a5ce6b7c4b70af03a92c111582b16c0
+      sha256: 43c19c8f6b3e8490ef2ceef660d23b49eb3947b18365a8a69b7cfdb4e2600fb9
       verbatim: false
     values_dtype: float32
     note: default 2D package, 150 bins x 90 Legendre modes (FLUKA20251 native Legendre,
-      both hemispheres); air composition for muon scattering; stencil bin-averaged
+      both hemispheres); air composition for muon scattering; stencil bin-averaged;
+      precomputed muon scattering rates
   mceq_model_SIBYLL23E_air_2d_legendre_v2.h5:
-    sha256: ed823181417dd8f3e211601ea6d8071439369b461607acee58b1eaeeeb0f22da
+    sha256: faef1ed7ab193d70a40ab33ef1f334b14e7ecd2c426c29d21814140f9a141c87
     size: 967581791
     grid: 2d-150x90
     spine: false
@@ -87,7 +88,7 @@ files:
     source:
       key: 2d
       file: mceq_db_legendre_native_stencil.h5
-      sha256: c9153b92d1dc2e3aff789e7ba3c20a983a5ce6b7c4b70af03a92c111582b16c0
+      sha256: 43c19c8f6b3e8490ef2ceef660d23b49eb3947b18365a8a69b7cfdb4e2600fb9
       verbatim: false
     values_dtype: float32
     note: SIBYLL 2.3e Legendre yields (m2m SIBYLL23E_legendre_20261008); needs mceq_base_air_2d_legendre_v2.h5;

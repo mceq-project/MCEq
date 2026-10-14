@@ -43,3 +43,12 @@ composition of the medium, read from the database at
 fraction). The Legendre 2D databases contain dry air. A database without the
 composition of the selected medium raises an error; set
 `config.muon_scattering_model = "gaussian"` to use such a database.
+
+With finite nuclei the rate costs about l_max^2: some 150 s for the modes up to
+l = 2000 on 31 energy bins. The Legendre 2D release packages therefore also
+carry it precomputed, at `/material_scattering/<medium>/screened_coulomb_rates`
+(one row per mode, one column per energy bin of the file), written by
+mceq-maintenance-tools with this same function. MCEq uses the table, cut to the
+run's energy window, when the muon mass, `muon_scattering_finite_nuclei` and
+the grids it records match the run; otherwise it computes the rate, once per
+process.

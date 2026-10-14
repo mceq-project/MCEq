@@ -72,6 +72,24 @@ class HDF5Backend:
             raise ValueError(f"Invalid composition at {group}/composition")
         return comp
 
+    def scattering_rate_table(self):
+        """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
+        Coulomb rates of the medium, cut to the run's energy window, or None.
+
+        Read from ``material_scattering/<medium>/screened_coulomb_rates``
+        (``(n_k, n_e)`` on the file's full grid); the attributes record the
+        inputs, which :func:`MCEq.operators.scattering.mode_rates` checks.
+        """
+        path = f"material_scattering/{self.medium}/screened_coulomb_rates"
+        if not self._had.has(path):
+            return None
+        rates, attrs = self._had.read_table(path)
+        common = self._had.attrs("common")
+        l_grid = np.asarray(common.get("k_grid", []), dtype=float)
+        if np.shape(rates) != (l_grid.size, np.size(common["e_grid"])):
+            return None
+        return rates[:, self._cuts], l_grid, self._energy_grid.c, attrs
+
     def __init__(
         self,
         medium=None,

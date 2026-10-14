@@ -40,6 +40,8 @@ e+- angular distribution is set by the EM cascade kinematics.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 from scipy import constants
 
@@ -113,12 +115,67 @@ def mode_rates(model, e_kin, l_grid, layout, muon_mass=MUON_MASS, finite_nuclei=
     if model == "gaussian":
         return (ell * (ell + 1))[:, None] * theta_s_squared(e_kin, muon_mass) / 4.0
     if model == "screened-coulomb":
-        return screened_coulomb_rate_legendre(
-            e_kin, ell, layout.scattering_composition(), muon_mass, finite_nuclei
-        )
+        table = _stored_rates(layout, e_kin, ell, muon_mass, finite_nuclei)
+        if table is not None:
+            return table
+        comp = np.asarray(layout.scattering_composition(), dtype=float)
+        e_kin = np.asarray(e_kin, dtype=float)
+        return _screened_coulomb_cached(
+            e_kin.tobytes(),
+            ell.tobytes(),
+            comp.tobytes(),
+            comp.shape,
+            float(muon_mass),
+            bool(finite_nuclei),
+        ).copy()
     raise ValueError(
         f"Unknown muon_scattering_model {model!r}; "
         "use 'screened-coulomb' or 'gaussian'."
+    )
+
+
+#: Name of the precomputed screened Coulomb table in
+#: ``material_scattering/<medium>/`` (written by mceq-maintenance-tools).
+RATE_TABLE = "screened_coulomb_rates"
+
+
+def _stored_rates(layout, e_kin, ell, muon_mass, finite_nuclei):
+    """The database's precomputed screened Coulomb rates on ``(ell, e_kin)``,
+    or None when the database has none or they were made for other inputs.
+
+    The finite-nucleus rates cost ~l_max^2 (150 s for l up to 2000 on 31
+    bins) and depend only on the database: its energy grid, its modes and its
+    medium composition, plus the muon mass and the ``finite_nuclei`` switch,
+    which the table records and which are checked here.
+    """
+    read = getattr(layout, "scattering_rate_table", None)
+    stored = read() if read is not None else None
+    if stored is None:
+        return None
+    rates, l_grid, e_grid, attrs = stored
+    if (
+        bool(attrs.get("finite_nuclei")) != bool(finite_nuclei)
+        or not np.isclose(
+            float(attrs.get("muon_mass", np.nan)), muon_mass, rtol=1e-12, atol=0
+        )
+        or not np.array_equal(np.asarray(l_grid, dtype=float), ell)
+        or np.shape(e_grid) != np.shape(e_kin)
+        or not np.allclose(e_grid, e_kin, rtol=1e-12, atol=0)
+    ):
+        return None
+    return np.array(rates, dtype=float)
+
+
+@functools.lru_cache(maxsize=8)
+def _screened_coulomb_cached(e_bytes, l_bytes, comp_bytes, comp_shape, mass, finite):
+    """:func:`screened_coulomb_rate_legendre`, memoised for the process: a
+    matrix rebuild without a stored table does not pay for it again."""
+    return screened_coulomb_rate_legendre(
+        np.frombuffer(e_bytes),
+        np.frombuffer(l_bytes),
+        np.frombuffer(comp_bytes).reshape(comp_shape),
+        mass,
+        finite,
     )
 
 
