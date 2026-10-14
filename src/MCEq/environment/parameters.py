@@ -312,18 +312,14 @@ def list_available_corsika_atmospheres(
 
 
 def get_atmosphere_parameters(location, season):
-    (
-        """
-    Returns the atmospheric parameters for a given location and season for CORSIKA-style models.
-    Parameters are based on CORSIKA parameterizations.
+    """CORSIKA atmosphere parameters of a (location, season).
 
-    Reference Table:
-    """
-        + _corsika_reference_table
-        + """
+    The available combinations are listed by
+    ``list_available_corsika_atmospheres(print_reference_table=True)``.
+
     Args:
-      location (str): The location identifier.
-      season (str or None): The season identifier.
+      location (str): location identifier.
+      season (str or None): season identifier.
 
     Returns:
       tuple: (_aatm, _batm, _catm, _thickl, _hlay) numpy arrays.
@@ -331,7 +327,6 @@ def get_atmosphere_parameters(location, season):
     Raises:
       KeyError: if the (location, season) combination is not found.
     """
-    )
     params = _cosika_atmosphere_params.get((location, season))
     if params is None:
         raise KeyError(
