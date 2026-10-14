@@ -66,6 +66,13 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 # cm (everything shorter-lived than K0s will be considered prompt)
 prompt_ctau = 2.6842
 
+#: Bin-averaged rates for databases with stencil-averaged tables: the decay and
+#: interaction rates of the parents the database marks (mceq-maintenance-tools
+#: ``bin_average``) become banded stencil operators instead of diagonals, so the
+#: counted decays and interactions are bin integrals. No effect on databases
+#: without the marks.
+bin_average_rates = True
+
 #: Approximate value for the maximum density expected. Used by the
 #: atmosphere model. Default value: air at the surface.
 max_density = 0.001225

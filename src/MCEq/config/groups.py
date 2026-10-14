@@ -122,6 +122,7 @@ GROUPS = {
         "muon_scattering_finite_nuclei",
         "enable_default_tracking",
         "prompt_ctau",
+        "bin_average_rates",
         "minimal_primary_energy",
         "standard_particles",
         "use_isospin_sym",

@@ -109,6 +109,8 @@ class Interactions:
         self.relations = index["relations"]
         self.index_d = index["index_d"]
         self.description = index["description"]
+        #: ``(radius, {pdg})`` of stencil-averaged yield tables, or None
+        self.bin_average = index.get("bin_average")
 
         # Advanced options
 

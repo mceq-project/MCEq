@@ -9,6 +9,7 @@ fallback.
 import numpy as np
 
 from MCEq.misc import average_A_target, getAZN, info
+from MCEq.species import bin_average
 from MCEq.species.constants import ATOMIC_MASS_UNIT_G, _pdata, _pname
 
 
@@ -228,6 +229,9 @@ class MCEqParticle:
         """
 
         self.current_hadronic_model = hadronic_db.iam
+        self._int_stencil = self._stencil_radius(
+            getattr(hadronic_db, "bin_average", None)
+        )
         if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
             self.hadr_secondaries, self.hadr_yields = self._set_channels(
@@ -245,6 +249,7 @@ class MCEqParticle:
             # Copy properties of the original particle for tracking
             orig_part = pmanager.pdg2pref[self.pdg_id]
             self.is_projectile = orig_part.is_projectile
+            self._int_stencil = orig_part._int_stencil
             if orig_part in orig_part.hadr_secondaries:
                 self.hadr_secondaries.append(self)
                 self.hadr_yields[self] = orig_part.hadr_yields[orig_part]
@@ -290,6 +295,7 @@ class MCEqParticle:
     def set_decay_channels(self, decay_db, pmanager):
         """Populates decay channel and energy distributions"""
 
+        self._dec_stencil = self._stencil_radius(getattr(decay_db, "bin_average", None))
         if self.is_stable or self.is_tracking:
             # Variables for decays
             self.children = []
@@ -398,6 +404,54 @@ class MCEqParticle:
             return self.mass / self.ctau / p_lab
         except ZeroDivisionError:
             return np.ones_like(self._energy_grid.c) * np.inf
+
+    def _stencil_radius(self, marks):
+        """Stencil radius if ``marks`` (``(radius, {pdg})``) cover this particle, else 0."""
+        if not marks or self.pdg_id[0] not in marks[1]:
+            return 0
+        return int(marks[0])
+
+    def decay_rate_operator(self):
+        """Banded bin-averaged decay rate (see :mod:`MCEq.species.bin_average`),
+        or None when the decay tables of this particle are not stencil-averaged.
+
+        Replaces ``diag(inverse_decay_length())``; same units.
+        """
+        r = getattr(self, "_dec_stencil", 0)
+        if not r or self.is_stable or not self.ctau > 0:
+            return None
+
+        def rate(e_kin):
+            e_tot = e_kin + self.mass
+            return self.mass / self.ctau / np.sqrt(e_tot**2 - self.mass**2)
+
+        return bin_average.rate_operator(self._energy_grid.b, rate, r)
+
+    def interaction_rate_operator(self):
+        """Banded bin-averaged interaction rate, or None when the yield tables of
+        this particle are not stencil-averaged.
+
+        Replaces ``diag(inverse_interaction_length())``; the cross section is
+        interpolated between the bin centres linearly in log-log (linearly in
+        log E where it vanishes somewhere on the grid).
+        """
+        r = getattr(self, "_int_stencil", 0)
+        if not r:
+            return None
+        lam = np.asarray(self.inverse_interaction_length(), dtype=np.float64)
+        log_c = np.log(np.asarray(self._energy_grid.c, dtype=np.float64))
+        if np.all(lam > 0):
+            log_l = np.log(lam)
+
+            def rate(e_kin):
+                return np.exp(np.interp(np.log(e_kin), log_c, log_l))
+
+        else:
+
+            def rate(e_kin):
+                return np.interp(np.log(e_kin), log_c, lam)
+
+        return bin_average.rate_operator(self._energy_grid.b, rate, r)
 
     def prod_cross_section(self, mbarn=False):
         """Returns production cross section.
