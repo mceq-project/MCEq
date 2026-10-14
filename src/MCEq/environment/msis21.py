@@ -15,6 +15,7 @@ from MCEq.environment.parameters import (
     KM3NET_DETECTORS,
     LOCATIONS,
     MONTH_TO_DAY_OF_YEAR,
+    location_key,
 )
 from MCEq.misc import info
 
@@ -54,6 +55,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
     def init_parameters(self, location, season, doy, use_loc_altitudes=False):
         """Set location, day-of-year, and default geophysical parameters."""
+        location = location_key(location)
         if location not in LOCATIONS:
             raise ValueError(
                 f"Location '{location}' not in MCEq's LOCATIONS table. "
@@ -92,6 +94,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
     def set_location(self, location):
         """Re-target by named location (entry in LOCATIONS)."""
+        location = location_key(location)
         if location not in LOCATIONS:
             raise ValueError(f"Unknown location '{location}'")
         lon, lat, _ = LOCATIONS[location]

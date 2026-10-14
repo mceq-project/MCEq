@@ -251,6 +251,25 @@ LOCATIONS = {
     "FtSumner": (-104.2, 34.5, 31000.0 * 100.0),
 }
 
+#: Location names that were renamed; the old name still works with a warning.
+_RENAMED_LOCATIONS = {"SanGrasso": "GranSasso"}
+
+
+def location_key(location):
+    """``location`` with renamed entries mapped to their current name."""
+    if location in _RENAMED_LOCATIONS:
+        import warnings
+
+        new = _RENAMED_LOCATIONS[location]
+        warnings.warn(
+            f"Location {location!r} is now called {new!r}.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return new
+    return location
+
+
 DAY_TIMES_SEC = {
     "day": 43200.0,  # 12:00 PM in seconds from midnight
     "night": 0.0,  # Midnight in seconds

@@ -657,3 +657,13 @@ def test_msis21_shares_km3net_site_table():
     from MCEq.environment.parameters import KM3NET_DETECTORS
 
     assert dp._KM3NET_DETECTORS is KM3NET_DETECTORS
+
+
+def test_renamed_location_still_works():
+    from MCEq.geometry.density_profiles import MSIS00Atmosphere
+
+    with pytest.warns(DeprecationWarning, match="GranSasso"):
+        old = MSIS00Atmosphere("SanGrasso", "January")
+    new = MSIS00Atmosphere("GranSasso", "January")
+    assert old.location == new.location == "GranSasso"
+    assert old.get_density(1e5) == new.get_density(1e5)

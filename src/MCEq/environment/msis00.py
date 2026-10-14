@@ -5,7 +5,7 @@ import numpy as np
 from MCEq.environment.base import EarthsAtmosphere
 from MCEq.environment.column import fit_column_splines
 from MCEq.environment.location_centered import LocationCenteredMixin
-from MCEq.environment.parameters import KM3NET_DETECTORS
+from MCEq.environment.parameters import KM3NET_DETECTORS, location_key
 from MCEq.misc import info
 
 
@@ -32,6 +32,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
     ):
         from MCEq.environment.msis00_backend import cNRLMSISE00
 
+        location = location_key(location)
         msis_atmospheres = [
             "SouthPole",
             "Karlsruhe",
