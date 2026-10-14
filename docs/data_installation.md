@@ -103,7 +103,10 @@ and `cross_sections/air/MYMODEL`, in the same layout as the release files.
 The test suite and the example notebooks use a reduced copy of the 1D release,
 31 energy bins from 891 GeV to 891 TeV: `mceq_ci_base_air_1d_v2.h5`
 (FLUKA20251, SIBYLL23E), `mceq_ci_extra_models_air_1d_v2.h5` (the other models)
-and `mceq_db_manifest_ci_v2.yaml`, assets of the `ci-assets` release. They are
+and `mceq_db_manifest_ci_v2.yaml`, assets of the `ci-assets` release, cut from
+the stencil-averaged release databases. They are published under
+digest-stamped names (`mceq_ci_base_air_1d_v2_<sha256[:12]>.h5`, which the CI
+manifest's `url` entries name), so an older commit keeps its files. They are
 not meant for physics. Each package names its manifest in the root attribute
 `mceq_db_manifest`, which takes precedence over `config.mceq_db_manifest`.
 

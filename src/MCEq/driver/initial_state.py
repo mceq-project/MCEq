@@ -141,8 +141,11 @@ class InitialState:
         multiple particles. If it is `False` the initial condition is reset to zero
         before adding the particle.
 
-        The kinetic energy per nucleon must fit the active energy grid
-        and the three-bin deposition stencil.
+        The kinetic energy per nucleon must fit the active energy grid and the
+        deposition: three bins matching E^0..E^2 at the bin centres, or, for
+        species whose tables the database marks as stencil-averaged, 2r + 1
+        bins whose reconstructed density has the moments of a delta
+        (:func:`MCEq.species.bin_average.delta_deposition`).
 
         Args:
           E (float): kinetic energy of a nucleus in GeV
@@ -196,6 +199,22 @@ class InitialState:
 
         cenbin = np.argwhere(En < ebins)[0][0] - 1
 
+        if self._deposit_for_stencil(En, n_nucleons, n_protons, n_neutrons, pdg_id):
+            return
+
+        if cenbin == 0 or cenbin == len(egrid) - 1:
+            # The outermost bin has no neighbour on one side for the
+            # three-bin moment match; deposit the particle there whole.
+            if n_nucleons == 0:
+                parts = [(pdg_id, 1.0)]
+            else:
+                parts = [(2212, n_protons), (2112, n_neutrons)]
+            for pid, k in parts:
+                if k > 0:
+                    lidx = self._system.pman[pid].lidx
+                    self.phi0[lidx + cenbin] += k / ewidths[cenbin]
+            return
+
         # Equalize the first three moments for 3 normalizations around the central
         # bin
         emat = np.vstack(
@@ -233,6 +252,57 @@ class InitialState:
                 self.phi0[n_lidx + cenbin - 1 : n_lidx + cenbin + 2] += solve(
                     emat, b_neutrons
                 )
+
+    def _deposit_for_stencil(self, En, n_nucleons, n_protons, n_neutrons, pdg_id):
+        """Deposit a single particle for stencil-averaged tables, if they apply.
+
+        Under stencil-averaged yield tables (:mod:`MCEq.species.bin_average`)
+        the cell contents around a bin are read as a smooth density, and the
+        three-bin deposition, which matches E^0..E^2 at the bin centres,
+        becomes a broad bump: the first generation near the primary energy
+        comes out low by ~5 %. The particle is then deposited on 2r + 1 bins
+        whose reconstructed density has the log-energy moments of a delta.
+        Returns False (nothing deposited) when no deposited species carries a
+        stencil mark, or when the particle sits within r bins of the grid edge,
+        where the three-bin deposition is used instead.
+        """
+        from MCEq.species.bin_average import delta_deposition
+
+        pman = self._system.pman
+        if n_nucleons == 0:
+            parts = [(pman[pdg_id], 1.0)]
+        else:
+            parts = [(pman[2212], n_protons), (pman[2112], n_neutrons)]
+            parts = [(p, k) for p, k in parts if k > 0]
+        radius = {
+            max(getattr(p, "_int_stencil", 0), getattr(p, "_dec_stencil", 0))
+            for p, _ in parts
+        }
+        if radius == {0}:
+            return False
+        if len(radius) != 1 or 0 in radius:
+            raise ValueError(
+                "single primary: deposited species disagree on the bin-average "
+                f"stencil ({sorted(radius)}); the database marks are inconsistent"
+            )
+        r = radius.pop()
+        grid = self._system._energy_grid
+        c = int(np.searchsorted(grid.b, En, side="right")) - 1
+        if c < r or c > len(grid.c) - 1 - r:
+            # The 2r + 1 bins would leave the grid; near the edge the tables
+            # read a constant density anyway, and a one-sided moment match
+            # oscillates. Use the three-bin deposition there.
+            info(
+                2,
+                f"single primary at {En:5.3g} GeV is within {r} bins of the grid "
+                "edge; using the three-bin deposition",
+            )
+            return False
+        first, contents = delta_deposition(grid.b, En, r)
+        sl = slice(first, first + len(contents))
+        for p, k in parts:
+            self.phi0[p.lidx + sl.start : p.lidx + sl.stop] += k * contents / grid.w[sl]
+        return True
 
     def set_initial_spectrum(self, spectrum, pdg_id, append=False):
         """Set a user-defined spectrum for an arbitrary species as initial condition.

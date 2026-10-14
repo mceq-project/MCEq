@@ -7,13 +7,7 @@ the run.
 
 import numpy as np
 
-# trapz was finally removed with numpy 2.4
-if hasattr(np, "trapezoid"):
-    trapz = np.trapezoid
-else:
-    trapz = np.trapz
-
-from MCEq.misc import info  # noqa: E402
+from MCEq.misc import info
 
 
 def n_particles(run, label, grid_idx=None, min_energy_cutoff=1e-1):
@@ -81,7 +75,36 @@ def z_factor(
     min_energy=0.3,
     use_cs_scaling=True,
 ):
-    """Energy dependent Z-factor according to Thunman et al. (1996)"""
+    r"""Energy-dependent Z-factor of ``projectile -> secondary`` interactions.
+
+    ``definition="thunman"`` (any value other than ``"primary_e"``) is the
+    spectrum-weighted moment of Thunman, Ingelman and Gondolo (1996) at the
+    secondary energy :math:`E`,
+
+    .. math::
+
+        Z(E) = \int_E^\infty dE'\,\frac{\phi_N(E')}{\phi_N(E)}
+            \frac{\lambda_N(E)}{\lambda_N(E')}\frac{dn(E', E)}{dE},
+
+    evaluated as a matrix row, :math:`Z_i = \sum_j C_{ij}\,\sigma_j\phi_j /
+    (\sigma_i\phi_i)` with :math:`\phi` the proton (neutron for a neutron
+    projectile) flux of the primary model at the bin centres and
+    :math:`\sigma` the production cross section (``use_cs_scaling=False``
+    drops the ratio). Under Feynman scaling and a power law
+    :math:`E^{-(\gamma+1)}` this is :math:`\int_0^1 x^{\gamma-1}F(x)dx`.
+    The row form is the table acting on a smooth flux, which is what
+    stencil-averaged tables are built for. Values below ``min_energy`` are 0.
+
+    ``definition="primary_e"`` is MCEq's own column definition with respect
+    to the cosmic-ray energy (x-axis = projectile energy): the yield column of
+    a projectile at :math:`E_j`, weighted by
+    :math:`\phi_N(E_j)/\phi_N(E_i)` over secondaries above ``min_energy``.
+    For stencil-averaged tables the column is that of a projectile at the bin
+    centre (:meth:`MCEqParticle.parent_column`).
+
+    Returns:
+      (numpy.ndarray): Z on ``run.e_grid``
+    """
 
     proj = run.pman[projectile_pdg]
     sec = run.pman[secondary_pdg]
@@ -96,52 +119,52 @@ def z_factor(
         nuc_flux = run.pmodel.p_and_n_flux(run.e_grid)[2]
     else:
         nuc_flux = run.pmodel.p_and_n_flux(run.e_grid)[1]
-    zfac = np.zeros(run.dim)
+    nuc_flux = np.asarray(nuc_flux, dtype=np.float64)
 
     smat = proj.hadr_yields[sec]
     proj_cs = proj.prod_cross_section()
-    zfac = np.zeros_like(run.e_grid)
-
     if run._cfg.has_cuda:
         import cupy
 
         smat = cupy.asnumpy(smat)
         proj_cs = cupy.asnumpy(proj_cs)
-    # Definition wrt CR energy (different from Thunman) on x-axis
-    min_idx = 0
+    smat = np.asarray(smat, dtype=np.float64)
+    proj_cs = np.asarray(proj_cs, dtype=np.float64)
+    e = np.asarray(run.e_grid, dtype=np.float64)
+    zfac = np.zeros_like(e)
+
     if definition == "primary_e":
-        for p_eidx, e in enumerate(run.e_grid):
-            if e < min_energy:
-                min_idx = p_eidx
-                continue
+        assert use_cs_scaling is False, f"cs_scaling has when definition = {definition}"
+        below = np.flatnonzero(e < min_energy)
+        min_idx = int(below[-1]) if len(below) else 0
+        for p_eidx in np.flatnonzero(e >= min_energy):
+            col = proj.parent_column(smat, p_eidx)
             nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-            assert use_cs_scaling is False, (
-                f"cs_scaling has when definition = {definition}"
-            )
-            cs_fac = 1.0
-            zfac[p_eidx] = np.sum(smat[min_idx : p_eidx + 1, p_eidx] * nuc_fac * cs_fac)
-        return zfac
-    else:
-        # Like in Thunman et al. 1996
-        for p_eidx, e in enumerate(run.e_grid):
-            if e < min_energy:
-                continue
-            min_idx = p_eidx
-            nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-            if use_cs_scaling:
-                cs_fac = np.zeros(p_eidx - min_idx + 1)
-                old_settings = np.seterr(all="ignore")
-                res = proj_cs[p_eidx] / proj_cs[min_idx : p_eidx + 1]
-                np.seterr(**old_settings)
-                cs_fac[(res > 0) & np.isfinite(res)] = res[(res > 0) & np.isfinite(res)]
-            else:
-                cs_fac = 1.0
-            zfac[p_eidx] = np.sum(smat[p_eidx, p_eidx:] * nuc_fac * cs_fac)
+            zfac[p_eidx] = np.sum(col[min_idx : p_eidx + 1] * nuc_fac)
         return zfac
 
+    # Thunman et al. 1996: a row of the table against the projectile flux
+    weight = nuc_flux * proj_cs if use_cs_scaling else nuc_flux.copy()
+    source = smat @ weight
+    ok = (e >= min_energy) & (weight > 0)
+    zfac[ok] = source[ok] / weight[ok]
+    return zfac
 
-def decay_z_factor(run, parent_pdg, child_pdg):
-    """Energy dependent Z-factor according to Lipari (1993)."""
+
+def decay_z_factor(run, parent_pdg, child_pdg, gamma=None):
+    r"""Energy-dependent decay Z-factor (Lipari 1993) at the daughter energy.
+
+    A matrix row against a parent decay spectrum :math:`S(E) \propto
+    E^{\gamma}` (``gamma`` the differential index; default: the nucleon index
+    of the primary model at the daughter energy, as the parent spectrum of
+    mesons that decay rather than interact):
+    :math:`Z_i = \sum_j D_{ij} S_j / S_i`. Under scaling this is Lipari's
+    moment :math:`\int_0^1 x^{-\gamma-1} dN/dx\,dx`. As a row it is valid
+    for stencil-averaged decay tables, which a single parent column is not.
+
+    Returns:
+      (numpy.ndarray): Z on ``run.e_grid``
+    """
 
     proj = run.pman[parent_pdg]
     sec = run.pman[child_pdg]
@@ -155,14 +178,18 @@ def decay_z_factor(run, parent_pdg, child_pdg):
     if not proj.is_child(sec):
         raise Exception(f"{sec.name} is not a a child particle of {proj.name}.")
 
-    cr_gamma = run.pmodel.nucleon_gamma(run.e_grid)
-    zfac = np.zeros(run.dim)
+    e = np.asarray(run.e_grid, dtype=np.float64)
+    if gamma is None:
+        gamma = run.pmodel.nucleon_gamma(e)
+    gamma = np.broadcast_to(np.asarray(gamma, dtype=np.float64), e.shape)
+    dmat = proj.decay_dists[sec]
+    if run._cfg.has_cuda:
+        import cupy
 
-    zfac = np.zeros_like(run.e_grid)
-    for p_eidx, e in enumerate(run.e_grid):
-        # if e < min_energy:
-        #     min_idx = p_eidx + 1
-        #     continue
-        xlab, xdist = proj.dNdec_dxlab(e, sec)
-        zfac[p_eidx] = trapz(xlab ** (-cr_gamma[p_eidx] - 2.0) * xdist, x=xlab)
+        dmat = cupy.asnumpy(dmat)
+    dmat = np.asarray(dmat, dtype=np.float64)
+    zfac = np.zeros_like(e)
+    for i in range(len(e)):
+        spec = (e / e[i]) ** gamma[i]
+        zfac[i] = dmat[i] @ spec
     return zfac

@@ -94,6 +94,14 @@ class HDF5Store:
         with self._open() as f:
             return f[path][:], dict(f[path].attrs)
 
+    def read_optional_table(self, path, attrs_path="common"):
+        """``(f[path][:], dict(f[path].attrs), dict(f[attrs_path].attrs))`` in
+        one open, or None when ``path`` is absent."""
+        with self._open() as f:
+            if path not in f:
+                return None
+            return f[path][:], dict(f[path].attrs), dict(f[attrs_path].attrs)
+
     def read_channel_pack(self, group_path, name) -> ChannelPack:
         """The pack ``group_path/name`` with its ``_indptrs`` sibling."""
         with self._open() as f:

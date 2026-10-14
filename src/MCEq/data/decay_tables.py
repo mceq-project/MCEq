@@ -40,6 +40,8 @@ class Decays:
         self.relations = index["relations"]
         self.index_d = index["index_d"]
         self.description = index["description"]
+        #: ``(radius, {pdg})`` of stencil-averaged decay tables, or None
+        self.bin_average = index.get("bin_average")
         # Advanced options
         regenerate_index = False
         if parent_list:

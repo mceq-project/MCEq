@@ -72,6 +72,26 @@ class HDF5Backend:
             raise ValueError(f"Invalid composition at {group}/composition")
         return comp
 
+    def scattering_rate_table(self):
+        """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
+        Coulomb rates of the medium cut to the energy window, or None.
+
+        ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
+        on the file's grid, its inputs as attributes for ``scattering.mode_rates``
+        to check), read once per medium: rebuilds then reopen nothing.
+        """
+        cache = self.__dict__.setdefault("_scattering_rate_tables", {})
+        if self.medium not in cache:
+            path = f"material_scattering/{self.medium}/screened_coulomb_rates"
+            got, cache[self.medium] = self._had.read_optional_table(path), None
+            if got is not None:
+                rates, attrs, common = got
+                l_grid = np.asarray(common.get("k_grid", []), dtype=float)
+                if np.shape(rates) == (l_grid.size, np.size(common["e_grid"])):
+                    cut = rates[:, self._cuts]
+                    cache[self.medium] = cut, l_grid, self._energy_grid.c, attrs
+        return cache[self.medium]
+
     def __init__(
         self,
         medium=None,
@@ -340,9 +360,17 @@ class HDF5Backend:
             return self._interaction_db_single(mname)
         he_index = self._interaction_db_single(mname)
         le_index = self._interaction_db_single(self.low_energy_model)
-        return self._blend_interaction_dbs(
+        blended = self._blend_interaction_dbs(
             he_index, le_index, mname, self.low_energy_model
         )
+        # A blended column is bin-averaged only where both models are.
+        he_ba, le_ba = he_index.get("bin_average"), le_index.get("bin_average")
+        blended["bin_average"] = (
+            (he_ba[0], he_ba[1] & le_ba[1])
+            if he_ba and le_ba and he_ba[0] == le_ba[0]
+            else None
+        )
+        return blended
 
     def _interaction_db_single(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)
@@ -392,6 +420,11 @@ class HDF5Backend:
             int_index = self._gen_db_dictionary(
                 store.read_channel_pack(f"{had}/{medium}", mname),
                 equivalences=eqv,
+            )
+            int_index["bin_average"] = self._bin_average_marks(
+                store.attrs(f"{had}/{medium}/{mname}"),
+                "bin_average_projectiles",
+                eqv if self._physics.assume_nucleon_interactions_for_exotics else None,
             )
 
         # Append electromagnetic interaction matrices from the EM database
@@ -472,7 +505,26 @@ class HDF5Backend:
         dec_index = self._gen_db_dictionary(
             self._had.read_channel_pack("decays", decay_dset_name),
         )
+        dec_index["bin_average"] = self._bin_average_marks(
+            self._had.attrs("decays"), "bin_average_parents"
+        )
         return dec_index
+
+    def _bin_average_marks(self, attrs, key, equivalences=None):
+        """``(radius, {pdg})`` of a stencil-averaged table, ``None`` without marks.
+
+        Stand-ins of :mod:`MCEq.data.equivalences` borrow the marks of the
+        parent whose tables they use.
+        """
+        if not getattr(self._physics, "bin_average_rates", True) or (
+            "bin_average_radius" not in attrs
+        ):
+            return None
+        pdgs = {int(p) for p in attrs.get(key, ())}
+        for stand_in, aliases in reverse_equivalences(equivalences or {}).items():
+            if stand_in[0] in pdgs:
+                pdgs |= {a[0] for a in aliases}
+        return int(attrs["bin_average_radius"]), pdgs
 
     def cs_db(self, interaction_model_name):
         mname = normalize_hadronic_model_name(interaction_model_name)

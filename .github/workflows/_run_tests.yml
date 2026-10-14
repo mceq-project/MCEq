@@ -54,19 +54,21 @@ jobs:
           src/MCEq/data/mceq_ci_base_air_1d_v2.h5
           src/MCEq/data/mceq_ci_extra_models_air_1d_v2.h5
           src/MCEq/data/mceq_ci_base_air_2d_legendre_v2.h5
-        key: mceq-ci-data-v2-f15fca02-5024945b-27b0786e-${{ runner.os }}
+        key: mceq-ci-data-v2-21865c8c-22a66142-ace549d0-${{ runner.os }}
 
     - name: Download CI data packages if not cached
       if: steps.cache-db.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        for f in mceq_db_manifest_ci_v2.yaml mceq_ci_base_air_1d_v2.h5 mceq_ci_extra_models_air_1d_v2.h5 \
-                 mceq_ci_base_air_2d_legendre_v2.h5; do
-          curl -fsSL "https://github.com/mceq-project/MCEq/releases/download/ci-assets/$f" -o "src/MCEq/data/$f"
+        # Published under digest-stamped names, so an older commit keeps its
+        # files; each lands under the name the code and manifest use.
+        base=https://github.com/mceq-project/MCEq/releases/download/ci-assets
+        for f in mceq_db_manifest_ci_v2_21865c8cff3c.yaml mceq_ci_base_air_1d_v2_f20f913a20e6.h5 \
+                 mceq_ci_extra_models_air_1d_v2_363d7c85edd9.h5 mceq_ci_base_air_2d_legendre_v2_22a661427080.h5; do
+          curl -fsSL "$base/$f" -o "src/MCEq/data/$(echo "$f" | sed -E 's/_[0-9a-f]{12}\././')"
         done
         # The stored 2D solution, too big for the repository.
-        curl -fsSL "https://github.com/mceq-project/MCEq/releases/download/ci-assets/2d_baseline_solution_27b0786e8998.npz" \
-          -o tests/data/2d_baseline_solution.npz
+        curl -fsSL "$base/2d_baseline_solution_ace549d08062.npz" -o tests/data/2d_baseline_solution.npz
 
     - name: Report CI data cache state and verify digests
       shell: bash
@@ -82,7 +84,7 @@ jobs:
             if digest != entry["sha256"]:
                 sys.exit(1)
         # The 2D Legendre CI database (16 modes, 31 bins) is not in the CI manifest.
-        name, pin = "mceq_ci_base_air_2d_legendre_v2.h5", "5024945b22172c0e4513766d9600dd6e0338ed2bf7a72cfac0bc3a877ca58619"
+        name, pin = "mceq_ci_base_air_2d_legendre_v2.h5", "22a6614270807eaa33b2d6d448030d2eb55e87efe2c7bf0bc7f08b63125a3838"
         digest = hashlib.sha256((data / name).read_bytes()).hexdigest()
         print(name, "OK" if digest == pin else "MISMATCH")
         if digest != pin:
