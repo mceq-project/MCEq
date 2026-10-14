@@ -1,8 +1,6 @@
 import sys
 from types import ModuleType
 
-import numpy as np
-
 #: Settings views, resolved and cached on first use by :func:`_views`.
 #: ``info``/``print_in_rows``/``caller_name`` read the ``debug`` group,
 #: ``average_A_target`` the ``physics`` one. ``misc`` never imports
@@ -12,7 +10,8 @@ import numpy as np
 #: ``sys.modules`` indirection ``config/groups.py`` already uses. #anfe: comment includes references to unrelated codebase "C5"
 _DEBUG = None
 _PHYSICS = None
-#anfe: why do we need this mechanism at all?
+# anfe: why do we need this mechanism at all?
+
 
 def _views():
     global _DEBUG, _PHYSICS
@@ -45,7 +44,7 @@ _MOVED_TO_DATA = {
 _RESOLVED = {}
 
 
-def _moved_to_data(name): #anfe: looks totally boilerplate to me.
+def _moved_to_data(name):  # anfe: looks totally boilerplate to me.
     """Resolve a moved name from its implementation module and retain the module.
 
     Read out of `sys.modules` rather than bound by the import statements:
@@ -72,7 +71,7 @@ def _moved_to_data(name): #anfe: looks totally boilerplate to me.
     return module
 
 
-class _MiscCompatModule(ModuleType): 
+class _MiscCompatModule(ModuleType):
     """Forward reads, writes, deletes, and `dir()` for the names in `_MOVED_TO_DATA`.
 
     Forwarding writes is necessary because `__getattr__` alone would let an
@@ -112,61 +111,38 @@ class _MiscCompatModule(ModuleType):
 
 sys.modules[__name__].__class__ = _MiscCompatModule
 
-#anfe: IMO, everything above is unnecessary, and is some sort of misunderstanding.
+# anfe: IMO, everything above is unnecessary, and is some sort of misunderstanding.
 
+#: Dry air: volume fraction, mass number and atoms per molecule of N2, O2, Ar.
+_AIR = [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
+
+#: Mean target mass number per atom. Averaging over atoms, not molecules, makes
+#: N_A/<A> * <sigma> with the per-atom cross section the interaction rate per
+#: grammage; for air <A> = 14.5431, CORSIKA's AVERAW.
 _target_masses = {
-    # <A> must be the ATOM-number-weighted mean mass so that the
-    # interaction rate per grammage N_A/<A> * <sigma> (with <sigma> the
-    # per-atom air average) equals N_A * sum_i w_i/A_i * sigma_i.
-    # Dry-air volume fractions N2/O2/Ar = 0.78084/0.20946/0.00934
-    # (https://en.wikipedia.org/wiki/Atmosphere_of_Earth) contribute
-    # 2/2/1 atoms per molecule -> <A> = 14.5431, identical to CORSIKA's
-    # AVERAW.
-    "air": (
-        sum(
-            n * f * a
-            for f, a, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
-        )
-        / sum(
-            n * f
-            for f, _, n in [(0.78084, 14.0, 2), (0.20946, 16.0, 2), (0.00934, 40.0, 1)]
-        )
-    ),#anfe: doesn't look elegant because of air mixture typed twice.
+    "air": sum(n * f * a for f, a, n in _AIR) / sum(n * f for f, _, n in _AIR),
     "water": 1.0 / 3.0 * (2.0 + 16.0),
     "ice": 1.0 / 3.0 * (2.0 + 16.0),
     "co2": 1.0 / 3.0 * (12.0 + 2.0 * 16.0),
     "rock": 22.0,
     "hydrogen": 1.0,
-    # Atomic mass of iron, not atomic number
-    "iron": 55.845, #why we have this exception only for iron
+    "iron": 55.845,
 }
 
 
-def average_A_target(mat="auto", physics=None): #anfe: this function is kind of crazy for just reading the number from the dictionary, no?
-    """Average target mass number.
-
-    For air <A> = 14.5431: the atom-number-weighted mean mass of dry
-    air (N2/O2/Ar volume fractions with 2/2/1 atoms per molecule),
-    matching CORSIKA's AVERAW. Pair it with per-atom-averaged air
-    cross sections. Other media supported are co2, rock, ice, water,
-    hydrogen, and iron.
+def average_A_target(
+    mat="auto", physics=None
+):  # anfe: this function is kind of crazy for just reading the number from the dictionary, no?
+    """Average target mass number of a medium.
 
     Args:
-        mat: str or float, optional
-            Interaction medium or custom target mass number. Default is "auto".
-        physics: physics settings group, optional
-            Where ``mat="auto"`` reads ``A_target`` from. Pass a
-            ``RunConfig().physics`` snapshot for isolation; the default
-            reads the process setting.
+        mat (str or float): medium name (one of ``_target_masses``), a mass
+            number, or "auto" for ``config.A_target``, which in turn may be
+            "auto" for ``config.interaction_medium``.
+        physics: settings group that "auto" reads; default the live config.
 
     Returns:
-        float
-            Average target mass number.
-
-    Raises:
-        ValueError:
-            If `mat` is not a valid option.
-
+        float: mean mass number per target atom.
     """
     if isinstance(mat, str) and mat.lower() == "auto":
         if physics is None:
@@ -179,14 +155,9 @@ def average_A_target(mat="auto", physics=None): #anfe: this function is kind of 
     if isinstance(mat, float) or isinstance(mat, int):
         return float(mat)
     raise ValueError(
-        "mceq_config.A_target is expected to be a "
+        "config.A_target is expected to be a "
         + 'number or one of {0} or "auto"'.format(", ".join(_target_masses.keys()))
     )
-
-
-def theta_deg(cos_theta): #anfe: doesn't seem to be used
-    """Converts :math:`\\cos{\\theta}` to :math:`\\theta` in degrees."""
-    return np.rad2deg(np.arccos(cos_theta)) 
 
 
 def print_in_rows(min_dbg_level, str_list, n_cols=5):
@@ -211,10 +182,17 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
 
 #: Photons, electrons and pi0 -- the species that exist only as part of the
 #: electromagnetic cascade. pi0 decays into photons and nothing else.
-EM_PDG_IDS = (22, 11, -11, 111) #anfe: funny to find this in the middle of the misc module 
+EM_PDG_IDS = (
+    22,
+    11,
+    -11,
+    111,
+)  # anfe: funny to find this in the middle of the misc module
 
 
-def strip_em_species(particle_list, physics): #anfe: this function is used twice, but it should be handled rather not by stripping the EM species later. The list should be build without EM species if EM is not switched on. So remove this module and work carefully the disabled em logic into particle manager. 
+def strip_em_species(
+    particle_list, physics
+):  # anfe: this function is used twice, but it should be handled rather not by stripping the EM species later. The list should be build without EM species if EM is not switched on. So remove this module and work carefully the disabled em logic into particle manager.
     """Leave the electromagnetic species out unless the cascade is on.
 
     Without EM interactions photons and electrons have no transport, and pi0
@@ -225,21 +203,6 @@ def strip_em_species(particle_list, physics): #anfe: this function is used twice
     if physics.enable_em:
         return particle_list
     return [p for p in particle_list if p[0] not in EM_PDG_IDS]
-
-
-def is_charm_pdgid(pdgid): #anfe: used onoly once! no need function
-    """Returns True if particle ID belongs to a heavy (charm) hadron."""
-
-    return (abs(pdgid) > 400 and abs(pdgid) < 500) or (
-        abs(pdgid) > 4000 and abs(pdgid) < 5000
-    )
-
-
-def _get_closest(value, in_list): #anfe:not used
-    """Returns the index and value of the nearest element of ``in_list``."""
-
-    minindex = np.argmin(np.abs(in_list - value * np.ones(len(in_list))))
-    return minindex, in_list[minindex]
 
 
 def getAZN(pdg_id):
@@ -256,7 +219,6 @@ def getAZN(pdg_id):
     Returns:
         (int,int,int): (A, Z, N) tuple
     """
-    Z, A = 1, 1
     if pdg_id < 2000:
         return 0, 0, 0
     if pdg_id == 2112:
@@ -267,78 +229,17 @@ def getAZN(pdg_id):
         A = (pdg_id % 1000) // 10
         Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
-    return 1, 0, 0 #anfe: this doesn't make sense as default case, A=1 but Z=0 and N=0
-
-
-def getAZN_corsika(corsikaid): #anfe: Used only once. I don't think it's needed. We can convert cka to pdg id or itnerpret in place. 
-    """Returns mass number :math:`A`, charge :math:`Z` and neutron
-    number :math:`N` of ``corsikaid``.
-
-    Args:
-        corsikaid (int): corsika id of nucleus/mass group
-    Returns:
-        (int,int,int): (A, Z, N) tuple
-    """
-    Z, A = 1, 1
-
-    if corsikaid == 14:
-        return getAZN(2212)
-    if corsikaid >= 100:
-        Z = corsikaid % 100
-        A = (corsikaid - Z) // 100
-    else:
-        Z, A = 0, 0
-
-    return A, Z, A - Z
-
-
-def corsikaid2pdg(corsika_id):
-    """Conversion of CORSIKA nuclear code to PDG nuclear code"""
-    if corsika_id in [101, 14]:
-        return 2212
-    if corsika_id in [100, 13]:
-        return 2112
-    A, Z, _ = getAZN_corsika(corsika_id)
-    # 10LZZZAAAI
-    pdg_id = 1000000000
-    pdg_id += 10 * A
-    pdg_id += 10000 * Z
-    return pdg_id
-
-
-def pdg2corsikaid(pdg_id): #anfe: not used.
-    """Conversion from nuclear PDG ID to CORSIKA ID.
-
-    Note::
-
-        PDG ID for nuclei is coded according to 10LZZZAAAI.
-        For iron-52 it is 1000260520.
-    """
-    if pdg_id == 2212:
-        return 14
-
-    A = pdg_id % 1000 / 10
-    Z = pdg_id % 1000000 / 10000
-
-    return A * 100 + Z
+    return 1, 0, 0  # anfe: this doesn't make sense as default case, A=1 but Z=0 and N=0
 
 
 def caller_name(skip=2):
     """Name of a caller as ``module.Class::method(): ``.
 
     `skip` counts stack levels above this function: skip=1 is "who calls me",
-    skip=2 "who calls my caller". An empty string is returned when the stack is
-    shallower than that.
-
-    The frame is fetched with :func:`sys._getframe` rather than
-    :func:`inspect.stack`, which materialises `FrameInfo` records with source
-    context for the whole stack: 0.08 us against 192 us on a typical stack, and
-    :func:`info` reaches this on every call while an override list is active. #anfe: this last paragraph is AI slop, no need this info.
+    skip=2 "who calls my caller". Returns "" if the stack is shallower.
 
     From https://gist.github.com/techtonik/2151727
     """
-    import sys
-
     try:
         frame = sys._getframe(skip)
     except ValueError:  # stack shallower than `skip`
@@ -398,45 +299,3 @@ def info(min_dbg_level, *message, **kwargs):
         if blank_caller:
             cname = len(cname) * " "
         print(cname + " ".join(message))
-
-
-def reset_plt(ticksize, fontsize): #anfe: no need
-    # Lazy-import: matplotlib is not a required dependency.
-    import matplotlib.pyplot as plt
-
-    plt.rcParams["xtick.labelsize"] = ticksize
-    plt.rcParams["ytick.labelsize"] = ticksize
-    plt.rcParams["font.size"] = fontsize
-    plt.rcParams["mathtext.fontset"] = "stix"
-    plt.rcParams["font.family"] = "STIXGeneral"
-    plt.rcParams["legend.facecolor"] = "white"
-    plt.rcParams["axes.formatter.limits"] = (-1, 3)
-    plt.rcParams["axes.linewidth"] = 2.25
-
-
-def put_ticks(this_fig, this_ax): #anfe: no need
-    # Lazy-import: matplotlib is not a required dependency.
-    import matplotlib
-
-    this_ax.xaxis.set_tick_params(
-        which="major", direction="in", width=2.5, length=12, zorder=1, top=True
-    )
-    this_ax.yaxis.set_tick_params(
-        which="major", direction="in", width=2.5, length=12, zorder=1, right=True
-    )
-    this_ax.xaxis.set_tick_params(
-        which="minor", direction="in", width=1.5, length=6, zorder=1, top=True
-    )
-    this_ax.yaxis.set_tick_params(
-        which="minor", direction="in", width=1.5, length=6, zorder=1, right=True
-    )
-    dx = -3 / 72
-    dy = -3 / 72
-    y_offset = matplotlib.transforms.ScaledTranslation(0, dy, this_fig.dpi_scale_trans)
-    x_offset = matplotlib.transforms.ScaledTranslation(dx, 0, this_fig.dpi_scale_trans)
-
-    for label in this_ax.xaxis.get_majorticklabels():
-        label.set_transform(label.get_transform() + y_offset)
-
-    for label in this_ax.yaxis.get_majorticklabels():
-        label.set_transform(label.get_transform() + x_offset)

@@ -19,29 +19,14 @@ with :math:`\boldsymbol{C}` the secondary-production matrix,
 diagonal of inverse interaction / decay lengths.
 
 :class:`MatrixBuilder` fills ``C`` and ``D`` per (child, parent) channel from
-the yields a :class:`~MCEq.particlemanager.ParticleManager` carries, folds
-resonances into their parents, adds the continuous-loss band and the
-per-mode muon multiple-scattering rate, and assembles the result
-into the two constant sparse matrices ``int_m`` and ``dec_m`` that
-:mod:`MCEq.operators.compiled` turns into a compiled operator for the solvers.
+the yields of a :class:`~MCEq.particlemanager.ParticleManager`, folds
+resonances into their parents, adds the continuous-loss band and the per-mode
+muon multiple-scattering rate, and assembles the sparse matrices ``int_m`` and
+``dec_m``. ``int_m`` is also available as :attr:`MatrixBuilder.int_m_hadr` +
+:attr:`MatrixBuilder.dEdx_band`.
+"""
 
-``int_m`` is also available split in two, as
-:attr:`MatrixBuilder.int_m_hadr` + :attr:`MatrixBuilder.dEdx_band`, which the
-block-ETD research item (R3) needs. Both halves are assembled lazily
-from what the accumulation stashed as it ran -- ``int_m`` is never recomputed
-from them, so it stays bitwise what it was, and the hot path pays one dense
-block copy per species carrying losses.
-
-Settings reach the builder as the ``grid``, ``losses`` and ``physics`` group
-views of :mod:`MCEq.config.groups`, not as reads off the config module, so this
-layer stays below the driver (enforced by ``.importlinter``). ``grid`` is
-the third view because ``config.floatlen`` -- the dtype every channel block and
-every assembled CSR is built in -- is mapped into the grid group as
-``grid.dtype`` rather than into ``losses`` or ``physics``; the constraint on
-this layer is that no new spec dataclass appears, and three existing views
-satisfy it.
-""" #anfe: too verbose. Do not write a story what was, what you have done, how it ran. Write only what the modules is about and what it contains now.
-
+from collections import defaultdict
 from itertools import product
 
 import numpy as np
@@ -58,23 +43,17 @@ from MCEq.species import bin_average
 #: (unstable in isolation) above.
 UPWIND_STIFFNESS_THRESHOLD = 0.5
 
-#: Floor of the adaptive layer: the number of monotone rows the boundary cliff
-#: of ``docs/mceq_v1.x_v2_diff.md`` 5.3 needs on its own, independent of the
-#: loss stiffness. Matches the ``loss_stencil_low_upwind_rows`` default.
+#: Minimum number of monotone upwind rows of the adaptive layer.
 UPWIND_ROWS_FLOOR = 8
 
 
 class MatrixBuilder:
-    """This class constructs the interaction and decay matrices.
+    """Builds ``int_m`` and ``dec_m`` from a ParticleManager's yields.
 
-    ``pman`` is the particle manager holding the cascade species, their
-    tabulated yields and the energy grid. ``layout`` supplies the mode layout
-    of the database (``is_2d``, ``n_k``, ``k_grid``), which decides whether a
-    per-channel block is ``(dim, dim)`` or one slab per Legendre mode.
-
-    ``grid``, ``losses`` and ``physics`` are the settings groups this builder
-    reads (see the module docstring); they are required, injected by the
-    driver -- there is no fallback to live config.
+    ``pman`` holds the cascade species, their yields and the energy grid.
+    ``layout`` supplies ``is_2d``, ``n_k`` and ``k_grid``: a per-channel block
+    is ``(dim, dim)`` or one slab per Legendre mode. ``grid``, ``losses`` and
+    ``physics`` are the settings groups the builder reads.
     """
 
     def __init__(self, pman, layout, *, grid, losses, physics):
@@ -108,9 +87,6 @@ class MatrixBuilder:
         Set the ``skip_decay_matrix`` flag to avoid recreating the decay
         matrix. This is not necessary if, for example, particle production
         is modified, or the interaction model is changed.
-
-        Also invalidates and re-stashes the :attr:`int_m_hadr` /
-        :attr:`dEdx_band` split, which is read off this accumulation.
 
         Args:
           skip_decay_matrix (bool): Omit re-creating D matrix
@@ -165,9 +141,8 @@ class MatrixBuilder:
                     ):
                         info(5, "Cont. loss for", parent.name)
                         if self._physics.enable_cont_rad_loss:
-                            # Stash the band and the block it lands on, so the
-                            # int_m_hadr / dEdx_band split needs neither a
-                            # second cont_loss_operator call nor a change here.
+                            # Stash the band and the pre-band block for the
+                            # int_m_hadr / dEdx_band split.
                             band = self.cont_loss_operator(parent.pdg_id)
                             self._contloss_bands[idx] = band
                             self._contloss_upwind_rows[idx] = self._closure_rows_for(
@@ -247,11 +222,7 @@ class MatrixBuilder:
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix.
 
-        The derivative operator is the species-adaptive one from
-        :meth:`_differential_operator_for`: for the ``expfit_low_upwind*``
-        composites the monotone low-energy layer widens per particle to cover
-        its own stiffness; every other family keeps the shared
-        :attr:`op_matrix`.
+        The derivative operator is :meth:`_differential_operator_for`.
         """
         op = self._differential_operator_for(pdg_id)
         op_mat = -np.diag(1 / self._energy_grid.c).dot(
@@ -263,28 +234,17 @@ class MatrixBuilder:
         return op_mat
 
     def _upwind_rows_for(self, pdg_id):
-        """Species-adaptive count of monotone upwind rows for one particle.
+        """Number of monotone upwind rows for one particle's loss stencil.
 
-        The smallest count covering every row whose ETD2 one-step stiffness
-        ``dX_max * |dEdX| / (E * dlnE)`` reaches :data:`UPWIND_STIFFNESS_THRESHOLD`:
-        there the mixed-sign expfit row is unstable under the diagonal-only ETD
-        split (the kernel exponentiates the diagonal and treats the stencil
-        explicitly, so the isolated one-step map tends ``-D^-1 Off``, whose
-        spectral radius the monotone rows bound at 1). Floored at
-        :data:`UPWIND_ROWS_FLOOR` -- the boundary-cliff layer of docs 5.3 the
-        composites exist for -- and capped at ``dim - 2``, the clamp
-        ``differential_operator`` applies. The reference depth is fixed at 20 g/cm², preserving the production
-        spatial operator independently of temporal solver tolerances. The
-        path controller now limits steps from the assembled bands instead
-        of changing the spatial stencil when tolerances change.
-        EM species return 0 -- their block runs under the
-        Cure-B cap of ``operators/compiled.py`` and its documented caveat is
-        separate; the instability this covers is the hadron blocks.
-        """#anfe: looong story. what is the function doing.
+        Covers every row whose one-step stiffness
+        ``dX * |dEdX| / (E * dlnE)`` at ``dX = 20 g/cm^2`` reaches
+        :data:`UPWIND_STIFFNESS_THRESHOLD`, clamped to
+        ``[UPWIND_ROWS_FLOOR, dim - 2]``. EM species return 0.
+        """
         particle = self._pman[pdg_id]
         if getattr(particle, "is_em", False):
             return 0
-        d_x_max = 20.0  # fixed stencil-design depth, independent of solver tolerances
+        d_x_max = 20.0  # fixed stencil-design depth
         dedx = np.abs(np.asarray(particle.dEdX, dtype=np.float64))
         dln_e = float(
             np.mean(loss_stencil.log_spacings(np.asarray(self._energy_grid.b, float)))
@@ -295,22 +255,15 @@ class MatrixBuilder:
         return min(max(n_rows, UPWIND_ROWS_FLOOR), int(self._energy_grid.d) - 2)
 
     def _closure_rows_for(self, pdg_id):
-        """Number of leading rows of one particle's loss band that are its
-        monotone upwind closure: :meth:`_upwind_rows_for` under an
-        ``expfit_low_upwind*`` stencil, 0 for every other stencil."""
+        """Leading upwind-closure rows of one particle's loss band (0 unless ``expfit_low_upwind*``)."""
         method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
         if not str(method).startswith("expfit_low_upwind"):
             return 0
         return self._upwind_rows_for(pdg_id)
 
     def _differential_operator_for(self, pdg_id):
-        """The derivative operator to fold one particle's ``dEdX`` into.
-
-        The shared :attr:`op_matrix` unless the stencil is an
-        ``expfit_low_upwind*`` composite AND the particle's adaptive row count
-        differs from the configured :attr:`op_matrix` count -- one operator per
-        distinct row count, built on first use and cached.
-        """
+        """The ``d/du`` operator for one particle: :attr:`op_matrix`, or a cached
+        ``expfit_low_upwind*`` variant with that particle's upwind row count."""
         method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
         if not str(method).startswith("expfit_low_upwind"):
             return self.op_matrix
@@ -341,10 +294,7 @@ class MatrixBuilder:
         self._int_m_hadr = self._dEdx_band = self._assembly_key = None
 
     def _current_assembly_key(self):
-        """The settings an assembly reads that the blocks do not carry: the
-        CSR dtype (``np.dtype`` normalises the ``floatlen = None`` spelling of
-        fp64), whether muon damping applies, and the selected scattering model and
-        its finite-nuclei switch."""
+        """Settings an assembly reads that the blocks do not carry: dtype and muon scattering."""
         damping = self.is_2d and getattr(
             self._physics, "muon_multiple_scattering", False
         )
@@ -376,29 +326,11 @@ class MatrixBuilder:
 
     @property
     def int_m_hadr(self):
-        r"""``int_m`` without the continuous-loss band, assembled on demand.
+        """``int_m`` without the continuous-loss band, cached on first read.
 
-        Hadronic production, the :math:`-\boldsymbol{1}` main diagonal, the
-        :math:`\boldsymbol{\Lambda}_{int}` scaling and the muon scattering
-        rate (:mod:`~MCEq.operators.scattering`), which belongs to neither
-        name: ``int_m == int_m_hadr + dEdx_band``, the sum taken in the band's
-        fp64 and rounded once to ``grid.dtype``.
-
-        Bitwise at fp64, the default. Below it the identity holds except where
-        the band and the damping meet -- nowhere in 1D, the muon diagonals in
-        2D. There the assembly adds the band into the dense block and the
-        damping over it as a CSR duplicate, so ``int_m`` is
-        ``fl(fl(hadronic + band) + damping)`` against this half's
-        ``fl(hadronic + damping)``; float addition is not associative, and a
-        few ulp of those entries is the difference (measured: 1542 of 8742, 1
-        to 7 ulp, on the 2D test fixture at float32).
-
-        ``int_m`` is not reassembled from the halves -- it is this same
-        accumulation read one block earlier. The split is constructed and
-        cached on first request; separating overlapping damping and loss terms
-        changes low-precision rounding because floating-point addition is not
-        associative, so recomputing it per read would not be stable.
-        """ #anfe: noooo story please. it's just 5 lines.
+        ``int_m == int_m_hadr + dEdx_band`` bitwise at fp64; below fp64 the muon
+        diagonals of 2D databases differ by a few ulp (different summation order).
+        """
         self._require_live_assembly("int_m_hadr")
         if self._int_m_hadr is None:
             blocks = dict(self.C_blocks)
@@ -408,30 +340,14 @@ class MatrixBuilder:
 
     @property
     def dEdx_band(self):
-        """The continuous-loss band of ``int_m`` alone, assembled on demand.
-
-        The complement of :attr:`int_m_hadr`, in fp64, from the band arrays
-        ``cont_loss_operator`` returned during the assembly -- reused, not
-        recomputed, so ``losses.average_operator`` never re-enters its
-        ``np.linalg.matrix_power`` and a stencil changed since cannot leak in.
-        Empty when the continuous loss is off. Cached like the other half.
-        """
+        """The continuous-loss band of ``int_m`` (fp64), from the stashed bands; cached."""
         self._require_live_assembly("dEdx_band")
         if self._dEdx_band is None:
             self._dEdx_band = self._csr_from_bands()
         return self._dEdx_band
 
     def _csr_from_bands(self):
-        """Place the stashed loss bands at their species offsets, per mode.
-
-        fp64, the dtype ``cont_loss_operator`` produces: a band cast to
-        ``grid.dtype`` first would round twice, where ``block += band`` rounds
-        the promoted sum once. The band is mode-independent -- added to every
-        mode slab of a species through ``band[None, :, :]`` -- so the 2D
-        operator is ``n_k`` copies of the one-mode matrix. No ``(row, column)``
-        is written twice, the species blocks being disjoint, so the COO
-        conversion has no duplicates to sum in an unspecified order.
-        """
+        """fp64 CSR of the stashed loss bands at their species offsets, repeated per mode."""
         shape = (self.dim_states, self.dim_states)
         parts = []
         for (c, p), band in self._contloss_bands.items():
@@ -506,35 +422,9 @@ class MatrixBuilder:
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
         """Assemble the per-channel blocks into the global CSR operator.
 
-        For 1D databases each block is a dense ``(dim, dim)`` channel
-        matrix scattered at its (child, parent) offsets directly into COO/CSR,
-        without a dense global matrix.
-
-        For 2D databases each block carries a leading ``n_k`` axis (one
-        slab per Legendre mode, shape ``(n_k, dim, dim)``). The modes
-        are mutually decoupled, so the operator is block-diagonal in
-        l: per mode, the nonzero entries of every channel slab are
-        scattered (with their global row/column offsets) into one COO
-        triplet set and converted to CSR in one shot — no dense
-        ``(dim_states, dim_states)`` intermediate. ``scipy.sparse.
-        block_diag`` then stitches the ``n_k`` mode matrices into the
-        final ``(n_k * dim_states, n_k * dim_states)`` CSR that the
-        dimension-agnostic ETD2RK kernels consume.
-
-        When ``apply_muon_scattering`` is True (the interaction-matrix
-        path) and ``physics.muon_multiple_scattering`` is on, muon-row
-        diagonals receive the selected per-mode multiple-scattering
-        generator (see
-        :meth:`_muon_scattering_damping`), added as extra COO entries
-        (duplicates are summed on CSR conversion).
-
-        The sec(theta) transport setting (``secant.transport``) does not
-        alter these matrices; the mode coupling is applied inside the
-        ETD2RK secant kernels (see :mod:`MCEq.operators.secant` for why it
-        is not stitched into the CSR).
+        2D blocks ``(n_k, dim, dim)`` give one CSR per mode, joined block-diagonally.
+        ``apply_muon_scattering`` adds :meth:`_muon_scattering_damping` to the muon diagonals.
         """
-        from scipy.sparse import coo_matrix, csr_matrix
-
         mu_damp = None
         if self.is_2d and apply_muon_scattering:
             mu_damp = self._muon_scattering_damping()
@@ -566,7 +456,7 @@ class MatrixBuilder:
                     cols.append(diag)
                     vals.append(damping)
             if rows:
-                m = coo_matrix(
+                m = sp.coo_matrix(
                     (
                         np.concatenate(vals).astype(self._grid.dtype),
                         (np.concatenate(rows), np.concatenate(cols)),
@@ -574,7 +464,7 @@ class MatrixBuilder:
                     shape=shape,
                 ).tocsr()
             else:
-                m = csr_matrix(shape, dtype=self._grid.dtype)
+                m = sp.csr_matrix(shape, dtype=self._grid.dtype)
             m.eliminate_zeros()
             m.sort_indices()
             per_mode_csr.append(m)
@@ -586,19 +476,7 @@ class MatrixBuilder:
         return stitched
 
     def _follow_chains(self, p, pprod_mat, p_orig, propmat, reclev=0):
-        """Recursively project ``p_orig``'s production through resonance
-        children of ``p`` into ``propmat``.
-
-        For each child ``d`` of ``p``:
-
-        * If ``d`` is *not* a resonance, ``d`` has its own state-vector slot,
-          so we add a direct contribution ``propmat[d, p_orig] += d's
-          production matrix · pprod_mat`` and stop.
-        * If ``d`` *is* a resonance (set via ``adv_set["force_resonance"]``),
-          ``d`` has no slot of its own, so we fold its production into
-          ``p_orig``'s row by multiplying through and recursing into ``d``'s
-          own children.
-        """
+        """Add ``p_orig``'s production through ``p``'s children to ``propmat``, recursing into resonances."""
         info(40, reclev * "\t", "entering with", p.name)
         for d in p.children:
             info(40, reclev * "\t", "following to", d.name)
@@ -614,8 +492,6 @@ class MatrixBuilder:
 
     def _fill_matrices(self, skip_decay_matrix=False):
         """Generates the interaction and decay matrices from scratch."""
-        from collections import defaultdict
-
         # Fill decay matrix blocks
         if not skip_decay_matrix or self.dec_m is None:
             # Initialize empty D matrix
@@ -645,34 +521,15 @@ class MatrixBuilder:
                 cmat = self._zero_mat()
                 p._assign_hadr_dist(s, cmat)
                 if not s.is_resonance:
-                    # s has its own state-vector slot — direct entry.
+                    # s has its own state-vector slot.
                     self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
                 else:
-                    # s is folded — recurse into its children.
+                    # s is folded: recurse into its children.
                     self._follow_chains(s, cmat, p, self.C_blocks, reclev=1)
 
     def _construct_differential_operator(self):
-        """Constructs a derivative operator for the continuous losses.
-
-        Builds a (dim_e x dim_e) banded matrix that approximates d/du with
-        u = ln E on the (log-uniform) energy grid. Families, exactness
-        conditions and the boundary-row caveat:
-        :mod:`MCEq.operators.loss_stencil`. The interior 7-point stencil is
-        selected by ``losses.stencil_method``, anchored for the ``expfit*``
-        families at ``losses.stencil_alpha0``, and the composites replace
-        ``losses.stencil_low_upwind_rows`` low-energy rows.
-
-        This shared matrix is what a direct ``op_matrix`` read sees and what
-        every species the adaptive layer does not widen is folded with; for a
-        widened hadron species :meth:`cont_loss_operator` substitutes a
-        per-row-count variant from :meth:`_differential_operator_for`, so this
-        method also (re)initialises that cache.
-
-        Called from :meth:`__init__` and nowhere else, so
-        :meth:`MCEq.core.MCEqRun.regenerate_matrices` rebuilds the blocks
-        against the ``op_matrix`` the constructor left behind; a stencil change
-        needs this method called explicitly.
-        """
+        """Build the shared ``d/du`` operator :attr:`op_matrix` (:mod:`MCEq.operators.loss_stencil`)
+        and reset the cache of per-species variants."""
         method = getattr(self._losses, "stencil_method", "expfit_low_upwind2")
         low_upwind_rows = getattr(self._losses, "stencil_low_upwind_rows", 8)
         self.op_matrix = loss_stencil.differential_operator(
@@ -683,13 +540,9 @@ class MatrixBuilder:
             low_upwind_rows=low_upwind_rows,
             dtype=self._grid.dtype,
         )
-        #: The row count ``op_matrix`` actually got (same clamp the builder
-        #: applies inside ``differential_operator``), so the adaptive layer can
-        #: reuse it instead of rebuilding an identical matrix.
+        # Row count of op_matrix after the clamp of differential_operator.
         self._op_matrix_rows = min(
             max(3, int(low_upwind_rows)), int(self._energy_grid.d) - 2
         )
-        #: Adaptive variants, one per distinct row count (see
-        #: :meth:`_differential_operator_for`). Rebuilt here so a stencil change
-        #: through a config write plus an explicit call cannot hit a stale cache.
+        # Per-species variants, keyed by upwind row count.
         self._adaptive_ops = {}

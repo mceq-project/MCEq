@@ -1,10 +1,4 @@
-"""``MCEqParticle``: one particle's properties, channels, and rates.
-
-One particle's bookkeeping, the species layer's counterpart to the manager.
-Reads the shared particle table from :mod:`MCEq.species.constants` and uses
-the required, injected ``physics`` settings; there is no configuration
-fallback.
-""" #anfe: prose horrible AI style, doesn't tell anything about the module. If nothing to say, just write one line, no need subpagaraph.
+"""MCEqParticle: properties, decay and interaction channels, and rates of a species."""
 
 import numpy as np
 
@@ -14,8 +8,8 @@ from MCEq.species.constants import ATOMIC_MASS_UNIT_G, _pdata, _pname
 
 
 class MCEqParticle:
-    """Bundles different particle properties for simplified
-    availability of particle properties in :class:`MCEq.core.MCEqRun`.
+    """Properties, channels and rates of one particle species in
+    :class:`MCEq.core.MCEqRun`.
 
     Args:
       pdg_id (int): PDG ID of the particle
@@ -23,6 +17,9 @@ class MCEqParticle:
       energy_grid: energy-grid object (centers, edges, widths, bin count)
       cs_db: cross-section provider, i.e.
              :class:`MCEq.data.InteractionCrossSections`
+      init_pdata_defaults (bool): fill name, mass, ctau and charge from the
+             PYTHIA particle table
+      A_target (float): average target mass number; default from ``physics``
       physics: settings group (``config.physics``) holding the decay and
                resonance filters. :class:`ParticleManager` passes its own.
     """
@@ -37,7 +34,7 @@ class MCEqParticle:
         A_target=None,
         *,
         physics,
-    ): #anfe: the init looks really boilerplate. Isn't there a better way to design this class?
+    ):  # anfe: the init looks really boilerplate. Isn't there a better way to design this class?
         #: settings group this particle reads its filters from
         self._physics = physics
         if A_target is None:
@@ -47,7 +44,7 @@ class MCEqParticle:
         #: (int) helicity -1, 0, 1 (0 means undefined or average)
         self.helicity = helicity
         #: (bool) particle is a nucleus (not yet implemented)
-        self.is_nucleus = False 
+        self.is_nucleus = False
         #: (bool) particle is a hadron
         self.is_hadron = False
         #: (bool) particle is a lepton
@@ -64,10 +61,7 @@ class MCEqParticle:
         self.name = None
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(pdg_id)
-        #: (bool) if True, this particle is folded into other particles'
-        #: matrices at build time and does not get its own state-vector slot.
-        #: Set by ``adv_set["force_resonance"]``; default ``False`` (full
-        #: propagation for everything).
+        #: (bool) folded into other particles' matrices, no state-vector slot
         self.is_resonance = False
         #: (bool) particle is interacting projectile
         self.is_projectile = False
@@ -81,8 +75,6 @@ class MCEqParticle:
         self.dEdX = None
         #: (bool) is a tracking particle
         self.is_tracking = False
-        #: decay channels if any
-        self.decay_dists = {}
         #: `(PDG ID, helicity)` particle identifier
         self.pdg_id = (pdg_id, helicity)
         #: `(PDG ID, helicity)` identifier, distinct for tracking particles
@@ -118,7 +110,9 @@ class MCEqParticle:
             #: interaction cross section in cm²
             self.set_cs(cs_db)
 
-    def _init_defaults_from_pythia_database(self): #anfe: also boiler plate. Looks to me like the class' design is missing something (as commented in __init__ )
+    def _init_defaults_from_pythia_database(
+        self,
+    ):  # anfe: also boiler plate. Looks to me like the class' design is missing something (as commented in __init__ )
         """Init some particle properties from :mod:`particletools.tables`."""
         #: (bool) particle is a nucleus (not yet implemented)
         self.is_nucleus = _pdata.is_nucleus(self.pdg_id[0])
@@ -150,7 +144,9 @@ class MCEqParticle:
             or self.pdg_id[0] in self._physics.filters["disable_decays"]
         )
 
-    def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs): #anfe: same here also looks quite boilerplate
+    def init_custom_particle_data(
+        self, name, pdg_id, helicity, ctau, mass, **kwargs
+    ):  # anfe: same here also looks quite boilerplate
         """Add custom particle type. (Incomplete and not debugged)"""
         #: `(PDG ID, helicity)` particle identifier
         self.pdg_id = (pdg_id, helicity)
@@ -173,8 +169,8 @@ class MCEqParticle:
         #: (bool) particle is stable
         self.is_stable = not self.ctau < np.inf
 
-    def set_cs(self, cs_db): #anfe: shouldn't be a public function
-        """Set cross section adn recalculate the dependent variables"""
+    def set_cs(self, cs_db):  # anfe: shouldn't be a public function
+        """Set cross section and recalculate the dependent variables"""
         info(11, "Obtaining cross sections for", self.pdg_id)
         self.current_cross_sections = cs_db.iam
         self.cs = cs_db[self.pdg_id[0]]
@@ -186,28 +182,11 @@ class MCEqParticle:
         self._critical_energy()
         self._apply_force_resonance()
 
-    def _set_channels(self, channel_table, pmanager, child_keys, keep_tracking=False): #anfe: why do we need this function exactly? It doesn't do anything special. and it is simply used below? No need.
-        """One wiring routine for every channel table.
-
-        ``channel_table`` is a ``MCEq.data.protocols.ChannelTable``:
-        the child keys of this particle are remapped to particle-manager
-        references and the matrices are fetched through the table's
-        ``get_matrix``. Domain guards stay in the callers: the
-        hadronic/decay wiring differs in how a missing parent is treated
-        (soft skip vs hard error) and only hadronic carries tracking
-        particles, so collapsing the guards would change behaviour —
-        the shared part is this remap-and-fetch body.
-
-        A child the manager does not carry is skipped. The databases hold
-        every channel; which species the system propagates is decided when
-        the particle list is built (``MCEq.misc.strip_em_species``), so a
-        table may name a child that is not tracked.
-
-        Returns ``(refs, yields)`` so the callers rebind their own
-        secondaries/children list and yield dict (rebinding, not
-        clearing: tracking-particle copies share these dict objects
-        until the first re-wire).
-        """#anfe: prose too long! and useless for a private function
+    def _set_channels(
+        self, channel_table, pmanager, child_keys, keep_tracking=False
+    ):  # anfe: why do we need this function exactly? It doesn't do anything special. and it is simply used below? No need.
+        """Child references and their matrices from ``channel_table``; children
+        the manager does not carry are skipped."""
         refs = []
         for key in child_keys:
             try:
@@ -225,7 +204,7 @@ class MCEqParticle:
         """Changes the hadronic interaction model.
 
         Replaces indexing of the yield dictionary from PDG IDs
-        with references from partilcle manager.
+        with references from particle manager.
         """
 
         self.current_hadronic_model = hadronic_db.iam
@@ -311,11 +290,13 @@ class MCEqParticle:
             decay_db, pmanager, decay_db.children(self.pdg_id)
         )
 
-    def track_decays(self, tracking_particle): #anfe: can we unify the tracking decays or interactions, the codes are almost the same.
+    def track_decays(
+        self, tracking_particle
+    ):  # anfe: can we unify the tracking decays or interactions, the codes are almost the same.
         children_d = {}
         for c in self.children:
             children_d[c.pdg_id] = c
-        if tracking_particle.pdg_id not in list(children_d):
+        if tracking_particle.pdg_id not in children_d:
             _n = self.name
             _tn = tracking_particle.name
             info(
@@ -330,11 +311,11 @@ class MCEqParticle:
         ]
         return True
 
-    def track_interactions(self, tracking_particle): #anfe: see above
+    def track_interactions(self, tracking_particle):  # anfe: see above
         secondaries_d = {}
         for s in self.hadr_secondaries:
             secondaries_d[s.pdg_id] = s
-        if tracking_particle.pdg_id not in list(secondaries_d):
+        if tracking_particle.pdg_id not in secondaries_d:
             _n = self.name
             _tn = tracking_particle.name
             info(
@@ -349,7 +330,9 @@ class MCEqParticle:
         ]
         return True
 
-    def is_secondary(self, particle_ref): #anfe: is_secondary and is_child are used only in a very few places. We should rather overload the operator to check for "sec in proj.decay_children" and "proj.prod_children" or so 
+    def is_secondary(
+        self, particle_ref
+    ):  # anfe: is_secondary and is_child are used only in a very few places. We should rather overload the operator to check for "sec in proj.decay_children" and "proj.prod_children" or so
         """`True` if this projectile and produces particle `particle_ref`."""
         if not isinstance(particle_ref, self.__class__):
             raise Exception("Argument not of MCEqParticle type.")
@@ -383,16 +366,9 @@ class MCEqParticle:
         r"""Returns inverse decay length, where the air density
         :math:`\rho` is factorized out.
 
-        The physical decay rate per unit path length is
         :math:`1/\lambda_{dec} = m/(c\tau\,p)`, with :math:`p` the lab
-        momentum (:math:`p = \beta\gamma m c`). Using the total energy
-        :math:`E = E_{kin} + m` in place of :math:`p` drops the factor
-        :math:`1/\beta` and understates decay of slow (:math:`\beta<1`)
-        particles; the momentum form is exact at all energies. #anfe: this paragraph is too verbose. not even needed.
-
-        A stable particle (``ctau = inf``) returns zeros — the physical
-        inverse length; ``inf`` is what the ``ctau == 0`` path returns, as a
-        length-``d`` vector.
+        momentum. A stable particle (``ctau = inf``) returns zeros;
+        ``inf`` is what the ``ctau == 0`` path returns.
 
         Returns:
           (numpy.array): :math:`\frac{\rho}{\lambda_{dec}}` in cm⁻¹,
@@ -415,7 +391,7 @@ class MCEqParticle:
         """Banded bin-averaged decay rate (see :mod:`MCEq.species.bin_average`),
         or None when the decay tables of this particle are not stencil-averaged.
 
-        Replaces ``diag(inverse_decay_length())``; same units.
+        Used in place of ``diag(inverse_decay_length())``; same units.
         """
         r = getattr(self, "_dec_stencil", 0)
         if not r or self.is_stable or not self.ctau > 0:
@@ -431,7 +407,7 @@ class MCEqParticle:
         """Banded bin-averaged interaction rate, or None when the yield tables of
         this particle are not stencil-averaged.
 
-        Replaces ``diag(inverse_interaction_length())``; the cross section is
+        Used in place of ``diag(inverse_interaction_length())``; the cross section is
         interpolated between the bin centres linearly in log-log (linearly in
         log E where it vanishes somewhere on the grid).
         """
@@ -480,22 +456,14 @@ class MCEqParticle:
         m_target = self.A_target * ATOMIC_MASS_UNIT_G  # <A> * m_u [g]
         return self.cs / m_target
 
-    def _assign_hadr_dist(self, child, cmat): #anfe: do we actually need this function and the one below?
-        """Copies the full ``hadr_yields[child]`` matrix into ``cmat``.
-
-        Args:
-          child (MCEqParticle): final-state secondary particle.
-          cmat (np.ndarray): destination interaction-matrix block.
-        """
+    def _assign_hadr_dist(
+        self, child, cmat
+    ):  # anfe: do we actually need this function and the one below?
+        """Copy ``hadr_yields[child]`` into the matrix block ``cmat``."""
         cmat[:, :] = self.hadr_yields[child][:, :]
 
     def _assign_decay_dist(self, child, cmat):
-        """Copies the full ``decay_dists[child]`` matrix into ``cmat``.
-
-        Args:
-          child (MCEqParticle): decay product.
-          cmat (np.ndarray): destination decay-matrix block.
-        """
+        """Copy ``decay_dists[child]`` into the matrix block ``cmat``."""
         cmat[:, :] = self.decay_dists[child][:, :]
 
     def parent_column(self, mat, eidx, kind="int"):
@@ -505,11 +473,9 @@ class MCEqParticle:
 
         Column ``eidx`` of ``mat`` (a yield or decay table on the run grid) for
         bin-centre tables. Stencil-averaged tables (:mod:`MCEq.species.bin_average`)
-        read neighbouring cell contents as a smooth density, so a single column
-        is not the spectrum of one parent energy; the table is applied to the
-        delta deposition at the bin centre instead, which reproduces that
-        spectrum to the stencil order (a few per cent at x -> 1 for kernels with
-        sharp kinematic edges, below a per cent elsewhere). Bins within the
+        read neighbouring cell contents as a smooth density, so the table is
+        applied to the delta deposition at the bin centre, which reproduces the
+        spectrum of one parent energy to the stencil order. Bins within the
         stencil radius of the grid edge return the column.
         """
         r = getattr(self, "_dec_stencil" if kind == "dec" else "_int_stencil", 0)
@@ -529,7 +495,7 @@ class MCEqParticle:
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
         to ``kin_energy`` for hadron-air collisions on this projectile.
 
-        The function respects modifications applied via :func:`_set_mod_pprod`.
+        Includes modifications applied via :meth:`MCEq.core.MCEqRun.set_mod_pprod`.
 
         Args:
             kin_energy (float): approximate interaction kinetic energy
@@ -577,7 +543,7 @@ class MCEqParticle:
         r"""Returns :math:`dN/dE_{\rm Kin}` in lab frame for an interaction
         kinetic energy close to ``kin_energy``.
 
-        The function respects modifications applied via :func:`_set_mod_pprod`.
+        Includes modifications applied via :meth:`MCEq.core.MCEqRun.set_mod_pprod`.
 
         Args:
             kin_energy (float): approximate interaction kinetic energy
@@ -598,7 +564,7 @@ class MCEqParticle:
         elab_dist = col[: eidx + 1] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
-    #anfe: For the dN_d.... functions above, it should be sufficient to just use one provate function with arguments specifying the variables, and three short functions just call this private function with correct argument to avoid copy/paste in multiple places.
+    # anfe: For the dN_d.... functions above, it should be sufficient to just use one provate function with arguments specifying the variables, and three short functions just call this private function with correct argument to avoid copy/paste in multiple places.
 
     def _critical_energy(self):
         """Set the approximate atmospheric critical energy ``E_crit``.
@@ -611,23 +577,20 @@ class MCEqParticle:
         else:
             self.E_crit = self.mass * 6.4e5 / self.ctau
 
-    def _apply_force_resonance(self): #anfe: why do we need a function for that? Isn't it just somewhere in the init clear that it is a resonance? 
-        """Flag this particle as a resonance if it appears in
-        ``physics.filters["force_resonance"]`` and is not in
-        ``physics.standard_particles``.
-
-        A resonance particle is folded into other particles' interaction /
-        decay matrices at build time (via ``MatrixBuilder._follow_chains``)
-        and never gets its own state-vector slot. Default
-        ``force_resonance = []`` means full propagation for everything.
-        """
+    def _apply_force_resonance(
+        self,
+    ):  # anfe: why do we need a function for that? Isn't it just somewhere in the init clear that it is a resonance?
+        """Flag as resonance if in ``physics.filters["force_resonance"]`` and
+        not in ``physics.standard_particles``."""
         pid = abs(self.pdg_id[0])
         self.is_resonance = (
             pid in self._physics.filters["force_resonance"]
             and pid not in self._physics.standard_particles
         )
 
-    def __eq__(self, other): #anfe: danger. We shouldn't use that. same for __neq__ and __hash__ only by name is not good. avoid in downstream.
+    def __eq__(
+        self, other
+    ):  # anfe: danger. We shouldn't use that. same for __neq__ and __hash__ only by name is not good. avoid in downstream.
         """Checks name for equality"""
         if isinstance(other, MCEqParticle):
             return self.name == other.name
@@ -640,7 +603,7 @@ class MCEqParticle:
         return NotImplemented
 
     def __hash__(self):
-        """Instruction for comuting the hash"""
+        """Hash of the name."""
         return hash(self.name)
 
     def __repr__(self):

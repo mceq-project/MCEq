@@ -1,12 +1,11 @@
-r"""Bin-averaged rates for databases with stencil-averaged tables.
+r"""Bin-averaged decay and interaction rates for stencil-averaged tables.
 
-A database built with mceq-maintenance-tools' ``bin_average`` step stores
-yield and decay tables that act on the parent's *count density* inside each
-bin, reconstructed by a fixed neighbour stencil: the degree-:math:`2r`
-polynomial in :math:`\xi = \log_{10}(E/E_j)/h` that reproduces the cell
-contents of bins :math:`j-r \ldots j+r`. The count of decays (interactions)
-in bin :math:`j` is then the bin integral of :math:`r(E)\,\Phi(E)`, not the
-centre value :math:`r(E_j)\,\Phi_j`. With the same reconstruction of
+Stencil-averaged yield and decay tables (the ``bin_average`` step of
+mceq-maintenance-tools) act on the parent's count density inside each bin,
+reconstructed as the degree-:math:`2r` polynomial in
+:math:`\xi = \log_{10}(E/E_j)/h` that reproduces the cell contents of bins
+:math:`j-r \ldots j+r`. The count of decays (interactions) in bin :math:`j` is
+the bin integral of :math:`r(E)\,\Phi(E)`. With the same reconstruction of
 :math:`\Phi`,
 
 .. math::
@@ -19,10 +18,9 @@ where :math:`s_j = \Phi_j w_j` are the cell contents and :math:`W` the inverse
 of the cell-average matrix. In flux units the rate becomes a banded operator
 :math:`R = \mathrm{diag}(1/w)\,R'\,\mathrm{diag}(w)` in place of
 :math:`\mathrm{diag}(r_j)`; for a constant rate :math:`R = r\,I` exactly.
-The database marks the parents it averaged (``bin_average_parents`` on the
+The database marks the averaged parents (``bin_average_parents`` on the
 decay group, ``bin_average_projectiles`` on a yield table) and the stencil
-radius; only those get :math:`R`, so databases without the marks are
-unchanged.
+radius; all other parents keep :math:`\mathrm{diag}(r_j)`.
 """
 
 import numpy as np
@@ -46,8 +44,8 @@ def rate_operator(e_bins, rate, r):
     """Banded rate operator in flux units, ``(d, d)``.
 
     ``e_bins``: bin edges, uniform in log E (else ``ValueError``); ``rate``:
-    callable, the rate at arbitrary energies (same units as the diagonal it
-    replaces). Bins within ``r`` of the grid edge keep the centre rate.
+    callable, the rate at arbitrary energies (units of the diagonal rate).
+    Bins within ``r`` of the grid edge keep the centre rate.
     """
     e_bins = np.asarray(e_bins, dtype=np.float64)
     lb = np.log10(e_bins)
@@ -92,9 +90,9 @@ def apply_rate(block, parent, kind, cache, dtype):
     """``block @ diag(rate)`` for a channel of ``parent``, or ``block @ R`` when
     its tables are stencil-averaged; ``kind`` is ``"int"`` or ``"dec"``.
 
-    ``cache`` (a dict the caller keeps for one matrix build) holds each
-    parent's rate and operator, so ``R`` is built once per parent, not per
-    channel. Scales ``block`` in place on the diagonal route.
+    ``cache`` (a dict kept for one matrix build) holds each parent's rate and
+    operator, so ``R`` is built once per parent. Scales ``block`` in place on
+    the diagonal route.
     """
     if parent.mceqidx not in cache:
         if kind == "int":
@@ -124,11 +122,11 @@ def delta_deposition(e_bins, energy, r):
     for one particle at ``energy`` under stencil-averaged tables.
 
     The tables read the cell contents of bins ``j - r .. j + r`` as the
-    degree-``2 r`` polynomial density inside bin ``j`` (bins within ``r`` of the
-    grid edge: a constant). The deposition is chosen so that this reconstructed
-    density has the log-energy moments ``k <= 2 r`` of a delta at ``energy``:
-    the first generation then equals the kernel at ``energy`` to the order of the
-    stencil. Returns ``(first_bin, contents)``; contents sum to 1.
+    degree-``2 r`` polynomial density inside bin ``j`` (a constant within ``r``
+    of the grid edge). The deposition gives this density the log-energy moments
+    ``k <= 2 r`` of a delta at ``energy``, so the first generation equals the
+    kernel at ``energy`` to the order of the stencil. Returns
+    ``(first_bin, contents)``; contents sum to 1.
     """
     lb = np.log10(np.asarray(e_bins, dtype=np.float64))
     h = float(lb[1] - lb[0])

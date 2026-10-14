@@ -1,14 +1,10 @@
 r"""Finite-difference families for ``d/du``, ``u = ln E``, on the energy grid.
 
-Continuous energy loss enters the cascade equations as an advection in
-``u = ln E``. :func:`differential_operator` returns the ``(dim_e, dim_e)``
-banded matrix that approximates ``dPhi/du`` on the (log-uniform) grid; the
-builder turns it into the loss band with
+Continuous energy loss is an advection in ``u = ln E``.
+:func:`differential_operator` returns the ``(dim_e, dim_e)`` banded matrix
+``D`` approximating ``dPhi/du``; the loss band is
 
-    ``-diag(1/E) . D . diag(dE/dX)``
-
-so the accuracy of this one matrix sets the accuracy of the whole
-continuous-loss channel.
+    ``-diag(1/E) . D . diag(dE/dX)``.
 
 Exactness conditions
 --------------------
@@ -16,57 +12,31 @@ With log spacing ``h = Delta u`` a seven-point row ``c_{-3..+3}`` evaluates
 
     ``(dPhi/du)_i ~ (1/h) sum_k c_k Phi(u_i + k h)``.
 
-On ``Phi = exp(a u)`` this is ``exp(a u_i) (1/h) sum_k c_k exp(a k h)``, so
-the row differentiates that exponential *exactly* iff
+On ``Phi = exp(a u)`` the row differentiates that exponential exactly iff
 
     ``sum_k c_k exp(a k h) = a h``.                                     (19)
 
-``docs/mceq_v1.x_v2_diff.md`` section 5.2 eq. 19 states the condition for one
-rate ``a = -alpha0`` together with polynomial exactness
-``sum_k c_k k^p = delta_{p,1}``, ``p = 0..5``, as the six companion equations.
-This implementation instead imposes (19) at seven rates at once,
+The ``expfit`` family imposes (19) at seven rates,
+``a = -alpha0 + delta``, ``delta = [-1, -1/2, 0, 1/2, 1, 3/2, 2]``
+(:func:`expfit_coefficients`), so it is exact on the band of power laws
+``E^{-alpha}``, ``alpha in [alpha0 - 2, alpha0 + 1]``.
 
-    ``a = -alpha0 + delta``,  ``delta = [-1, -1/2, 0, 1/2, 1, 3/2, 2]``,
+Exactness on a constant
+-----------------------
+A constant is ``a = 0``, where (19) reads ``sum_k c_k = 0`` (zero row sum).
 
-seven equations for seven coefficients (:func:`expfit_coefficients`). The
-fitted set is therefore a *band* of power laws ``E^{-alpha}`` with
-``alpha = alpha0 - delta`` in ``[alpha0 - 2, alpha0 + 1]``, not one power law
-plus a polynomial.
+* ``centered``, ``biased``, ``upwind``, ``upwind2``: exact in every row
+  (polynomial fits including ``p = 0``).
+* ``expfit`` interior: not exact. ``a = 0`` lies outside the fitted band at
+  the default ``alpha0 = 3``; every interior row carries the residual
+  ``(sum_k c_k) / h``.
+* boundary rows of every family and the ``expfit_low_upwind*`` replacement
+  rows: exact (one-sided polynomial or upwind rows).
 
-Which families are exact on a constant
---------------------------------------
-A constant is ``a = 0``, where (19) reads ``sum_k c_k = 0`` -- zero row sum.
-
-* ``centered``, ``biased``, ``upwind``, ``upwind2``: exact in every row.
-  They are polynomial fits and ``p = 0`` is in their fit set.
-* the ``expfit`` interior: **not** exact. ``a = 0`` needs ``delta = alpha0``,
-  and at the default ``alpha0 = 3`` that lies outside the fitted band, so the
-  span of the seven fitted exponentials does not contain a constant. Every
-  interior row carries the same residual ``(sum_k c_k) / h`` -- the same one
-  because the grid is log-uniform, so a single coefficient vector is divided
-  by a common ``h``. It is a genuine truncation error on flat spectra, traded
-  for round-off-limited accuracy near ``E^{-alpha0}`` (docs 5.2: 5e-16
-  against ~1e-4 for ``centered`` on ``exp(-3u)``).
-* boundary rows of every family, and the ``expfit_low_upwind*`` replacement
-  rows: exact -- they are one-sided polynomial or upwind rows.
-
-Row layout
-----------
-The high-order interiors use seven points and span at most ``[-3, +3]``, which
-is what makes the interior range ``range(3, dim_e - 3)`` uniform across the
-dispatch; first- and second-order upwind rows use two and three points. The
-three lowest and three highest rows would reach outside the grid, so the
-non-upwind families close them with one-sided polynomial rows of third-,
-fourth-, and fifth-order accuracy. Those rows are exact on constants but carry
-percent-level residuals on steep spectra and excite non-normal transients at a
-low-energy grid floor -- the "boundary cliff" of
-``docs/mceq_v1.x_v2_diff.md`` section 5.3. The ``expfit_low_upwind*`` composites
-are the fix in production use: they overwrite the lowest ``low_upwind_rows``
-rows with upwind rows and keep the expfit interior above.
-
-Energy loss advects the spectrum toward *lower* E, so the upwind direction is
-toward higher E (forward in ``u``), which is also the orientation of the
-one-sided low-energy row.
+The three lowest and highest rows use one-sided polynomial rows of third- to
+fifth-order accuracy. The ``expfit_low_upwind*`` composites replace the lowest
+``low_upwind_rows`` rows with upwind rows. Energy loss advects toward lower E,
+so the upwind direction is toward higher E (forward in ``u``).
 """
 
 from __future__ import annotations
@@ -80,9 +50,7 @@ __all__ = [
     "log_spacings",
 ]
 
-#: Every interior stencil :func:`differential_operator` accepts, in the order
-#: of its own dispatch: the two composites, the three high-order families,
-#: then the first- and second-order upwind operators.
+#: Every stencil :func:`differential_operator` accepts.
 STENCIL_METHODS = (
     "expfit_low_upwind2",
     "expfit_low_upwind",
@@ -97,7 +65,7 @@ STENCIL_METHODS = (
 EXPFIT_DELTAS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
 
 #: ``(offsets, coefficients, denominator)`` of the one-sided polynomial rows at
-#: the low-energy edge -- rows 0, 1 and 2, each relative to its own row index.
+#: the low-energy edge, rows 0, 1 and 2, each relative to its own row index.
 #: Third-, fourth-, and fifth-order derivative rows at the three low-energy
 #: positions; each set sums to zero, so each row annihilates a constant.
 _LOW_EDGE_ROWS = (
@@ -118,9 +86,7 @@ _HIGH_EDGE_ROWS = tuple(
 def log_spacings(e_bins):
     """Per-bin log spacings ``h_i = ln(E_{i+1}/E_i)`` from the bin edges.
 
-    Constant on a log-uniform grid; kept per-row because the operator divides
-    each row by the spacing of *its* bin, which is what makes the boundary rows
-    correct on a grid that has been cut at either end.
+    Kept per row so that each row is divided by the spacing of its own bin.
     """
     e_bins = np.asarray(e_bins)
     return np.log(e_bins[1:] / e_bins[:-1])
@@ -130,13 +96,8 @@ def expfit_coefficients(h, alpha0, offsets=None):
     r"""Solve (19) for the seven exponentially-fitted interior coefficients.
 
     ``A c = b`` with ``A_{ij} = exp(a_i k_j h)`` and ``b_i = a_i h`` over the
-    seven rates ``a_i = -alpha0 + delta_i`` of :data:`EXPFIT_DELTAS`. Square and
-    nonsingular for distinct rates, so the fit is a direct solve rather than a
-    least-squares one, and the resulting row differentiates each of the seven
-    power laws ``E^{-alpha0 + delta}`` exactly.
-
-    ``h`` is a single spacing, not the per-bin array: the grid is log-uniform,
-    so one fit at the mean spacing serves every interior row.
+    seven rates ``a_i = -alpha0 + delta_i`` of :data:`EXPFIT_DELTAS`; ``h`` is
+    a single spacing (the grid is log-uniform).
     """
     if offsets is None:
         offsets = np.arange(-3, 4)
@@ -145,11 +106,7 @@ def expfit_coefficients(h, alpha0, offsets=None):
 
 
 def _interior_row(method, h, alpha0):
-    """``(offsets, coefficients)`` of the interior row of a high-order family.
-
-    The coefficients are the row *before* division by ``h``, so a caller
-    divides by the spacing of each row it writes.
-    """
+    """``(offsets, coefficients)`` of a high-order interior row, before division by ``h``."""
     if method == "biased":
         offsets, coeffs, denom = _LOW_EDGE_ROWS[2]
         return np.asarray(offsets), np.asarray(coeffs, dtype=np.float64) / float(denom)
@@ -164,20 +121,15 @@ def _interior_row(method, h, alpha0):
         return offsets, expfit_coefficients(float(np.mean(h)), float(alpha0), offsets)
     raise ValueError(
         f"Unknown loss_stencil_method: {method!r}. "
-        "Expected 'expfit', 'centered', 'biased', 'upwind', 'upwind2', "
-        "'expfit_low_upwind', or 'expfit_low_upwind2'."
+        f"Expected one of {', '.join(repr(m) for m in STENCIL_METHODS)}."
     )
 
 
 def _write_upwind_rows(op_matrix, h, rows, order):
     """Fill ``rows`` with the first- or second-order forward upwind row.
 
-    Forward-biased, i.e. toward higher E: ``[-1, 1]/h`` at first order,
-    ``[-3/2, 2, -1/2]/h`` at second. Both annihilate a constant and are
-    diffusive at ``O(h)`` / ``O(h^2)``, so they converge as the grid refines.
-    Stability depends on the time integrator; the second-order formula has a
-    negative off-diagonal coefficient and is not generally positivity-
-    preserving. Requires ``row + order`` to be on the grid.
+    ``[-1, 1]/h`` at first order, ``[-3/2, 2, -1/2]/h`` at second (not
+    positivity-preserving). Requires ``row + order`` to be on the grid.
     """
     for row in rows:
         if order == 1:
@@ -190,14 +142,7 @@ def _write_upwind_rows(op_matrix, h, rows, order):
 
 
 def _upwind_operator(h, dim_e, order, dtype):
-    """The pure upwind families: first- or second-order upwind rows everywhere,
-    no high-order rows.
-
-    No polynomial boundary rows at all, so the expfit boundary cliff has nothing
-    to excite; the price is first-/second-order accuracy in the bulk. At the
-    upper boundary, use backward-biased mirror rows where the forward stencil
-    does not fit.
-    """
+    """First- or second-order upwind rows everywhere, backward-biased mirror rows at the top."""
     op_matrix = np.zeros((dim_e, dim_e), dtype=dtype)
     last = dim_e - 1
     _write_upwind_rows(op_matrix, h, range(dim_e - order), order)

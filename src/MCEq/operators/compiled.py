@@ -1,16 +1,8 @@
-"""Operator assembly for the ETD2RK step loop.
+"""Diagonal/off-diagonal split and secant layout of the operator for the ETD2RK step loop.
 
-:func:`compile_operator` turns the constant matrices ``A = int_m`` and
-``B = dec_m`` of :class:`~MCEq.operators.matrix_builder.MatrixBuilder` and
-the optional sec(theta) operator set of :mod:`MCEq.operators.secant` into
-one read-only :class:`CompiledOperator`: the diagonal / off-diagonal split
-in the state layout of the step loop and the mode-coupling operators in
-a real basis of the coupled block. :func:`em_step_scale` is the EM stiffness scale that caps
-``dX``. The math is in :ref:`solver-math`.
-
-The off-diagonals are CSR with every row's nonzeros kept in their build
-order, also after the layout permutation, so every backend sums the same
-products in the same order.
+The off-diagonals are CSR with every row's nonzeros kept in build order, also
+after the layout permutation, so every backend sums the same products in the
+same order. The math is in :ref:`solver-math`.
 """
 
 from types import SimpleNamespace
@@ -22,8 +14,7 @@ import scipy.sparse as sp
 
 def split_diagonal(int_m, dec_m):
     """``(d_int, d_dec, int_off, dec_off)``: the diagonals of A and B and
-    their off-diagonal remainders (explicit zeros dropped). Both pieces are
-    constant in X — only ``ri`` modulates how they combine per step."""
+    their off-diagonal remainders (explicit zeros dropped)."""
     d_int = int_m.diagonal()
     d_dec = dec_m.diagonal()
     int_off = int_m - sp.diags(d_int, format=int_m.format)
@@ -44,8 +35,8 @@ def secant_layout(sec_ops, dim):
     """Low-E-first state layout of the secant kernels.
 
     The state is ``(n_k, N)`` row-major over (Legendre mode, species x
-    energy). The coupling acts on the modes ``P`` — the leading dense block
-    of the l grid — and on the low-E columns ``g``. Moving ``g`` to the
+    energy). The coupling acts on the modes ``P`` (the leading dense block
+    of the l grid) and on the low-E columns ``g``. Moving ``g`` to the
     front of every mode block, ``x' = x[perm]``, makes the coupled plane
     the corner block ``x'.reshape(n_k, N)[:n_P, :n_g]``: a strided view,
     so the step needs no gather and no scatter. Returns a namespace with
@@ -109,16 +100,13 @@ def secant_coupling(sec_ops, schur=False):
 
 def _permute_csr(off, perm, inv_perm):
     """Symmetric row/column permutation of a CSR matrix that keeps each
-    row's nonzeros in their original order (the SpMM sums as before)."""
+    row's nonzeros in their original order."""
     off = off.tocsr()[perm]
     return sp.csr_matrix((off.data, inv_perm[off.indices], off.indptr), shape=off.shape)
 
 
 class CompiledOperator:
-    """The ETD2RK operator, assembled for the step loop.
-
-    Treat the object as read-only while a backend or cache uses it; nothing
-    here enforces that.
+    """The ETD2RK operator, assembled for the step loop (read-only).
 
     Attributes:
       dim: state dimension (``n_k * dim_states`` for 2D databases).
@@ -209,9 +197,6 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
         continuous-loss band; the band's diagonal joins ``d_int`` and its
         off-diagonal bypasses ``mode_mix``, since energy loss does not
         change the direction.
-
-    Pure function of its inputs; :class:`MCEq.core.MCEqRun` caches the
-    result against the identity of the matrices and the operator set.
     """
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     band_off = None
@@ -247,26 +232,12 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
 
 
 def em_step_scale(int_m, particles, dense_eig_max=4000):
-    """EM stiffness-based step limit r_EM of the e+/-/gamma block of ``int_m``.
+    """Spectral radius of the off-diagonal e+/-/gamma block of ``int_m``, in cm^2/g.
 
-    Returns ``spec(int_off_EM)``: the spectral radius of the *off-diagonal*
-    part of ``int_m`` restricted to the e+/-/gamma rows and columns, in
-    1/(g/cm^2). This is the same quantity (``spec(int_off)``) that fixes the
-    legacy ``config.etd2_path['dX_max']`` for the hadronic matrix, evaluated
-    on the stiffer EM block. The spectral radius — not a matrix norm — is the
-    right scale: the EM off-diagonal is a near-singular, highly non-normal
-    difference+production operator whose 1-norm is dominated by the
-    near-cancelling continuous-loss bands and is meaningless as a step scale.
-    ``int_m`` is X-constant, so r_EM is one global scalar;
-    :meth:`MCEq.driver.mceq_run.MCEqRun._em_cascade_step_scale` memoises it
-    against the identity of the matrix it was taken from. Returns 0.0 when
-    ``particles`` holds no e+/-/gamma (EM cascade inactive).
-
-    ``particles`` are the cascade species, read for ``is_em`` and for the
-    ``lidx``/``uidx`` of those that are. Those offsets index one ``dim_states``
-    block, so on the ``(n_k * dim_states)`` operator the 2D assembly stitches
-    this reads mode l = 0 alone. See the corresponding test in
-    ``tests/test_operators_pin.py``.
+    The EM off-diagonal is strongly non-normal, so its spectral radius, not a
+    norm, sets the step scale r_EM. ``particles`` supply ``is_em`` and the
+    ``lidx``/``uidx`` of one ``dim_states`` block (mode l = 0 on a 2D
+    operator). Returns 0.0 if no species is EM.
     """
     col_ranges = [
         np.arange(p.lidx, p.uidx) for p in particles if getattr(p, "is_em", False)
@@ -277,16 +248,8 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
     diag = int_m.diagonal()
     int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
     block = int_off[idx][:, idx].tocsc().astype(np.float64)
-    # Spectral radius of the EM off-diagonal. The block is a small sub-system
-    # (a few e+/-/gamma species x dim_e, typically < ~2000) and strongly
-    # NON-NORMAL (||A||_2 / rho ~ 3). Sparse ``eigs(k=1, 'LM')`` routinely
-    # FAILS to converge on it (ARPACK DNAUPD finds no eigenvalue to tolerance),
-    # and an except-branch that substitutes a matrix norm then overestimates
-    # the spectral radius AND is nondeterministic, capping dX tighter than
-    # intended. Dense eigendecomposition is deterministic and cheap at this
-    # size and avoids those convergence failures; it produces a numerical
-    # estimate. ARPACK + norm survive only as a fallback for an unexpectedly
-    # huge block.
+    # Dense eigvals up to dense_eig_max (ARPACK often fails to converge on
+    # this non-normal block); ARPACK beyond.
     n = block.shape[0]
     try:
         if n <= int(dense_eig_max):
@@ -297,9 +260,7 @@ def em_step_scale(int_m, particles, dense_eig_max=4000):
             ev = eigs(block, k=1, which="LM", return_eigenvectors=False, maxiter=10000)
         return float(np.max(np.abs(ev)))
     except Exception:
-        # Last-resort fall-back (huge block + ARPACK failure): the spectral
-        # radius is bounded above by both induced norms; take the smaller so we
-        # never under-cap.
+        # The spectral radius is bounded by both induced norms; take the smaller.
         n1 = float(np.abs(block).sum(axis=0).max())
         ninf = float(np.abs(block).sum(axis=1).max())
         return min(n1, ninf)

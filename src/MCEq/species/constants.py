@@ -1,11 +1,9 @@
 """Species-layer constants: the shared table singleton and unit constants.
 
 One particle-data table is created at import time and shared with the
-particle and DDM implementations. Making it lazy would hide it from
-``vars()``, which the public-surface test forbids (see the test note in
-``tests/test_phase4_surface.py``). ``_pname`` and the neutrino name map are
+particle and DDM implementations. ``_pname`` and the neutrino name map are
 defined here.
-""" #anfe: Looks very overenginieered to me. Let's migrate from particletools to scikit hep "particle" module, also, the backward compatible stuff is not needed anymore as it was in the transition from the very old MCEq classic.
+"""  # anfe: Looks very overenginieered to me. Let's migrate from particletools to scikit hep "particle" module, also, the backward compatible stuff is not needed anymore as it was in the transition from the very old MCEq classic.
 
 from particletools.tables import PYTHIAParticleData
 

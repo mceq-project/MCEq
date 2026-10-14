@@ -15,7 +15,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     similar to the Air-Shower Monte Carlo
     `CORSIKA <https://web.ikp.kit.edu/corsika/>`_.
 
-    The parameters pre-defined parameters are taken from the CORSIKA
+    The pre-defined parameters are taken from the CORSIKA
     manual. If new sets of parameters are added to :func:`init_parameters`,
     the array _thickl can be calculated using :func:`calc_thickl` .
 

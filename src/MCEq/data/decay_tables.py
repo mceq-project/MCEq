@@ -1,8 +1,4 @@
-"""Decay yield matrices: the ``Decays`` consumer.
-
-Decay-table selection uses the required, injected ``physics`` settings; there
-is no configuration fallback.
-"""
+"""Decay yield matrices."""
 
 from MCEq.misc import info
 
@@ -18,8 +14,6 @@ class Decays:
         self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
-        #: (list) List of particles in the decay matrices
-        self.parent_list = []
         self._default_decay_dset = override_decay_db_name
 
         if self._default_decay_dset is None:

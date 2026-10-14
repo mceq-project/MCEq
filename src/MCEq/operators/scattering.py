@@ -71,8 +71,7 @@ ELECTRON_MASS = (
     constants.physical_constants["electron mass energy equivalent in MeV"][0] * 1e-3
 )
 
-#: PDG muon mass, GeV. Fallback only -- a caller that has a particle manager
-#: passes the mass the tables were built with.
+#: PDG muon mass, GeV.
 MUON_MASS = 0.10566
 
 #: PDG ids and helicity states of every muon species the cascade can carry.

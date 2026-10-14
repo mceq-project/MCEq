@@ -20,11 +20,6 @@ for fn in os.listdir(base):
         msis = cdll.LoadLibrary(os.path.join(base, fn))
         break
 else:
-    # Without this, the module imports cleanly with no `msis` attribute and the
-    # failure surfaces much later as `AttributeError: module has no attribute
-    # 'msis'` from the first density call. The compiled NRLMSISE-00 library
-    # must be installed beside this module; it is gitignored, so a fresh
-    # checkout needs a build (`pip install -e .`).
     raise ImportError(
         f"No _libnrlmsis*{suffix} found in {base}. Install the compiled "
         "NRLMSISE-00 library beside this module (`pip install -e .`)."
@@ -46,23 +41,9 @@ class ap_array(Structure):
 class nrlmsise_input(Structure):
     """Input variables for NRLMSISE.
 
-    This object supplies Python attributes to the scalar ``gtd7_py`` call; it
-    is not passed to the native library as an input structure.
-
-    ``_field_`` is a typo for ``_fields_`` and has been one since the struct
-    was written, so ctypes never lays the struct out: ``sizeof()`` is 0,
-    ``_fields_`` is ``None``, and every ``inp.<name>`` is an ordinary Python
-    attribute holding whatever object was assigned. That is harmless only
-    because ``gtd7_py`` takes scalars; ``nrlmsise_flags`` and
-    ``nrlmsise_output``, which are passed ``byref``, declare ``_fields_``
-    correctly.
-
-    Do not "fix" the name without adapting the consumers: Python code reads
-    these as ctypes scalar objects (``self.inp.sec.value`` in
-    :class:`MCEq.environment.msis00_backend.cNRLMSISE00`), and a real
-    ``_fields_`` would hand back plain floats and break every ``.value``.
-    ``inp.doy`` already carries two different runtime types depending on
-    whether ``set_season`` (bare int) or ``set_doy`` (``c_int``) ran last.
+    ``_field_`` (not ``_fields_``) means ctypes does not lay out a struct: the
+    entries are plain Python attributes holding ctypes scalars, read via
+    ``.value`` by ``cNRLMSISE00``. The struct is never passed to the C library.
     """
 
     _field_ = [

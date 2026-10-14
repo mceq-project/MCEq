@@ -116,7 +116,7 @@ factor stage (``diag_factors``), the sparse product :math:`N x`
 (``apply_off``), the predictor and the corrector. The diagonals and the
 :math:`\varphi` factors are always formed in double precision, whatever the
 precision of the state, see
-:data:`~MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+:mod:`MCEq.solvers.backends.base`.
 
 In single precision the limit is the exponent range, not the mantissa. The
 fluxes fall roughly as :math:`E^{-3}` over the twelve decades of the energy

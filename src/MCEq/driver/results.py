@@ -1,17 +1,9 @@
-"""Batch results, spectrum extraction, and the angular readout.
+"""Spectrum extraction and the batch-solve result container.
 
-``MCEqBatchResult`` is what :meth:`MCEqRun.solve_batch` and
-:meth:`MCEqRun.solve_fullsky` return; the :func:`get_solution` family
-here is the extraction backend behind both that class and ``MCEqRun``,
-which binds the functions as methods
-(``get_solution = results.get_solution`` etc. in ``mceq_run.py``).
-
-In 2-D runs the state vector stacks the Legendre modes
-``a_l = <P_l(cos theta)>``; the ``l = 0`` mode is the angle-integrated
-flux, so :func:`get_solution` (and
-``MCEqBatchResult.get_solution``) on a 2-D result return exactly the
-angle-integrated spectrum — see ``docs/mceq_v1.x_v2_diff.md`` §11.9.
-Per-mode / per-angle readout is :func:`convert_to_theta_space`.
+In 2D runs the state vector stacks the Legendre modes
+``a_l = <P_l(cos theta)>``; the ``l = 0`` mode is the angle-integrated flux
+returned by :func:`get_solution`. Angular densities come from
+:func:`convert_to_theta_space`.
 """
 
 import numpy as np
@@ -24,11 +16,10 @@ class MCEqBatchResult:
     """Result of a batched (multi-RHS) solve.
 
     Returned by :meth:`MCEqRun.solve_batch` and
-    :meth:`MCEqRun.solve_fullsky`. Wraps the final-state matrix — shape
-    ``(n_k * dim_states, K)``, where ``n_k = 1`` in 1-D runs — together
-    with the batch metadata and provides named per-column spectrum
-    extraction through :meth:`get_solution`, with exactly the same
-    particle-name semantics as :meth:`MCEqRun.get_solution`.
+    :meth:`MCEqRun.solve_fullsky`. Holds the final states, shape
+    ``(n_k * dim_states, K)`` with ``n_k = 1`` in 1D runs, and the batch
+    metadata; :meth:`get_solution` extracts named spectra per column as
+    :meth:`MCEqRun.get_solution` does.
 
     Attributes:
       sol (np.ndarray[n_k * dim_states, K]): final state, one column per
@@ -37,10 +28,8 @@ class MCEqBatchResult:
         stacked depth snapshots when ``int_grid`` was requested
         (shared-path batches only), else ``None``.
       nsteps_per_col (np.ndarray[K] | None): integration steps per column.
-      shared_path (bool): True when every column solved through one path
-        tuple — the multi-RHS route, the condition list deduplicated to a
-        single direction. ``grid_sol`` is only ever non-``None`` on such
-        results.
+      shared_path (bool): True when every column was solved along one
+        path (the multi-RHS route). Only such results can have ``grid_sol``.
       conditions (list | None): the per-column conditions passed to
         :meth:`MCEqRun.solve_batch`, if any.
       pixel_index (np.ndarray[K, 2] | None): ``(i_zen, i_az)`` per column
@@ -78,17 +67,12 @@ class MCEqBatchResult:
         self.pixel_index = pixel_index
         self.zenith_grid = zenith_grid
         self.azimuth_grid = azimuth_grid
-        self._shared_path = None if shared_path is None else bool(shared_path)
+        self.shared_path = None if shared_path is None else bool(shared_path)
 
     @property
     def K(self):
         """Number of batch members (columns)."""
         return self.sol.shape[1]
-
-    @property
-    def shared_path(self):
-        """True if all columns solved through one shared path tuple."""
-        return self._shared_path
 
     @property
     def n_azimuth(self):
@@ -270,7 +254,6 @@ def get_solution(
     mag=0.0,
     grid_idx=None,
     integrate=False,
-    # Default fixed at import time (v1 behaviour); None uses the run's setting.
     return_as=config.return_as,
     dont_sum_helicities=False,
 ):
@@ -301,8 +284,8 @@ def get_solution(
       integrate (bool, optional): return averge particle number instead of
       flux (multiply by bin width)
       return_as (str, optional): the flux can be returned as ``total energy``, ``kinetic energy``,
-        or ``total momentum`` flux. When omitted, the process default captured at import is used;
-        pass ``None`` to use the run's output setting
+        or ``total momentum`` flux. The default is ``config.return_as`` at import time;
+        ``None`` uses the run's output setting
       dont_sum_helicities (bool, optional): Per default the lepton flux is summed over the available helicities,
         e.g. ``total_mu+`` is the muon flux from (-1, 0, +1) helicity for mu+.
 
@@ -340,12 +323,8 @@ def _get_solution_from_state(
 ):
     """Extract a named spectrum from an explicit state vector.
 
-    Same particle-name/prefix semantics, helicity summation and
-    ``return_as`` conversions as :meth:`get_solution`, but operates
-    on the state vector ``sol`` passed by the caller instead of
-    ``run._solution``. This is the shared extraction backend for
-    :meth:`get_solution` and :meth:`MCEqBatchResult.get_solution`
-    (per-column retrieval from multi-RHS solves).
+    Same particle names, helicity summation and ``return_as`` conversions
+    as :meth:`get_solution`, applied to ``sol`` instead of ``run._solution``.
 
     Args:
       sol (np.ndarray[dim_states]): state vector to extract from.
@@ -408,15 +387,11 @@ def _get_solution_from_state(
                 )
 
     if particle_name.startswith("total_"):
-        # Note: This has changed from previous MCEq versions,
-        # since pi_ and k_ prefixes are mere tracking counters
-        # and no full particle species anymore
-
+        # pi_ and k_ prefixes are tracking counters, not species
         res = sum_lr(lep_str, prefix="")
 
     elif particle_name.startswith("conv_"):
-        # Note: This changed from previous MCEq versions,
-        # conventional is defined as total - prompt
+        # conventional = total - prompt
         res = run._get_solution_from_state(
             sol,
             "total_" + lep_str,

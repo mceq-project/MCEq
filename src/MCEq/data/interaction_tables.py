@@ -1,10 +1,6 @@
-"""Interaction yield matrices: the ``Interactions`` consumer.
+"""Interaction yield matrices with channel overrides and production modifications."""
 
-Loads interaction channels, selects projectiles, and applies channel
-overrides and production multipliers. ``normalize_hadronic_model_name`` is
-imported by name from ``model_names`` rather than read off the package
-namespace, so this module has no import-time edge back to ``data/__init__``.
-"""
+from collections import defaultdict
 
 import numpy as np
 
@@ -20,8 +16,6 @@ class Interactions:
     """
 
     def __init__(self, mceq_hdf_db, *, physics):
-        from collections import defaultdict
-
         self._physics = physics
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
@@ -40,45 +34,19 @@ class Interactions:
 
         #: (str) Interaction Model name
         self.iam = None
-        #         #: (tuple) selection of a band of coeffictients (in xf)
-        # self.band = None
         #: (tuple) modified particle combination for error prop.
         self.mod_pprod = defaultdict(dict)
-        #: (dict) absolute channel overrides, keyed by the table's own
-        #: ``(parent, child)`` key shape, applied in ``get_matrix`` before
-        #: the multiplicative production modifications. Survives ``load``
-        #: (the channel is a policy on the table, not a slice of the file)
-        #: and is the only write path for external matrices
-        #: (``MCEqRun.inject_ddm``); see ``set_channel_override``.
+        #: (dict) absolute channel overrides ``{(parent, child): matrix}``,
+        #: kept across ``load``; see ``set_channel_override``.
         self.channel_overrides = {}
 
     def set_channel_override(self, parent, child, matrix):
-        """Store an absolute channel override.
+        """Replace the channel ``parent -> child`` by ``matrix`` in ``get_matrix``.
 
-        ``get_matrix`` returns *matrix* for this channel from now on. The
-        override survives table reloads for the same interaction model and
-        is applied before the multiplicative production modifications, so
-        ``get_matrix``, the particle channels wired from it
-        (``ParticleManager.set_interaction_model``), ``dN_dxlab``, and the
-        assembled ``int_m`` all agree with the injected matrix, and the
-        injection is no longer a ``hadr_yields`` dict write that the next
-        reload silently discards. Selecting a different interaction model
-        clears the overrides (``MCEqRun.set_interaction_model``). Bare PDG
-        ints are accepted and normalised to helicity-0 keys.
-
-        The override is returned as stored, like the raw ``index_d``
-        matrices are; treat it as read-only. ``mod_pprod`` factors
-        still multiply on top afterwards, so a Barr-style modification
-        composes with an injected matrix instead of replacing it.
-
-        Adding an override does not add a missing relation. There is no
-        membership validation: a channel absent from the loaded
-        model simply never gets wired (particle channels are built from
-        the relations), exactly as for a DB channel the
-        particle filters dropped.
+        Production modifications (``mod_pprod``) still multiply on top. Bare PDG
+        ints are normalised to helicity-0 keys. The override does not add a
+        relation, so a channel absent from the loaded model is never used.
         """
-        import numpy as np
-
         parent = (parent, 0) if isinstance(parent, int) else tuple(parent)
         child = (child, 0) if isinstance(child, int) else tuple(child)
         self.channel_overrides[(parent, child)] = np.asarray(matrix)
@@ -98,8 +66,6 @@ class Interactions:
         return n
 
     def load(self, interaction_model, parent_list=None):
-        from MCEq.misc import is_charm_pdgid
-
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
         index = self.mceq_db.interaction_db(self.iam)
@@ -121,7 +87,11 @@ class Interactions:
                 if p in parent_list and p[0] not in disabled_particles
             ]
         if filters["disable_charm_pprod"]:
-            self.parents = [p for p in self.parents if not is_charm_pdgid(p[0])]
+            self.parents = [
+                p
+                for p in self.parents
+                if not (400 < abs(p[0]) < 500 or 4000 < abs(p[0]) < 5000)
+            ]
         if filters["disable_interactions_of_unstable"]:
             self.parents = [
                 p for p in self.parents if p[0] not in [2212, 2112, -2212, -2112]
@@ -246,10 +216,7 @@ class Interactions:
         if not self._physics.use_isospin_sym:
             return True
 
-        # Choose the opposite nucleon from the caller's primary: a 2112
-        # primary gets symm 2212 and vice versa. Binding the swap before the
-        # test would overwrite the name being tested and treat a 2112 primary
-        # as a proton, landing its isospin copies on the wrong keys.
+        # the other nucleon
         if prim_pdg == 2112:
             prim_pdg, symm_pdg = 2112, 2212
         else:
@@ -325,15 +292,14 @@ class Interactions:
         if child not in self.relations[parent]:
             raise Exception(f"trying to get empty matrix {parent} -> {child}")
 
-        # An absolute override replaces the file matrix; production
-        # multipliers still multiply on top below, so the two mechanisms
-        # compose rather than fight.
+        # An override replaces the file matrix; production modifications
+        # still multiply on top below.
         if (parent, child) in self.channel_overrides:
             m = self.channel_overrides[(parent, child)]
         else:
             m = self.index_d[(parent, child)]
 
-        if (parent[0], child[0]) in list(self.mod_pprod):
+        if (parent[0], child[0]) in self.mod_pprod:
             info(
                 5,
                 f"using modified particle production for {parent[0]}/{child[0]}",

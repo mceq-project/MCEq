@@ -1,19 +1,16 @@
 """Data-release manifest: which database file carries which hadronic model.
 
-The data release is a set of HDF5 files plus a YAML manifest
-(``config.mceq_db_manifest``) recording, for each file, its energy grid,
-checksum and the models it holds per medium::
+The YAML manifest (``config.mceq_db_manifest``) records for each file its
+energy grid, checksum and models per medium::
 
     files:
       mceq_base_air_1d_v2.h5:
         grid: 1d-150
         models: {air: [FLUKA20251, SIBYLL23E], hydrogen: [SIBYLL23E]}
 
-``config.mceq_db_fname`` names the primary file, which supplies the grid,
-decays and continuous losses. When a run requests a model the primary does
-not hold, :class:`ModelStoreCache` finds a file on the same grid that does,
-downloads it if needed, verifies that the energy grids match, and returns
-that store. Registering a further model means adding a manifest entry.
+The primary file (``config.mceq_db_fname``) supplies the grid, decays and
+continuous losses; :class:`ModelStoreCache` serves models it lacks from files
+on the same grid.
 """
 
 from __future__ import annotations
@@ -94,16 +91,13 @@ class ModelStoreCache:
     """
 
     def __init__(self, paths, primary: hdf5_store.HDF5Store, fetcher):
-        # ``fetcher`` supplies ``ensure_manifest(paths, name)`` and
-        # ``ensure_package(paths, name, manifest)`` (MCEq.data.download);
-        # injected so the fetch layer, which reads this module's schema,
-        # is not imported back from here.
+        # ``fetcher`` provides ``ensure_manifest(paths, name)`` and
+        # ``ensure_package(paths, name, manifest)`` (MCEq.data.download).
         self._paths = paths
         self._primary = primary
         self._fetch = fetcher
-        # The packager stamps the manifest a package belongs to; a CI or
-        # custom set names its own, which takes precedence over the config
-        # default when it is present in data_dir.
+        # A manifest named in the package's root attributes overrides the
+        # config default.
         declared = primary.attrs().get("mceq_db_manifest")
         self.manifest_name = str(declared) if declared else paths.mceq_db_manifest
         common = primary.attrs("common")

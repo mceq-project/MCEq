@@ -1,45 +1,18 @@
-"""What every ETD2 backend shares: the precision contract and scipy SpMM.
-
-:data:`_PRECISION_CONTRACT` is the fp32/fp64 rule all four backends
-implement, and :func:`_state_dtype` the one place ``fp_precision`` becomes a
-dtype. :class:`ScipyApplyOff` is the off-diagonal SpMM binding that needs no
-library beyond scipy, and the reference the other bindings are checked
-against.
-
-A definition belongs here when more than one backend module needs it and it
-depends on no sparse library and no device.
-"""
+"""Precision rule, state dtype and scipy off-diagonal SpMM shared by the ETD2 backends."""
 
 import numpy as np
 
-#: The precision contract every backend implements. ``fp_precision`` (32 or
-#: 64) is one knob on the shared backends, not a kernel family of its own,
-#: and it means exactly this. Referenced from
-#: :class:`MCEq.solvers.backends.host.HostBackend`,
-#: :class:`MCEq.solvers.backends.cuda.CudaOperator`,
-#: :func:`MCEq.solvers.etd2.etd2_driver` and
-#: :func:`MCEq.solvers.etd2.solve_etd2`.
-_PRECISION_CONTRACT = """\
-The diagonals (``d_int``, ``d_dec``, and ``lam_j D0_i`` on the sec(theta)
-corner) and the phi factors computed from them (``eD``, ``h phi1``,
-``h phi2``) are evaluated in FP64 whatever the requested precision, and
-cast once, on the way out, to the state dtype. The state, the scratch
-buffers and the off-diagonal operator are stored in the requested dtype,
-and every stage that touches them runs there. The step size and
-``rho_inv`` therefore reach the factor stage in FP64; ``rho_inv`` reaches
-the SpMM in the state dtype.
+# Precision rule of every backend. The diagonals (d_int, d_dec, and lam_j D0_i
+# on the sec(theta) corner) and the phi factors (eD, h phi1, h phi2) are
+# evaluated in fp64 and cast once to the state dtype; the step size and
+# rho_inv reach the factor stage in fp64 (the phi Taylor-switch radii are
+# calibrated for fp64). The state, the scratch buffers and the off-diagonal
+# operator are stored in the requested dtype, and rho_inv reaches the SpMM in
+# it. At fp32 the driver solves for s*phi with s an exact power of two
+# (MCEq.solvers.etd2._fp32_scale) to keep steep spectra above the fp32 normal
+# range.
 
-The phi quotients cancel near their Taylor-switch radii, which are
-calibrated for FP64 rounding; the contract binds the inputs of the factor
-stage, not only its arithmetic.
-
-At FP32 the driver solves for ``s phi`` with ``s`` an exact power of two
-(:func:`MCEq.solvers.etd2._fp32_scale`) and divides it out of the result:
-fluxes falling like E^-3 reach 1e-40 near 1e10 GeV, below the FP32 normal
-range, and the products inside the SpMM fall below it first.
-"""
-
-#: State dtype per ``fp_precision``; the one place 32/64 becomes a dtype.
+#: State dtype per ``fp_precision``.
 _FP_DTYPE = {32: np.float32, 64: np.float64}
 
 
@@ -56,8 +29,7 @@ def _state_dtype(fp_precision):
 class ScipyApplyOff:
     """``out = int_off x + ri dec_off x`` through scipy CSR SpMM.
 
-    The operator is stored in ``dtype`` so the SpMM runs at the state
-    precision (see :data:`_PRECISION_CONTRACT`)."""
+    The operator is stored in ``dtype``, the state precision."""
 
     name = "numpy"
 

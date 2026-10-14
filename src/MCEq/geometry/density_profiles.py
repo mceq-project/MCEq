@@ -1,16 +1,4 @@
-"""Compatibility exports of the atmosphere classes from :mod:`MCEq.environment`.
-
-The atmospheres now live in ``environment/{base,corsika,isothermal,
-msis00,tabulated,target}.py``. This module keeps ``from MCEq.geometry.density_profiles import ...``
-working, including the ``import *`` form that
-``docs/examples/Plot_density_depth_relations.ipynb`` relies on.
-
-``__all__`` is explicit and preserves the exact 19 names the star-import bound
-before the split -- ``np``, ``join``, ``ABCMeta``, ``abstractmethod`` and
-``info`` included. The notebook calls ``np.linspace`` without importing numpy
-itself, so the exported ``np`` name has to stay.
-``tests/geometry/test_geometry_shims.py`` checks this export list.
-"""
+"""Atmosphere classes re-exported under their v1.4 import path."""
 
 from abc import ABCMeta, abstractmethod  # noqa: F401  (star-import surface)
 from os.path import join  # noqa: F401  (star-import surface)
@@ -62,10 +50,7 @@ __all__ = [
     "np",
 ]
 
-# The MSIS21 names are resolved lazily through PEP 562 so that touching this
-# module does not require the optional MSIS21 backend. They are deliberately
-# absent from __all__, as they were before the split: a module __getattr__ does
-# not extend `import *`.
+# MSIS21 names resolve on first access (PEP 562); they are not in __all__.
 _MSIS21_EXPORTS = (
     "MSIS21Atmosphere",
     "MSIS21LocationCentered",

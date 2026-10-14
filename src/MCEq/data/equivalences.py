@@ -1,45 +1,6 @@
-"""Model-specific projectile equivalences: the table and the three uses of it.
+"""Projectile equivalences of hadronic models and cross-section mapping."""
 
-A database stores production matrices for the projectiles its generator
-actually simulated; every other species has to borrow a column. This module
-holds the borrowing rules:
-
-* :data:`equivalences`, the per-family ``child -> stand-in`` table;
-* :func:`reverse_equivalences` and :func:`apply_equivalences`, the inverse
-  lookup and the copy that ``HDF5Backend._gen_db_dictionary`` performs per
-  channel when ``assume_nucleon_interactions_for_exotics`` is set;
-* :func:`mapped_cross_section` and :func:`family_fallback`, the cross-section
-  side.
-
-**Two object identities must be preserved.**
-
-1. ``equivalences["FLUKA"] is equivalences["DPMJET"]`` -- the same dict, not a
-   copy, so any edit to one family is seen by the other.
-2. :func:`apply_equivalences` aliases rather than copies: the borrowing
-   projectile gets *the same* matrix object as its stand-in, and *the same*
-   ``relations`` list, which later iterations of the caller's channel loop keep
-   appending to. Callers must therefore account for mutations reached through
-   either name.
-
-Both are checked in ``tests/test_data_hdf5_decode.py``
-(``test_equivalence_injection_aliases_rather_than_copies``,
-``test_fluka_and_dpmjet_share_one_equivalence_table``).
-
-**Importing from this module: use ``from … import``, never ``import … as``.**
-``MCEq.data`` re-exports the :data:`equivalences` *dict* under the same name as
-this submodule, and the re-export runs after the import machinery has bound the
-module, so the dict wins: ``MCEq.data.equivalences`` **is the dict**. CPython
-resolves ``import MCEq.data.equivalences as x`` by ``getattr``, so that binds
-the dict too, and ``MCEq.data.equivalences.family_fallback`` raises
-``AttributeError: 'dict' object has no attribute 'family_fallback'`` even after
-a plain ``import MCEq.data.equivalences``. Only
-``from MCEq.data.equivalences import family_fallback`` (or a ``sys.modules``
-lookup) reaches the functions. The dict has to win -- it is the exported public
-name (``tests/test_phase4_surface.py``).
-
-No config, no HDF5, no numpy: the module reads only :mod:`MCEq.data.model_names`
-and ``misc.info``.
-""" #anfe: crazy docstring! AI talking to itself. This module should joined with the model_names to form soem kind of model "settings" or hadr_model_[xomething, missing a word] 
+# anfe: crazy docstring! AI talking to itself. This module should joined with the model_names to form soem kind of model "settings" or hadr_model_[xomething, missing a word]
 
 from collections import defaultdict
 
@@ -176,12 +137,7 @@ equivalences["FLUKA"] = equivalences["DPMJET"]
 
 
 def reverse_equivalences(equivalences):
-    """``{child: stand_in}`` -> ``{(stand_in, 0): [(child, 0), ...]}``.
-
-    A ``defaultdict(list)`` on purpose: the caller indexes it with every parent
-    it decodes, most of which stand in for nothing, and relies on the empty
-    list rather than guarding the lookup.
-    """
+    """``{child: stand_in}`` -> ``defaultdict {(stand_in, 0): [(child, 0), ...]}``."""
     eqv_lookup = defaultdict(list)
     for k in equivalences:
         eqv_lookup[(equivalences[k], 0)].append((k, 0))
@@ -198,19 +154,11 @@ def apply_equivalences(
     index_d,
     relations,
 ):
-    """Give missing projectiles the simulated parent's channel matrix and list.
+    """Give projectiles without own tables the channel of their stand-in ``parent_pdg``.
 
-    ``parent_pdg`` is the simulated representative; ``eqv_lookup`` lists the
-    projectiles that borrow from it.
-
-    Called once per decoded channel by ``HDF5Backend._gen_db_dictionary``, and
-    only when ``physics.assume_nucleon_interactions_for_exotics`` is set -- the
-    switch stays at the call site so this module reads no configuration.
-
-    Mutates ``particle_list``, ``index_d`` and ``relations`` in place, and
-    **aliases**: the borrowing projectile shares the matrix object and the
-    ``relations`` list of ``parent_pdg`` (see the module docstring). Returns
-    nothing.
+    Updates ``particle_list``, ``index_d`` and ``relations`` in place. The
+    borrowing projectile shares the matrix object and the ``relations`` list of
+    ``parent_pdg`` (no copies).
     """
     for eqv_parent in eqv_lookup[parent_pdg]:
         if eqv_parent[0] not in model_particles:
@@ -240,35 +188,19 @@ def apply_equivalences(
         )
 
 
-def family_fallback(projectile): #anfe: the docstring is crazy for this function. I think a few inline comments would be easire to read what this function does.
-    """Sign-preserving family representatives to try for ``projectile``.
-
-    A negative projectile tries the antiparticle representative first
-    (antibaryons carry annihilation channels -- nbar, lambda-bar etc. must map
-    to pbar, not p; same logic for K-/pi- when the model stores dedicated
-    columns) before falling back to the positive one.
-
-    Check kaon IDs before pion IDs: ID ``130`` (K_L) satisfies both the kaon
-    window (``apid in (130, 310, 311)``) and the pion window
-    (``100 < apid < 300``), and keeps the kaon representative only because its
-    branch is tested first. Reordering the branches would silently reroute K_L
-    to the pion column.
-
-    Anything outside all three windows gets ``[]`` -- leptons, the diffractive
-    ``10313``/``10323`` ids, nuclei at or above 5000. This is one of three
-    ``PDG -> family representative`` policies in the tree and is deliberately
-    not unified with the other two; see
-    ``tests/test_data_model_names.py::test_the_two_pdg_policies_are_not_unified``,
-    which drives both real callables and fails if they are unified.
-    """
+def family_fallback(projectile):
+    """Family representatives (K+-, pi+-, p) to try for ``projectile``."""
+    # Antiparticle representative first (e.g. nbar -> pbar), then the particle.
     apid = abs(projectile)
     sign = -1 if projectile < 0 else 1
+    # Kaons before pions: 130 (K_L) is also inside the pion window.
     if apid in (130, 310, 311) or 300 < apid < 1000:
         return [sign * 321, 321]
     if 100 < apid < 300:
         return [sign * 211, 211]
     if 1000 < apid < 5000:
         return [sign * 2212, 2212]
+    # leptons, 10313/10323, nuclei: no equivalent
     return []
 
 

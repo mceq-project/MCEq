@@ -45,16 +45,12 @@ class MCEqRun:
         including their decay products.
     """
 
-    #: Per-run configuration. The class default is the live config module, so
-    #: settings are read when accessed; ``config=RunConfig.snapshot()`` on an
-    #: instance replaces it with a detached copy. The default lives here rather
-    #: than only in ``__init__`` so unbound calls from test stubs keep working.
+    #: Configuration of the run: the live config module, or the detached copy
+    #: passed as ``config=RunConfig.snapshot()``.
     _cfg = config
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
-        # `config=RunConfig.snapshot()` captures the settings at construction;
-        # the default None reads process settings when accessed. Neither
-        # automatically rebuilds existing matrices or cached paths.
+        # Changing either config does not rebuild existing matrices or paths.
         from MCEq.config.run import RunConfig
 
         snapshot = kwargs.pop("config", None)
@@ -66,10 +62,6 @@ class MCEqRun:
             )
         self._cfg = snapshot if snapshot is not None else config
         ensure_db_available(self._cfg)
-        # ``enable_em`` and muon-helicity rows are incompatible:
-        # ``driver.system.run_physics_view`` returns the physics settings with
-        # helicity dependence forced off for this run, and CascadeSystem holds
-        # that copy; the process default is untouched.
         self.medium = kwargs.pop("medium", self._cfg.physics.interaction_medium)
         le_config = self._cfg.physics.low_energy
         low_energy_model = kwargs.pop("low_energy_model", le_config.get("model"))
@@ -85,9 +77,6 @@ class MCEqRun:
         )
         self.theta_deg = theta_deg
 
-        # The physics system (database, tables, pman, builder, matrices)
-        # lives in driver/system.py; the public properties below forward
-        # physics-system attributes into it.
         self._system = CascadeSystem(
             interaction_model,
             medium=self.medium,
@@ -99,8 +88,6 @@ class MCEqRun:
 
         # Initialize solution vector
         self._solution = np.zeros(1)
-        # Initial condition (phi0 + restore list + pmodel) lives in
-        # driver/initial_state.py
         self._initial_state = InitialState(self._system)
 
         # Set interaction model and compute grids and matrices
@@ -113,10 +100,8 @@ class MCEqRun:
         # Default GPU device id for CUDA
         self._cuda_device = kwargs.pop("cuda_gpu_id", self._cfg.backend.cuda_gpu_id)
 
-        # Geomagnetic rigidity cutoff toggle. ``None`` (default) auto-detects
-        # from the density model — MSIS-based atmospheres and location-tagged
-        # CORSIKA atmospheres get the cutoff on by default, everything else
-        # off. Set explicitly True / False to override.
+        # Geomagnetic rigidity cutoff: None auto-enables it for MSIS and
+        # location-tagged atmospheres; True/False override.
         self.geomagnetic_cutoff = kwargs.pop("geomagnetic_cutoff", None)
 
         # Print particle list after tracking particles have been initialized
@@ -345,19 +330,18 @@ class MCEqRun:
         force=False,
         build_matrices=True,
     ):
-        """Select the interaction model, update the particle layout and initial
-        state as needed, and rebuild matrices unless ``build_matrices=False``.
+        """Select the interaction model and rebuild the matrices.
 
-        The load itself is the system's branch ladder
-        (:meth:`CascadeSystem.reload_for_model`); this class keeps the
-        skip short-circuit before it and the resize/rebuild after
-        it — the resize replays the recorded initial-condition method
-        names, so only this class can drive the load -> resize ->
-        build order.
+        The initial condition is restored on the new particle layout.
 
         Args:
           interaction_model (str): name of interaction model
+          particle_list (list, optional): parent particles of the system;
+            ``None`` takes all particles of the model and their decay products
+          update_particle_list (bool): re-derive the particle list from
+            ``particle_list``; False reuses the current one
           force (bool): force loading interaction model
+          build_matrices (bool): False skips the matrix construction
         """
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
@@ -371,8 +355,8 @@ class MCEqRun:
             info(2, "Skip, since current model identical to", interaction_model + ".")
             return
 
-        # A model change clears injected channel overrides; a same-model reload
-        # keeps them -- surviving the reload is the point of the override hook.
+        # A model change clears injected channel overrides; a same-model
+        # reload keeps them.
         if self._interactions.iam != interaction_model:
             self._interactions.clear_channel_overrides()
 
@@ -388,14 +372,7 @@ class MCEqRun:
             self._system.build_matrices()
 
     def _resize_vectors_and_restore(self):
-        """Update solution and grid vectors if the number of particle species
-        or the interaction models change. The previous state, such as the
-        initial spectrum, are restored.
-
-        The ``phi0`` reallocation and the restore replay live on
-        :class:`MCEq.driver.initial_state.InitialState`; this wrapper orders
-        them and supplies the replay.
-        """
+        """Reallocate the state vectors and replay the initial condition."""
         self._solution = np.zeros(self.dim_states)
         self._initial_state.resize(
             self._restore_initial_condition,
@@ -403,46 +380,53 @@ class MCEqRun:
         )
 
     def set_primary_model(self, model_class_or_object, tag=None):
-        """Sets primary flux model (delegates to InitialState).
+        """Sets primary flux model.
 
-        See :meth:`MCEq.driver.initial_state.InitialState.set_primary_model`
-        for parameters.
+        Args:
+          model_class_or_object: a :class:`crflux.models.PrimaryFlux`
+            subclass, or an instance of one
+          tag: argument passed to the class when constructing the model
         """
         return self._initial_state.set_primary_model(model_class_or_object, tag)
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
     ):
-        """Set a single primary particle (delegates to InitialState).
+        """Set a single primary nucleus or particle as initial condition.
 
-        See :meth:`MCEq.driver.initial_state.InitialState.
-        set_single_primary_particle` for parameters.
+        Nuclei are superpositions of Z protons and A-Z neutrons at
+        :math:`E/A`; see
+        :meth:`MCEq.driver.initial_state.InitialState.set_single_primary_particle`.
+
+        Args:
+          E (float): kinetic energy of a nucleus in GeV
+          corsika_id (int): CORSIKA ID ``A*100 + Z`` of a nucleus
+          pdg_id (int): PDG ID of a particle
+          append (bool): If True, keep previous state and append a new particle.
         """
         return self._initial_state.set_single_primary_particle(
             E, corsika_id=corsika_id, pdg_id=pdg_id, append=append
         )
 
     def set_initial_spectrum(self, spectrum, pdg_id, append=False):
-        """Set a user spectrum (delegates to InitialState).
+        """Set a user spectrum of one species as initial condition.
 
-        See :meth:`MCEq.driver.initial_state.InitialState.
-        set_initial_spectrum` for parameters.
+        Args:
+          spectrum (np.array): differential spectrum on the kinetic-energy grid
+          pdg_id (int): PDG ID of the particle
+          append (bool): If True, add to the previous initial condition.
         """
         return self._initial_state.set_initial_spectrum(spectrum, pdg_id, append=append)
 
     def get_initial_state(self):
-        """Return a copy of the current initial-condition vector ``phi0``.
-
-        Delegates to
-        :meth:`MCEq.driver.initial_state.InitialState.get_initial_state`.
-        """
+        """Return a copy of the current initial-condition vector ``phi0``."""
         return self._initial_state.get_initial_state()
 
     def initial_state(self, components):
         """Compose an initial-state column without mutating the instance.
 
-        Delegates to :meth:`MCEq.driver.initial_state.InitialState.
-        initial_state`.
+        See :meth:`MCEq.driver.initial_state.InitialState.initial_state` for
+        the component format.
         """
         return self._initial_state.initial_state(components)
 
@@ -458,7 +442,7 @@ class MCEqRun:
         :mod:`MCEq.geometry.density_profiles`.Calling this method will
         issue a recalculation of the interpolation and the integration path.
 
-        From v1.2, `density_model_or_config` may also be an instance of
+        `density_model_or_config` may also be an instance of
         :class:`~MCEq.environment.base.EarthsAtmosphere` or
         :class:`~MCEq.environment.target.GeneralizedTarget`.
 
@@ -546,27 +530,16 @@ class MCEqRun:
         cached_azi = getattr(self.density_model, "_current_azimuth_deg", None)
         if cached_theta == zenith_deg and cached_azi == azimuth_deg:
             info(2, "Angle selection corresponds to cached value, skipping calc.")
-            # Synchronize the stored zenith even when the atmosphere already
-            # has the requested angle. Safe on this branch because a cache hit
-            # means an earlier ``set_theta`` already accepted the angle.
             self.theta_deg = zenith_deg
             return
 
-        # Dispatch to set_theta with or without azimuth_deg depending on
-        # the density model's ``depends_on_azimuth`` attribute. Both
-        # MSIS00LocationCentered and MSIS21LocationCentered accept the
-        # extra azimuth_deg argument; everything else ignores azimuth.
+        # Only azimuth-dependent atmospheres accept azimuth_deg.
         if getattr(self.density_model, "depends_on_azimuth", False):
             self.density_model.set_theta(zenith_deg, azimuth_deg=azimuth_deg)
         else:
             self.density_model.set_theta(zenith_deg)
 
-        # Stored angles are updated only after ``set_theta`` accepts them.
-        # Assigning earlier is observable: an atmosphere with ``max_theta = 90``
-        # rejects 120 deg, and ``set_density_model`` replays ``self.theta_deg``
-        # into the next model, so a caller who caught the range error and then
-        # swapped atmospheres would silently solve at an angle that was never
-        # accepted.
+        # Store the angle only after set_theta accepted it.
         self.theta_deg = zenith_deg
         self.integration_path = None
 
@@ -595,10 +568,8 @@ class MCEqRun:
         The argument requires a DDM model object. Calling `set_interaction_model`
         overwrites DDM with a different model.
 
-        The matrices are installed as channel overrides on the interaction
-        table (``Interactions.set_channel_override``) and reach
-        ``hadr_yields``/``int_m`` through the ordinary ``get_matrix``
-        wiring, followed by a matrix rebuild. The overrides survive
+        The DDM matrices are installed as channel overrides of the
+        interaction tables and the matrices are rebuilt. The overrides survive
         same-model reloads and ``regenerate_matrices``; selecting a
         different interaction model clears them.
         """
@@ -670,8 +641,7 @@ class MCEqRun:
         """Call this function after applying particle prod. modifications aka
         Barr parameters"""
 
-        # Particle channels are refreshed before the matrices are rebuilt.
-        self._system.regenerate(skip_decay_matrix=skip_decay_matrix)
+        self._system.regenerate()
         self._resize_vectors_and_restore()
         self._system.build_matrices(skip_decay_matrix=skip_decay_matrix)
 
@@ -714,11 +684,8 @@ class MCEqRun:
           dtype (np.float32 | np.float64 | None): state precision.
             ``None``: float32 on CUDA with ``config.cuda_fp_precision = 32``,
             else float64. The solution is returned in float64 either way.
-          kwargs (dict): Reserved for advanced flags. Currently only
-            ``skip_integration_path=True`` is recognised — it bypasses
-            the call to ``_calculate_integration_path`` and reuses the
-            cached ``self.integration_path`` (used by tests / experts who
-            want to keep the path fixed across multiple ``solve`` calls).
+          kwargs (dict): ``skip_integration_path=True`` reuses the cached
+            ``self.integration_path`` instead of rebuilding it.
 
         """
         info(2, f"Launching {self._cfg.backend.kernel_config} solver")
@@ -743,14 +710,8 @@ class MCEqRun:
         else:
             info(2, "Warning: integration path calculation skipped.")
 
-        # If the initial angular density is a delta function (e.g. a single
-        # cosmic-ray shower incident along the axis), all Legendre modes
-        # (P_l(1) = 1) carry the same amplitude as the 1D initial
-        # condition. The stitched ETD2 path operates on a length
-        # ``n_k * dim_states`` state vector — broadcast ``_phi0`` across
-        # the n_k blocks via ``np.tile`` so block-k of the stacked state
-        # is a copy of ``_phi0``. For 1D databases this reduces to a
-        # plain copy.
+        # 2D: a delta in angle has equal amplitude in every Legendre mode
+        # (P_l(1) = 1), so phi0 is repeated over the n_k mode blocks.
         if self._mceq_db.is_2d:
             phi0 = np.tile(self._phi0, self._mceq_db.n_k)
         else:
@@ -771,8 +732,7 @@ class MCEqRun:
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
     def _run_etd2_resolved(self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype):
-        """:meth:`_run_etd2` at the precision :func:`batch.resolve_dtype`
-        picks, with the low-energy CUDA FP32 warning; results in float64."""
+        """:meth:`_run_etd2` at the resolved precision; results in float64."""
         dtype = batch.resolve_dtype(self, dtype)
         sec_ops = self._resolve_secant()
         batch._warn_low_energy_cuda_fp32(self, dtype, sec_ops)
@@ -785,7 +745,6 @@ class MCEqRun:
         self, nsteps, dX, rho_inv, grid_idcs, *, dtype=None
     ):
         """Launches the solver directly for parameters of the integration path.
-
 
         The helper function is useful if you want to skip the calculation of
         the integration path every time. This function is intended for expert
@@ -809,8 +768,7 @@ class MCEqRun:
 
         start = time()
 
-        # See ``MCEqRun.solve`` for the rationale: stitched ETD2 needs a
-        # length ``n_k * dim_states`` initial state for 2D databases.
+        # 2D: phi0 repeated over the n_k mode blocks, as in solve().
         if self._mceq_db.is_2d:
             phi0 = np.tile(self._phi0, self._mceq_db.n_k)
         else:
@@ -823,13 +781,10 @@ class MCEqRun:
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
     def _is_geomag_eligible_atmosphere(self):
-        """True if the active atmosphere has a meaningful geographic location.
+        """True for MSIS atmospheres and atmospheres with a known location.
 
-        The :meth:`solve_fullsky` auto-cutoff fires only when this returns
-        True and ``self.geomagnetic_cutoff`` is True or None. Eligible
-        atmospheres are MSIS*-derived classes (both MSIS00 and MSIS21
-        hierarchies) and any other atmosphere whose ``self.location``
-        appears in :data:`MCEq.environment.parameters.LOCATIONS`.
+        Decides the :meth:`solve_fullsky` geomagnetic cutoff when
+        ``geomagnetic_cutoff`` is None.
         """
         from MCEq.environment.msis00 import MSIS00Atmosphere
         from MCEq.environment.msis21 import MSIS21Atmosphere
@@ -840,21 +795,14 @@ class MCEqRun:
             return False
         if isinstance(dm, MSIS00Atmosphere):
             return True
-        # MSIS21 models use a separate class hierarchy and load their optional
-        # backend lazily in the constructor.
         if isinstance(dm, MSIS21Atmosphere):
             return True
         loc = getattr(dm, "location", None)
         return isinstance(loc, str) and loc in LOCATIONS
 
-    # Batch functions bound as methods; their parameter documentation lives on
-    # the functions in driver/batch.py. The first parameter of each function is
-    # named ``run`` precisely so that this binding reads as the method.
     solve_batch = batch.solve_batch
     solve_fullsky = batch.solve_fullsky
     _build_condition_paths = paths.build_condition_paths
-    # Result-extraction and observable functions bound as methods; their
-    # contracts live in driver/results.py and driver/observables.py.
     get_solution = results.get_solution
     _get_solution_from_state = results._get_solution_from_state
     convert_to_theta_space = results.convert_to_theta_space
@@ -865,20 +813,15 @@ class MCEqRun:
     decay_z_factor = observables.decay_z_factor
 
     def _resolve_secant(self):
-        """The sec(theta) operator set for a solve, or ``None`` (paraxial).
-        One constant set serves every column of every batch; only
-        ``config.secant_mode`` decides, on every kernel and precision."""
-        # getattr fallback: test objects without `_cfg` use the process config.
+        """sec(theta) operators for the solve, or None if secant mode is off."""
         cfg = getattr(self, "_cfg", config)
         if cfg.secant_mode(self._mceq_db.is_2d) == "off":
             return None
         return self._build_secant_ops()
 
     def _build_secant_ops(self):
-        """The constant sec(theta) operator set for the current geometry (see
-        :mod:`MCEq.operators.secant`), built once per (geometry, ``secant_*``
-        parameters) and reused across solves — the operator and backend
-        caches key on its identity."""
+        """sec(theta) operator set (:mod:`MCEq.operators.secant`), cached per
+        grid, species count and secant parameters."""
         from MCEq.operators.secant import build_secant_kernel_ops
 
         k_grid = np.asarray(self._mceq_db.k_grid)
@@ -904,9 +847,8 @@ class MCEqRun:
         return cached[1]
 
     def _compiled_operator(self, sec_ops=None):
-        """:func:`~MCEq.operators.compiled.compile_operator` of the current
-        matrices, cached against the identity of ``int_m`` / ``dec_m`` and
-        of the operator set (a paraxial and a coupled entry coexist)."""
+        """Compiled operator of the current matrices, cached per identity of
+        ``int_m``, ``dec_m`` and ``sec_ops`` (paraxial and coupled entries)."""
         cache = self.__dict__.setdefault("_operator_cache", {})
         coupled = sec_ops is not None
         entry = cache.get(coupled)
@@ -923,10 +865,10 @@ class MCEqRun:
         return entry[3]
 
     def _etd2_backend(self, sec_ops=None, dtype=np.float64):
-        """The step-loop backend of ``config.kernel_config`` bound to the
-        compiled operator: scipy CSR, MKL or Accelerate handles, or the
-        device upload. Cached per (kernel, precision, coupling); a backend
-        whose operator or device rotated is closed and rebuilt.
+        """Solver backend of ``kernel_config`` for the compiled operator.
+
+        Cached per kernel, precision and coupling; rebuilt when the operator
+        or the CUDA device changes.
         """
         import MCEq.solvers as solvers
 
@@ -969,8 +911,7 @@ class MCEqRun:
     def _run_etd2(
         self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
     ):
-        """One integration path for a ``(dim,)`` or ``(dim, K)`` state —
-        the single-axis and the shared-path multi-RHS route."""
+        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
         import MCEq.solvers as solvers
 
         dtype = np.dtype(dtype)
@@ -991,8 +932,8 @@ class MCEqRun:
         dtype=np.float64,
         sec_ops=None,
     ):
-        """One LPT carousel launch (per-lane paths); returns the
-        ``(dim, K_total)`` final states in pixel order."""
+        """Integrate K states along per-column paths with the LPT carousel;
+        returns the ``(dim, K)`` final states in column order."""
         import MCEq.solvers as solvers
 
         be = self._etd2_backend(sec_ops, dtype)
@@ -1009,10 +950,10 @@ class MCEqRun:
         return np.asarray(sol, dtype=np.dtype(dtype))
 
     def close(self):
-        """Release the backend resources held by this MCEqRun — MKL sparse
-        handles, Accelerate slots, GPU buffers. Idempotent; the next solve
-        rebuilds the operator and backend caches lazily, so this is also a
-        "drop and reset" knob in long-running scripts."""
+        """Release backend resources (MKL handles, Accelerate slots, GPU buffers).
+
+        Idempotent; the next solve rebuilds the caches.
+        """
         for be in self.__dict__.pop("_backend_cache", {}).values():
             try:
                 be.close()
@@ -1035,14 +976,9 @@ class MCEqRun:
         return False
 
     def _em_cascade_step_scale(self):
-        """EM off-diagonal stiffness scale r_EM of the current ``int_m``, memoised.
+        """Spectral radius of the EM block of ``int_m`` (cached per matrix).
 
-        The scale itself is a property of the operator and is computed by
-        :func:`MCEq.operators.compiled.em_step_scale`; this method holds the
-        memo. ``int_m`` is X-constant, so one spectral radius serves every step
-        of every solve, and the entry is keyed on the *identity* of ``int_m``,
-        which invalidates it whenever the matrices are rebuilt. Returns 0.0
-        before the matrices exist, and 0.0 when no e+/-/gamma are loaded.
+        0.0 before the matrices exist or without e+/e-/gamma.
         """
         int_m = getattr(self, "int_m", None)
         if int_m is None:
@@ -1059,12 +995,7 @@ class MCEqRun:
         return r_em
 
     def _em_cascade_dx_cap(self):
-        """Effective EM stiffness-based step cap, or np.inf.
-
-        Thin delegator to :func:`MCEq.driver.paths.em_cascade_dx_cap`;
-        the memoised stiffness it consumes stays on this class
-        (:meth:`_em_cascade_step_scale`).
-        """
+        """EM stiffness step cap, or np.inf."""
         return paths.em_cascade_dx_cap(self, self._em_cascade_step_scale())
 
     def _calculate_integration_path(
@@ -1079,11 +1010,7 @@ class MCEqRun:
         dX_min=None,
         fd_span=None,
     ):
-        """Build (or reuse the cache of) the ETD2 integration path.
-
-        Thin delegator to :func:`MCEq.driver.paths.calculate_integration_path`;
-        the path cache and the ``force`` handling live on this instance.
-        """
+        """Build the ETD2 integration path, or reuse the cached one."""
         return paths.calculate_integration_path(
             self,
             int_grid,

@@ -1,3 +1,5 @@
+"""Data-Driven Model (DDM): spline database and production-matrix model."""
+
 import pathlib
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -5,10 +7,12 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
+from jacobi import propagate
 from scipy.integrate import quad
 
 from MCEq import base_path
 from MCEq.misc import info
+from MCEq.models.ddm import ddm_utils
 from MCEq.models.ddm.ddm_utils import _eval_spline, _generate_DDM_matrix, fmteb
 from MCEq.species.constants import _pdata
 
@@ -65,7 +69,7 @@ class _DDMEntry:
     x17 : bool
         Whether the spline fits x^1.7 dn/dx or just dn/dx.
     tck : Tuple
-        Spline tuple ``(knots, coefficients, degree)"
+        Spline tuple ``(knots, coefficients, degree)``.
     cov : npt.NDArray
         The covariance matrix of the spline.
     tv : float
@@ -88,50 +92,22 @@ class _DDMEntry:
 
     @property
     def knot_sigma(self) -> npt.NDArray:
-        """
-        Compute the knot standard deviation for the spline.
-
-        Returns
-        -------
-        npt.NDArray
-            The standard deviation of the knots.
-        """
+        """Standard deviation of the spline coefficients, scaled by ``te``."""
         return self.te * np.sqrt(np.diag(self.cov))
 
     @property
     def fl_ebeam(self) -> float:
-        """
-        Get the beam energy as a float.
-
-        Returns
-        -------
-        float
-            The beam energy.
-        """
+        """Beam energy in GeV as float."""
         return float(self.ebeam)
 
     @property
     def n_knots(self) -> int:
-        """
-        Get the number of knots in the spline.
-
-        Returns
-        -------
-        int
-            The number of knots.
-        """
+        """Number of spline coefficients."""
         return len(self.tck[1])
 
     @property
     def x_min(self) -> float:
-        """
-        Calculate the minimum x value for the spline.
-
-        Returns
-        -------
-        float
-            The minimum x value.
-        """
+        """Kinematic lower limit of x, secondary mass over beam energy."""
         return _pdata.mass(self.secondary) / float(self.ebeam)
 
     def calc_zfactor_and_error(
@@ -170,10 +146,6 @@ class _DDMEntry:
                 projectile, secondary, ebeam=ebeam)
         >>> z_factor, z_error = entry.calc_zfactor_and_error()
         """
-        from jacobi import propagate
-
-        from MCEq.models.ddm import ddm_utils
-
         info(
             3,
             f"Calculating Z-factor for {self.projectile} --> "
@@ -228,9 +200,9 @@ class _DDMEntry:
         Notes
         -----
         Unlike :meth:`calc_zfactor_and_error`, the central spectrum and its
-        error are integrated separately, using the spline covariance rather
-        than error propagation of the integral. This method is a bit more
-        stable for the "problematic" splines.
+        error (from the spline covariance) are integrated separately, without
+        error propagation through the integral. More stable for poorly
+        constrained splines.
 
         Examples
         --------
@@ -239,8 +211,6 @@ class _DDMEntry:
                 projectile, secondary, ebeam=ebeam)
         >>> z_factor, z_error = entry.calc_zfactor_and_error2()
         """
-        from MCEq.models.ddm import ddm_utils
-
         info(
             3,
             f"Calculating Z-factor for {self.projectile} --> "
@@ -356,53 +326,22 @@ class _DDMChannel:
 
     @property
     def entries(self) -> List[_DDMEntry]:
-        """
-        Returns the DDM entries.
-
-        Returns
-        -------
-        List[_DDMEntry]
-            A list of _DDMEntry objects.
-        """
-
+        """The DDM entries, sorted by beam energy."""
         return self._entries
 
     @property
     def total_n_knots(self) -> int:
-        """
-        Returns the total number of knots.
-
-        Returns
-        -------
-        int
-            The total number of knots.
-        """
-
+        """Total number of knots over all entries."""
         return sum([len(entry.tck[0]) for entry in self._entries])
 
     @property
     def n_splines(self) -> int:
-        """
-        Returns the number of splines.
-
-        Returns
-        -------
-        int
-            The number of splines.
-        """
-
+        """Number of splines."""
         return len(self._entries)
 
     @property
     def spline_indices(self) -> List[int]:
-        """
-        Returns the spline indices.
-
-        Returns
-        -------
-        List[int]
-            A list of spline indices.
-        """
+        """Spline indices of the entries."""
         return [entry.spl_idx for entry in self._entries]
 
     def get_entry(
@@ -458,8 +397,7 @@ class DDMSplineDB:
     """A class for maintaining DDMEntryCollections for different
     projectile and secondary particle combinations."""
 
-    #: Empty default only. ``_load_from_file`` binds a fresh dict per
-    #: instance, so each loaded database owns a fresh spline-cache dictionary.
+    #: Class-level default; ``_load_from_file`` binds a dict per instance.
     _ddm_splines: Dict[str, _DDMChannel] = {}
 
     def __init__(
@@ -489,21 +427,7 @@ class DDMSplineDB:
         enable_channels: List[Tuple[int, int]],
         exclude_projectiles: List[int],
     ):
-        """
-        Loads DDM splines from a file.
-
-        Parameters
-        ----------
-        filename : str
-            The filename of the DDM spline data file.
-        enable_channels : List[Tuple[int, int]]
-            List of projectile and secondary combinations to enable.
-        exclude_projectiles : List[int]
-            List of projectile codes to exclude.
-        """
-
-        # Create a fresh cache for this load so instances and reloads do not
-        # accumulate shared entries.
+        """Load the selected DDM splines from ``filename``."""
         self._ddm_splines = {}
 
         spl_file = np.load(filename, allow_pickle=True, encoding="latin1").item()
@@ -576,8 +500,6 @@ class DDMSplineDB:
             The projectile.
         secondary : int
             The secondary particle.
-        ebeam : Union[float, str, int]
-            The beam energy in GeV.
 
         Returns
         -------
@@ -589,14 +511,7 @@ class DDMSplineDB:
 
     @property
     def channels(self) -> Generator[_DDMChannel, None, None]:
-        """
-        Returns the DDM channels.
-
-        Yields
-        ------
-        _DDMChannel
-            A generator of _DDMChannel objects.
-        """
+        """Iterate over the DDM channels."""
         for channel in self._ddm_splines:
             yield self._ddm_splines[channel]
 
@@ -660,21 +575,7 @@ class DDMSplineDB:
         )
 
     def _mk_channel(self, projectile: int, secondary: int) -> str:
-        """
-        Creates a channel key.
-
-        Parameters
-        ----------
-        projectile : int
-            The projectile.
-        secondary : int
-            The secondary particle.
-
-        Returns
-        -------
-        str
-            The channel key.
-        """
+        """Channel key ``"projectile-secondary"``."""
         return f"{projectile}-{secondary}"
 
 

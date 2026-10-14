@@ -1,9 +1,4 @@
-"""Particle-count and Z-factor observables read from a solved cascade.
-
-Observable functions bound as :class:`MCEqRun` methods
-(``n_particles = observables.n_particles`` etc.); their first argument is
-the run.
-"""
+"""Particle numbers and Z-factors from a solved cascade."""
 
 import numpy as np
 
@@ -123,11 +118,6 @@ def z_factor(
 
     smat = proj.hadr_yields[sec]
     proj_cs = proj.prod_cross_section()
-    if run._cfg.has_cuda:
-        import cupy
-
-        smat = cupy.asnumpy(smat)
-        proj_cs = cupy.asnumpy(proj_cs)
     smat = np.asarray(smat, dtype=np.float64)
     proj_cs = np.asarray(proj_cs, dtype=np.float64)
     e = np.asarray(run.e_grid, dtype=np.float64)
@@ -183,10 +173,6 @@ def decay_z_factor(run, parent_pdg, child_pdg, gamma=None):
         gamma = run.pmodel.nucleon_gamma(e)
     gamma = np.broadcast_to(np.asarray(gamma, dtype=np.float64), e.shape)
     dmat = proj.decay_dists[sec]
-    if run._cfg.has_cuda:
-        import cupy
-
-        dmat = cupy.asnumpy(dmat)
     dmat = np.asarray(dmat, dtype=np.float64)
     zfac = np.zeros_like(e)
     for i in range(len(e)):

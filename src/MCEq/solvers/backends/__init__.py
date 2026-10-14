@@ -1,14 +1,7 @@
-"""Backend bindings of the ETD2RK step loop, one module per library.
+"""Backend bindings of the ETD2RK step loop, one module per sparse library or device.
 
-A backend places a :class:`~MCEq.operators.compiled.CompiledOperator` on its
-sparse library or device and executes the stages of
-:func:`MCEq.solvers.etd2.etd2_driver` there. The four constructors
-re-exported here are what :data:`MCEq.solvers.etd2._BACKENDS` binds by name.
-
-Importing this package stays cheap on a machine with no MKL, no GPU and no
-Accelerate: no module below it may load a shared library, import cupy or
-probe hardware at import time. Every such call belongs inside the function
-or constructor that needs it.
+No module here loads a shared library, imports cupy or probes hardware at
+import time.
 """
 
 from MCEq.solvers.backends.accelerate import accelerate_backend

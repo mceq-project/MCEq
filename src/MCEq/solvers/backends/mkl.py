@@ -1,16 +1,6 @@
-"""Intel MKL sparse BLAS binding of the ETD2 off-diagonal SpMM.
+"""Intel MKL sparse BLAS binding of the ETD2 off-diagonal SpMM; ``libmkl_rt`` is loaded on the first handle."""
 
-:class:`MklSparseMatrix` is the RAII wrapper around one
-``mkl_sparse_{d,s}_*`` handle together with the ctypes argtype registration
-its call sites need; :class:`MklApplyOff` is the ``apply_off`` binding built
-on a pair of handles, and :func:`mkl_backend` hands that pair to
-:class:`MCEq.solvers.backends.host.HostBackend`.
-
-Everything that talks to ``libmkl`` belongs here. The library is loaded on
-the first handle, never at import.
-"""
-
-from ctypes import POINTER, Structure, c_double, c_float, c_int
+from ctypes import POINTER, Structure, byref, c_double, c_float, c_int, c_void_p
 
 import numpy as np
 import scipy.sparse as sp
@@ -21,11 +11,9 @@ from MCEq.solvers.backends.host import HostBackend
 
 
 class _MklMatrixDescr(Structure):
-    """Shared ``struct matrix_descr`` ctypes wrapper for MKL sparse calls.
+    """``struct matrix_descr`` of the MKL sparse calls.
 
-    Module level so the argtypes-registered type and the per-wrapper
-    instance are the same Python type — ctypes does strict isinstance()
-    checking on Structure argtypes.
+    Module level: ctypes checks Structure argtypes with isinstance().
     """
 
     _fields_ = [("type", c_int), ("mode", c_int), ("diag", c_int)]
@@ -35,21 +23,14 @@ _MKL_ARGTYPES_SET = False
 
 
 def _set_mkl_argtypes(mkl):
-    """Register ctypes argtypes/restype on the MKL functions we call.
+    """Register ctypes argtypes/restype of the MKL sparse calls, once.
 
-    Without explicit argtypes, Python ctypes inspects the value passed at
-    each call site to decide how to marshal it. That breaks when callers
-    pass ``c_double.from_address(addr)`` where ``POINTER(c_double)`` is
-    expected — ctypes marshals the c_double by value (not as a pointer)
-    and MKL rejects the call with ``SPARSE_STATUS_INVALID_VALUE``.
-    Setting argtypes once after the library load fixes the marshalling.
+    Without them ctypes marshals scalars by value where MKL expects pointers.
     """
     global _MKL_ARGTYPES_SET
     if _MKL_ARGTYPES_SET:
         return
-    from ctypes import POINTER, c_int, c_void_p
-    from ctypes import c_double as fl64
-    from ctypes import c_float as fl32
+    fl64, fl32 = c_double, c_float
 
     # fp64
     mkl.mkl_sparse_d_mv.argtypes = [
@@ -106,8 +87,7 @@ def _set_mkl_argtypes(mkl):
     _MKL_ARGTYPES_SET = True
 
 
-#: MKL Sparse BLAS entry-point family and ctypes scalar per state dtype —
-#: the whole of the fp64/fp32 difference in :class:`MklSparseMatrix`.
+#: MKL Sparse BLAS entry-point family and ctypes scalar per state dtype.
 _MKL_TYPES = {
     np.dtype(np.float64): ("d", c_double),
     np.dtype(np.float32): ("s", c_float),
@@ -120,13 +100,8 @@ class MklSparseMatrix:
     Holds a CSR view of the off-diagonal block in ``dtype``, on the
     ``mkl_sparse_d_*`` or ``mkl_sparse_s_*`` entry points of
     :data:`_MKL_TYPES`. MKL keeps raw pointers into the backing arrays, so
-    the Python objects must outlive the handle — we keep references on the
-    wrapper. ``mkl_sparse_set_mv_hint`` + ``mkl_sparse_optimize`` are
-    called once at construction so the per-solve loop reuses the optimised
-    layout.
-
-    CSR only: BSR was a 1.5x win at fp64 on SIBYLL21, but the BSR block
-    microkernels MKL ships are fp64-only on most builds.
+    the wrapper holds references to them. ``mkl_sparse_set_mv_hint`` and
+    ``mkl_sparse_optimize`` run once at construction.
 
     Args:
       csr (scipy.sparse.csr_matrix): CSR matrix with int32 indices; the
@@ -136,8 +111,6 @@ class MklSparseMatrix:
     """
 
     def __init__(self, csr, expected_calls=200, dtype=np.float64):
-        from ctypes import byref, c_int, c_void_p
-
         mkl_runtime.load()
         if not sp.isspmatrix_csr(csr):
             raise TypeError(
@@ -162,9 +135,8 @@ class MklSparseMatrix:
         self._mv = getattr(mkl, f"mkl_sparse_{prec}_mv")
         self._mm = getattr(mkl, f"mkl_sparse_{prec}_mm")
 
-        # Require real float32 or float64 input: the conversions below would
-        # silently change complex or integer data. Only the two real float
-        # widths convert to each other meaningfully here.
+        # Real float32/float64 input only; the casts below would silently
+        # change complex or integer data.
         if csr.dtype not in _MKL_TYPES:
             raise TypeError(
                 f"MklSparseMatrix expects float64 or float32 data, got {csr.dtype}"
@@ -214,12 +186,7 @@ class MklSparseMatrix:
             raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
 
     def gemv_ctargs(self, alpha, x_p, beta, y_p):
-        """``y = alpha * A * x + beta * y`` via raw pointers of the wrapper's
-        dtype.
-
-        Mirrors :meth:`MCEq.solvers._kernels.spacc.SpaccMatrix.gemv_ctargs` so the ETD2
-        kernels can be written backend-agnostic up to the gemv binding.
-        """
+        """``y = alpha * A * x + beta * y`` via raw pointers of the wrapper's dtype."""
         fl_pr = self._ct
         st = self._mv(
             self._operation,
@@ -234,25 +201,11 @@ class MklSparseMatrix:
             raise RuntimeError(f"mkl_sparse_{self._prec}_mv failed with status {st}")
 
     def gemm_ctargs(self, alpha, nrhs, B_p, ldb, C_p, ldc, beta=1.0, layout=102):
-        """``C = alpha * A * B + beta * C`` via raw pointers of the wrapper's
-        dtype.
+        """``C = alpha * A * B + beta * C`` via raw pointers of the wrapper's dtype.
 
-        Wraps ``mkl_sparse_{d,s}_mm``. The default column-major layout
-        (``layout=102``) serves (dim, K) Fortran-contiguous buffers
-        without transpose; ``layout=101`` (row-major, ``ldb``/``ldc`` = K)
-        serves the C-contiguous buffers of the driver. ``ldb`` and ``ldc``
-        are the leading dimensions; per-tile callers offset the pointer
-        instead.
-
-        Default ``beta = 1.0`` matches :class:`MCEq.solvers._kernels.spacc.SpaccMatrix.gemm_ctargs`
-        (accumulating SpMM). Caller is responsible for zeroing ``C`` before
-        the first call in an accumulator chain.
+        ``layout`` is 102 (column-major) or 101 (row-major, the driver's
+        C-contiguous buffers, ``ldb = ldc = K``).
         """
-        from ctypes import c_int
-
-        # SPARSE_LAYOUT_COLUMN_MAJOR = 102, SPARSE_LAYOUT_ROW_MAJOR = 101.
-        # Operation enum (10 = non-transpose) comes from self._operation,
-        # set in __init__.
         fl_pr = self._ct
         st = self._mm(
             self._operation,
@@ -271,17 +224,7 @@ class MklSparseMatrix:
             raise RuntimeError(f"mkl_sparse_{self._prec}_mm failed with status {st}")
 
     def set_mm_hint(self, nrhs, expected_calls=200, layout=102):
-        """Tell MKL the SpMM-specific shape so it can re-plan.
-
-        ``mkl_sparse_set_mm_hint`` accepts the layout, op, descr, ncols, and
-        expected call count; if the layout/ncols differs from the SpMV hint
-        registered at construction, the optimiser can pick a different
-        kernel. Followed by another ``mkl_sparse_optimize``. Optional —
-        callers can skip if the SpMV hint is already adequate.
-        """
-        from ctypes import c_int
-
-        # SPARSE_LAYOUT_COLUMN_MAJOR = 102, SPARSE_LAYOUT_ROW_MAJOR = 101.
+        """Register the SpMM shape (``layout``, ``nrhs``) with MKL and re-optimise."""
         st = self._mkl.mkl_sparse_set_mm_hint(
             self._handle,
             self._operation,
@@ -297,14 +240,7 @@ class MklSparseMatrix:
             raise RuntimeError(f"mkl_sparse_optimize failed with status {st}")
 
     def close(self):
-        """Free the underlying MKL sparse handle.
-
-        Idempotent — safe to call repeatedly. Prefer this over
-        ``del`` or relying on refcount-driven ``__del__`` when the
-        backend cache of ``MCEqRun`` rotates; the call below the C
-        boundary returns the MKL-internal optimised layout memory, not
-        just the Python wrapper.
-        """
+        """Free the MKL handle (idempotent)."""
         handle = getattr(self, "_handle", None)
         mkl = getattr(self, "_mkl", None)
         if handle is None or mkl is None:
@@ -316,9 +252,7 @@ class MklSparseMatrix:
         self._handle = None
 
     def __del__(self):
-        # Defer to ``close()``; both are idempotent. Guards in ``close()``
-        # cover partially-initialised instances (constructor raised before
-        # the handle was created).
+        # close() also covers a partially initialised instance.
         try:
             self.close()
         except Exception:
@@ -330,8 +264,7 @@ class MklApplyOff:
 
     The driver's ``(dim, K)`` buffers are C-contiguous, so one row-major
     ``mkl_sparse_d_mm`` (or ``mkl_sparse_s_mm`` at float32) per stage covers
-    all lanes (SpMV at K = 1). A
-    scalar ``ri`` is fused into the dec SpMM's alpha; a ``(K,)`` lane row
+    all lanes (SpMV at K = 1). A scalar ``ri`` is fused into the dec SpMM's alpha; a ``(K,)`` lane row
     scales a separate accumulator. ``owns`` closes the handles with the
     binding. ``dtype`` is the state precision and matches the handles'.
     """

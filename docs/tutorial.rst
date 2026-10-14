@@ -151,7 +151,7 @@ Directions, days/atmospheres, or a mix           :func:`MCEq.core.MCEqRun.solve_
 
 All variants work on all four backends (``numpy_etd2`` / ``cuda_etd2``
 / ``mkl_etd2`` / ``accelerate_etd2``) and return an
-:class:`MCEq.core.MCEqBatchResult` with per-member named-spectrum
+:class:`MCEq.driver.results.MCEqBatchResult` with per-member named-spectrum
 extraction — no manual state-vector indexing::
 
     # 1) a scan over single-primary energies (e.g. a response matrix)

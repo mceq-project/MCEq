@@ -1,3 +1,5 @@
+"""DDM matrix generation, spline evaluation and knot variations."""
+
 from copy import copy
 from typing import Optional, Tuple, Union
 
@@ -34,24 +36,8 @@ def fmteb(ebeam: Union[float, str]) -> str:
 def _spline_min_max_at_knot(
     tck: Tuple, iknot: int, sigma: npt.NDArray
 ) -> Tuple[Tuple, Tuple, float]:
-    """
-    Return variation of spline coefficients by 1 sigma.
-
-    Args:
-        tck : Tuple
-            A tuple representing the input spline.
-        iknot : int
-            The knot index to calculate the variation of.
-        sigma : npt.NDArray
-            The 1-sigma errors of each knot.
-
-    Returns
-    -------
-    Tuple[Tuple, Tuple, float]
-        A tuple containing two tuples representing the minimum and maximum spline
-        coefficients, respectively, and a float representing the variation of the
-        spline coefficients by 1 sigma.
-    """
+    """Splines ``(tck_min, tck_max, h)`` with coefficient ``iknot`` shifted by
+    ``-h`` and ``+h``, ``h = sigma[iknot]``."""
     assert iknot <= len(tck[1]) - 1, f"Invalid knot {iknot} requested"
     _c_min = np.copy(tck[1])
     _c_max = np.copy(tck[1])
@@ -66,26 +52,11 @@ def _spline_min_max_at_knot(
 def _generate_DDM_matrix(
     channel, mceq, e_min: float = -1.0, e_max: float = -1.0, average: bool = True
 ) -> npt.NDArray:
-    """
-    Generate a Data-Driven Model matrix for the given channel and MCEq object.
+    """DDM yield matrix of ``channel`` on the grid of ``mceq``.
 
-    Args:
-        channel : _DDMChannel
-            The DDM channel.
-        mceq : MCEq
-            The MCEq object.
-        e_min : float, optional
-            The minimum energy range in GeV where DDM cross sections overwrite
-            original MCEq matrices, by default -1.0.
-        e_max : float, optional
-            The maximum energy range in GeV where DDM cross sections overwrite
-            original MCEq matrices, by default -1.0.
-        average : bool, optional
-            Whether to average the dndx values, by default True.
-
-    Returns:
-        npt.NDArray
-            The DDM matrix.
+    Columns of projectile energies in ``[e_min, e_max]`` GeV (negative: grid
+    edge) are replaced by the DDM spectrum, interpolated linearly in log
+    beam energy between the splines; ``average`` uses bin-averaged dN/dx.
     """
     from MCEq.data.energy_grid import EnergyGrid, _eval_energy_cuts
 
@@ -271,90 +242,9 @@ def _eval_spline(
     return res.squeeze()
 
 
-def _eval_spline_and_correction(
-    x: Union[float, npt.NDArray],
-    tck_dndx: Tuple[npt.NDArray, npt.NDArray, int],
-    tck_corr: Tuple[npt.NDArray, npt.NDArray, int],
-    x17: bool,
-    cov: npt.NDArray,
-    return_error: Optional[bool] = False,
-    gamma_zfac: Optional[float] = None,
-) -> Union[npt.NDArray, Tuple[npt.NDArray, npt.NDArray]]:
-    """
-    This case evaluates the product of two splines, which has been
-    used in DDM to apply the MC correction from pp -> K+ to pC -> K+
-
-    Args:
-        x: Evaluation points.
-        tck_dndx: Spline tuple ``(knots, coefficients, degree)`` of the dndx spline.
-        tck_corr: Spline tuple of the spline multiplied with the dndx spline.
-        x17: If True, remove the stored ``x**1.7`` weighting.
-        cov: The covariance matrix.
-        return_error: If True, return the propagated error of the fit.
-        gamma_zfac: Supplies an additional power of x. If None, it is not used.
-
-    Returns:
-        The value of the fit at each knot point.
-    """
-    if gamma_zfac is None:
-        factor = x ** (-1.7) if x17 else 1.0
-    else:
-        factor = x ** (gamma_zfac) if not x17 else x ** (gamma_zfac - 1.7)
-
-    func_params = np.hstack([tck_dndx[1], tck_corr[1]])
-
-    def func(params: npt.NDArray) -> npt.NDArray:
-        tck_dndx_1 = params[: len(tck_dndx[1])]
-        tck_corr_1 = params[len(tck_dndx[1]) :]
-        return (
-            factor
-            * np.exp(splev(x, (tck_dndx[0], tck_dndx_1, tck_dndx[2])))
-            * splev(x, (tck_corr[0], tck_corr_1, tck_corr[2]))
-        )
-
-    if return_error:
-        y, C = propagate(func, func_params, cov, **_PROPAGATE_PARAMS)
-        sig_y = np.squeeze(np.sqrt(np.diag(np.atleast_1d(C))))
-        return y, sig_y
-    res = np.atleast_1d(func(func_params))
-    res[(res < 0) | ~np.isfinite(res) | (res > _LIMIT_PROPAGATE)] = 0.0
-    return res.squeeze()
-
-
 def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
-    """
-    Generate dN/dx values for a given energy binning using a DDM entry.
-
-    Parameters
-    ----------
-    xbins : numpy.ndarray
-        Binning of x values.
-    entry : _DDMEntry
-        The DDM entry containing the spline information.
-
-    Returns
-    -------
-    numpy.ndarray
-        Array of dN/dx values corresponding to the provided xbinning.
-
-    Notes
-    -----
-    The dN/dx values are calculated by evaluating the spline defined by the
-    DDM entry at the square root of the bin boundaries. The resulting values
-    are multiplied by the tuning value of the entry.
-
-    If the evaluated x value is less than the minimum x value of the spline,
-    the corresponding dN/dx value is set to zero.
-
-    Evaluation happens at the geometric means of adjacent bin edges and the
-    result carries one value per bin, i.e. ``len(xbins) - 1`` values.
-
-    Examples
-    --------
-    >>> xbins = np.linspace(0, 1, 11)
-    >>> entry = _DDMEntry(...)
-    >>> dndx = _gen_dndx(xbins, entry)
-    """
+    """Tuned dN/dx at the geometric bin centres of ``xbins``, zero below
+    ``entry.x_min``."""
 
     x = np.sqrt(xbins[1:] * xbins[:-1])
 
@@ -364,41 +254,8 @@ def _gen_dndx(xbins: np.ndarray, entry) -> np.ndarray:
 
 
 def _gen_averaged_dndx(xbins: np.ndarray, entry) -> np.ndarray:
-    """
-    Generate averaged dN/dx values for a given energy binning using a DDM entry.
-
-    Parameters
-    ----------
-    xbins : numpy.ndarray
-        Binning of x values.
-    entry : _DDMEntry
-        The DDM entry containing the spline information.
-
-    Returns
-    -------
-    numpy.ndarray
-        Array of averaged dN/dx values corresponding to the provided xbinning.
-
-    Notes
-    -----
-    The averaged dN/dx values are calculated by integrating the spline defined
-    by the DDM entry over each energy bin and dividing by the bin width. The
-    resulting values are multiplied by the tuning value of the entry.
-
-    If an energy bin extends beyond x=1, the integration is performed from the
-    lower limit of the bin to x=1.
-
-    If an energy bin is entirely below entry.x_min, the averaged dN/dx value
-    for that bin is set to zero.
-
-    The returned array has the same shape as the provided xbinning[:-1].
-
-    Examples
-    --------
-    >>> xbins = np.linspace(0.1, 1, 11)
-    >>> entry = _DDMEntry(...)
-    >>> averaged_dndx = _gen_averaged_dndx(xbins, entry)
-    """
+    """Tuned dN/dx averaged over each bin of ``xbins``, integrated within
+    ``[entry.x_min, 1]``; one value per bin."""
 
     xwidths = np.diff(xbins)
     integral = np.zeros_like(xwidths)

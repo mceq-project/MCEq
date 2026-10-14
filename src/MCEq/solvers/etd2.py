@@ -2,20 +2,13 @@
 
 :func:`etd2_driver` is one loop for every route -- paraxial and
 sec(theta)-coupled, single axis, shared-path multi-RHS and the LPT carousel
--- on numpy, MKL, Accelerate and CUDA.
-:func:`MCEq.operators.compiled.compile_operator` prepares the operator; a
-backend object places it on its library / device and executes the stages
-there. Nothing else differs between backends. :func:`solve_etd2` is the
-single route from the matrices of ``MatrixBuilder`` to a solution: compile,
-bind the backend named in :data:`_BACKENDS`, run the loop, release the
-handles.
-
-Stage logic and route dispatch belong here. A stage's implementation on a
-particular library or device belongs in :mod:`MCEq.solvers.backends`; the
-scalar formulas it calls belong in :mod:`MCEq.solvers.numerics`.
+-- on numpy, MKL, Accelerate and CUDA. :func:`solve_etd2` compiles the
+operator, binds the backend named in :data:`_BACKENDS`, runs the loop and
+releases the handles.
 """
 
 from contextlib import nullcontext
+from time import time
 
 import numpy as np
 
@@ -47,12 +40,10 @@ def _fp32_scale(phi, phi0_per_pixel=None):
 
 
 def _serial_dense_blas(be):
-    """Context of the step loop: OpenBLAS and BLIS at one thread when the
-    SpMM runs on MKL's threads, MKL's own pool as set.
+    """Limit OpenBLAS/BLIS to one thread while MKL runs the SpMM.
 
-    MKL's threads spin between the sparse calls, and the small dense GEMMs
-    that numpy sends to another BLAS on the same cores wait for them: 30-90 ms
-    per call instead of ~1 ms, a 3-5x slower step at 8 threads.
+    MKL's spinning threads otherwise stall the small dense GEMMs numpy sends
+    to another BLAS on the same cores.
     """
     if be.name != "mkl":
         return nullcontext()
@@ -65,7 +56,7 @@ def _serial_dense_blas(be):
 def etd2_driver(
     nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
 ):
-    """ETD2RK step loop — every route, every backend.
+    """ETD2RK step loop for every route and backend.
 
     Integrates ``dPhi/dX = (A + ri B) S Phi`` with the Cox–Matthews
     exponential RK2: the diagonal ``D`` exactly through its exp / phi
@@ -96,7 +87,7 @@ def etd2_driver(
 
     The step size and ``rho_inv`` reach the factor stage in fp64 and the
     SpMM in the state dtype
-    (:data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`).
+    (the precision rule of :mod:`MCEq.solvers.backends.base`).
     """
     xp = be.xp
     dtype = be.dtype
@@ -222,12 +213,10 @@ def etd2_driver(
 
     grid_sol = []
     grid_step = 0
-
-    from time import time
-
     start = time()
 
-    # See :data:`MCEq.solvers.path._EM_BLOWUP_CAVEAT` for the errstate contract.
+    # At extreme zenith the e+- rows can overflow to inf in F_phi / F_a; the
+    # warnings are silenced, the lepton spectra are not checked for finiteness.
     with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
@@ -349,15 +338,15 @@ def solve_etd2(
         :func:`MCEq.solvers.schedule.compile_carousel_schedule`. With a
         schedule the step count is
         the schedule's own ``T`` and ``nsteps`` is ignored; the return is the
-        harvested ``(dim, K_total)`` pixel matrix rather than a pair.
+        harvested ``(dim, K_total)`` pixel matrix instead of a pair.
       device_id: CUDA device index; ignored by the host backends.
       band, mode_mix: Legendre databases: the continuous-loss band kept out
         of ``int_m`` and the backward removal of
         :func:`MCEq.operators.compiled.compile_operator`.
-      fp_precision: 32 or 64, the state precision on every backend — the
+      fp_precision: 32 or 64, the state precision on every backend: the
         state, the scratch buffers and the off-diagonal operator are
         stored in it while the diagonals and the phi factors stay fp64.
-        See :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+        See the precision rule of :mod:`MCEq.solvers.backends.base`.
 
     Returns:
       ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.

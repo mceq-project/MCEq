@@ -1,3 +1,5 @@
+"""ctypes bindings of the Apple Accelerate sparse BLAS extension (``spacc.c``)."""
+
 import os
 import sysconfig
 from ctypes import (
@@ -13,10 +15,6 @@ import numpy as np
 
 base = os.path.dirname(os.path.abspath(__file__))
 suffix = sysconfig.get_config_var("EXT_SUFFIX")
-# Some Python 2.7 versions don't define EXT_SUFFIX
-if suffix is None and "SO" in sysconfig.get_config_vars():
-    suffix = sysconfig.get_config_var("SO")
-
 assert suffix is not None, "Shared lib suffix was not identified."
 
 for fn in os.listdir(base):
@@ -90,9 +88,8 @@ spacc.create_sparse_matrix_f32.argtypes = [
 spacc.free_mstore()
 
 
-#: Accelerate sparse entry-point family and ctypes scalar per state dtype —
-#: the whole of the fp64/fp32 difference in :class:`SpaccMatrix`. The mstore
-#: slot is typed at creation, so f64 and f32 matrices live in different slots.
+#: Accelerate sparse entry-point family and ctypes scalar per state dtype. The
+#: mstore slot is typed at creation, so f64 and f32 matrices use different slots.
 _SPACC_TYPES = {
     np.dtype(np.float64): ("create_sparse_matrix", "gemv", "gemm", c_double),
     np.dtype(np.float32): (
@@ -109,9 +106,7 @@ class SpaccMatrix:
 
     ``dtype`` is the storage precision, float64 or float32, and selects the
     ``sparse_matrix_*_double`` or ``sparse_matrix_*_float`` entry-point
-    family of :data:`_SPACC_TYPES`. fp32 halves the memory bandwidth on the
-    ``(dim, K)`` state buffers and benches at ~1.5-2x the fp64 SpMM
-    throughput.
+    family of :data:`_SPACC_TYPES`.
 
     Args:
       scipy_sparse_matrix: any scipy sparse matrix; the data is cast to
@@ -144,14 +139,7 @@ class SpaccMatrix:
         self._create_matrix(csr)
 
     def close(self):
-        """Free the underlying Accelerate sparse-matrix slot.
-
-        Idempotent — safe to call more than once. Prefer this over
-        ``del`` or letting refcount drive ``__del__`` when you need a
-        deterministic release of the slot (e.g. when juggling caches
-        in ``MCEqRun._etd2_backend``); the slot pool
-        (``SIZE_MSTORE``) is fixed-size, so prompt release matters.
-        """
+        """Free the Accelerate matrix slot (idempotent; the slot pool is fixed-size)."""
         if self.store_id is not None and spacc is not None:
             spacc.free_mstore_at(self.store_id)
             self.store_id = None
@@ -164,9 +152,7 @@ class SpaccMatrix:
             pass
 
     def _create_matrix(self, csr):
-        # Construction buffers live only until sparse_commit returns. The
-        # native matrix owns its entries; retaining COO copies here adds
-        # 24 bytes per nonzero at fp64, on top of the compiled CSR operator.
+        # The native matrix copies its entries; the buffers are not retained.
         indptr = np.ascontiguousarray(csr.indptr, dtype=np.int64)
         indices = np.ascontiguousarray(csr.indices, dtype=np.int32)
         data = np.ascontiguousarray(csr.data, dtype=self.dtype)

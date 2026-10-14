@@ -1,10 +1,4 @@
-"""Platform, MKL, CUDA and Accelerate detection, resolved on first use.
-
-Importing MCEq must not dlopen a BLAS, probe a GPU or decide which solver
-kernel will run: those are properties of the machine that only matter once a
-solve is set up. Hardware and library probes run on first use and cache their
-results; :func:`reset_cache` exists for tests that need to re-probe.
-"""
+"""Platform, MKL, CUDA and Accelerate detection and kernel resolution, probed on first use and cached."""
 
 from __future__ import annotations
 
@@ -25,7 +19,7 @@ KERNELS = {
     "cuda_etd2": ("has_cuda", False),
 }
 
-#: Names the dispatchers still accept for the kernels above.
+#: Short names accepted for the kernels above.
 ALIASES = {
     "accelerate": "accelerate_etd2",
     "mkl": "mkl_etd2",
@@ -73,12 +67,7 @@ def has_accelerate():
 
 @functools.cache
 def has_cuda():
-    """A usable device, not merely an importable cupy.
-
-    `find_spec("cupy")` alone is True on a machine that has the wheel and no
-    driver, where every CUDA route then fails at run time instead of being
-    skipped.
-    """
+    """True if cupy imports and sees at least one device."""
     if importlib.util.find_spec("cupy") is None:
         return False
     try:
@@ -100,9 +89,7 @@ def available(capability):
 def resolve_kernel(requested):
     """Map a `kernel_config` value onto the kernel that will actually run.
 
-    Raises when a specific kernel is named and its capability is missing. The
-    request is validated each time this function is called; assigning a
-    concrete value to ``kernel_config`` bypasses this resolution path.
+    Raises when a specific kernel is named and its capability is missing.
     """
     name = ALIASES.get(str(requested).lower(), str(requested).lower())
     if name == "auto":
@@ -123,6 +110,6 @@ def resolve_kernel(requested):
 
 
 def reset_cache():
-    """Forget every probe result. For tests that fake a platform."""
+    """Forget every probe result."""
     for probe in (mkl_library_path, has_mkl, has_cuda, has_accelerate):
         probe.cache_clear()

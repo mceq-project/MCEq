@@ -1,15 +1,7 @@
-"""Continuous-energy-loss tables: the ``ContinuousLosses`` consumer.
+"""Continuous energy-loss tables and the generic hadron dE/dX spline.
 
-The class manages stopping-power arrays loaded from the backend and builds the
-generic (proton-curve) spline used for all charged hadrons.
-
-The generic (proton-curve) source follows the lepton branch of the backend:
-with ``enable_em`` on it is ``ionization/hadron``, otherwise ``total/hadron``
-(the backend still reads the latter, so ``load_db`` re-reads the ionization
-group itself when the flag is on and the group exists). The raw table pair is
-kept on :attr:`generic_table` so consumers can clamp their boost argument to
-the tabulated interval instead of extrapolating the k=1 log-log spline off
-either end.
+The generic (proton) curve is ``ionization/hadron`` when ``enable_em`` is on and
+the group exists, otherwise ``total/hadron``.
 """
 
 import numpy as np
@@ -33,8 +25,8 @@ class ContinuousLosses:
         self.parents = None
         #: Stopping-power arrays indexed by particle
         self.index_d = None
-        #: Raw ``(boost, dEdX)`` pair behind :attr:`generic_spl`, as read
-        #: (before the log transform); see :meth:`load_db`.
+        #: Raw ``(boost, dEdX)`` table behind :attr:`generic_spl`, used to
+        #: clamp arguments to the tabulated range.
         self.generic_table = None
         # Load defaults
         self.load_db()
@@ -49,14 +41,7 @@ class ContinuousLosses:
         return key in self.parents
 
     def _ionization_hadron_curve(self):
-        """The ``ionization/hadron`` generic curve, or None if absent.
-
-        Mirrors the backend's lepton branch (``ionization`` when ``enable_em``)
-        for the generic proton curve. Read directly rather than through
-        ``continuous_loss_db`` because the backend pairs the generic table with
-        whichever loss case its leptons got and has no switch for the hadron
-        group.
-        """
+        """The ``ionization/hadron`` generic curve, or None if absent."""
         import h5py
 
         path = f"continuous_losses/{self.mceq_db.medium}/ionization/hadron"

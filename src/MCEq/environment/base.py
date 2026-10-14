@@ -1,11 +1,4 @@
-"""The abstract atmosphere: column depth, splines and the zenith contract.
-
-:class:`EarthsAtmosphere` is the base class for the atmospheric density models
-in this package. It owns the path integration that turns a density profile into
-the depth/density splines the solver reads, and delegates the actual air
-density to a subclass through :meth:`get_density`. (:class:`GeneralizedTarget`
-is a separate, independent target model and does not derive from this class.)
-"""
+"""Abstract Earth atmosphere: slant-depth integration and the rho(X) splines."""
 
 from abc import ABCMeta, abstractmethod
 
@@ -16,15 +9,7 @@ from MCEq.misc import info
 
 
 def _default_environment_group():
-    """The live ``config.environment`` view, fetched dynamically.
-
-    The no-argument construction path (a model built without an injected
-    ``environment`` group) keeps reading process-wide settings at
-    construction, but this layer must not carry a static import edge to
-    :mod:`MCEq.config`. The device is the one :func:`MCEq.misc._views`
-    uses. Driver-built atmospheres never come here: ``set_density_model``
-    injects the run's environment group.
-    """
+    """Return the global ``config.environment`` group."""
     from importlib import import_module
 
     return import_module("MCEq.config").environment
@@ -78,9 +63,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         self.geom = geometry
         self.thrad = None
         self.theta_deg = None
-        # Configured surface density, so ``max_den`` reads before the first
-        # ``set_theta``; that call overwrites it with ``get_density(geom.h(0,
-        # thrad))``, the atmosphere top -- the path minimum, not the maximum.
+        # Replaced by the density at the atmosphere top on ``set_theta``.
         self._max_den = environment.max_density
         self.max_theta = 90.0
         self.location = None
@@ -137,11 +120,6 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         # ``dl = 0`` is the atmosphere top, so this is the path minimum.
         max_den = self.get_density(self.geom.h(0, thrad))
 
-        # One scalar ``geom.h`` call per sample, preserved because changing the
-        # height evaluation order changes the spline inputs through
-        # floating-point rounding; the MSIS21 overrides pass the heights of a
-        # single array call instead and differ by one ULP of ``r_E`` at some
-        # zeniths -- see ``tests/geometry/test_environment_pins.py``.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
         fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
@@ -154,11 +132,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
 
     @property
     def max_den(self):
-        """Before spline construction, the configured density estimate.
-
-        After the first ``set_theta``, the density evaluated at the
-        atmosphere's upper endpoint -- the path minimum, despite the name.
-        """
+        """Density at the atmosphere top (``config.max_density`` before ``set_theta``)."""
         if not hasattr(self, "_max_den"):
             self.set_theta(0)
         return self._max_den
@@ -188,8 +162,7 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         """Validate the zenith angle and rebuild the atmospheric splines.
 
         Calls :func:`calculate_density_spline`, which makes :func:`r_X2rho`
-        available to the core code. The splines are always rebuilt; there is
-        no spline cache.
+        available to the core code.
 
         Args:
           theta_deg (float): zenith angle :math:`\\theta` at detector

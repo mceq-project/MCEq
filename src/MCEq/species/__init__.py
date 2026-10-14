@@ -1,8 +1,3 @@
-"""The species layer: particle identities, channels, and the registry.
-
-Particle constants, particle properties, and the particle manager:
-``constants`` holds the shared ``PYTHIAParticleData`` singleton and the mass
-constant, ``particle`` the :class:`MCEqParticle` bookkeeping class, ``manager``
-the :class:`ParticleManager` registry. ``MCEq.particlemanager`` provides
-compatibility exports. 
-"""#anfe: be more specific about what the package bundles.
+"""Particle species: PYTHIA particle data and MCEq names, the per-species
+:class:`MCEqParticle`, the :class:`ParticleManager` registry with state-vector
+indices, and bin-averaged rate operators."""

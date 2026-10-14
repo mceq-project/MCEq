@@ -1,18 +1,4 @@
-"""Run-level integration-path construction, caching, and batch preparation.
-
-These functions operate on an ``MCEqRun`` object: they write
-``run.integration_path`` / ``run._cached_etd2_path_params``, switch the
-run's zenith / atmosphere, and the fork pool holds the run in a module
-global, so they belong to the driver rather than the solver layer.
-Numerical path construction is implemented in
-:func:`MCEq.solvers.path.etd2_nonuniform_path`; the EM stiffness memo
-stays on ``MCEqRun._em_cascade_step_scale`` (the cap function here
-consumes it and passes the value down pure).
-
-``MCEqRun._calculate_integration_path`` and
-``MCEqRun._em_cascade_dx_cap`` delegate here, so subclass overrides of
-``set_density_model`` / ``set_zenith_azimuth`` still reach this code.
-"""
+"""Integration-path construction, including per-condition batched paths."""
 
 import numpy as np
 
@@ -23,20 +9,17 @@ from MCEq.solvers.path import etd2_nonuniform_path
 
 
 def em_cascade_dx_cap(run, r_em):
-    """Effective EM stiffness-based step cap, or np.inf.
-
-    Combine the run's EM settings with the supplied stiffness estimate to
-    determine the additional step cap. Settings come from
-    ``run.config.em`` (the run's snapshot or the live group), never from a
-    module-level config import. *r_em* is the caller's memoised
-    stiffness, so the memo stays on the run. The arithmetic lives in the
-    pure core :func:`MCEq.solvers.path.em_cascade_dx_cap`.
-    """
+    """EM step cap for the stiffness ``r_em`` and ``run.config.em``, or np.inf."""
     return path_em_cascade_dx_cap(r_em, run.config.em)
 
 
 def continuous_loss_dx_cap(run):
-    """Memoize on matrix/secant identity; a rebuild invalidates the cap."""
+    """Step cap ``LOSS_STEP_SAFETY / rate`` from the off-diagonal row sums of
+    the continuous-loss bands (scaled by sec(theta) if secant is on).
+
+    Cached per identity of ``int_m`` and the secant operators; np.inf before
+    the matrices exist.
+    """
     if getattr(run, "int_m", None) is None:
         return np.inf  # atmosphere-only path planning before assembly
     builder = run.matrix_builder
@@ -66,9 +49,11 @@ def calculate_integration_path(
     dX_min=None,
     fd_span=None,
 ):
-    # Apply atmosphere accuracy settings plus caps from the assembled loss
-    # stencil (including secant elongation) and the optional EM estimator.
-    # Resolve before caching so live config changes cannot reuse stale paths.
+    """Build the ETD2 path on ``run.integration_path`` unless the cached one
+    matches the resolved parameters.
+
+    ``dX_max`` is capped by the continuous-loss and EM stiffness limits.
+    """
     solver = run.config.solver
     p = solver.etd2_path
     X_start = solver.X_start if X_start is None else X_start
@@ -114,13 +99,7 @@ def calculate_integration_path(
     info(
         2,
         "ETD2 non-uniform path (eps={}, dX_max={}, dX_min={}, "
-        "fd_span={}, X_start={})".format(
-            eps if eps is not None else solver.etd2_path["eps"],
-            dX_max if dX_max is not None else solver.etd2_path["dX_max"],
-            dX_min if dX_min is not None else solver.etd2_path["dX_min"],
-            fd_span if fd_span is not None else solver.etd2_path["fd_span"],
-            X_start if X_start is not None else solver.X_start,
-        ),
+        "fd_span={}, X_start={})".format(eps, dX_max, dX_min, fd_span, X_start),
     )
     run.integration_path = etd2_nonuniform_path(
         run.density_model,
@@ -134,16 +113,7 @@ def calculate_integration_path(
     )
 
 
-# Module-level worker state for the optional process-pool path build
-# inside :func:`build_condition_paths`. Workers fork from the parent
-# and inherit ``_PATH_WORKER_MCEQ`` via copy-on-write — the MCEqRun
-# instance itself never has to be picklable. Each worker process gets
-# its own CoW copy of the density model, so per-worker
-# ``set_zenith_azimuth`` mutations stay process-local. The pool is used
-# when multiple distinct paths are requested, ``path_workers > 1``, and no
-# per-condition density-model overrides require serial handling. Every
-# atmosphere is fork-reproducible; the paths a worker returns are bitwise
-# equal to the serial ones.
+# Run instance shared with forked path workers (inherited, not pickled).
 _PATH_WORKER_MCEQ = None
 
 
@@ -174,28 +144,22 @@ def build_condition_paths(
     Each condition is a dict with optional keys ``zenith_deg``,
     ``azimuth_deg`` and ``density_model`` (config tuple or density-
     model instance). Missing zenith and density-model fields use current
-    values; missing azimuth is ``None``. Conditions that resolve to the
-    same physical path — the
-    same density model and zenith, and the same azimuth when the
-    model's ``depends_on_azimuth`` is True — share one path tuple, so
-    duplicates (e.g. azimuth pixels of an azimuth-independent
-    atmosphere) cost nothing. Restores the active density model and
-    angles before returning.
+    values; missing azimuth is ``None``. Conditions with the same density
+    model and zenith, and the same azimuth when the model depends on it,
+    share one path tuple. Restores the active density model and angles
+    before returning.
 
     Args:
       conditions (list[dict]): one dict per batch member.
       X_start, eps, dX_max, dX_min, fd_span: ETD2 path knobs, see
         :meth:`solve`.
       path_workers (int): fork-pool size for a parallel path build.
-        Only allowed without ``density_model`` overrides. A worker's
-        paths are bitwise equal to the serial ones on every
-        atmosphere, MSIS00 included. Ignored where fork is
-        unavailable (Windows), which builds serially.
+        Only allowed without ``density_model`` overrides. Builds
+        serially where fork is unavailable (Windows).
 
     Returns:
       list: ``(nsteps, dX, rho_inv, grid_idcs)`` tuples, one per
-      condition (duplicate conditions share the same tuple object —
-      callers can detect a fully shared batch with ``is``).
+      condition; duplicate conditions share the same tuple object.
     """
     allowed_keys = {"zenith_deg", "azimuth_deg", "density_model"}
     norm = []
@@ -227,8 +191,7 @@ def build_condition_paths(
             )
         import multiprocessing as _mp
 
-        # Windows and any spawn-only platform: the pool needs fork to
-        # share the atmosphere, so build serially instead. Same paths.
+        # The pool needs fork; build serially on spawn-only platforms.
         if "fork" not in _mp.get_all_start_methods():
             n_workers = 0
 
@@ -297,12 +260,6 @@ def build_condition_paths(
         jobs = sorted(job_of_key.items(), key=lambda item: repr(item[0]))
         unique_paths = {}
         if n_workers > 1 and len(jobs) > 1:
-            # Fork-based worker pool. Pickling MCEqRun would be
-            # fragile; instead set a module-level global and rely on
-            # fork() to share via CoW. Only zenith/azimuth vary here
-            # (density_model overrides were rejected above).
-            import multiprocessing as _mp
-
             global _PATH_WORKER_MCEQ
             _PATH_WORKER_MCEQ = run  # inherited by forked children
             try:

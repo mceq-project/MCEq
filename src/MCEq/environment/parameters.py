@@ -1,8 +1,8 @@
+"""Atmosphere parameter tables: CORSIKA parameterisations, MSIS sites and defaults."""
+
 import numpy as np
 
-# CORSIKA-style atmosphere parameters
-# Data storage for atmosphere parameters
-# Each key is a tuple (location, season), and value is a dict of parameters.
+# CORSIKA-style atmosphere parameters, keyed by (location, season).
 _cosika_atmosphere_params = {
     ("USStd", None): {
         "_aatm": np.array([-186.5562, -94.919, 0.61289, 0.0, 0.01128292]),
@@ -347,11 +347,7 @@ def get_day_time_seconds(day_time_name):
     return DAY_TIMES_SEC.get(day_time_name)
 
 
-# ---------------------------------------------------------------------------
-# KM3NeT detector coordinates (approximate positions)
-# ---------------------------------------------------------------------------
-# Shared detector coordinates for both MSIS backends; they live here so
-# neither backend needs to import the other.
+# KM3NeT detector sites (lon, lat in deg; depth in m)
 KM3NET_DETECTORS = {
     # ORCA: offshore Toulon (France), ~2450 m depth
     "ORCA": {"longitude": 6.033, "latitude": 42.803, "depth_m": 2450.0},

@@ -1,15 +1,7 @@
-"""CUDA backend: CSR SpMM RawKernels and cupy ElementwiseKernels.
+"""CUDA backend of the ETD2 step loop: CSR SpMM RawKernels and cupy ElementwiseKernels.
 
-:class:`CudaOperator` uploads a compiled operator's split to the device
-once, :class:`CudaBackend` runs the stages of
-:func:`MCEq.solvers.etd2.etd2_driver` against it, and :func:`cuda_backend`
-builds the pair. The off-diagonal SpMM and the Legendre band are the CSR
-kernels of :data:`_CSR_SPMM_SRC`; the fused elementwise stages are the
-kernel set of :func:`_build_cuda_etd2_kernels`. All compile on first use.
-
-Everything that needs a device belongs here. cupy is imported inside the
-functions that use it and the CUDA runtime libraries are dlopened there
-too, so importing this module on a machine with no GPU costs nothing.
+cupy and the CUDA libraries are loaded inside the functions that use them;
+the kernels compile on first use.
 """
 
 from types import SimpleNamespace
@@ -22,17 +14,9 @@ from MCEq.solvers.numerics import CORRECTOR_EXPR, PHI_C_BODY, PREDICTOR_EXPR
 
 
 def _preload_nvidia_pip_libs():
-    """Dlopen the nvidia-* pip-package CUDA libs so cupy 13 can find them.
+    """Dlopen the CUDA 12 libraries of the nvidia-* pip wheels that are installed.
 
-    CuPy 14 auto-discovers the ``nvidia/<lib>/lib`` directories from
-    site-packages, but CuPy 13 does not — and on systems where the system
-    CUDA toolkit is a different major (e.g. CUDA 13 toolkit + cupy-cuda12x),
-    that mismatch leaves the cupy loader unable to find ``libnvrtc.so.12``
-    etc. This function looks for the standard pip wheels
-    (``nvidia-cuda-nvrtc-cu12``, ``nvidia-cuda-runtime-cu12``,
-    ``nvidia-cusparse-cu12``, ``nvidia-cublas-cu12``) and dlopens whichever
-    are present. Missing packages are silently ignored — if a library is
-    actually needed, cupy will still report the missing-symbol error.
+    CuPy 13 does not find them on its own; missing wheels are skipped.
     """
     import ctypes
     import importlib
@@ -52,9 +36,7 @@ def _preload_nvidia_pip_libs():
             mod = importlib.import_module(pkg_name)
         except ImportError:
             continue
-        # The nvidia.* wheels are PEP-420 namespace packages under some
-        # installers (uv): ``__file__`` is None and the package may span
-        # several site-packages dirs — walk ``__path__`` instead.
+        # Namespace packages (uv) have no __file__ and may span several dirs.
         if getattr(mod, "__file__", None) is not None:
             pkg_dirs = [os.path.dirname(mod.__file__)]
         else:
@@ -66,10 +48,7 @@ def _preload_nvidia_pip_libs():
             try:
                 ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
             except OSError:
-                # Best effort — if the dlopen fails, cupy will still try
-                # its own discovery and report a more specific error if
-                # it's actually missing.
-                pass
+                pass  # cupy reports the missing library itself
             break
 
 
@@ -242,8 +221,7 @@ def _lane_map(K, itemsize, row_nnz=None, kernel="csr_spmm_off"):
     """``(S, C)`` for ``K`` state columns: the :data:`_LANE_MAPS` entry, else
     ``(16, 1)``; ``S`` is halved while ``16 S`` exceeds ``row_nnz``, the
     nonzeros per row of both operators together. The band kernel
-    ``csr_spmm_acc`` takes ``S = 1`` (about two nonzeros per row; within 3 %
-    of the best S on the 2D Legendre band)."""
+    ``csr_spmm_acc`` (about two nonzeros per row) takes ``S = 1``."""
     S, C = _LANE_MAPS[itemsize].get(K, (16, 1))
     if kernel == "csr_spmm_acc":
         return 1, C
@@ -334,30 +312,13 @@ _CUDA_ETD2_KERNELS = None
 
 
 def _build_cuda_etd2_kernels(cp):
-    """Build the cupy ElementwiseKernel set of the CUDA backend.
+    """The cupy ElementwiseKernels of the driver stages, formatted from
+    :mod:`MCEq.solvers.numerics`.
 
-    One kernel per driver stage, named for the stage, and every body
-    generated from the formula table of :mod:`MCEq.solvers.numerics` --
-    :data:`~MCEq.solvers.numerics.PHI_C_BODY` for the factor stage,
-    :data:`~MCEq.solvers.numerics.PREDICTOR_EXPR` and
-    :data:`~MCEq.solvers.numerics.CORRECTOR_EXPR` for the two state stages --
-    so a change to a formula reaches this backend and the NumPy path
-    together. The C kernels duplicate the same formulas and require matching
-    edits; tests compare the implementations against each other.
-
-    The state stages are dtype-agnostic through the ``T`` template; cupy
-    compiles a specialisation per input dtype combination on first launch.
-    They broadcast a ``(dim, 1)`` shared-path factor over the ``(dim, K)``
-    state and take a ``(dim, K)`` per-lane factor as it is.
-
-    ``diag_factors`` takes fp64 inputs and does its arithmetic in double
-    whatever ``T`` is, writing the factors in the state dtype. That cast is
-    the one place the state precision enters stage 1; see
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT` for why the
-    arithmetic stays in double. Pass ``d_int[:, None], d_dec[:, None]``
-    against scalar ``h`` / ``ri`` for a shared path, or against
-    ``h_K[None, :], ri_K[None, :]`` for one path per lane; the broadcast
-    shape is the output's.
+    ``diag_factors`` evaluates in fp64 and writes the state dtype ``T``;
+    ``d_int, d_dec`` broadcast against scalar ``h``/``ri`` (shared path) or
+    ``(1, K)`` rows (per lane). The state stages broadcast a ``(dim, 1)``
+    factor over the ``(dim, K)`` state.
     """
     diag_factors = cp.ElementwiseKernel(
         "float64 d_int, float64 d_dec, float64 h, float64 ri",
@@ -391,7 +352,7 @@ def _build_cuda_etd2_kernels(cp):
 
 
 def _cuda_etd2_kernels():
-    """Lazy singleton — cupy ElementwiseKernels for the multi-RHS path."""
+    """The kernels of :func:`_build_cuda_etd2_kernels`, built once."""
     global _CUDA_ETD2_KERNELS
     if _CUDA_ETD2_KERNELS is None:
         import cupy as cp
@@ -407,7 +368,7 @@ class CudaOperator:
     Legendre operator, ``band_off`` (:class:`_DeviceCsr`) in the state dtype
     of ``fp_precision`` (32 or 64), and the diagonals in fp64 whatever the
     precision (see
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). When both
+    the precision rule of :mod:`MCEq.solvers.backends.base`). When both
     off-diagonal matrices are ``n_k`` diagonal blocks whose patterns (nearly)
     agree, one shared pattern is kept (``n_blk = n_k``, :func:`_block_pattern`). The state and scratch
     buffers are allocated per solve by :class:`CudaBackend`; one device
@@ -426,9 +387,6 @@ class CudaOperator:
         band_off=None,
         operator_precision=None,
     ):
-        # CuPy 13.x does not auto-discover the nvidia-* pip packages that
-        # ship the CUDA 12 runtime libs; dlopen them before the first JIT
-        # (a no-op where the libs are already on the loader path).
         _preload_nvidia_pip_libs()
         try:
             import cupy as cp
@@ -446,7 +404,6 @@ class CudaOperator:
         self.cp = cp
         self.fl_pr = fl_pr
         self.value_dtype = np.dtype(val)
-        self.fp_precision = int(fp_precision)
         self.device_id = int(device_id)
         cp.cuda.Device(self.device_id).use()
         self.dim = int(d_int.shape[0])
@@ -471,10 +428,10 @@ class CudaBackend:
     :class:`CudaOperator` of ``op``'s split, and carries the state dtype.
     At ``fp_precision=32`` everything runs in fp32 except the diagonals
     and the phi factors: those come out of fp64 inputs, are evaluated in
-    fp64 inside the kernels, and are cast on the kernels' way out — the
+    fp64 inside the kernels, and are cast on the kernels' way out: the
     same stages in the same order as
     :class:`MCEq.solvers.backends.host.HostBackend`. See
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+    the precision rule of :mod:`MCEq.solvers.backends.base`.
     """
 
     def __init__(self, dev, op):
@@ -568,9 +525,7 @@ class CudaBackend:
     def diag_factors(self, h, ri):
         """``eD, h phi1, h phi2`` of ``h (d_int + ri d_dec)``, broadcastable
         to (dim, K); on the sec(theta) corner the factors of ``h lam_j D0_i``.
-        ``h`` and ``ri`` come in fp64 and the diagonals are fp64; the kernel
-        evaluates there and writes the factors in the state dtype, so the
-        cast happens once, at the kernel's output."""
+        Evaluated in fp64, written in the state dtype."""
         d_int, d_dec = self._diag
         if self._per_lane:
             h, ri = h[None, :], ri[None, :]

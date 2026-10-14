@@ -1,25 +1,4 @@
-"""Detector-centred atmosphere geometry, shared by both MSIS backends.
-
-Where the detector sits, where a shower of a given zenith and azimuth crosses
-the surface, and what local zenith the column is then integrated at -- none of
-that depends on which MSIS implementation supplies the densities. This module
-is the single copy shared by both MSIS families.
-
-Keep the scalar expressions in the coordinate formulas exactly as written. The
-impact-point discriminant is spelled ``A**2`` on a float64 scalar: numpy sends
-``scalar**2`` through libm ``pow`` while ``A*A`` is a multiply, so the two
-spellings differ by ~1 ULP at some arguments, and that difference propagates
-into the spline inputs. The ``max_theta`` rejection raises ``ValueError``; only
-the exception type is pinned by the tests, not the message text.
-
-The mixin imports nothing from :mod:`MCEq.environment.base`, which keeps the
-geometry modules free of import cycles: the density backend calls into the
-mixin, never the reverse. It does not reach the base initialiser through
-``super()`` because the next class in the MRO is the backend atmosphere, whose
-``__init__`` takes ``(location, season, doy, ...)``, not detector arguments. The
-concrete class runs ``EarthsAtmosphere.__init__`` itself and then calls
-:meth:`LocationCenteredMixin._init_detector_geometry`.
-"""
+"""Detector-centred geometry shared by the MSIS00 and MSIS21 backends."""
 
 from __future__ import annotations
 
@@ -33,15 +12,11 @@ class LocationCenteredMixin:
 
     A concrete class must supply:
 
-    * ``_set_backend_location(longitude, latitude)`` -- point the density
-      backend at a coordinate. MSIS00 hands it to the C library, MSIS21 stores
-      it for the next batched call; the density evaluation itself is provided
-      per-backend, as is ``calculate_density_spline``.
-    * ``calculate_density_spline`` and ``get_density``. The scalar-loop and
-      batched forms differ at the ~1e-14 level;
-      ``tests/geometry/test_environment_pins.py`` bounds that difference at
-      < 1e-11 in relative density. It is expected, not a defect.
-    * ``self.geom``, i.e. ``EarthsAtmosphere.__init__`` must have run.
+    * ``_set_backend_location(longitude, latitude)``: point the density
+      backend at a coordinate.
+    * ``calculate_density_spline`` and ``get_density``.
+    * ``self.geom``, i.e. ``EarthsAtmosphere.__init__`` must have run before
+      :meth:`_init_detector_geometry`.
     """
 
     def _set_backend_location(self, longitude, latitude):
@@ -57,11 +32,7 @@ class LocationCenteredMixin:
         max_theta,
         surface_elevation_m,
     ):
-        """Store the detector geometry. Call *after* ``EarthsAtmosphere.__init__``.
-
-        This method reads ``self.geom``, which only the base initialiser
-        creates.
-        """
+        """Store the detector geometry. Call *after* ``EarthsAtmosphere.__init__``."""
         self._detector_longitude = longitude
         self._detector_latitude = latitude
         self._detector_depth_m = depth_m
@@ -95,8 +66,6 @@ class LocationCenteredMixin:
         showers the crossing is near the detector; for upgoing showers
         (zenith > 90°) the toward-source ray traverses the Earth and the
         crossing is on the far side, where the shower actually developed.
-        The full (zenith, azimuth) pair at the detector is used directly —
-        no mirroring of either angle is needed.
 
         Args:
             zenith_deg (float): Zenith angle at the detector in degrees
@@ -171,7 +140,7 @@ class LocationCenteredMixin:
         atmospheric column is integrated at the local zenith angle where
         the shower axis crosses the surface, obtained from impact-parameter
         conservation along the straight axis,
-        :math:`\\sin\\theta_s = (r_{det}/r_{surf})\\sin\\theta`.  This one
+        :math:`\\sin\\theta_s = (r_{det}/r_{surf})\\sin\\theta`.  This
         formula covers all regimes: downgoing (tiny correction below ~80°,
         ~1.4° at the horizon for a detector 2 km below the surface), the
         grazing window just below the geometric horizon (90° < theta ≤

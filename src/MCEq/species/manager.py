@@ -1,9 +1,6 @@
-"""``ParticleManager``: the registry of tracked particles and index tables.
+"""ParticleManager: registry of particles and their state-vector indices."""
 
-Builds the particle registry from ``MCEq.species.particle``. The flat
-``MCEq.particlemanager`` module re-exports this implementation.
-"""
-
+from copy import copy
 from math import copysign
 
 import numpy as np
@@ -33,9 +30,6 @@ class ParticleManager:
         *,
         physics,
     ):
-        # Resolve the default medium from the supplied physics settings at
-        # construction, rather than as a signature default (which would bind
-        # at module import time and depend on write order).
         medium = physics.interaction_medium if medium is None else medium
         #: Energy-grid object containing centers, edges, widths, and bin count
         self._energy_grid = energy_grid
@@ -44,22 +38,16 @@ class ParticleManager:
         self.pdg2mceqidx = {}
         #: (dict) Converts particle name to index in state vector
         self.pname2mceqidx = {}
-        #: (dict) Converts PDG ID to reference of
-        # :class:`particlemanager.MCEqParticle`
+        #: (dict) Converts PDG ID to reference of :class:`MCEqParticle`
         self.pdg2pref = {}
-        #: (dict) Converts particle name to reference of
-        #: class:`particlemanager.MCEqParticle`
+        #: (dict) Converts particle name to reference of :class:`MCEqParticle`
         self.pname2pref = {}
-        #: (dict) Converts MCEq index to reference of
-        #: class:`particlemanager.MCEqParticle`
+        #: (dict) Converts MCEq index to reference of :class:`MCEqParticle`
         self.mceqidx2pref = {}
         #: (dict) Converts index in state vector to PDG ID
         self.mceqidx2pdg = {}
         #: Map state-vector particle indices to particle names
         self.mceqidx2pname = {}
-        # Save setup of tracked particles to reapply the relations
-        # when models change
-        self.tracking_relations = {}
         #: (int) Total number of species
         self.nspec = 0
         # save currently applied cross section model
@@ -72,7 +60,7 @@ class ParticleManager:
         self._medium = medium
         # Settings group, handed on to every MCEqParticle built here
         self._physics = physics
-        # List of saved tracking-particle definitions
+        # Applied tracking relations, reapplied when models change
         self.tracking_relations = []
         # Requested tracking definitions, including user requests and
         # configured defaults
@@ -155,13 +143,10 @@ class ParticleManager:
                 # Compute beta*gamma from kinetic energy
                 betagamma_p = (
                     np.sqrt((self._energy_grid.c + p.mass) ** 2 - p.mass**2) / p.mass
-                ) # should be pobably assigned in Particle class instead of here?
+                )  # should be pobably assigned in Particle class instead of here?
                 ln_boost = np.log(betagamma_p)
                 if generic_table is not None:
-                    # Clamp the spline argument to the tabulated boost interval
-                    # instead of extrapolating the k=1 log-log spline off its
-                    # high end (a 35x overestimate at the top of a wide grid;
-                    # the low end never leaves the table on any realistic grid). #anfe: long story. just "clip dEdX spline to its range without extrapolating"
+                    # Clip dEdX spline to its range without extrapolating
                     ln_boost = np.clip(
                         ln_boost,
                         np.log(generic_table[0][0]),
@@ -178,12 +163,9 @@ class ParticleManager:
         from_interactions=False,
         include_antiparticle=False,
     ):
-        """Allows tracking decay and particle production chains.
+        """Track a parent-to-child decay or production channel under an alias.
 
-        Tracks any parent-to-child channel under an alias, replacing the older
-        ``obs_particle`` mechanism (which tracked only leptons from selected
-        decays and reserved the special PDG IDs 71XX, 72XX, etc). Parent and
-        child keys are ``(PDG ID, helicity)`` tuples::
+        Parent and child keys are ``(PDG ID, helicity)`` tuples::
 
             $ particleManagerInstance.add_tracking_particle([(211, 0)], (14, 0), 'pi_numu')
 
@@ -200,9 +182,9 @@ class ParticleManager:
             alias_name (str): name under which the result is accessible in
                 get_solution
             from_interactions (bool): track particles from interactions
+            include_antiparticle (bool): also track the channels of the
+                antiparticles of ``parent_list``
         """
-        from copy import copy
-
         info(10, "requested for", parent_list, child_pdg, alias_name)
 
         for p in parent_list:
@@ -237,14 +219,13 @@ class ParticleManager:
             tracking_particle.is_tracking = True
             tracking_particle.name = alias_name
             # Find a unique PDG ID for the new tracking particle
-            # print child_pdg[0], int(copysign(1000000, child_pdg[0]))
             unique_child_pdg = (
                 child_pdg[0] + int(copysign(1000000, child_pdg[0])),
                 tracking_particle.helicity,
             )
 
             for i in range(100):
-                if unique_child_pdg not in list(self.pdg2pref):
+                if unique_child_pdg not in self.pdg2pref:
                     break
                 _tn = tracking_particle.name
                 _u = unique_child_pdg
@@ -305,7 +286,7 @@ class ParticleManager:
                     (parent_pdg, child_pdg, alias_name, from_interactions)
                 )
                 track_success = True
-        if track_success and tracking_particle.name not in list(self.pname2pref):
+        if track_success and tracking_particle.name not in self.pname2pref:
             tracking_particle.mceqidx = np.max(list(self.mceqidx2pref)) + 1
             self.all_particles.append(tracking_particle)
             self.cascade_particles.append(tracking_particle)
@@ -361,15 +342,8 @@ class ParticleManager:
             )
 
     def _init_categories(self, particle_pdg_list):
-        """Populate particle categories from the supplied particle list, using
-        the model-derived fallback when no list is supplied.
-
-        The particles which enter this list are those, which have a
-        defined index in the SIBYLL 2.3 interaction model. Included are
-        most relevant baryons and mesons and some of their high mass states.
-        More details about the particles which enter the calculation can
-        be found in :mod:`particletools`.
-        """
+        """Build the particle objects and categories; without a list, use the
+        SIBYLL 2.3 particle table of :mod:`particletools`."""
 
         info(5, "Generating particle list.")
 
@@ -458,18 +432,16 @@ class ParticleManager:
         self.dim_states = self._energy_grid.d * self.n_cparticles
 
         # Clean all dictionaries
-        [
+        for d in [
+            self.pdg2mceqidx,
+            self.pname2mceqidx,
+            self.mceqidx2pdg,
+            self.mceqidx2pname,
+            self.mceqidx2pref,
+            self.pdg2pref,
+            self.pname2pref,
+        ]:
             d.clear()
-            for d in [
-                self.pdg2mceqidx,
-                self.pname2mceqidx,
-                self.mceqidx2pdg,
-                self.mceqidx2pname,
-                self.mceqidx2pref,
-                self.pdg2pref,
-                self.pname2pref,
-            ]
-        ]
 
         for p in self.all_particles:
             self.pdg2mceqidx[p.unique_pdg_id] = p.mceqidx
@@ -504,7 +476,6 @@ class ParticleManager:
         """Add default tracking particles for leptons from pi, K, and mu"""
         # Init default tracking particles
         info(1, "Initializing default tracking categories (pi, K, mu)")
-        self._tracking_requested_by_default = []
         for parents, prefix, with_helicity in [
             ([(211, 0)], "pi_", True),
             ([(321, 0)], "k_", True),

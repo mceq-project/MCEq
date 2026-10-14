@@ -13,9 +13,7 @@ and a uniform azimuth about the parent, has
     a_l(secondary) = k_l a_l(parent),   k_l = <P_l(cos alpha)>_kernel,
 
 exactly on the sphere. Production, decay and scattering therefore stay
-diagonal in ``l``. For ``theta -> 0`` at fixed ``(l + 1/2) theta``,
-``P_l(cos theta) -> J_0((l + 1/2) theta)`` (Hilb's formula), so the Hankel
-modes are the flat-sky limit with ``kappa = l + 1/2``.
+diagonal in ``l``.
 
 Operations that act on ``mu`` couple the modes through
 

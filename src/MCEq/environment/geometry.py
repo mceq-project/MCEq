@@ -1,3 +1,5 @@
+"""Spherical Earth geometry of the atmospheric path."""
+
 import numpy as np
 
 
@@ -92,8 +94,7 @@ class EarthGeometry:
 
     The arguments are in metres, the units of the ``environment`` settings
     they default to; the attributes below and :func:`set_h_obs` are in cm.
-    Each argument left at ``None`` is read from :mod:`MCEq.config` at
-    construction, so a caller that passes all three never touches config.
+    Each argument left at ``None`` is read from :mod:`MCEq.config`.
 
     Attributes:
       h_obs (float): observation level height [cm]

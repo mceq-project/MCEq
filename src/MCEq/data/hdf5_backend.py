@@ -1,11 +1,4 @@
-"""The HDF5 backend: the consumer classes' view of the cross-section tables.
-
-The materialized numpy reads are :mod:`MCEq.data.hdf5_store`; the EM
-selection policy is :mod:`MCEq.data.em_tables`. This module owns the class
-that opens the databases, decodes channel packs into interaction
-dictionaries, and applies the hadronic-model / medium / low-energy
-blending policy on top. Re-exported as ``MCEq.data.HDF5Backend``.
-"""
+"""HDF5 database backend: reads, decodes and blends interaction, decay, cross-section and loss tables."""
 
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
@@ -29,13 +22,9 @@ class HDF5Backend:
     """Provides access to tabulated data stored in an HDF5 file.
 
     Reads the hadronic database and, when EM interactions are enabled, a
-    separate EM database. Neither is maintained in git, and both change
-    infrequently.
-
-    ``paths``, ``grid``, ``physics`` and ``em`` are the settings groups this
-    backend reads from; all four are required, injected by the driver --
-    there is no fallback to live config. An omitted medium resolves from the
-    injected ``physics`` group at construction, not against config.
+    separate EM database. ``paths``, ``grid``, ``physics`` and ``em`` are the
+    settings groups it reads; ``medium=None`` means
+    ``physics.interaction_medium``.
     """
 
     @contextmanager
@@ -107,8 +96,6 @@ class HDF5Backend:
         self._grid = grid
         self._physics = physics
         self._em = em
-        # Resolved here rather than as a signature default, so the value is
-        # read from the injected physics group at construction time.
         medium = physics.interaction_medium if medium is None else medium
 
         info(2, "Opening HDF5 file", paths.mceq_db_fname)
@@ -118,9 +105,8 @@ class HDF5Backend:
                 f'MCEq DB file {paths.mceq_db_fname} not found in "data" directory.'
             )
         self._had = hdf5_store.HDF5Store(self.had_fname)
-        # A v2 release package (root attr ``mceq_db_manifest``, stamped by
-        # the packager) resolves models it lacks through the release
-        # manifest; a monolith is resolved against its own file only.
+        # A release package (root attr ``mceq_db_manifest``) resolves models
+        # it lacks through the release manifest; a monolithic file does not.
         self._paths = paths
         self._packages = (
             db_manifest.ModelStoreCache(paths, self._had, download)
@@ -134,8 +120,6 @@ class HDF5Backend:
             raise Exception(
                 f'Electromagnetic DB file {_n} not found in "data" directory.'
             )
-        # The store is created without opening the file, so an absent EM
-        # database is fine.
         self._em_store = hdf5_store.HDF5Store(self.em_fname)
 
         with self._read_session():
@@ -158,9 +142,8 @@ class HDF5Backend:
                 int(self.max_idx - self.min_idx),
             )
 
-            # 2D databases are detected by the ``k_dim`` attribute on the
-            # ``common`` group; there is no config flag. Their modes are the
-            # Legendre moments <P_l(cos theta)> with l = k_grid.
+            # 2D databases carry ``k_dim`` on the ``common`` group. Their
+            # modes are the Legendre moments <P_l(cos theta)> with l = k_grid.
             self.is_2d = "k_dim" in ca
             self.angular_basis = hdf5_store.angular_basis(ca, grid_store.fname)
             if self.is_2d:
@@ -262,9 +245,7 @@ class HDF5Backend:
                 condition=len(equivalences) > 0,
             )
             if self._physics.assume_nucleon_interactions_for_exotics:
-                # Aliases, deliberately: the stand-in shares this channel's
-                # matrix object and this parent's `relations` list, which later
-                # iterations of this loop keep appending to.
+                # The stand-in shares this parent's matrix and `relations` list.
                 apply_equivalences(
                     eqv_lookup,
                     parent_pdg,
@@ -293,14 +274,9 @@ class HDF5Backend:
             info(0, "Choose from:\n", "\n".join(available_models))
             raise Exception("Unknown selections.")
 
-    # -- model resolution across release packages -------------------------
-    #
-    # ``_model_store`` answers "which file holds tree/<medium>/<model>":
-    # the primary file first, then -- for release packages only -- the
-    # manifest-listed packages on the same grid (MCEq.data.db_manifest).
-
     def _model_store(self, mname, medium, tree):
-        """Store holding ``tree/<medium>/<mname>``, or None."""
+        """Store holding ``tree/<medium>/<mname>``: the primary file, then the
+        manifest-listed release packages, else None."""
         if self._had.has(f"{tree}/{medium}/{mname}"):
             return self._had
         if self._packages is not None:
@@ -309,7 +285,7 @@ class HDF5Backend:
 
     def _resolve_interaction_store(self, mname):
         """``(store, medium)`` of the yield pack of ``mname`` in package mode,
-        with the monolith path's air fallback spanning primary and packages."""
+        with the air fallback."""
         had = "hadronic_interactions"
         store = self._model_store(mname, self.medium, had)
         if store is not None:
@@ -330,11 +306,7 @@ class HDF5Backend:
         )
 
     def _he_le_weight(self):
-        """:func:`MCEq.data.blending.he_le_weight` on this backend's settings.
-
-        Reads the dtype off the injected grid group; ``__init__`` always
-        binds it, so there is no live-config fallback here.
-        """
+        """:func:`MCEq.data.blending.he_le_weight` on this backend's settings."""
         return he_le_weight(
             self._energy_grid.c,
             self.he_le_transition,
@@ -406,9 +378,8 @@ class HDF5Backend:
             raise ValueError("Unknown equivalence table for", mname)
         eqv = equivalences[family]
         if self._em_standalone:
-            # Hadronic matrices live on the (coarser) hadronic grid; they
-            # are inert for a γ/e± cascade. Skip them so they never hit the
-            # dim_full reshape against the EM grid.
+            # Hadronic matrices are on the hadronic grid and unused in a
+            # γ/e± cascade on the EM grid.
             int_index = {
                 "parents": [],
                 "particles": [],
@@ -461,9 +432,8 @@ class HDF5Backend:
         info(10, f"Generating decay db. dset_name={decay_dset_name}")
 
         if self._em_standalone:
-            # Decay matrices live on the hadronic grid and are inert for a
-            # γ/e± cascade (the only decaying secondaries are sub-permille
-            # muons from γ→μ⁺μ⁻). Skip them.
+            # Decay matrices are on the hadronic grid and negligible for a
+            # γ/e± cascade (only muons from γ→μ⁺μ⁻ decay).
             return {
                 "parents": [],
                 "particles": [],
@@ -485,12 +455,8 @@ class HDF5Backend:
         self._check_subgroup_exists(self._had, "decays", decay_dset_name)
 
         if self.is_2d and decay_dset_name == "polarized":
-            # 2D databases declare ``layout='superset'`` on the
-            # ``polarized`` dataset: the full channel set including the
-            # helicity-resolved muon entries, loadable directly. A 2D
-            # database without this attribute stores only a helicity
-            # overlay (an unsupported legacy layout) and must be rebuilt
-            # with current mceq-maintenance-tools.
+            # The 2D ``polarized`` dataset must hold the full channel set
+            # including helicity-resolved muons (``layout='superset'``).
             layout = self._had.attrs("decays/polarized").get("layout", None)
             if isinstance(layout, bytes):
                 layout = layout.decode()
@@ -548,8 +514,7 @@ class HDF5Backend:
             info(5, f"{mname} cross sections replaced by 23D.")
             mname = "SIBYLL23D"
 
-        # Modern databases carry native FLUKA cross sections. Preserve the
-        # historical DPMJET fallback only for older files that do not.
+        # FLUKA cross sections fall back to DPMJET for files without them.
         if "FLUKA" in mname:
             cs_root = "cross_sections"
             direct = self._model_store(mname, medium, cs_root) is not None
@@ -628,7 +593,7 @@ class HDF5Backend:
 
         # Append electromagnetic interaction cross sections from the EM database
         if self._physics.enable_em:
-            info(2, "Injecting EM matrices into interaction_db.")
+            info(2, "Injecting EM cross sections into cs_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", medium)
             em_cs_group = em_tables.em_cs_group_path(
@@ -664,11 +629,9 @@ class HDF5Backend:
         index_d = {}
         generic_dedx = None
 
-        # In em_standalone mode the loss curves are stored on the hadronic
-        # grid; interpolate them onto the (finer) EM grid before applying
-        # the energy cuts. dE/dX is smooth (Bethe-Bloch) and stored with a
-        # negative sign, so interpolate the value linearly in log(E) — a
-        # log-log interpolation would take log of a negative number.
+        # In em_standalone mode the loss curves are on the hadronic grid;
+        # interpolate onto the EM grid before the energy cuts. dE/dX is
+        # stored negative, so interpolate linearly in log(E).
         had_eg = (
             np.asarray(self._had.attrs("common")["e_grid"])
             if self._em_standalone

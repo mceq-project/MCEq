@@ -1,9 +1,9 @@
-"""Angular modes of a 2D database as seen by the operator compilation.
+"""Operator-compilation inputs for the Legendre modes of 2D databases.
 
-2D databases carry Legendre moments. Their operators compile the hadronic
-part and the continuous-loss band separately, so that the removal of
-backward production (:func:`MCEq.operators.legendre.backward_removal`) acts
-on produced particles only; energy loss keeps the direction.
+The hadronic part and the continuous-loss band are compiled separately, so
+that the removal of backward production
+(:func:`MCEq.operators.legendre.backward_removal`) acts on produced particles
+only; energy loss keeps the direction.
 """
 
 from types import SimpleNamespace

@@ -1,9 +1,4 @@
-"""A piecewise-constant material target, e.g. a fixed-target or beam-dump setup.
-
-:class:`GeneralizedTarget` is not an :class:`~MCEq.environment.base.
-EarthsAtmosphere`: it has no zenith angle and its ``set_theta`` raises. That
-raise is the protocol boundary between "an atmosphere" and "a medium".
-"""
+"""Piecewise-constant material target (non-atmospheric medium)."""
 
 import numpy as np
 
@@ -39,9 +34,6 @@ class GeneralizedTarget:
         env_name=None,
         environment=None,
     ):
-        # Omitted parameters are resolved from the supplied environment
-        # settings here, not in the signature, so they are read at
-        # construction time.
         if len_target is None or env_density is None or env_name is None:
             if environment is None:
                 from importlib import import_module
@@ -211,7 +203,6 @@ class GeneralizedTarget:
         if X[-1] > self.max_X and X[-1] < self.max_X * 1.003:
             X[-1] = self.max_X
         if np.min(X) < 0.0 or np.max(X) > self.max_X:
-            # return self.get_density(self.s_X2h(self.max_X))
             info(
                 0,
                 f"Depth {np.max(X):4.3f} exceeds target dimensions {self.max_X:4.3f}",
@@ -291,7 +282,6 @@ class GeneralizedTarget:
                 facecolor="grey",
                 alpha=alpha,
             )
-            # axes.text(0.5e-2 * (xstart + xend), 0.5 * ymax, str(nm))
 
         axes.plot([xl for xl in self.knots], self.X_int, lw=1.7, color="r")
 

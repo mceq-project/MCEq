@@ -1,33 +1,4 @@
-"""Geomagnetic rigidity-cutoff integration via gtracr.
-
-Self-contained helper used by :class:`MCEq.core.MCEqRun` to apply a
-per-pixel rigidity cutoff to the primary spectrum on the full-sky path.
-
-Flow on first call after install (or after a cache-invalidation):
-
-1. Look up the detector location from the active density model
-   (``MSIS00*Centered`` / ``MSIS21*Centered`` exposes
-   ``_detector_latitude/_longitude``; named MSIS atmospheres / location-
-   tagged CORSIKA atmospheres look up the coords in
-   :data:`MCEq.environment.parameters.LOCATIONS`).
-2. Run ``gtracr.geomagnetic_cutoffs.GMRC`` to sample trajectories at the
-   detector position (IGRF-13 by default), with a tqdm progress bar.
-   The position is an explicit ``gtracr.location.Location`` carrying the
-   coordinates from step 1, for every site: MCEq's table is authoritative,
-   so the cutoff map and the atmospheric column always refer to the same
-   point on the Earth.
-3. Bin to a fine native grid (180 × 360) and gap-fill any NaN cells.
-4. Save the result to ``<MCEq.data_dir>/gtracr_cutoffs/<key>.npz``.
-   Cache key encodes location, IGRF date, B-field type, particle
-   altitude, MC iter count, and :data:`CACHE_VERSION`.
-
-Subsequent calls with the same key hit the cache. Re-evaluate by
-deleting the file or bumping :data:`CACHE_VERSION`.
-
-The bin returned to the caller is linearly interpolated from the fine
-native grid onto the caller's ``(zenith_centres, azimuth_centres)``,
-so the gtracr binning is decoupled from MCEq's pixel grid.
-"""
+"""Geomagnetic rigidity cutoffs from gtracr (cached per site)."""
 
 from __future__ import annotations
 
@@ -40,11 +11,6 @@ import numpy as np
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
 # or the gtracr API changes in a backward-incompatible way).
-#
-# v2: the trajectory sampling point is MCEq's detector coordinate for every
-# site, where v1 handed gtracr the bare site name for IceCube and ORCA and
-# let gtracr's own table decide. Maps cached under v1 sampled a different
-# position for those two, so they cannot be reused.
 CACHE_VERSION = 2
 
 # Native gtracr sampling grid: 1° × 1° (180 zen × 360 az). All downstream
@@ -87,12 +53,7 @@ def _try_tqdm():
 
 
 def _cache_dir(paths=None) -> Path:
-    """Return ``<paths.data_dir>/gtracr_cutoffs/``; create if missing.
-
-    ``paths`` is a ``config.paths`` group; ``None`` reads the global one
-    through a dynamic import, keeping this layer free of a static import
-    edge to ``MCEq.config``; the driver always passes the run's group.
-    """
+    """Return ``<paths.data_dir>/gtracr_cutoffs/`` (global ``config.paths`` if None); create if missing."""
     if paths is None:
         from importlib import import_module
 
@@ -127,26 +88,17 @@ def _cache_key(
 def _gtracr_location_from_atmosphere(density_model):
     """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
-    Raises ``ValueError`` unless the model exposes detector coordinates or a
-    location name present in :data:`MCEq.environment.parameters.LOCATIONS`.
+    Coordinates come from ``_detector_latitude/_longitude`` of detector-centred
+    models, or from :data:`MCEq.environment.parameters.LOCATIONS` for a named
+    site. The name is only a cache label: ``_detector_name`` if set, ``IceCube``
+    at (-90, 0), otherwise a string encoding the coordinates.
 
-    The coordinates always come from MCEq — ``_detector_latitude /
-    _detector_longitude`` for the detector-centred models, the
-    :data:`MCEq.environment.parameters.LOCATIONS` table for a named site — and
-    :func:`get_cutoff_map` samples at exactly those. The name is a label on
-    them, not a lookup key, so how it is obtained cannot move the sampling
-    point:
-
-    - the KM3NeT subclasses carry ``_detector_name`` (``ORCA`` / ``ARCA``),
-      set from the same ``_KM3NET_DETECTORS`` entry the coordinates come
-      from, so the tag cannot drift away from the position it names;
-    - without an explicit detector name, coordinates within 1e-6 degrees of
-      (-90, 0) are labelled ``IceCube``; everything else gets a stub
-      spelling out its own coordinates.
+    Raises:
+        ValueError: if neither detector coordinates nor a known location exist.
     """
     from MCEq.environment.parameters import LOCATIONS
 
-    # Detector-centered MSIS — most informative branch
+    # Detector-centred MSIS
     lat = getattr(density_model, "_detector_latitude", None)
     lon = getattr(density_model, "_detector_longitude", None)
     if lat is not None and lon is not None:
@@ -250,12 +202,8 @@ def get_cutoff_map(
             g_az = d["gtracr_native_az"].copy()
             g_rc = d["gtracr_native_rcutoff_GV"].copy()
     else:
-        # MCEq's site table is authoritative: always hand gtracr an explicit
-        # Location built from the coordinates MCEq resolved, never a bare
-        # site name. Passing a name gtracr recognises would make gtracr's own
-        # table decide where the trajectories are sampled, so the cutoff map
-        # would belong to a different point than the atmospheric column the
-        # rest of the calculation integrates — the two must agree.
+        # Explicit coordinates, so gtracr samples at the same point as the
+        # atmospheric column (a bare site name would use gtracr's own table).
         gmrc_loc = Location(name=location_name, latitude=lat, longitude=lon)
 
         gmrc = GMRC(
@@ -270,9 +218,6 @@ def get_cutoff_map(
             solver="rk45",
         )
 
-        # gtracr's evaluate_batch runs the full MC; wrap a tqdm bar around
-        # the wall-clock so the user has feedback. (gtracr itself does not
-        # expose a per-trajectory callback.)
         tqdm_cls = _try_tqdm()
         bar = tqdm_cls(
             total=iter_num,
@@ -344,10 +289,6 @@ def get_cutoff_map(
     return rc
 
 
-# ---------------------------------------------------------------------------
-# Primary spectrum with per-pixel cutoff
-# ---------------------------------------------------------------------------
-
 # GaisserHonda / GSF mass-group nominal nuclear charges (Z) and mass numbers
 # (A). Used as the canonical superposition for primary spectra without their
 # own per-species rigidity awareness.
@@ -370,18 +311,13 @@ def build_phi0_with_cutoff(
 ) -> np.ndarray:
     """Build a ``(dim_states, K)`` phi0 with rigidity cutoff applied.
 
-    For each mass group ``(Z, A)`` with cutoff ``R_c[pixel]``, the group is
-    accepted where ``A * E_nuc > Z * R_c`` — nucleus total energy
-    ``A * E_nuc`` against the rigidity threshold ``Z * R_c``, in the
-    ultrarelativistic approximation ``R ≈ E / Z``. Below the threshold the
-    species contributes zero. Above, the standard proton+neutron
-    superposition is applied as in
-    :meth:`MCEqRun.set_primary_model`.
+    A mass group ``(Z, A)`` contributes where its total energy exceeds the
+    rigidity threshold, ``A * E_nuc > Z * R_c[pixel]`` (ultrarelativistic,
+    ``R ≈ E / Z``), and is split into protons and neutrons by superposition
+    as in :meth:`MCEqRun.set_primary_model`.
 
     ``physics`` is a ``config.physics`` group supplying
-    ``minimal_primary_energy``; ``None`` reads the global one through a
-    dynamic import, keeping this layer free of a static import edge to
-    ``MCEq.config``; the driver always passes the run's group.
+    ``minimal_primary_energy``; ``None`` reads the global one.
     """
     if physics is None:
         from importlib import import_module

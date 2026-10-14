@@ -1,11 +1,8 @@
-"""Fetching and verifying the MCEq database files.
+"""Download and sha256 verification of the MCEq database files and data packages.
 
-`MCEqRun.__init__` downloads the database when it is first needed, so a
-caller can point ``config.mceq_db_fname`` elsewhere beforehand. Files are
-fetched by name and checked against the checksum the manifest records.
-Concurrent jobs are safe: one process downloads while the others are told to
-pre-fetch with ``python -m MCEq.data.download``, and only a complete,
-verified file is put in place.
+Concurrent jobs are safe: one process downloads under a lock file, the others
+are told to pre-fetch with ``python -m MCEq.data.download``, and only a
+complete, verified file is put in place.
 """
 
 from __future__ import annotations
@@ -14,6 +11,8 @@ import hashlib
 import os
 import tempfile
 from pathlib import Path
+
+from MCEq.data import db_manifest
 
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
@@ -124,22 +123,14 @@ def _download_file(url, outfile, checksum=None):
 
 
 def ensure_db_available(cfg):
-    """Download the MCEq database if not already present.
+    """Download ``cfg.mceq_db_fname`` into ``cfg.data_dir`` if missing or corrupt.
 
-    Called by ``MCEqRun.__init__`` with the run's configuration — the live
-    module or a run snapshot — so the download is deferred until the database
-    is actually needed and this module imports no configuration itself.
-    ``cfg`` must expose flat ``data_dir``, ``mceq_db_fname`` and
-    ``debug_level`` attributes; a paths-only group does not supply that
-    interface. Direct callers pass ``MCEq.config`` (or the module they
-    override):
+    A file listed in the manifest is fetched from the data release, any other
+    name from the v1 single-file release.
 
-        from MCEq import config
-        config.mceq_db_fname = "my_db.h5"
-        ensure_db_available(config)
-
-    A missing file listed in the manifest is fetched from the data release;
-    any other missing name is looked for in the legacy single-file release.
+    Args:
+        cfg: object with ``data_dir``, ``mceq_db_fname``, ``mceq_db_manifest``
+            and ``debug_level`` attributes, e.g. ``MCEq.config``.
     """
     data_dir = cfg.data_dir
     mceq_db_fname = cfg.mceq_db_fname
@@ -179,17 +170,12 @@ def _remove_old_dbs(data_dir):
             os.unlink(old_db)
 
 
-# ---------------------------------------------------------------------------
-# v2 data release: manifest-described packages
-# ---------------------------------------------------------------------------
+# Data release: manifest-described packages
 
-#: Where a manifest missing from ``data_dir`` is fetched from. The manifest's
-#: own ``url_base`` governs the package URLs, so this only bootstraps a
-#: custom data directory on a fresh machine; a copy of the manifest ships
-#: inside the package (``MCEq/data``) and is used when present.
+#: Where a manifest missing from ``data_dir`` and from the installed package is
+#: fetched from. Package URLs come from the manifest's ``url_base``.
 data_release_url = "https://github.com/mceq-project/MCEq/releases/download/v2.0.0/"
-#: Manifest file name of the current data release; ``config.mceq_db_manifest``
-#: defaults to the same literal (the data layer does not import config).
+#: Manifest file name of the current data release (``config.mceq_db_manifest``).
 DEFAULT_MANIFEST = "mceq_db_manifest_v2.yaml"
 
 
@@ -214,13 +200,10 @@ def packaged_manifest(name):
 def local_manifest(cfg, preferred=None):
     """Parsed manifest without network, or None.
 
-    Search order: ``preferred`` in ``data_dir`` (the manifest a package
-    declares in its root attribute ``mceq_db_manifest`` -- a CI or custom
-    package set names its own), then ``cfg.mceq_db_manifest`` in
-    ``data_dir``, then the copy packaged with MCEq.
+    Search order: ``preferred`` in ``data_dir`` (the manifest named in a
+    package's root attribute ``mceq_db_manifest``), then
+    ``cfg.mceq_db_manifest`` in ``data_dir``, then the copy packaged with MCEq.
     """
-    from MCEq.data import db_manifest
-
     candidates = []
     if preferred:
         candidates.append(Path(cfg.data_dir) / preferred)
@@ -234,8 +217,6 @@ def local_manifest(cfg, preferred=None):
 def ensure_manifest(cfg, preferred=None):
     """The manifest (see :func:`local_manifest`), fetched into ``data_dir``
     from the data release when no local copy exists."""
-    from MCEq.data import db_manifest
-
     manifest = local_manifest(cfg, preferred)
     if manifest is not None:
         return manifest
@@ -334,8 +315,6 @@ def cli_main(argv=None):
     package directly; ``--all`` fetches every package of the release.
     """
     import argparse
-
-    from MCEq.data import db_manifest
 
     parser = argparse.ArgumentParser(
         prog="python -m MCEq.data.download",

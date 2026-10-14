@@ -1,7 +1,4 @@
-"""Hadron-air cross-sections: the ``InteractionCrossSections`` consumer.
-
-Loads and manages the per-projectile cross-section arrays.
-"""
+"""Hadron-air inelastic cross sections."""
 
 import numpy as np
 
@@ -76,19 +73,17 @@ class InteractionCrossSections:
             parent = parent[0]
 
         def _family_cs(base_pdg, label):
-            """Family representative, sign-preserving: a negative parent
-            uses the antiparticle column when the model provides one
-            (annihilation channels for antibaryons; dedicated K-/pi-
-            columns) and falls back to the particle column otherwise."""
+            # A negative parent uses the antiparticle column if the model has
+            # one (annihilation channels for antibaryons), else the particle's.
             if parent < 0 and -base_pdg in self.index_d:
                 info(15, message_templ.format(parent, f"anti-{label}"))
                 return self.index_d[-base_pdg]
             info(15, message_templ.format(parent, label))
             return self.index_d[base_pdg]
 
-        if parent in list(self.index_d):
+        if parent in self.index_d:
             cs = self.index_d[parent]
-        elif abs(parent) in list(self.index_d):
+        elif abs(parent) in self.index_d:
             cs = self.index_d[abs(parent)]
         elif 100 < abs(parent) < 300 and abs(parent) != 130:
             cs = _family_cs(211, "pi+-")

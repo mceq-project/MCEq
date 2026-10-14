@@ -1,21 +1,4 @@
-"""Runtime HE/LE model blending: the sigmoid weight and the two blends.
-
-``HDF5Backend`` loads the model tables and passes their arrays to these
-functions; the backend keeps thin delegates.
-
-DTYPE
------
-
-With ``dtype=None`` (the default), blend weights use float64 and blended
-channels promote accordingly. An explicit dtype controls the weights.
-Channels without an LE counterpart are passed through unchanged and retain
-their stored arrays and dtype.
-
-The weight is applied as ``w_he[np.newaxis, :]``, i.e. along the LAST axis, so
-one ``(1, n_e)`` array serves both the 1D ``(n_e, n_e)`` channel matrix and the
-2D ``(n_k, n_e, n_e)`` angular-mode tensor (it broadcasts as ``(1, 1, n_e)``).
-Indexing the first axis instead would still pass a square-matrix test.
-"""
+"""Runtime blending of a high- and a low-energy hadronic model."""
 
 from collections import defaultdict
 
@@ -32,9 +15,7 @@ def he_le_weight(energy, transition, trwidth, dtype):
         transition: HE/LE transition energy in GeV.
         trwidth: full 10--90 % width of the transition in decades; ``0.0``
             makes the weight a hard switch at ``transition``.
-        dtype: ``grid.dtype``, i.e. ``None`` unless ``config.floatlen`` is set.
-            The default result is float64; an explicit dtype is respected in
-            both transition modes.
+        dtype: weight dtype; ``None`` gives float64.
     """
     energy = np.asarray(energy, dtype=float)
     if trwidth == 0.0:
@@ -46,25 +27,14 @@ def he_le_weight(energy, transition, trwidth, dtype):
 
 
 def blend_yields(he_index, le_index, he_name, le_name, w_he, transition, trwidth):
-    """Blend yield matrices column-wise, using the HE channel set.
+    """Blend yield matrices column-wise over the HE model's channel set.
 
-    The HE model defines the channel set. Channels absent from the LE
-    model remain unchanged, matching the former compiled low-energy
-    extension. Model-specific projectile equivalences have already been
-    applied by ``_gen_db_dictionary`` before this step.
-
-    On 2D databases the channel matrices are ``(n_k, n_e, n_e)`` tensors of
-    Legendre moments and the ``(1, n_e)`` column weights broadcast over every
-    mode: the blend weight depends on the projectile energy only, so
-    blending is linear in the angular distribution and applies per mode.
-    Both models must be stored on the database's common grid (a model's
-    blocks are zero outside its production range, so the transition
-    window must lie inside both models' coverage — the multi-model 2D
-    database build guarantees this).
-
-    ``w_he`` is the 1D weight of :func:`he_le_weight`; ``transition`` and
-    ``trwidth`` are carried only to render the description string, which is the
-    returned index's sole record of how the blend was parameterised.
+    Channels absent from the LE model keep the HE matrix. The weight
+    ``w_he`` of :func:`he_le_weight` depends on the projectile energy (last
+    axis) only, so it broadcasts over the Legendre modes of 2D
+    ``(n_k, n_e, n_e)`` tensors. Both models must be on the same energy grid,
+    with the transition inside both models' coverage. ``transition`` and
+    ``trwidth`` only enter the description string.
     """
     w_he = w_he[np.newaxis, :]
     w_le = 1.0 - w_he
@@ -99,16 +69,10 @@ def blend_yields(he_index, le_index, he_name, le_name, w_he, transition, trwidth
 def blend_cross_sections(he_index, le_index, he_name, le_name, w_he):
     """Blend inelastic cross sections per projectile, mapping across models.
 
-    Unlike :func:`blend_yields` this is not a plain intersection: a projectile
-    carried by only one of the two models is mapped onto the other model's
-    nearest column through :func:`~MCEq.data.equivalences.mapped_cross_section`,
-    and ``None`` from that lookup means "no equivalent" and leaves the value the
-    one model does carry unblended. ``he_name``/``le_name`` select the model's
-    alias table, so they are the normalised model names, not free-form labels.
-
-    ``w_he`` is the 1D weight of :func:`he_le_weight`, applied without the
-    ``np.newaxis`` of :func:`blend_yields`: a cross section is one value per
-    energy, so the weight already lines up.
+    A projectile carried by only one model is mapped onto the other model's
+    equivalent column (:func:`~MCEq.data.equivalences.mapped_cross_section`);
+    without an equivalent it stays unblended. ``he_name``/``le_name`` are
+    normalised model names and select the equivalence tables.
     """
     w_le = 1.0 - w_he
     blended = {}
@@ -116,11 +80,10 @@ def blend_cross_sections(he_index, le_index, he_name, le_name, w_he):
         le_cs = mapped_cross_section(le_index["index_d"], projectile, le_name)
         # Leave HE-only projectiles unchanged.
         blended[projectile] = he_cs if le_cs is None else he_cs * w_he + le_cs * w_le
-    # LE-only projectiles (e.g. FLUKA's dedicated n, nbar, K0, hyperon
-    # columns) keep their identity instead of being dropped: their own
-    # sigma below the transition, the mapped HE equivalent above it.
-    # Without this, get_cs falls back to the proton column, which for
-    # antibaryons misses the annihilation part entirely.
+    # LE-only projectiles (e.g. FLUKA's n, nbar, K0, hyperons) are kept: own
+    # sigma below the transition, the mapped HE equivalent above it. Otherwise
+    # get_cs would fall back to the proton column and, for antibaryons, miss
+    # the annihilation part.
     for projectile, le_cs in le_index["index_d"].items():
         if projectile in blended:
             continue

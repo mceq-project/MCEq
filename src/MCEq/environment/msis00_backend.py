@@ -1,3 +1,5 @@
+"""Python driver for the NRLMSISE-00 C library."""
+
 from ctypes import byref, c_double, c_int, pointer
 
 import MCEq.environment._ext.nrlmsise00 as cmsis
@@ -58,16 +60,10 @@ class cNRLMSISE00(NRLMSISE00Base):
 
         self.inp.doy = c_int(self.month2doy["June"])  # Day of year
         self.inp.year = c_int(0)  # No effect
-        # Superseded by ``_update_lst`` below, which derives ``sec`` (UT) from
-        # the longitude so the site sits at local noon. Kept so the field is
-        # never unset if that call order ever changes.
-        self.inp.sec = c_double(self.daytimes["day"])  # 12:00
         self.inp.alt = c_double(self.locations[self.current_location][2])
         self.inp.g_lat = c_double(self.locations[self.current_location][1])
         self.inp.g_long = c_double(self.locations[self.current_location][0])
         self._update_lst()
-        # Do not touch this except you know what you are doing
-        # Use imported constants
         self.inp.f107A = c_double(DEFAULT_F107A)
         self.inp.f107 = c_double(DEFAULT_F107)
         self.inp.ap = c_double(DEFAULT_AP)
@@ -104,18 +100,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self._invalidate()
 
     def _update_lst(self):
-        """Use local noon at every location.
-
-        ``lst = 12`` hours and ``sec = 43200 - 240 * longitude`` seconds UT, so
-        the NRLMSISE-00 consistency relation ``lst = sec/3600 + longitude/15``
-        holds exactly and every site is sampled at its own local noon. The
-        model uses ``lst`` for the diurnal and semidiurnal tides.
-
-        MSIS 2.1 samples 12:00 UT instead (its ``lst`` is derived from a fixed
-        UT seconds), so comparisons of the two backends at nonzero longitude
-        sample different local times. That difference is intentional and
-        pinned by ``tests/geometry/test_environment_pins.py::test_msis00_is_local_noon_and_msis21_is_ut_noon``.
-        """
+        """Set lst=12 h and the matching UT seconds, ``lst = sec/3600 + longitude/15``."""
         lst_hours = self.daytimes["day"] / 3600.0
         self.inp.lst = c_double(lst_hours)
         self.inp.sec = c_double(lst_hours * 3600.0 - 240.0 * self.inp.g_long.value)
@@ -135,14 +120,7 @@ class cNRLMSISE00(NRLMSISE00Base):
         self._invalidate()
 
     def _invalidate(self):
-        """Drop the altitude memo of :meth:`_retrieve_result`.
-
-        The memo keys on altitude alone, so every setter that changes latitude,
-        longitude or day of year has to clear it: otherwise a
-        ``get_density(h)`` repeated at the same altitude returns the previous
-        location's or season's value, including inside the azimuth-averaged
-        ``MSIS00LocationCentered.get_density``.
-        """
+        """Drop the altitude memo of :meth:`_retrieve_result` (keyed on altitude only)."""
         self.last_alt = None
 
     def _retrieve_result(self, altitude_cm):

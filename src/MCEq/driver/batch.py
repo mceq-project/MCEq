@@ -1,14 +1,4 @@
-"""Batch orchestration: K independent solves, sky grids, multi-RHS.
-
-The functions take the :class:`MCEqRun` object as their first argument
-(``run``) and use its methods to resolve the secant operator set, build
-paths (``run._calculate_integration_path`` /
-``run._build_condition_paths`` -- the fork pool and the path builder live
-in ``driver/paths.py``), run the ETD2 routes, and wrap results in
-:class:`MCEq.driver.results.MCEqBatchResult`. Going through the methods
-keeps method overrides effective. ``solve_fullsky``'s 2-D-phi0
-cutoff warning uses ``stacklevel=2`` so it points at the caller's frame.
-"""
+"""Batched solves: many initial states and/or directions in one call."""
 
 import warnings
 from time import time
@@ -46,12 +36,9 @@ def _warn_low_energy_cuda_fp32(run, dtype, sec_ops):
     ):
         return
     warnings.warn(
-        "CUDA FP32 with low-energy 2D secant transport can accumulate "
-        "precision error in angular distributions. Tests with e_min=0.1 GeV "
-        "exceeded 1% angular error; smaller steps increased the error. "
-        "Compare against dtype=np.float64 on the same integration path "
-        "before relying on percent-level angular accuracy. "
-        "The requested precision and step settings are unchanged.",
+        "CUDA FP32 with low-energy 2D secant transport can lose percent-level "
+        "angular accuracy; compare with dtype=np.float64 on the same "
+        "integration path.",
         RuntimeWarning,
         stacklevel=3,
     )
@@ -75,12 +62,10 @@ def solve_batch(
 ):
     """Solve K independent cascade problems in one batched call.
 
-    This is the general entry point for anything that would
-    otherwise be a loop of :meth:`solve` calls with a shared
-    operator: many primary spectra or single-primary energies at one
-    direction, many zenith/azimuth directions, atmospheres for
-    different days/seasons — or any mix of these. The batch members
-    are defined by the columns of ``phi0`` and/or the entries of
+    Replaces a loop of :meth:`solve` calls with a shared operator: many
+    primary spectra or single-primary energies, zenith/azimuth directions,
+    atmospheres for different days/seasons, or any mix of these. The batch
+    members are the columns of ``phi0`` and/or the entries of
     ``conditions``:
 
     * ``conditions=None`` (default): all columns share the current
@@ -93,22 +78,19 @@ def solve_batch(
       values use the current settings, while a missing azimuth is
       passed as ``None``, allowing the atmosphere's azimuth-averaging
       behavior. One integration path is built per
-      *distinct* condition (duplicates — including azimuth pixels of
-      azimuth-independent atmospheres — share a path), and the batch
-      runs on the LPT carousel so total kernel work is
-      ``Σ nsteps × ms/RHS`` rather than ``max(nsteps) × K``. If all
-      conditions resolve to the same path, the shared-path fast
-      route is used automatically.
+      distinct condition (azimuth pixels of azimuth-independent
+      atmospheres share a path), and the batch runs on the LPT carousel,
+      so the kernel work is ``sum(nsteps)`` instead of
+      ``max(nsteps) * K``. If all conditions resolve to the same path,
+      the shared-path route is used.
 
     Does NOT mutate ``run._phi0`` / ``run._solution`` /
     ``run.grid_sol``; the active density model and angles are
     restored after the path build.
 
-    For 2D databases the sec(theta) transport correction resolves
-    through ``config.secant_mode(is_2d)`` exactly as in
-    :meth:`solve`: one constant operator set (the cap is not zenith
-    dependent) is shared by every column, on every backend and at
-    either ``dtype``.
+    For 2D databases the sec(theta) transport correction follows
+    ``config.secant_mode`` as in :meth:`solve`; one operator set serves
+    every column.
 
     Examples::
 
@@ -141,19 +123,14 @@ def solve_batch(
         Only supported for shared-path batches (``conditions=None``).
       grid_var (str): only ``"X"`` is supported.
       dtype (np.float32 | np.float64 | None): precision of the state
-        buffers, on every backend and every route. ``None``: float32 on
-        CUDA with ``config.cuda_fp_precision = 32``, else float64. The diagonal-factor
-        pipeline (``exp(h·D)``, φ₁, φ₂) is always computed in fp64
-        (fp32 φ-functions suffer catastrophic cancellation) and cast
-        once on the way out. Accuracy remains workload dependent;
-        low-energy 2D secant transport can accumulate angular errors
-        above 1% in FP32. Compare with FP64 when accuracy matters. See
-        ``MCEq.solvers.backends.base._PRECISION_CONTRACT``.
+        buffers. ``None``: float32 on CUDA with
+        ``config.cuda_fp_precision = 32``, else float64. The diagonal
+        factors ``exp(h D)``, phi_1, phi_2 are always computed in float64.
       carousel_K (int | None): pipeline width for the LPT scheduler
         (heterogeneous batches only). ``None`` → ``min(K, 128)``.
       path_workers (int): fork-pool size for a parallel path build
         (heterogeneous batches only). Must be 0 with ``density_model``
-        overrides; every atmosphere is fork-reproducible.
+        overrides.
       X_start, eps, dX_max, dX_min, fd_span (float | None): ETD2
         non-uniform path knobs forwarded to
         :meth:`_calculate_integration_path`; same semantics as
@@ -212,11 +189,7 @@ def solve_batch(
     else:
         phi0_mat = np.ascontiguousarray(phi0_arr)
 
-    # 2D databases: the stitched solver state is n_k * dim_states per
-    # column. phi0 stays user-facing at dim_states (per mode); a delta
-    # angular initial condition populates every Legendre mode with the
-    # same amplitude, so tile the rows across the n_k blocks — the
-    # exact analogue of the np.tile in solve().
+    # 2D: phi0 repeated over the n_k mode blocks, as in solve().
     if run._mceq_db.is_2d:
         phi0_mat = np.ascontiguousarray(np.tile(phi0_mat, (run._mceq_db.n_k, 1)))
 
@@ -256,10 +229,6 @@ def solve_batch(
             f"solve_batch: shared-path multi-RHS route, K={K}, "
             f"kernel={run.config.backend.kernel_config}, nsteps={nsteps}",
         )
-        # ``dtype`` controls the state-buffer precision; the diagonals
-        # ``d_int`` / ``d_dec`` remain fp64 in the diag-factor pipeline
-        # for the fp32 path (exp(h·D) saturates fp32 fast at high
-        # zenith).
         phi0_typed = phi0_mat.astype(dtype, copy=True)
         sol, grid_sol = run._run_etd2(
             nsteps,
@@ -331,12 +300,8 @@ def solve_fullsky(
 ):
     """Propagate phi0 through every (zenith, azimuth) pixel of a sky grid.
 
-    Builds a per-pixel integration path (zenith- and azimuth-dependent
-    ``dX``/``rho_inv``/``nsteps``) and propagates the sky grid using
-    longest-processing-time-first scheduling, reusing a fixed number of
-    active batch slots so the total kernel work is ``Σ nsteps × ms/RHS``
-    rather than ``max(nsteps) × K``. Wired for all four backends
-    (``numpy_etd2``, ``cuda_etd2``, ``mkl_etd2``, ``accelerate_etd2``).
+    Builds one integration path per pixel and solves the grid with
+    :func:`solve_batch` on the LPT carousel.
 
     Args:
         zenith_grid: 1-D zenith angles in degrees.
@@ -347,15 +312,13 @@ def solve_fullsky(
             order matches the ``(i_zen, i_az)`` flattening with
             azimuth as the inner axis). ``None`` reuses
             ``run._phi0``.
-        carousel_K: pipeline width for the LPT scheduler. ``None``
-            picks the default ``min(K, 128)``, which is the sweet
-            spot across the full-sky benchmarks for K ≤ 2664.
+        carousel_K: pipeline width for the LPT scheduler, default
+            ``min(K, 128)``.
         X_start, eps, dX_max, dX_min, fd_span: per-pixel path-builder
             knobs.
         return_pixel_index: also return the ``(K, 2)`` mapping
             ``(i_zen, i_az)`` for reshaping back to grid.
-        path_workers: fork-pool size for parallel path build. Any
-            value >= 1 is fine on every atmosphere.
+        path_workers: fork-pool size for parallel path build.
         geomagnetic_cutoff: override the constructor-level toggle for
             this call. ``None`` means "use ``run.geomagnetic_cutoff``"
             (auto-detect from the atmosphere if also ``None``).
@@ -364,17 +327,15 @@ def solve_fullsky(
             (e.g. ``{"iter_num": 30000, "bfield_type": "igrf"}``).
 
     Returns:
-        :class:`MCEqBatchResult` — final state per pixel
-        ``(dim_states, K)`` plus the sky grid, with per-pixel
-        named-spectrum extraction (:meth:`MCEqBatchResult.get_solution`,
-        :meth:`MCEqBatchResult.skymap`). Read the result's attributes.
+        :class:`MCEqBatchResult`: final state per pixel
+        ``(dim_states, K)`` and the sky grid, with per-pixel
+        extraction (:meth:`MCEqBatchResult.get_solution`,
+        :meth:`MCEqBatchResult.skymap`).
     """
     info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
     start = time()
 
-    # Resolve geomagnetic-cutoff toggle. Per-call argument has
-    # priority; otherwise fall back to instance default; otherwise
-    # auto-detect from the atmosphere.
+    # Cutoff toggle: call argument, then instance setting, then atmosphere.
     cutoff_flag = geomagnetic_cutoff
     if cutoff_flag is None:
         cutoff_flag = run.geomagnetic_cutoff
@@ -420,17 +381,11 @@ def solve_fullsky(
             f"second axis = K = {K}"
         )
 
-    # Apply geomagnetic rigidity cutoff per pixel if requested. Skip
-    # when phi0 was already supplied as 2-D (caller is in charge of
-    # the per-pixel primary spectrum then) — warn if the cutoff was
-    # requested explicitly in that case, since silently combining
-    # both would double-apply per-pixel physics.
+    # Per-pixel geomagnetic cutoff, not applied to a user-supplied 2-D phi0.
     if phi0_is_2d and (
         geomagnetic_cutoff is True
         or (geomagnetic_cutoff is None and run.geomagnetic_cutoff is True)
     ):
-        import warnings
-
         warnings.warn(
             "solve_fullsky: 2-D phi0 supplied — the geomagnetic cutoff "
             "is NOT applied on top (the caller owns the per-pixel "
@@ -479,8 +434,7 @@ def solve_fullsky(
                 f"(R_c range [{rc_grid.min():.2f}, {rc_grid.max():.2f}] GV)",
             )
 
-    # Expand the sky grid into per-pixel batch conditions (azimuth
-    # as the inner axis) and delegate to the general batched solver.
+    # One condition per pixel, azimuth as the inner axis.
     conditions = []
     pixel_index = np.empty((K, 2), dtype=np.int32)
     k = 0
@@ -506,7 +460,6 @@ def solve_fullsky(
         fd_span=fd_span,
     )
 
-    # Decorate the batch result with the sky-grid metadata.
     res.pixel_index = pixel_index
     res.zenith_grid = zenith_grid
     res.azimuth_grid = azimuth_grid

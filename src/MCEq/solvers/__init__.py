@@ -1,25 +1,4 @@
-"""ETD2RK cascade solvers: the step loop, its backends and its inputs.
-
-The public surface of the solver stack, re-exported from the modules that
-own each piece:
-
-* :mod:`MCEq.solvers.numerics` -- the scalar phi-function maths and the
-  scratch-buffer layouts every backend shares.
-* :mod:`MCEq.solvers.etd2` -- the ETD2RK step loop
-  (:func:`~MCEq.solvers.etd2.etd2_driver`) and the one entry point that
-  compiles an operator, binds a backend and runs it
-  (:func:`~MCEq.solvers.etd2.solve_etd2`).
-* :mod:`MCEq.solvers.backends` -- one module per sparse library or device:
-  scipy, MKL, Apple Accelerate, CUDA.
-* :mod:`MCEq.solvers.path` -- the non-uniform integration path.
-* :mod:`MCEq.solvers.schedule` -- the LPT carousel that packs many pixels
-  through a fixed-width multi-RHS pipeline.
-
-A name is re-exported here when a caller outside the package uses it;
-everything else stays in the module that owns it. The
-:mod:`MCEq.operators.compiled` names below are re-exported because callers
-reach them through this module.
-"""
+"""ETD2RK cascade solvers and their sparse/device backends."""
 
 from MCEq.operators.compiled import (
     CompiledOperator,

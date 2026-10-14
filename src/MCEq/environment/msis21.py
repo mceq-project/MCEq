@@ -1,24 +1,4 @@
-"""NRLMSIS 2.1 atmosphere models for MCEq.
-
-Drop-in replacements for the MSIS00 atmosphere hierarchy backed by the
-NRLMSIS 2.1 empirical model (Emmert et al. 2021).  The 2.1 model is a
-whole-atmosphere refit with newer satellite data; it differs from
-NRLMSISE-00 by a few percent in the 50–100 km range.
-
-Key implementation note: ``calculate_density_spline`` is overridden to
-issue a single batched call to :meth:`nrlmsis.NRLMSIS21.calc_altitude_array`
-instead of looping ``get_density`` per altitude.  On the all-sky pipeline
-this reduces the per-pixel MSIS share to ~5 ms vs ~25 ms for the C
-MSISE-00 ctypes wrapper, in pure numpy.
-
-The class hierarchy mirrors :mod:`MCEq.environment.msis00`:
-- :class:`MSIS21Atmosphere`        — named-location atmosphere
-- :class:`MSIS21LocationCentered`  — arbitrary (lon, lat) + detector depth
-- :class:`MSIS21IceCubeCentered`   — South Pole, depth 1948 m
-- :class:`MSIS21KM3NeTCentered`    — ORCA / ARCA
-
-Requires ``nrlmsis`` (https://github.com/afedynitch/nrlmsis2.1) installed.
-"""
+"""NRLMSIS 2.1 atmospheres (Emmert et al. 2021; requires the nrlmsis package)."""
 
 from __future__ import annotations
 
@@ -40,12 +20,7 @@ from MCEq.misc import info
 
 
 class MSIS21Atmosphere(EarthsAtmosphere):
-    """NRLMSIS 2.1 atmosphere at a named location.
-
-    Drop-in replacement for :class:`MCEq.environment.msis00.MSIS00Atmosphere`.
-    The public surface (``get_density``, ``get_temperature``, ``set_location``,
-    ``set_location_coord``, ``set_season``, ``set_doy``) is identical so MCEq
-    code can swap MSIS00 → MSIS21 without touching call sites.
+    """NRLMSIS 2.1 atmosphere at a named location (interface of MSIS00Atmosphere).
 
     Args:
         location (str): A key of
@@ -56,9 +31,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         doy (int, optional): Day of year [1, 365].  Takes precedence over
             ``season`` if both are supplied.
         use_loc_altitudes (bool): Use the named location's surface altitude
-            from :data:`LOCATIONS` as the observation level.  Mirrors the
-            argument of :class:`MSIS00Atmosphere` -- the two families are
-            separate class trees but expose the same interface.
+            from :data:`LOCATIONS` as the observation level.
     """
 
     def __init__(
@@ -78,10 +51,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         # when ``use_loc_altitudes`` moves the observation level.
         EarthsAtmosphere.__init__(self, environment=environment)
         self.init_parameters(location, season, doy, use_loc_altitudes)
-
-    # ------------------------------------------------------------------
-    # Parameter management
-    # ------------------------------------------------------------------
 
     def init_parameters(self, location, season, doy, use_loc_altitudes=False):
         """Set location, day-of-year, and default geophysical parameters."""
@@ -110,8 +79,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         self._sec = float(DAY_TIMES_SEC["day"])
         self._f107a = float(DEFAULT_F107A)
         self._f107 = float(DEFAULT_F107)
-        # nrlmsis 2.1 wants a 7-element ap vector; replicate the MSISE-00
-        # scalar default the same way MCEq's MSIS00 wrapper does.
+        # nrlmsis 2.1 takes a 7-element ap vector; fill it with the scalar default.
         self._ap = np.full(7, float(DEFAULT_AP))
 
         self.location = location
@@ -121,10 +89,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
     def _clear_cache(self):
         """Invalidate the cached density spline."""
         self.theta_deg = None
-
-    # ------------------------------------------------------------------
-    # Setters
-    # ------------------------------------------------------------------
 
     def set_location(self, location):
         """Re-target by named location (entry in LOCATIONS)."""
@@ -160,7 +124,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         self._clear_cache()
 
     def update_parameters(self, **kwargs):
-        """Bulk-update parameters (matches MSIS00Atmosphere API).
+        """Update several parameters at once.
 
         Recognised kwargs: ``location_coord=(lon, lat)``, ``season``, ``doy``.
         ``doy`` takes precedence over ``season`` if both are set.
@@ -180,10 +144,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
                     "Both 'season' and 'doy' supplied; 'doy' takes precedence.",
                 )
 
-    # ------------------------------------------------------------------
-    # Scalar density / temperature lookups (mirrors MSIS00 API)
-    # ------------------------------------------------------------------
-
     def _calc_one(self, h_cm):
         z_km = max(float(h_cm) / 1e5, 0.0)
         return self._model.calc(
@@ -198,29 +158,15 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         )
 
     def get_density(self, h_cm):
-        """Air mass density at height *h_cm* (cm) in g/cm³.
-
-        Note: nrlmsis 2.1 returns kg/m³ internally; we convert to g/cm³
-        (factor 1e-3) to match MCEq's existing MSIS00 convention.
-        """
+        """Air mass density at height *h_cm* (cm) in g/cm³ (nrlmsis returns kg/m³)."""
         return self._calc_one(h_cm).densities[0] * 1.0e-3
 
     def get_temperature(self, h_cm):
         """Air temperature at height *h_cm* (cm) in K."""
         return self._calc_one(h_cm).temperature
 
-    # ------------------------------------------------------------------
-    # Vectorised spline build — the speed win
-    # ------------------------------------------------------------------
-
     def calculate_density_spline(self, n_steps=2000):
-        """Build the rho(X) spline using one batched nrlmsis call.
-
-        Overrides the base-class height-major Python loop.  Replaces
-        N_steps scalar ``get_density`` calls (~25 µs each in MSISE-00 C,
-        ~80 µs each in scalar nrlmsis2.1 Python) with a single vectorised
-        ``calc_altitude_array`` (~4 ms total for n_steps=2000).
-        """
+        """Build the rho(X) spline from one batched nrlmsis call."""
         from time import time
 
         if self.theta_deg is None:
@@ -234,7 +180,6 @@ class MSIS21Atmosphere(EarthsAtmosphere):
         thrad = self.thrad
         path_length = self.geom.path_len(thrad)
         dl_vec = np.linspace(0.0, path_length, n_steps)
-        # geom.h is pure-numpy and accepts an array dl — call once.
         h_vec_cm = self.geom.h(dl_vec, thrad)
         # nrlmsis is valid 0..2000 km; clamp negatives (can occur for
         # detector-depth geometries on the way to obs level)
@@ -257,13 +202,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
         max_den = float(rho_vec[0])
 
-        # Spline samples use the vectorised heights already computed above,
-        # preserving this model's existing floating-point evaluation order.
         fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1], max_den=max_den)
-
-    # ------------------------------------------------------------------
-    # set_theta (base-class behavior; no azimuth concept here)
-    # ------------------------------------------------------------------
 
     def set_theta(self, theta_deg):
         """Configure zenith angle and trigger spline build."""
@@ -275,12 +214,7 @@ class MSIS21Atmosphere(EarthsAtmosphere):
 
 
 class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
-    """NRLMSIS 2.1 atmosphere coupled to an arbitrary detector location.
-
-    Drop-in replacement for
-    :class:`MCEq.environment.msis00.MSIS00LocationCentered`.
-    Geometry (impact-point projection, azimuth-averaging) is identical;
-    only the MSIS backend differs.
+    """NRLMSIS 2.1 atmosphere centred on a detector at an arbitrary site.
 
     Args:
         detector_coord (tuple): ``(longitude, latitude)`` of the detector
@@ -330,8 +264,7 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
 
         longitude, latitude = detector_coord
 
-        # Backend model + parameters (bypass MSIS21Atmosphere.__init__ to skip
-        # the LOCATIONS lookup which only knows named sites).
+        # Bypass MSIS21Atmosphere.__init__, which requires a named location.
         self._model = NRLMSIS21()
         self._lon = float(longitude)
         self._lat = float(latitude)
@@ -358,14 +291,6 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
             surface_elevation_m,
         )
 
-    # ------------------------------------------------------------------
-    # Geometry — identical to MSIS00LocationCentered._impact_point
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Density — single-azimuth or azimuth-averaged
-    # ------------------------------------------------------------------
-
     def get_density(self, h_cm):
         """Single-altitude density in g/cm³.
 
@@ -381,18 +306,11 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
             return total / len(self._azimuth_avg_coords)
         return self._calc_one(h_cm).densities[0] * 1.0e-3
 
-    # ------------------------------------------------------------------
-    # Vectorised spline build (single or azimuth-averaged)
-    # ------------------------------------------------------------------
-
     def calculate_density_spline(self, n_steps=2000):
-        """Batched rho(X) spline using calc_altitude_array.
+        """Build the rho(X) spline from batched nrlmsis calls.
 
-        Single-azimuth: one vectorised call.
-        Azimuth-averaging: n_azimuth vectorised calls (one per azimuth), with
-        all sampled heights evaluated in a single backend call per azimuth and
-        the densities averaged before the spline fit. MSIS00 also iterates over
-        azimuths first, but evaluates its heights through scalar calls.
+        In azimuth-averaging mode, one call per impact point; the densities
+        are averaged before the spline fit.
         """
         from time import time
 
@@ -402,8 +320,6 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
         thrad = self.thrad
         path_length = self.geom.path_len(thrad)
         dl_vec = np.linspace(0.0, path_length, n_steps)
-        # geom.h is pure-numpy, broadcast-friendly — single call replaces
-        # the n_steps Python loop.
         h_vec_cm = self.geom.h(dl_vec, thrad)
         z_km_vec = np.maximum(h_vec_cm / 1.0e5, 0.0)
 
@@ -452,17 +368,11 @@ class MSIS21LocationCentered(LocationCenteredMixin, MSIS21Atmosphere):
 
         max_den = float(rho_vec[0])
 
-        # As above: ``h_vec_cm[2:]`` is the base tail's ``dl_vec[2:]`` heights,
-        # from one array ``geom.h`` call rather than ``n_steps`` scalar ones.
         fit_column_splines(self, rho_vec, dl_vec, h_vec_cm[2:][::-1], max_den=max_den)
 
 
 class MSIS21IceCubeCentered(MSIS21LocationCentered):
-    """NRLMSIS 2.1 atmosphere centred on the IceCube detector at South Pole.
-
-    Drop-in replacement for
-    :class:`MCEq.environment.msis00.MSIS00IceCubeCentered`.
-    """
+    """NRLMSIS 2.1 atmosphere centred on the IceCube detector at South Pole."""
 
     def __init__(self, location, season, environment=None):
         if location != "SouthPole":
@@ -482,11 +392,7 @@ class MSIS21IceCubeCentered(MSIS21LocationCentered):
 
 
 class MSIS21KM3NeTCentered(MSIS21LocationCentered):
-    """NRLMSIS 2.1 atmosphere coupled to a KM3NeT detector.
-
-    Drop-in replacement for
-    :class:`MCEq.environment.msis00.MSIS00KM3NeTCentered`.
-    """
+    """NRLMSIS 2.1 atmosphere centred on a KM3NeT detector (ORCA or ARCA)."""
 
     def __init__(self, detector, season=None, doy=None, n_azimuth=36, environment=None):
         if detector not in KM3NET_DETECTORS:

@@ -28,8 +28,7 @@ _C_POINTER = {np.float64: POINTER(c_double), np.float32: POINTER(c_float)}
 
 def _fused_stages(dtype):
     """The C predictor / corrector of :mod:`MCEq.solvers._kernels.etd2` at
-    ``dtype``, or ``None`` when the extension is not built. Imported on
-    demand: importing :mod:`MCEq.solvers` must not dlopen anything."""
+    ``dtype``, or ``None`` when the extension is not built."""
     try:
         from MCEq.solvers._kernels.etd2 import (
             etd2_corrector_f32,
@@ -54,7 +53,7 @@ class HostBackend:
     state precision (float64 or float32): the state, the scratch buffers and
     the operator are stored in it; the diagonals and the phi factors are
     computed in fp64 and cast once
-    (:data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`).
+    (the precision rule of :mod:`MCEq.solvers.backends.base`).
     """
 
     xp = np
@@ -93,7 +92,7 @@ class HostBackend:
         self._ptr = _C_POINTER[self.dtype]
         # scratch for the numpy lowering
         self._work = None if stages else np.empty((dim, K), dtype=self.dtype)
-        # landing buffers for the one cast of the fp64 factors (None at fp64)
+        # landing buffers for the cast of the fp64 factors (None at fp64)
         self._factors = (
             None if fp64 else tuple(np.empty(shape, dtype=self.dtype) for _ in range(3))
         )
@@ -122,8 +121,7 @@ class HostBackend:
         out += self._band @ x
 
     def _cast_factors(self, *factors):
-        """The one cast of the fp64 factors to the state dtype; identity at
-        fp64, where the factor buffers already are the state dtype."""
+        """Cast the fp64 factors to the state dtype; identity at fp64."""
         if self._factors is None:
             return factors
         for src, dst in zip(factors, self._factors):
@@ -146,10 +144,9 @@ class HostBackend:
         return self._cast_factors(b["eD"], b["phi1"], b["phi2"])
 
     def _ptrs(self, arrays):
-        """ctypes pointers to ``arrays``, memoized by identity for the life of
-        the solve: ``data_as`` costs more than a kernel at K = 1. The entry
-        keeps its array so a recycled ``id`` cannot hit; ``data_as`` pins the
-        array, which is why :meth:`close` drops the cache."""
+        """ctypes pointers to ``arrays``, memoized by identity for the solve
+        (``data_as`` costs more than a kernel at K = 1). Each entry keeps its
+        array so a recycled ``id`` cannot hit."""
         cache = self._ptr_cache
         out = []
         for arr in arrays:

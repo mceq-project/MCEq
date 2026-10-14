@@ -53,8 +53,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         self._msis = cNRLMSISE00()
 
         # Base class first: it creates self.geom, which init_parameters needs
-        # when ``use_loc_altitudes`` moves the observation level.  Calling it
-        # afterwards made ``use_loc_altitudes=True`` raise AttributeError.
+        # when ``use_loc_altitudes`` moves the observation level.
         EarthsAtmosphere.__init__(self, environment=environment)
 
         self.init_parameters(location, season, doy, use_loc_altitudes)
@@ -85,10 +84,7 @@ class MSIS00Atmosphere(EarthsAtmosphere):
             self.geom.set_h_obs(self._msis.alt_surface)
 
     def _clear_cache(self):
-        """Clears the density model cache so that density profiles can be recalculated
-
-        It is a private method to wrap the logic of cache cleaning
-        """
+        """Force the splines to be rebuilt on the next ``set_theta``."""
         self.theta_deg = None
 
     def update_parameters(self, **kwargs):
@@ -187,43 +183,20 @@ class MSIS00Atmosphere(EarthsAtmosphere):
 
 
 class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
-    """MSIS atmosphere model coupled to an arbitrary detector location.
+    """NRLMSISE-00 atmosphere centred on a detector at an arbitrary site.
 
-    This is the general base class for detector-centred atmosphere models.
-    It computes the geographic coordinates (latitude, longitude) of the
-    shower impact point on Earth's surface for a given zenith and azimuth
-    angle using a spherical-Earth ECEF (Earth-Centred, Earth-Fixed) geometry,
-    then feeds those coordinates to the NRLMSISE-00 empirical atmosphere model
-    so that the density profile reflects the actual atmosphere above the
-    shower column.
+    The shower impact point for a given zenith and azimuth is found on a
+    spherical Earth (ECEF), and NRLMSISE-00 is evaluated there. Without an
+    azimuth, the density is averaged over *n_azimuth* equally spaced
+    directions.
 
-    Azimuth convention: 0° = geographic North, 90° = East (meteorological /
-    clockwise from North).  Zenith: 0° = directly above detector, 90° =
-    horizontal, > 90° = upgoing (shower source below horizon) provided
-    *max_theta* is set to 180.
-
-    When *set_theta* is called **without** an azimuth angle the model
-    computes an azimuth-averaged density profile by sampling *n_azimuth*
-    equally-spaced directions around the compass and averaging the MSIS
-    density at every height step.  This provides a single representative
-    profile that accounts for the latitudinal variation around the detector.
-
-    Subclasses (e.g. :class:`MSIS00IceCubeCentered`,
-    :class:`MSIS00KM3NeTCentered`) specialise this for concrete detector
-    sites.
-
-    The zenith angle is interpreted as the angle *at the detector*.  Since
-    the detector sits below (or above, for elevated sites) the local
-    surface, the local zenith angle where the shower axis crosses the
-    surface differs from the detector-frame angle.  For a straight line on
-    a spherical Earth the impact parameter :math:`r\\,\\sin\\theta` is
-    conserved, so the surface-frame angle used for the atmospheric column
-    is :math:`\\theta_s = \\arcsin((r_{det}/r_{surf})\\sin\\theta)`.  The
-    difference is negligible below ~80° but reaches ~1.4° at the horizon
-    for a detector 2 km below the surface (a ~60% slant-depth effect), and
-    it maps the grazing window just below the geometric horizon
-    (:math:`90° < \\theta \\le 90° + \\arccos(r_{det}/r_{surf})`) onto
-    near-side downgoing columns instead of mis-classifying it as upgoing.
+    Azimuth: 0° = North, 90° = East. Zenith is measured at the detector;
+    > 90° is upgoing (requires ``max_theta=180``). The column is integrated
+    at the local zenith at the surface crossing,
+    :math:`\\theta_s = \\arcsin((r_{det}/r_{surf})\\sin\\theta)`, which also
+    maps the grazing window
+    :math:`90° < \\theta \\le 90° + \\arccos(r_{det}/r_{surf})` onto near-side
+    downgoing columns.
 
     Args:
         detector_coord (tuple): ``(longitude, latitude)`` of the detector
@@ -284,8 +257,7 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
         elif doy is not None:
             self._msis.set_doy(doy)
 
-        # Base class first (creates self.geom), then the shared detector
-        # geometry -- see LocationCenteredMixin._init_detector_geometry.
+        # Base class first: it creates self.geom.
         EarthsAtmosphere.__init__(self, environment=environment)
         self._init_detector_geometry(
             longitude,
@@ -296,14 +268,6 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
             max_theta,
             surface_elevation_m,
         )
-
-    # ------------------------------------------------------------------
-    # Geometry helpers
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Density
-    # ------------------------------------------------------------------
 
     def get_density(self, h_cm):
         """Return air density in g/cm³ at height *h_cm*.
@@ -326,21 +290,14 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
             return total / len(self._azimuth_avg_coords)
         return self._msis.get_density(h_cm)
 
-    # ------------------------------------------------------------------
-    # Density spline (azimuth-averaging optimisation)
-    # ------------------------------------------------------------------
-
     def calculate_density_spline(self, n_steps=2000):
         """Calculate and store a spline of :math:`\\rho(X)`.
 
         In single-azimuth mode delegates to the base-class implementation.
 
-        In azimuth-averaging mode uses an azimuth-major loop for efficiency:
-        for each of the :attr:`_n_azimuth` pre-computed impact points the
-        MSIS location is set **once** and the full height profile is sampled
-        in a single vectorised call, so the C library benefits from staying
-        at the same latitude/longitude across all height steps.  The 36
-        per-azimuth profiles are averaged before spline fitting.
+        In azimuth-averaging mode the MSIS location is set once per
+        pre-computed impact point, the full height profile is sampled there,
+        and the profiles are averaged before spline fitting.
         """
         if not self._azimuth_averaging:
             super().calculate_density_spline(n_steps)
@@ -360,10 +317,6 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
         )
         now = time()
 
-        # Azimuth-major loop: set MSIS location once per direction, then
-        # vectorise over all heights.  This is far more efficient than the
-        # height-major order because the C library stays at the same
-        # lat/lon across all altitude queries.
         rho_sum = np.zeros(n_steps)
         msis_vec = np.vectorize(self._msis.get_density)
         for lat, lon in self._azimuth_avg_coords:
@@ -375,9 +328,6 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
 
         max_den = float(rho_vec[0])
 
-        # Evaluate heights with scalar ``geom.h`` calls, as the base
-        # atmosphere does, to preserve the spline inputs under floating-point
-        # rounding.
         h_intp = [self.geom.h(dl, thrad) for dl in reversed(dl_vec[2:])]
         fit_column_splines(self, rho_vec, dl_vec, h_intp, max_den=max_den)
 
@@ -385,20 +335,12 @@ class MSIS00LocationCentered(LocationCenteredMixin, MSIS00Atmosphere):
 class MSIS00IceCubeCentered(MSIS00LocationCentered):
     """Atmosphere model centred on the IceCube detector at South Pole.
 
-    Specialisation of :class:`MSIS00LocationCentered` for IceCube.  The
-    detector sits 1948 m below the top of the Antarctic ice sheet, whose
-    surface at the South Pole is at ~2835 m elevation — the detector
-    centre is therefore ~887 m *above* sea level, and downgoing showers
-    impact the glacier surface at 2835 m.  Upgoing angles up to 180° are
-    supported.
-
-    The public interface is identical to the original implementation so
-    that existing code continues to work unchanged.  The ``location``
-    argument is accepted for backward compatibility but is always
-    overridden to ``"SouthPole"``.
+    The detector sits 1948 m below the ice surface at 2835 m elevation, so
+    downgoing showers end on the glacier surface. Upgoing angles up to 180°
+    are supported.
 
     Args:
-      location (str): Ignored (kept for backward compatibility).
+      location (str): ignored; always ``"SouthPole"``.
       season (str): Month name, e.g. ``"January"``.
     """
 
@@ -417,9 +359,7 @@ class MSIS00IceCubeCentered(MSIS00LocationCentered):
     def _latitude(self, det_zenith_deg):
         """Return the geographic latitude of the shower impact point.
 
-        Backward-compatible wrapper around :meth:`_impact_point`.
-        The azimuth is irrelevant at the South Pole (all directions are
-        equivalent), so 0° is passed.
+        The azimuth is irrelevant at the South Pole, so 0° is passed.
 
         Args:
           det_zenith_deg (float): zenith angle at detector in degrees

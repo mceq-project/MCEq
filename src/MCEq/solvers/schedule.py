@@ -5,12 +5,7 @@ finishes its current pixel, the next pixel's phi0 is loaded into that
 slot's column on the same step. :func:`schedule_lpt` assigns pixels to
 slots and :func:`compile_carousel_schedule` turns that assignment into the
 ``(T, K)`` path tensors and the sparse reset / record events of a
-:class:`CarouselSchedule`. Pure numpy and backend-agnostic;
-:func:`MCEq.solvers.etd2.etd2_driver` consumes the schedule as stage 7
-(harvest before reset) of its step loop.
-
-Packing policy belongs here -- how pixels share a pipeline. What the loop
-does with a schedule belongs in :mod:`MCEq.solvers.etd2`.
+:class:`CarouselSchedule`.
 """
 
 from collections import namedtuple

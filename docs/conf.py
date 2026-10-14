@@ -6,6 +6,8 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+import importlib.metadata
+
 project = "MCEq"
 copyright = "2026, Anatoli Fedynitch, Stefan Fröse"
 author = "Anatoli Fedynitch, Stefan Fröse"
@@ -36,9 +38,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 
-# The packaged version is 2.0.0-dev (D-6: release cut deferred); the last
-# published release is 1.4.1. State both, in one place, until the cut.
-version = "2.0.0-dev"
+version = importlib.metadata.version("MCEq")
 release = version
 master_doc = "index"
 

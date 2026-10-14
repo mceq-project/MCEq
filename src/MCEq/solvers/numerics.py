@@ -9,24 +9,18 @@ remainder and ``h`` the step size::
 
 Derivation: :ref:`solver-math`.
 
-This module is the single source of the formulas, lowered three ways:
-numpy here; C in ``MCEq/solvers/_kernels/etd2/etd2_kernels.c``, which
-carries the two ``*_EXPR`` strings verbatim as macros; cupy in
-:func:`MCEq.solvers.backends.cuda._build_cuda_etd2_kernels`, whose kernel
-bodies are formatted from the same strings. ``h`` is folded into the phi
-factors at the factor stage, so the association order is fixed here and
-the predictor and corrector are products of three arrays. numpy only.
+The formulas are lowered three ways: numpy here, C in
+``_kernels/etd2/etd2_kernels.c`` (the ``*_EXPR`` strings as macros) and cupy
+kernels formatted from the same strings, so every backend associates them
+identically. ``h`` is folded into the phi factors at the factor stage.
 """
 
 import numpy as np
 
 # --- the formula table -----------------------------------------------------
 
-#: Radii below which the phi quotients are replaced by their Taylor series
-#: (order 2 for phi1, order 3 for phi2), set where the cancellation of the
-#: quotient meets the truncation of the series; worst relative error 7.9e-13
-#: (phi1) and 5.4e-12 (phi2) against a 60-digit reference
-#: (:func:`tests.test_solvers.test_phi_factors_accuracy`).
+#: Taylor-switch radii of phi1 (order 2) and phi2 (order 3); worst relative
+#: error 7.9e-13 / 5.4e-12.
 _PHI1_SMALL = 1.3e-4
 _PHI2_SMALL = 6.31e-3
 _INV_6 = 1.0 / 6.0
@@ -40,17 +34,14 @@ CORRECTOR_EXPR = "(a) + (hphi2) * ((F_a) - (F))"
 
 
 def predictor(eD, x, hphi1, F, out, work):
-    """``out = eD x + hphi1 F``, the numpy lowering of :data:`PREDICTOR_EXPR`:
-    the reference of the compiled stages and the fallback without the C
-    extension. ``work`` is a scratch array of ``out``'s shape."""
+    """``out = eD x + hphi1 F`` (:data:`PREDICTOR_EXPR`); ``work`` is scratch of ``out``'s shape."""
     np.multiply(eD, x, out=out)
     np.multiply(hphi1, F, out=work)
     np.add(out, work, out=out)
 
 
 def corrector(a, hphi2, F_a, F, out, work):
-    """``out = a + hphi2 (F_a - F)`` — the numpy lowering of
-    :data:`CORRECTOR_EXPR`, associated exactly as written."""
+    """``out = a + hphi2 (F_a - F)`` (:data:`CORRECTOR_EXPR`)."""
     np.subtract(F_a, F, out=work)
     np.multiply(hphi2, work, out=work)
     np.add(a, work, out=out)
@@ -139,7 +130,7 @@ def diagonal_factors(h, ri, d_int, d_dec, bufs):
         d_int, d_dec = d_int[:, None], d_dec[:, None]
         h, ri = h[None, :], ri[None, :]
 
-    # D = d_int + ri d_dec, then hD = h D, in the one buffer
+    # D = d_int + ri d_dec, then hD = h D, in place
     np.multiply(d_dec, ri, out=hD)
     np.add(hD, d_int, out=hD)
     np.multiply(hD, h, out=hD)
@@ -154,8 +145,7 @@ def left_matmul(matrix, plane, out=None):
 
     The driver carries logical ``(mode, column, lane)`` planes; flattening
     the trailing axes turns each mode transform into one dense GEMM. The
-    plane may be a strided view of the state (the low-E block) — BLAS
-    takes it through its leading dimension without a copy.
+    plane may be a strided view of the state (the low-E block).
     """
     trailing = plane.shape[1:]
     result_shape = (matrix.shape[0],) + trailing

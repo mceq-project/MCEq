@@ -1,15 +1,4 @@
-"""Initial state: primary models to the ``phi0`` vector.
-
-``InitialState`` composes the initial-condition vector the solver starts
-from — the machinery behind ``MCEqRun.set_primary_model`` /
-``set_single_primary_particle`` / ``set_initial_spectrum`` /
-``initial_state()`` — and owns the restore list, which stores method
-names rather than bound methods to avoid retaining a reference to the
-run. ``MCEqRun`` controls restoration. The particle manager and energy
-grid are read from :class:`MCEq.driver.system.CascadeSystem`, ``_phi0``
-is ``phi0`` here, and the resize of the composition vector is
-:meth:`resize`.
-"""
+"""Initial condition (primary flux or user spectra) of the cascade."""
 
 import numpy as np
 
@@ -17,11 +6,11 @@ from MCEq.misc import info
 
 
 class InitialState:
-    """The primary-model configuration and the composed ``phi0``.
+    """Primary model, initial-condition vector ``phi0`` and its restore list.
 
     Args:
-      system: the :class:`MCEq.driver.system.CascadeSystem` the particle
-        manager and energy grid are read from.
+      system: the :class:`MCEq.driver.system.CascadeSystem` providing the
+        particle manager and energy grid.
     """
 
     def __init__(self, system):
@@ -65,62 +54,33 @@ class InitialState:
 
         info(1, f"Primary model set to {self.pmodel.name}")
 
-        # Save primary flux model for restoration after interaction model
-        # changes. Store the method *name*, not a bound method, to avoid
-        # retaining a reference to the run.
+        # Replayed by name after interaction-model changes.
         self._restore_initial_condition = [("set_primary_model", self.pmodel)]
         self.get_nucleon_spectrum = self.pmodel.p_and_n_flux
 
-        try:
-            self._system.pman.dim_states
-        except AttributeError:
-            self.finalize_pmodel = True
-
-        # Set initial condition
+        pman = self._system.pman
         minimal_energy = self._system._cfg.physics.minimal_primary_energy
-        if (2212, 0) in self._system.pman and (2112, 0) in self._system.pman:
-            e_tot = self._system._energy_grid.c + 0.5 * (
-                self._system.pman[(2212, 0)].mass + self._system.pman[(2112, 0)].mass
-            )
-        else:
+        if (2212, 0) not in pman or (2112, 0) not in pman:
             raise Exception(
                 "No nucleons in eqn system, primary flux model can not be used."
             )
+        proton, neutron = pman[(2212, 0)], pman[(2112, 0)]
+        e_tot = self._system._energy_grid.c + 0.5 * (proton.mass + neutron.mass)
 
         min_idx = np.argmin(np.abs(e_tot - minimal_energy))
         self.phi0 *= 0
         p_top, n_top = self.get_nucleon_spectrum(e_tot[min_idx:])[1:]
-        if (2212, 0) in self._system.pman:
-            self.phi0[
-                min_idx + self._system.pman[(2212, 0)].lidx : self._system.pman[
-                    (2212, 0)
-                ].uidx
-            ] = 1e-4 * p_top
-        else:
-            info(
-                1,
-                "Protons not in equation system, can not set primary flux.",
-            )
+        self.phi0[min_idx + proton.lidx : proton.uidx] = 1e-4 * p_top
 
-        if (2112, 0) in self._system.pman and not self._system.pman[
-            (2112, 0)
-        ].is_resonance:
-            self.phi0[
-                min_idx + self._system.pman[(2112, 0)].lidx : self._system.pman[
-                    (2112, 0)
-                ].uidx
-            ] = 1e-4 * n_top
-        elif (2212, 0) in self._system.pman:
+        if not neutron.is_resonance:
+            self.phi0[min_idx + neutron.lidx : neutron.uidx] = 1e-4 * n_top
+        else:
             info(
                 2,
                 "Neutrons not part of equation system,",
                 "substituting initial flux with protons.",
             )
-            self.phi0[
-                min_idx + self._system.pman[(2212, 0)].lidx : self._system.pman[
-                    (2212, 0)
-                ].uidx
-            ] += 1e-4 * n_top
+            self.phi0[min_idx + proton.lidx : proton.uidx] += 1e-4 * n_top
 
     def set_single_primary_particle(
         self, E, corsika_id=None, pdg_id=None, append=False
@@ -157,7 +117,7 @@ class InitialState:
 
         from scipy.linalg import solve
 
-        from MCEq.misc import getAZN, getAZN_corsika
+        from MCEq.misc import getAZN
 
         if corsika_id and pdg_id:
             raise Exception("Provide either corsika or PDG ID")
@@ -165,7 +125,11 @@ class InitialState:
         info(2, f"CORSIKA ID {corsika_id}, PDG ID {pdg_id}, energy {E:5.3g} GeV")
 
         if corsika_id:
-            n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
+            # CORSIKA codes nuclei as 100 * A + Z; 14 is the proton
+            n_nucleons, n_protons = (
+                (1, 1) if corsika_id == 14 else divmod(corsika_id, 100)
+            )
+            n_neutrons = n_nucleons - n_protons
         elif pdg_id:
             n_nucleons, n_protons, n_neutrons = getAZN(pdg_id)
 
@@ -175,8 +139,6 @@ class InitialState:
             raise Exception("energy per nucleon too low for primary " + str(corsika_id))
 
         if append is False:
-            # Store ``False`` explicitly so the replay does not silently
-            # default to overwriting on the first call of an append chain.
             self._restore_initial_condition = [
                 ("set_single_primary_particle", E, corsika_id, pdg_id, False)
             ]
@@ -256,15 +218,12 @@ class InitialState:
     def _deposit_for_stencil(self, En, n_nucleons, n_protons, n_neutrons, pdg_id):
         """Deposit a single particle for stencil-averaged tables, if they apply.
 
-        Under stencil-averaged yield tables (:mod:`MCEq.species.bin_average`)
-        the cell contents around a bin are read as a smooth density, and the
-        three-bin deposition, which matches E^0..E^2 at the bin centres,
-        becomes a broad bump: the first generation near the primary energy
-        comes out low by ~5 %. The particle is then deposited on 2r + 1 bins
-        whose reconstructed density has the log-energy moments of a delta.
-        Returns False (nothing deposited) when no deposited species carries a
-        stencil mark, or when the particle sits within r bins of the grid edge,
-        where the three-bin deposition is used instead.
+        Stencil-averaged tables (:mod:`MCEq.species.bin_average`) read the
+        cells around a bin as a smooth density, so the particle is deposited
+        on 2r + 1 bins whose reconstructed density has the log-energy moments
+        of a delta. Returns False (nothing deposited) when no deposited
+        species carries a stencil mark, or within r bins of the grid edge,
+        where the three-bin deposition is used.
         """
         from MCEq.species.bin_average import delta_deposition
 
@@ -427,11 +386,7 @@ class InitialState:
             self._restore_initial_condition = saved_restore
 
     def resize(self, restore_list, replay):
-        """Reallocate ``phi0`` to the current system size and replay.
-
-        The caller zeroes its own solution vector, then passes the
-        recorded method names and the replay callback.
-        """
+        """Reallocate ``phi0`` and call ``replay(name, args)`` per recorded entry."""
         self.phi0 = np.zeros(self._system.pman.dim_states)
         if len(restore_list) > 0:
             for con in restore_list:

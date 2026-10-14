@@ -1,4 +1,4 @@
-"""Atmospheres read from tabulated data rather than a parameterisation."""
+"""Atmospheres interpolated from tabulated (AIRS satellite) data."""
 
 from os.path import join
 
@@ -31,10 +31,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         self.extrapolate = extrapolate
 
-        # Copied per instance, not aliased: ``month2doy`` is a plain public
-        # attribute, so binding the shared module table here would make
-        # ``atm.month2doy["June"] = ...`` retune the day-of-year map for every
-        # MSIS object in the process.
+        # Per-instance copy, so edits do not change the shared module table.
         self.month2doy = dict(MONTH_TO_DAY_OF_YEAR)
 
         self.season = season
@@ -48,7 +45,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
           location (str): supported is only "SouthPole"
           doy (int): Day Of Year
         """
-        # from time import strptime
         from os import path
 
         from matplotlib.dates import datestr2num, num2date
@@ -79,16 +75,10 @@ class AIRSAtmosphere(EarthsAtmosphere):
 
         for d_key, fname in files:
             fname = data_path + "tables/" + fname
-            # tabf = open(fname).read()
 
             tab = np.loadtxt(
                 fname, converters={0: bytespdate2num}, usecols=[0] + list(range(2, 27))
             )
-            # with open(fname, 'r') as f:
-            #     comline = f.readline()
-            # p_levels = [
-            #     float(s.strip()) for s in comline.split(' ')[3:] if s != ''
-            # ][min_press_idx:]
             dates = num2date(tab[:, 0])
             for di, date in enumerate(dates):
                 if date.month == 6 and date.day == 1:
@@ -105,9 +95,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
         self.dates = {}
         dates = data_collection["alti"][0]
 
-        # Function-local so that `tabulated` -> `msis00` stays a deferred
-        # edge: importing an AIRS atmosphere must not drag in the MSIS00
-        # backend, and the registry resolves the two independently.
         from MCEq.environment.msis00 import MSIS00Atmosphere
 
         msis = MSIS00Atmosphere(location, "January")
@@ -175,7 +162,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
     def set_season(self, month):
         self.season = month
         self._set_doy(self.month2doy[month])
-        self.season = month
 
     def set_IC79_day(self, IC79_day):
         import datetime
