@@ -2466,11 +2466,12 @@ def test_cuda_diag_factors_f64diag_accuracy():
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 @pytest.mark.parametrize("fp", [64, 32])
-@pytest.mark.parametrize("same_pattern", [True, False])
-def test_cuda_apply_off_mode_blocks(same_pattern, fp):
-    """The SpMM kernel against scipy on ``n_k`` diagonal blocks, with one
-    pattern kept once or a pattern per block (every row its own), over a
-    partial tile, K across the lane maps, one ``ri`` and one per lane."""
+@pytest.mark.parametrize("pattern", ["same", "near", "distinct"])
+def test_cuda_apply_off_mode_blocks(pattern, fp):
+    """The SpMM kernel against scipy on ``n_k`` diagonal blocks: one pattern,
+    patterns that differ by a few entries (shared as their union, as the
+    Legendre modes), or a pattern per block (full CSR), over a partial tile,
+    K across the lane maps, one ``ri`` and one per lane."""
     from types import SimpleNamespace
 
     import cupy as cp
@@ -2484,12 +2485,13 @@ def test_cuda_apply_off_mode_blocks(same_pattern, fp):
     def blocks(density):
         base = sp.random(N, N, density=density, random_state=rng, format="csr")
         out = []
-        for _ in range(n_k):
-            b = (
-                base.copy()
-                if same_pattern
-                else sp.random(N, N, density=density, random_state=rng, format="csr")
-            )
+        for k in range(n_k):
+            if pattern == "distinct":
+                b = sp.random(N, N, density=density, random_state=rng, format="csr")
+            else:
+                b = base.copy()
+                if pattern == "near" and k == 0:  # mode 0 carries a few extras
+                    b = (b + sp.random(N, N, density=1e-4, random_state=rng)).tocsr()
             b.data = rng.standard_normal(b.nnz)
             out.append(b)
         return sp.block_diag(out, format="csr")
@@ -2499,7 +2501,7 @@ def test_cuda_apply_off_mode_blocks(same_pattern, fp):
     dev = cu.CudaOperator(
         A, B, np.zeros(dim), np.zeros(dim), config.cuda_gpu_id, fp, n_k
     )
-    assert dev.n_blk == (n_k if same_pattern else 1)
+    assert dev.n_blk == (1 if pattern == "distinct" else n_k)
     be = cu.CudaBackend(
         dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
     )

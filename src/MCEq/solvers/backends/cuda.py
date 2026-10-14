@@ -270,37 +270,58 @@ def _spmm_kernel(cp, dtype, K, row_nnz=None, kernel="csr_spmm_off"):
     return _SPMM_KERNELS[key]
 
 
+#: Largest growth of the shared pattern over the fullest block, see
+#: :func:`_block_pattern`.
+_PATTERN_SLACK = 0.05
+
+
 def _block_pattern(csr, n_blk):
-    """``(indptr, indices)`` of the first diagonal block when ``csr`` is
-    ``n_blk`` diagonal blocks with one sparsity pattern, else None."""
+    """``(indptr, indices, data)`` of one sparsity pattern shared by the
+    ``n_blk`` diagonal blocks of ``csr``, with every block's values on it
+    (block ``b`` at ``data[b * nnz:]``), or None.
+
+    The pattern is the union of the blocks' patterns, explicit zeros where a
+    block lacks an entry: the 2D modes nearly share one (the Legendre
+    operators differ by a few residual entries at l = 0). None when ``csr``
+    has entries off the diagonal blocks or the union exceeds the fullest
+    block by more than :data:`_PATTERN_SLACK`; the full CSR is then kept.
+    """
     dim = csr.shape[0]
     N = dim // n_blk
     if n_blk < 2 or N * n_blk != dim:
         return None
-    ip, idx = csr.indptr, csr.indices
-    nnz = int(ip[N])
-    if int(ip[-1]) != n_blk * nnz:
+    blocks = [
+        csr[b * N : (b + 1) * N, b * N : (b + 1) * N].tocsr() for b in range(n_blk)
+    ]
+    if sum(blk.nnz for blk in blocks) != csr.nnz:
         return None
-    for b in range(1, n_blk):
-        if not (
-            np.array_equal(ip[b * N : (b + 1) * N] - b * nnz, ip[:N])
-            and np.array_equal(idx[b * nnz : (b + 1) * nnz] - b * N, idx[:nnz])
-        ):
-            return None
-    return ip[: N + 1], idx[:nnz]
+    keys = [
+        np.repeat(np.arange(N, dtype=np.int64), np.diff(blk.indptr)) * N + blk.indices
+        for blk in blocks
+    ]
+    union = np.unique(np.concatenate(keys))
+    if union.size > (1 + _PATTERN_SLACK) * max(blk.nnz for blk in blocks):
+        return None
+    data = np.zeros((n_blk, union.size), dtype=csr.dtype)
+    for b, (blk, key) in enumerate(zip(blocks, keys)):
+        data[b, np.searchsorted(union, key)] = blk.data
+    indptr = np.searchsorted(union // N, np.arange(N + 1)).astype(np.int64)
+    return indptr, union % N, data.ravel()
 
 
 class _DeviceCsr:
     """The three arrays of a CSR matrix on the device, ``data`` in the state
-    dtype; with a ``pattern`` of :func:`_block_pattern` only the first
-    block's ``indptr`` and ``indices``. ``nnz`` is per block."""
+    dtype; with a ``pattern`` of :func:`_block_pattern` the shared pattern
+    once and every block's values on it. ``nnz`` is per block."""
 
     def __init__(self, cp, csr, dtype, pattern=None):
-        indptr, indices = (csr.indptr, csr.indices) if pattern is None else pattern
+        indptr, indices, data = (
+            (csr.indptr, csr.indices, csr.data) if pattern is None else pattern
+        )
         self.nnz = int(indices.size)
         self.indptr = cp.asarray(indptr, dtype=cp.int32)
         self.indices = cp.asarray(indices, dtype=cp.int32)
-        self.data = cp.asarray(csr.data, dtype=dtype)
+        self.data = cp.asarray(data, dtype=dtype)
 
 
 # --------------------------------------------------------------------
@@ -384,8 +405,8 @@ class CudaOperator:
     of ``fp_precision`` (32 or 64), and the diagonals in fp64 whatever the
     precision (see
     :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). When both
-    off-diagonal matrices are ``n_k`` diagonal blocks with one pattern each,
-    the patterns are kept once (``n_blk = n_k``). The state and scratch
+    off-diagonal matrices are ``n_k`` diagonal blocks whose patterns (nearly)
+    agree, one shared pattern is kept (``n_blk = n_k``, :func:`_block_pattern`). The state and scratch
     buffers are allocated per solve by :class:`CudaBackend`; one device
     operator serves every K.
     """
