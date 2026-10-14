@@ -18,7 +18,7 @@ from MCEq.ddm_utils import (
     fmteb,
 )
 from MCEq.misc import info
-from MCEq.species.constants import _pdata
+from MCEq.particlemanager import _pdata
 
 #: Spline file read when no filename is given, looked up in ``config.data_dir``.
 _DEFAULT_DDM_FILE = "DDM_1.0.npy"

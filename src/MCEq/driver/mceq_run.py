@@ -250,10 +250,6 @@ class MCEqRun:
         return self._system.pman
 
     @property
-    def _particle_list(self):
-        return self._system._particle_list
-
-    @property
     def _energy_grid(self):
         return self._system._energy_grid
 

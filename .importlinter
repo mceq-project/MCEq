@@ -6,7 +6,7 @@ root_packages =
     mceq_config
 
 [importlinter:contract:layers]
-name = core -> driver -> solvers -> operators -> species -> data -> misc -> config
+name = core -> driver -> solvers -> operators -> particlemanager -> data -> misc -> config
 type = layers
 containers =
     MCEq
@@ -15,8 +15,8 @@ layers =
     driver
     solvers
     operators
-    species
-    data
+    particlemanager
+    bin_average | data
     misc
     config
 
@@ -30,7 +30,7 @@ forbidden_modules =
     MCEq.driver
     MCEq.solvers
     MCEq.operators
-    MCEq.species
+    MCEq.particlemanager
     MCEq.data
 
 [importlinter:contract:legacy]

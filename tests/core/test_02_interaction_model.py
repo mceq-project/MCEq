@@ -33,34 +33,27 @@ def test_set_theta_deg(mceq_sib21, theta, nmu):
     assert nmu_sol == approx(nmu, abs=1e-8)
 
 
-# Particle counts on the v2 CI data; e+- are not in the system without
-# enable_em.
-testdata_model = [
-    ["QGSJETII04", 36],
-    ["SIBYLL21", 40],
-]
-ids_model = [f"{model[0]}" for model in testdata_model]
+def _expected_species(run):
+    from MCEq.particlemanager import EM_PDG_IDS
+
+    tables = run._interactions.particles + run._decays.particles
+    return {p for p in tables if p[0] not in EM_PDG_IDS}
 
 
-@pytest.mark.parametrize(["model", "n"], testdata_model, ids=ids_model)
-def test_set_interaction_model_model(mceq_sib21, model, n):
+@pytest.mark.parametrize("model", ["QGSJETII04", "SIBYLL21"])
+def test_set_interaction_model_model(mceq_sib21, model):
+    """The species are those of the tables, without e+- and photons (no enable_em)."""
     mceq_sib21.set_interaction_model(model)
-    n_particles = len(mceq_sib21._particle_list)
-    assert n_particles == n
+    assert set(mceq_sib21.pman.pdg_id_list) == _expected_species(mceq_sib21)
+    assert len(mceq_sib21.pman.pdg_id_list) == 22
 
 
 def test_set_interaction_model_update_particle_list(mceq_sib21):
-    # Establish a known baseline by re-running update_particle_list under the
-    # current (autouse-restored) config; prior parametrized model switches in
-    # the session leave _particle_list in an unrelated state otherwise.
     mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
-    n_particles_sib = len(mceq_sib21._particle_list)
+    species_sib = list(mceq_sib21.pman.pdg_id_list)
 
     mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=True)
-    n_particles = len(mceq_sib21._particle_list)
-    assert n_particles == 36
+    assert set(mceq_sib21.pman.pdg_id_list) == _expected_species(mceq_sib21)
 
     mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=True)
-    n_particles_s = len(mceq_sib21._particle_list)
-
-    assert n_particles_s == n_particles_sib
+    assert mceq_sib21.pman.pdg_id_list == species_sib

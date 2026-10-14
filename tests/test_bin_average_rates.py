@@ -1,4 +1,4 @@
-"""Bin-averaged rates for stencil-averaged databases (``MCEq.species.bin_average``).
+"""Bin-averaged rates for stencil-averaged databases (``MCEq.bin_average``).
 
 A database whose tables act on the parent count density reconstructed by the
 quartic neighbour stencil marks the parents it averaged; their decay and
@@ -12,11 +12,10 @@ import h5py
 import numpy as np
 import pytest
 
-from MCEq import config
+from MCEq import bin_average, config
 from MCEq.data.hdf5_backend import HDF5Backend  # noqa: F401  (import check)
 from MCEq.misc import energy_grid
-from MCEq.species import bin_average
-from MCEq.species.particle import MCEqParticle
+from MCEq.particlemanager import MCEqParticle
 
 H = 0.1
 E_BINS = np.logspace(-1, 6, 71)

@@ -21,16 +21,6 @@ from pathlib import Path
 IMPORT_TABLE = [
     ("MCEq.core.MCEqRun", "MCEq.driver.mceq_run.MCEqRun", "facade"),
     (
-        "MCEq.particlemanager.ParticleManager",
-        "MCEq.species.manager.ParticleManager",
-        "keep",
-    ),
-    (
-        "MCEq.particlemanager.MCEqParticle",
-        "MCEq.species.particle.MCEqParticle",
-        "shim",
-    ),
-    (
         "MCEq.geometry.density_profiles",
         "MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)",
         "keep",

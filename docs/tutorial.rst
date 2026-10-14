@@ -43,7 +43,7 @@ The spectrum of each particle species at the surface can be retrieved as numpy a
 
     mceq.get_solution('mu+')
 
-List available particle species managed by :mod:`MCEq.species`::
+List available particle species managed by :mod:`MCEq.particlemanager`::
 
     mceq.pman.print_particle_tables(0)
 

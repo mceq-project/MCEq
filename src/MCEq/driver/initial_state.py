@@ -3,8 +3,8 @@
 import numpy as np
 
 from MCEq import config
+from MCEq.bin_average import delta_deposition
 from MCEq.misc import getAZN, info
-from MCEq.species.bin_average import delta_deposition
 
 
 class InitialState:
@@ -107,7 +107,7 @@ class InitialState:
         deposition: three bins matching E^0..E^2 at the bin centres, or, for
         species whose tables the database marks as stencil-averaged, 2r + 1
         bins whose reconstructed density has the moments of a delta
-        (:func:`MCEq.species.bin_average.delta_deposition`).
+        (:func:`MCEq.bin_average.delta_deposition`).
 
         Args:
           E (float): kinetic energy of a nucleus in GeV
@@ -218,7 +218,7 @@ class InitialState:
     def _deposit_for_stencil(self, En, n_nucleons, n_protons, n_neutrons, pdg_id):
         """Deposit a single particle for stencil-averaged tables, if they apply.
 
-        Stencil-averaged tables (:mod:`MCEq.species.bin_average`) read the
+        Stencil-averaged tables (:mod:`MCEq.bin_average`) read the
         cells around a bin as a smooth density, so the particle is deposited
         on 2r + 1 bins whose reconstructed density has the log-energy moments
         of a delta. Returns False (nothing deposited) when no deposited

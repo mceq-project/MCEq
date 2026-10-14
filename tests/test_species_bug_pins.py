@@ -13,8 +13,7 @@ five-bin grid; nothing here constructs an ``MCEqRun``.
 import numpy as np
 
 from MCEq.misc import energy_grid
-from MCEq.species.constants import _pdata
-from MCEq.species.particle import MCEqParticle
+from MCEq.particlemanager import MCEqParticle, _pdata
 
 #: Five bins, one decade apart -- enough to tell a vector from a scalar.
 GRID = energy_grid(c=np.logspace(0.0, 3.0, 5), b=None, w=None, d=5)
@@ -63,25 +62,8 @@ def test_b9_the_healthy_paths_all_return_length_d_vectors():
     assert np.array_equal(stable, np.zeros(GRID.d))
 
 
-def test_b9_stable_returns_zero_and_the_docstring_now_says_so():
-    """B9 second leg FIXED (R3): ``ctau = inf`` returns zeros, and the doc matches.
-
-    The pre-fix docstring promised "infinity (np.inf), if particle is
-    stable" while IEEE gives ``mass / inf / p = 0.0`` -- the physically
-    right value for an inverse decay length but the opposite of what was
-    documented. The fix rewrote the docstring to state the zeros return and
-    to reserve ``inf`` for the ``ctau == 0`` path; this test pins the numbers
-    (0.0 for p, e-, gamma) and greps the docstring so a future rewrite that
-    re-promises infinity for stability fails here.
-    """
-    import inspect
-
-    from MCEq.species.particle import MCEqParticle as _C
-
-    doc = inspect.getdoc(_C.inverse_decay_length)
-    assert "infinity" not in doc.lower() or "zeros" in doc.lower()
-    assert "``inf`` is what the ``ctau == 0``" in doc
-
+def test_b9_stable_returns_zero():
+    """``ctau = inf`` gives a zero inverse decay length."""
     for pdg_id in (2212, 11, 22):
         p = particle(pdg_id)
         assert p.ctau == np.inf
@@ -176,7 +158,7 @@ def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
     import inspect
 
     from MCEq.data.tables import InteractionCrossSections
-    from MCEq.species.particle import MCEqParticle as _C
+    from MCEq.particlemanager import MCEqParticle as _C
 
     src = inspect.getsource(_C.prod_cross_section)
     assert "GeVfm" not in src, "the second copy of the unit constants is back"

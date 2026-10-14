@@ -31,8 +31,6 @@ the rest keep working under both spellings.
 | `MCEq.geometry.registry` | `MCEq.environment.registry` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.hankel` | `MCEq.operators.legendre.theta_density` | removed with the Hankel modes; the Legendre readout replaces it |
 | `MCEq.operator_assembly` | `MCEq.operators.compiled` | removed at 2.0 (public-usage census: no users) |
-| `MCEq.particlemanager.MCEqParticle` | `MCEq.species.particle.MCEqParticle` | importable under both names |
-| `MCEq.particlemanager.ParticleManager` | `MCEq.species.manager.ParticleManager` | kept at 2.0 (public-usage census) |
 | `MCEq.secant` | `MCEq.operators.secant` | removed at 2.0 (public-usage census: no users) |
 | `MCEq.spacc` | `MCEq.solvers._kernels.spacc` | old name gone (private module) |
 | `mceq_config` | `MCEq.config` | permanent |

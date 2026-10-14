@@ -21,7 +21,7 @@ Submodules
   ddm
   operators
   solvers
-  species
+  particlemanager
 
 
 Reference/API

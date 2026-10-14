@@ -1,5 +1,6 @@
 """ParticleManager lookups and index maps."""
 
+import numpy as np
 import pytest
 
 
@@ -64,3 +65,44 @@ def test_set_interaction_model_reloads_for_a_new_parent_list():
     run.set_interaction_model("SIBYLL23E")
     run.set_interaction_model("SIBYLL23E", particle_list=nucleons, force=True)
     assert sorted(run._interactions.parents) == sorted(nucleons)
+
+
+def _flux(run, name):
+    run.solve()
+    return run.get_solution(name, 0).copy()
+
+
+def test_reload_keeping_the_species_does_not_duplicate_tracking(mceq_sib21):
+    """``update_particle_list=False`` once doubled every interaction-tracked flux."""
+    before = _flux(mceq_sib21, "prres_numu")
+    mceq_sib21.set_interaction_model("SIBYLL21", update_particle_list=False, force=True)
+    for p in mceq_sib21.pman.all_particles:
+        assert len(p.hadr_secondaries) == len(set(map(id, p.hadr_secondaries)))
+    assert np.array_equal(_flux(mceq_sib21, "prres_numu"), before)
+
+
+def test_reload_keeping_the_species_switches_the_model(mceq_sib21):
+    """The tracked channels follow the new model instead of raising."""
+    try:
+        mceq_sib21.set_interaction_model("QGSJETII04", update_particle_list=False)
+        assert mceq_sib21._interactions.iam == "QGSJETII04"
+        assert np.all(np.isfinite(_flux(mceq_sib21, "prres_numu")))
+    finally:
+        mceq_sib21.set_interaction_model("SIBYLL21", force=True)
+
+
+def test_a_tracked_hadron_adds_no_real_particles(mceq_sib21):
+    """A tracking particle produces only itself, so the untracked fluxes do not move."""
+    pi_plus = _flux(mceq_sib21, "pi+")
+    pman = mceq_sib21.pman
+    try:
+        pman.add_tracking_particle([(2212, 0)], (2212, 0), "p_from_p", True)
+        mceq_sib21.set_interaction_model("SIBYLL21", force=True)
+        tracked = mceq_sib21.pman["p_from_p"]
+        assert list(tracked.hadr_yields) == [tracked]
+        assert np.array_equal(_flux(mceq_sib21, "pi+"), pi_plus)
+    finally:
+        mceq_sib21.pman._tracking_requested = [
+            r for r in mceq_sib21.pman._tracking_requested if r[2] != "p_from_p"
+        ]
+        mceq_sib21.set_interaction_model("SIBYLL21", force=True)

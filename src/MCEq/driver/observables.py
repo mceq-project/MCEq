@@ -107,7 +107,7 @@ def z_factor(
     if not proj.is_projectile:
         raise Exception(f"{proj.name} is not a projectile particle.")
     info(10, f"Computing e-dependent Zfactor for {proj.name} -> {sec.name}")
-    if not proj.is_secondary(sec):
+    if sec not in proj.hadr_yields:
         raise Exception(f"{sec.name} is not a secondary particle of {proj.name}.")
 
     p_flux, n_flux = run.pmodel.p_and_n_flux(run.e_grid)[1:]
@@ -163,7 +163,7 @@ def decay_z_factor(run, parent_pdg, child_pdg, gamma=None):
         10,
         f"Computing e-dependent decay Zfactor for {proj.name} -> {sec.name}",
     )
-    if not proj.is_child(sec):
+    if sec not in proj.decay_dists:
         raise Exception(f"{sec.name} is not a a child particle of {proj.name}.")
 
     e = np.asarray(run.e_grid, dtype=np.float64)

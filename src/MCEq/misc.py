@@ -101,31 +101,6 @@ def print_in_rows(min_dbg_level, str_list, n_cols=5):
     print(print_str.strip()[:-1])
 
 
-#: Photons, electrons and pi0 -- the species that exist only as part of the
-#: electromagnetic cascade. pi0 decays into photons and nothing else.
-EM_PDG_IDS = (
-    22,
-    11,
-    -11,
-    111,
-)  # anfe: funny to find this in the middle of the misc module
-
-
-def strip_em_species(
-    particle_list,
-):  # anfe: this function is used twice, but it should be handled rather not by stripping the EM species later. The list should be build without EM species if EM is not switched on. So remove this module and work carefully the disabled em logic into particle manager.
-    """Leave the electromagnetic species out unless the cascade is on.
-
-    Without EM interactions photons and electrons have no transport, and pi0
-    has nothing to decay into; energy going into them leaves the cascade. The
-    databases carry the channels either way; this decides only what the
-    solver propagates.
-    """
-    if config.enable_em:
-        return particle_list
-    return [p for p in particle_list if p[0] not in EM_PDG_IDS]
-
-
 def getAZN(pdg_id):
     """Mass number A, charge Z and neutron number N of a nucleon or nucleus.
 

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.interpolate import splrep
 
-from MCEq.species.constants import _pdata
+from MCEq.particlemanager import _pdata
 
 # DDMEntry
 

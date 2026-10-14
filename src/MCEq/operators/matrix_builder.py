@@ -32,10 +32,9 @@ from itertools import product
 import numpy as np
 import scipy.sparse as sp
 
-from MCEq import config
+from MCEq import bin_average, config
 from MCEq.misc import info
 from MCEq.operators import loss_stencil, scattering
-from MCEq.species import bin_average
 
 #: Stiffness threshold of the species-adaptive upwind layer, see
 #: :meth:`MatrixBuilder._upwind_rows_for`. The row count covers every row whose
@@ -471,12 +470,12 @@ class MatrixBuilder:
             info(40, reclev * "\t", "following to", d.name)
             if not d.is_resonance:
                 dprop = self._zero_mat()
-                p._assign_decay_dist(d, dprop)
+                dprop[:, :] = p.decay_dists[d][:, :]
                 propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
                 info(20, reclev * "\t", "\t terminating at", d.name)
             else:
                 dres = self._zero_mat()
-                p._assign_decay_dist(d, dres)
+                dres[:, :] = p.decay_dists[d][:, :]
                 self._follow_chains(d, dres.dot(pprod_mat), p_orig, propmat, reclev + 1)
 
     def _fill_matrices(self, skip_decay_matrix=False):
@@ -508,7 +507,7 @@ class MatrixBuilder:
                 continue
             for s in p.hadr_secondaries:
                 cmat = self._zero_mat()
-                p._assign_hadr_dist(s, cmat)
+                cmat[:, :] = p.hadr_yields[s][:, :]
                 if not s.is_resonance:
                     # s has its own state-vector slot.
                     self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
