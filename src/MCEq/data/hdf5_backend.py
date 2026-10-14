@@ -74,21 +74,23 @@ class HDF5Backend:
 
     def scattering_rate_table(self):
         """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
-        Coulomb rates of the medium, cut to the run's energy window, or None.
+        Coulomb rates of the medium cut to the energy window, or None.
 
-        Read from ``material_scattering/<medium>/screened_coulomb_rates``
-        (``(n_k, n_e)`` on the file's full grid); the attributes record the
-        inputs, which :func:`MCEq.operators.scattering.mode_rates` checks.
+        ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
+        on the file's grid, its inputs as attributes for ``scattering.mode_rates``
+        to check), read once per medium: rebuilds then reopen nothing.
         """
-        path = f"material_scattering/{self.medium}/screened_coulomb_rates"
-        if not self._had.has(path):
-            return None
-        rates, attrs = self._had.read_table(path)
-        common = self._had.attrs("common")
-        l_grid = np.asarray(common.get("k_grid", []), dtype=float)
-        if np.shape(rates) != (l_grid.size, np.size(common["e_grid"])):
-            return None
-        return rates[:, self._cuts], l_grid, self._energy_grid.c, attrs
+        cache = self.__dict__.setdefault("_scattering_rate_tables", {})
+        if self.medium not in cache:
+            path = f"material_scattering/{self.medium}/screened_coulomb_rates"
+            got, cache[self.medium] = self._had.read_optional_table(path), None
+            if got is not None:
+                rates, attrs, common = got
+                l_grid = np.asarray(common.get("k_grid", []), dtype=float)
+                if np.shape(rates) == (l_grid.size, np.size(common["e_grid"])):
+                    cut = rates[:, self._cuts]
+                    cache[self.medium] = cut, l_grid, self._energy_grid.c, attrs
+        return cache[self.medium]
 
     def __init__(
         self,

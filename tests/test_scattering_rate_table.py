@@ -76,7 +76,12 @@ def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
     backend._had, backend.medium = HDF5Store(path), "air"
     backend._cuts = slice(3, 9)
     backend._energy_grid = EnergyGrid(e_full[3:9], None, None, 6)
+    reads = []
+    read = backend._had.read_optional_table
+    backend._had.read_optional_table = lambda *a: reads.append(a) or read(*a)
     rates, l_grid, e_grid, attrs = backend.scattering_rate_table()
+    assert backend.scattering_rate_table()[0] is rates  # kept, not reread
+    assert len(reads) == 1
     assert np.array_equal(rates, table[:, 3:9])
     assert np.array_equal(l_grid, k_grid) and np.array_equal(e_grid, e_full[3:9])
     assert attrs["finite_nuclei"]
