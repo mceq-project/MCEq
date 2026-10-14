@@ -364,5 +364,7 @@ def build_phi0_with_cutoff(
         phi0[p.lidx + min_idx : p.uidx, k] = 1e-4 * p_flux_2d[min_idx:, k]
         if has_neutrons:
             phi0[nproj.lidx + min_idx : nproj.uidx, k] = 1e-4 * n_flux_2d[min_idx:, k]
+        else:  # neutrons not propagated: their flux goes onto protons
+            phi0[p.lidx + min_idx : p.uidx, k] += 1e-4 * n_flux_2d[min_idx:, k]
 
     return phi0
