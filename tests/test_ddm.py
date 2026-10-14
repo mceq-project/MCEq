@@ -332,3 +332,12 @@ def test_calc_zfactor_and_error2(data_driven_model):
 
     # Check zerror result
     assert np.allclose(0.010476966, z_error)
+
+
+def test_default_spline_file_follows_data_dir(tmp_path, monkeypatch):
+    from MCEq import config
+    from MCEq.models.ddm.ddm import DDMSplineDB
+
+    monkeypatch.setattr(config, "data_dir", tmp_path)
+    with pytest.raises(FileNotFoundError, match=str(tmp_path)):
+        DDMSplineDB()

@@ -268,11 +268,15 @@ def test_repeat_load_on_one_instance_replaces_instead_of_appending():
     holds exactly the restricted channel set, nothing from the first load
     survives, and the class default is still untouched.
     """
+    import pathlib
+
+    from MCEq import config
     from MCEq.models.ddm.ddm import _DEFAULT_DDM_FILE, DDMSplineDB
 
     db = DDMSplineDB()
     assert len(db._ddm_splines) > 1, "the full load should hold many channels"
-    db._load_from_file(_DEFAULT_DDM_FILE, [(2212, 211)], [])
+    fname = str(pathlib.Path(config.data_dir) / _DEFAULT_DDM_FILE)
+    db._load_from_file(fname, [(2212, 211)], [])
     assert set(db._ddm_splines) == {db._mk_channel(2212, 211)}
     assert DDMSplineDB._ddm_splines == {}
 

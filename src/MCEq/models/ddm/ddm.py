@@ -10,16 +10,14 @@ import numpy.typing as npt
 from jacobi import propagate
 from scipy.integrate import quad
 
-from MCEq import base_path
+from MCEq import config
 from MCEq.misc import info
 from MCEq.models.ddm import ddm_utils
 from MCEq.models.ddm.ddm_utils import _eval_spline, _generate_DDM_matrix, fmteb
 from MCEq.species.constants import _pdata
 
-#: Default DDM spline file: ``<base_path>/data/DDM_1.0.npy``, independent of
-#: ``config.data_dir``. Pass a filename to ``DDMSplineDB`` to select another
-#: file.
-_DEFAULT_DDM_FILE = str(pathlib.Path(base_path) / "data" / "DDM_1.0.npy")
+#: Spline file read when no filename is given, looked up in ``config.data_dir``.
+_DEFAULT_DDM_FILE = "DDM_1.0.npy"
 
 # isospin symmetries used in the DDM
 isospin_partners = {2212: 2112, -211: 211}
@@ -402,7 +400,7 @@ class DDMSplineDB:
 
     def __init__(
         self,
-        filename: str = _DEFAULT_DDM_FILE,
+        filename: Optional[str] = None,
         enable_channels: List[Tuple[int, int]] = [],
         exclude_projectiles: List[int] = [],
     ):
@@ -412,13 +410,16 @@ class DDMSplineDB:
         Parameters
         ----------
         filename : str, optional
-            The filename of the DDM spline data file, by default "DDM_1.0.npy".
+            The DDM spline data file, by default "DDM_1.0.npy" in
+            ``config.data_dir``.
         enable_channels : List[Tuple[int, int]], optional
             List of projectile and secondary combinations to enable,
             by default an empty list.
         exclude_projectiles : List[int], optional
             List of projectile codes to exclude, by default an empty list.
         """
+        if filename is None:
+            filename = str(pathlib.Path(config.data_dir) / _DEFAULT_DDM_FILE)
         self._load_from_file(filename, enable_channels, exclude_projectiles)
 
     def _load_from_file(
@@ -584,7 +585,7 @@ class DataDrivenModel:
 
     def __init__(
         self,
-        filename: str = _DEFAULT_DDM_FILE,
+        filename: Optional[str] = None,
         e_min: float = -1.0,
         e_max: float = -1.0,
         enable_channels: List[Tuple[int, int]] = [],
@@ -597,8 +598,8 @@ class DataDrivenModel:
         Parameters
         ----------
         filename : str, optional
-            The filename of the data file used to build the model,
-            by default "DDM_1.0.npy".
+            The DDM spline data file, by default "DDM_1.0.npy" in
+            ``config.data_dir``.
         e_min : float, optional
             The minimum energy range where DDM cross sections
             overwrite original MCEq matrices, by default 0.
