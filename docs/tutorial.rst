@@ -151,14 +151,15 @@ Directions, days/atmospheres, or a mix           :func:`MCEq.core.MCEqRun.solve_
 
 All variants work on all four backends (``numpy_etd2`` / ``cuda_etd2``
 / ``mkl_etd2`` / ``accelerate_etd2``) and return an
-:class:`MCEq.driver.results.MCEqBatchResult` with per-member named-spectrum
+:class:`MCEq.batch.MCEqBatchResult` with per-member named-spectrum
 extraction — no manual state-vector indexing::
 
     # 1) a scan over single-primary energies (e.g. a response matrix)
-    phi0 = np.stack(
-        [mceq.initial_state({"E": E, "pdg_id": 2212}) for E in E_prims],
-        axis=1)
-    res = mceq.solve_batch(phi0)
+    columns = []
+    for E in E_prims:
+        mceq.set_single_primary_particle(E, pdg_id=2212)
+        columns.append(mceq.get_initial_state())
+    res = mceq.solve_batch(np.stack(columns, axis=1))
     res.get_solution("total_mu+", k=3, mag=3)
 
     # 2) one spectrum through 12 months x 3 zenith angles

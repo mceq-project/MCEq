@@ -133,7 +133,7 @@ def test_generic_dedx_in_range_matches_table(v13_hadronic_run):
     grid.
     """
     run = v13_hadronic_run
-    bg, dedx = run._system._cont_losses.generic_table
+    bg, dedx = run._cont_losses.generic_table
     p = run.pman["pi+"]
     d = -np.asarray(p.dEdX)
     e_grid = np.asarray(run.e_grid, dtype=np.float64)

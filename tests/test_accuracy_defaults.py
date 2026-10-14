@@ -7,9 +7,14 @@ import numpy as np
 import pytest
 
 from MCEq import config
-from MCEq.driver.batch import _warn_low_energy_cuda_fp32, resolve_dtype
-from MCEq.driver.paths import calculate_integration_path
+from MCEq.batch import resolve_dtype
+from MCEq.core import MCEqRun
 from MCEq.operators.matrix_builder import MatrixBuilder
+
+
+class _Run(SimpleNamespace):
+    _calculate_integration_path = MCEqRun._calculate_integration_path
+    _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
 
 
 def path_run(monkeypatch, is_2d=False, electrons=False):
@@ -20,7 +25,7 @@ def path_run(monkeypatch, is_2d=False, electrons=False):
         dict(eps=None, dX_max=None, dX_min=0.01, fd_span=0.01),
     )
     monkeypatch.setattr(config, "em_adaptive_step", False)
-    return SimpleNamespace(
+    return _Run(
         _mceq_db=SimpleNamespace(is_2d=is_2d),
         pman=SimpleNamespace(
             all_particles=[SimpleNamespace(pdg_id=(11 if electrons else 13, 0))]
@@ -46,16 +51,16 @@ def test_automatic_settings_follow_retained_physics(
     monkeypatch, is_2d, electrons, expected
 ):
     run = path_run(monkeypatch, is_2d, electrons)
-    calculate_integration_path(run, None, "X")
+    run._calculate_integration_path(None, "X")
     assert run._cached_etd2_path_params[1:3] == expected
 
 
 def test_call_and_config_overrides_survive_automatic_selection(monkeypatch):
     run = path_run(monkeypatch, True)
     config.etd2_path["eps"] = 0.08
-    calculate_integration_path(run, None, "X", dX_max=4.0)
+    run._calculate_integration_path(None, "X", dX_max=4.0)
     assert run._cached_etd2_path_params[1:3] == (0.08, 4.0)
-    calculate_integration_path(run, None, "X", eps=0.02)
+    run._calculate_integration_path(None, "X", eps=0.02)
     assert run._cached_etd2_path_params[1:3] == (0.02, 2.0)
 
 
@@ -81,7 +86,7 @@ def test_precision_warning_is_informative(
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _warn_low_energy_cuda_fp32(run, np.dtype(dtype), {} if secant else None)
+        MCEqRun._warn_low_energy_cuda_fp32(run, np.dtype(dtype), {} if secant else None)
     assert len(caught) == int(expected)
     if expected:
         assert caught[0].category is RuntimeWarning
@@ -107,16 +112,14 @@ def test_state_precision_follows_cuda_fp_precision(
     names none; an explicit dtype wins; host kernels ignore the setting."""
     monkeypatch.setattr(config, "kernel_config", kernel)
     monkeypatch.setattr(config, "cuda_fp_precision", fp)
-    run = SimpleNamespace()
-    assert resolve_dtype(run, dtype) == np.dtype(expected)
+    assert resolve_dtype(dtype) == np.dtype(expected)
 
 
 def test_invalid_cuda_fp_precision_raises(monkeypatch):
     monkeypatch.setattr(config, "kernel_config", "cuda_etd2")
     monkeypatch.setattr(config, "cuda_fp_precision", 16)
-    run = SimpleNamespace()
     with pytest.raises(ValueError, match="cuda_fp_precision"):
-        resolve_dtype(run)
+        resolve_dtype()
 
 
 @pytest.mark.parametrize("twod", [False, True])

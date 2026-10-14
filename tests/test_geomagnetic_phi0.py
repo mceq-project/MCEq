@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from MCEq.environment.geomagnetic.cutoff import build_phi0_with_cutoff
+from MCEq.batch import build_phi0_with_cutoff
 
 
 def test_zero_cutoff_reproduces_the_primary_flux(mceq_sib21):

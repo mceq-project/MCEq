@@ -16,20 +16,12 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
 import MCEq.geometry.density_profiles as dprof
 
 
-def test_restore_initial_condition_uses_method_names(mceq_sib21):
-    """``_restore_initial_condition`` entries must hold method *names*.
-
-    Storing bound methods would close a refcycle through ``self`` and
-    keep MCEqRun instances alive across constructions (PR #163).
-    """
-    for entry in mceq_sib21._restore_initial_condition:
-        assert isinstance(entry[0], str), (
-            f"first slot must be method name string, got {type(entry[0]).__name__}"
-        )
-        # The named method must exist on the run object.
-        assert callable(getattr(mceq_sib21, entry[0], None)), (
-            f"entry references unknown method {entry[0]!r}"
-        )
+def test_initial_condition_holds_no_reference_to_the_run(mceq_sib21):
+    """A bound method in the stored initial condition would close a reference
+    cycle through the run and keep instances alive (PR #163)."""
+    for entry in mceq_sib21._initial_condition:
+        assert isinstance(entry[0], str)
+        assert not any(getattr(x, "__self__", None) is mceq_sib21 for x in entry)
 
 
 def test_ptot_grid(mceq_sib21):

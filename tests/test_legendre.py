@@ -341,7 +341,7 @@ def test_convert_to_theta_space_reads_one_species(log_theta):
     a 5-degree cone integrates to its ``a_0`` in ``theta dtheta``."""
     from types import SimpleNamespace
 
-    from MCEq.driver.results import convert_to_theta_space
+    from MCEq.core import MCEqRun
 
     n_e, kappa = 3, 1 / np.radians(5.0) ** 2
     cone = vmf_moments(kappa, L_GRID)
@@ -352,7 +352,7 @@ def test_convert_to_theta_space_reads_one_species(log_theta):
         e_grid=np.ones(n_e),
         pman=SimpleNamespace(pdg2mceqidx={(14, 0): 1}),
     )
-    l_grid, amps, theta, f = convert_to_theta_space(
+    l_grid, amps, theta, f = MCEqRun.convert_to_theta_space(
         run, [state, 0.5 * state], 14, 0, theta_res=4000, log_theta=log_theta
     )
     np.testing.assert_array_equal(l_grid, L_GRID)

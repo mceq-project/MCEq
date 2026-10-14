@@ -106,7 +106,7 @@ def test_swapping_the_atmosphere_keeps_the_current_zenith(mceq_sib21):
 
 def test_swapping_cached_atmosphere_invalidates_integration_path():
     """Equal cached angles must not retain a path from another atmosphere."""
-    from MCEq.driver.mceq_run import MCEqRun
+    from MCEq.core import MCEqRun
     from MCEq.environment.base import EarthsAtmosphere
 
     class CachedAtmosphere(EarthsAtmosphere):

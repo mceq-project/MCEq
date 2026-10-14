@@ -19,7 +19,6 @@ from pathlib import Path
 # plan); "keep" = survives 2.0 (public-usage census); "shim" = importable
 # under both names; "removed" = old name deleted at the v2.0 cull.
 IMPORT_TABLE = [
-    ("MCEq.core.MCEqRun", "MCEq.driver.mceq_run.MCEqRun", "facade"),
     (
         "MCEq.geometry.density_profiles",
         "MCEq.environment (base/corsika/isothermal/msis00/msis21/tabulated)",

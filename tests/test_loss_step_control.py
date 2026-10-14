@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from MCEq.driver.paths import continuous_loss_dx_cap
+from MCEq.core import MCEqRun
 from MCEq.operators.stiffness import continuous_loss_rate
 from MCEq.solvers.path import etd2_nonuniform_path
 
@@ -49,12 +49,12 @@ def test_cap_rebuilt_with_operator_and_secant():
         int_m=object(),
         _resolve_secant=lambda: sec,
     )
-    assert continuous_loss_dx_cap(run) == 0.25
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.25
     sec = {"lam": np.array([1.0, 4.0])}
-    assert continuous_loss_dx_cap(run) == 0.0625
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.0625
     bands[(0, 0)] *= 2
     run.int_m = object()
-    assert continuous_loss_dx_cap(run) == 0.03125
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.03125
 
 
 def test_path_floor_cannot_exceed_ceiling(monkeypatch):
@@ -73,7 +73,6 @@ def test_path_floor_cannot_exceed_ceiling(monkeypatch):
 
 def test_run_guard_clamps_override_and_floor_and_refreshes_settings(monkeypatch):
     from MCEq import config
-    from MCEq.driver.paths import calculate_integration_path
 
     monkeypatch.setattr(config, "X_start", 0.0)
     monkeypatch.setattr(
@@ -82,7 +81,12 @@ def test_run_guard_clamps_override_and_floor_and_refreshes_settings(monkeypatch)
         dict(eps=0.01, dX_max=20.0, dX_min=0.01, fd_span=0.01),
     )
     monkeypatch.setattr(config, "em_adaptive_step", False)
-    run = SimpleNamespace(
+
+    class _Run(SimpleNamespace):
+        _calculate_integration_path = MCEqRun._calculate_integration_path
+        _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
+
+    run = _Run(
         matrix_builder=SimpleNamespace(
             _contloss_bands={0: np.array([[-1e3, 1e3], [0.0, -1e3]])},
             _contloss_upwind_rows={0: 0},
@@ -93,11 +97,11 @@ def test_run_guard_clamps_override_and_floor_and_refreshes_settings(monkeypatch)
         integration_path=None,
         density_model=SimpleNamespace(r_X2rho=lambda x: np.ones_like(x), max_X=0.002),
     )
-    calculate_integration_path(run, None, "X", dX_max=1e4)
+    run._calculate_integration_path(None, "X", dX_max=1e4)
     assert max(run.integration_path[1]) <= 0.0005
     before = run._cached_etd2_path_params
     config.etd2_path["eps"] = 0.005
-    calculate_integration_path(run, None, "X", dX_max=1e4)
+    run._calculate_integration_path(None, "X", dX_max=1e4)
     assert run._cached_etd2_path_params != before
 
 

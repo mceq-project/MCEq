@@ -157,7 +157,7 @@ the local logarithmic variation of the inverse density,
 
 with :math:`\rho^{-1}_n` the integral mean over the step
 (:func:`~MCEq.solvers.etd2_nonuniform_path`,
-``calculate_integration_path`` of :mod:`MCEq.driver.paths`). The defaults are
+:meth:`MCEq.core.MCEqRun._calculate_integration_path`). The defaults are
 :math:`\epsilon = 0.03`, :math:`h_{\max} = 5` g/cm² for the
 one-dimensional hadron and lepton transport and :math:`\epsilon = 0.01`,
 :math:`h_{\max} = 2` g/cm² for the two-dimensional transport or retained
@@ -189,7 +189,7 @@ with :math:`\lambda_j` the eigenvalues of the :math:`\sec\theta` coupling
 of the next section (one without it):
 :func:`~MCEq.operators.stiffness.continuous_loss_rate`,
 :data:`~MCEq.operators.stiffness.LOSS_STEP_SAFETY`,
-:func:`~MCEq.driver.paths.continuous_loss_dx_cap`. The closure rows are
+:meth:`~MCEq.core.MCEqRun._continuous_loss_dx_cap`. The closure rows are
 left out because they are sized for the design depth already and their
 one-step map is bounded for any step under the diagonal-exact splitting;
 their row sums fall as :math:`1/E` and limit accuracy, not stability.

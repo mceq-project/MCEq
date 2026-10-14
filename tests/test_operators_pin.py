@@ -632,6 +632,7 @@ class _CacheStub:
     close = MCEqRun.close
 
     def __init__(self, dim=6):
+        self._mceq_db = SimpleNamespace(is_2d=False)
         self.int_m = sp.csr_matrix(_toy_matrix(dim, 0.3))
         self.dec_m = sp.csr_matrix(_toy_matrix(dim, 0.1))
 

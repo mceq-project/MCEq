@@ -15,7 +15,6 @@ Submodules
   config
   core
   data
-  driver
   environment
   misc
   ddm
