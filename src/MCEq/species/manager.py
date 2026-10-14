@@ -470,7 +470,10 @@ class ParticleManager:
 
         for pid, cid, alias, int_dec, incl_anti in self._tracking_requested:
             if pid not in self.pdg2pref:
-                info(15, "Can not restore {0}, since not in particle list.")
+                info(
+                    15,
+                    f"Can not restore {alias}: parent {pid} is not in the particle list.",
+                )
                 continue
             self.add_tracking_particle([pid], cid, alias, int_dec, incl_anti)
 
