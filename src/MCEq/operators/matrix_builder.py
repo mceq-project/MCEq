@@ -22,8 +22,8 @@ diagonal of inverse interaction / decay lengths.
 the yields of a :class:`~MCEq.particlemanager.ParticleManager`, folds
 resonances into their parents, adds the continuous-loss band and the per-mode
 muon multiple-scattering rate, and assembles the sparse matrices ``int_m`` and
-``dec_m``. ``int_m`` is also available as :attr:`MatrixBuilder.int_m_hadr` +
-:attr:`MatrixBuilder.dEdx_band`.
+``dec_m``. ``int_m`` is also kept as its two parts, :attr:`MatrixBuilder.int_m_hadr`
++ :attr:`MatrixBuilder.dEdx_band`.
 """
 
 from collections import defaultdict
@@ -64,7 +64,12 @@ class MatrixBuilder:
         self._energy_grid = self._pman._energy_grid
         self.int_m = None
         self.dec_m = None
-        self._reset_band_split()
+        #: ``int_m`` without the continuous-loss band
+        self.int_m_hadr = None
+        #: the continuous-loss band of ``int_m`` (fp64)
+        self.dEdx_band = None
+        self._contloss_bands, self._preband_blocks = {}, {}
+        self._contloss_upwind_rows = {}
         self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
@@ -94,14 +99,14 @@ class MatrixBuilder:
             f"Start filling matrices. Skip_decay_matrix = {skip_decay_matrix}",
         )
 
-        self._reset_band_split()
+        self._contloss_bands, self._preband_blocks = {}, {}
+        self._contloss_upwind_rows = {}
         self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
 
         cparts = self._pman.cascade_particles
 
         # interaction part
         # -I + C
-        self.max_lint = 0.0
         int_rates = {}
 
         for parent, child in product(cparts, cparts):
@@ -118,11 +123,6 @@ class MatrixBuilder:
                     self.C_blocks[idx][np.diag_indices(self.dim)] -= 1.0
 
             if idx in self.C_blocks:
-                # Multiply with Lambda_int and keep track of the maximum
-                # inverse interaction length across the parent species
-                self.max_lint = np.max(
-                    [self.max_lint, np.max(parent.inverse_interaction_length())]
-                )
                 self.C_blocks[idx] = bin_average.apply_rate(
                     self.C_blocks[idx], parent, "int", int_rates, config.floatlen
                 )
@@ -137,8 +137,7 @@ class MatrixBuilder:
                     ):
                         info(5, "Cont. loss for", parent.name)
                         if config.enable_cont_rad_loss:
-                            # Stash the band and the pre-band block for the
-                            # int_m_hadr / dEdx_band split.
+                            # Kept for the int_m_hadr / dEdx_band split.
                             band = self.cont_loss_operator(parent.pdg_id)
                             self._contloss_bands[idx] = band
                             self._contloss_upwind_rows[idx] = self._closure_rows_for(
@@ -151,11 +150,13 @@ class MatrixBuilder:
                                 self.C_blocks[idx] += band
 
         self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
-        self._assembly_key = self._current_assembly_key()
+        self.int_m_hadr = self._csr_from_blocks(
+            {**self.C_blocks, **self._preband_blocks}, apply_muon_scattering=True
+        )
+        self.dEdx_band = self._csr_from_bands()
         # -I + D
 
         if not skip_decay_matrix or self.dec_m is None:
-            self.max_ldec = 0.0
             dec_rates = {}
             for parent, child in product(cparts, cparts):
                 idx = (child.mceqidx, parent.mceqidx)
@@ -176,12 +177,6 @@ class MatrixBuilder:
                 if idx not in self.D_blocks:
                     info(25, parent.pdg_id[0], child.pdg_id, "not in D_blocks")
                     continue
-                # Multiply with Lambda_dec and keep track of the maximum
-                # inverse decay length across the parent species
-                self.max_ldec = max(
-                    [self.max_ldec, np.max(parent.inverse_decay_length())]
-                )
-
                 self.D_blocks[idx] = bin_average.apply_rate(
                     self.D_blocks[idx], parent, "dec", dec_rates, config.floatlen
                 )
@@ -264,11 +259,10 @@ class MatrixBuilder:
         if not str(method).startswith("expfit_low_upwind"):
             return self.op_matrix
         n_rows = self._upwind_rows_for(pdg_id)
-        if n_rows == 0 or n_rows == self._op_matrix_rows:
+        if n_rows == 0:
             return self.op_matrix
-        cached = self._adaptive_ops.get(n_rows)
-        if cached is None:
-            cached = loss_stencil.differential_operator(
+        if n_rows not in self._stencils:
+            self._stencils[n_rows] = loss_stencil.differential_operator(
                 self._energy_grid.b,
                 int(self._energy_grid.d),
                 method=method,
@@ -276,65 +270,7 @@ class MatrixBuilder:
                 low_upwind_rows=n_rows,
                 dtype=config.floatlen,
             )
-            self._adaptive_ops[n_rows] = cached
-        return cached
-
-    # ----------------------------------------------------------------------
-    # the int_m_hadr + dEdx_band split
-    # ----------------------------------------------------------------------
-
-    def _reset_band_split(self):
-        """Drop the band stashes and both assembled halves of ``int_m``."""
-        self._contloss_bands, self._preband_blocks = {}, {}
-        self._contloss_upwind_rows = {}
-        self._int_m_hadr = self._dEdx_band = self._assembly_key = None
-
-    def _current_assembly_key(self):
-        """Settings an assembly reads that the blocks do not carry: dtype and muon scattering."""
-        damping = self.is_2d and config.muon_multiple_scattering
-        return (
-            np.dtype(config.floatlen),
-            bool(damping),
-            config.muon_scattering_model if damping else None,
-            bool(config.muon_scattering_finite_nuclei) if damping else None,
-        )
-
-    def _require_live_assembly(self, name):
-        """Raise unless ``name`` would assemble into a part of the live ``int_m``."""
-        if self.int_m is None:
-            raise RuntimeError(
-                f"{name} needs construct_matrices() to have run: it is read off "
-                f"the accumulation that produces int_m."
-            )
-        current = self._current_assembly_key()
-        if current != self._assembly_key:
-            raise RuntimeError(
-                f"{name} would not be a part of the int_m in hand: (config.floatlen, "
-                f"muon damping) is now {current} and int_m was assembled at "
-                f"{self._assembly_key}. Call construct_matrices() first."
-            )
-
-    @property
-    def int_m_hadr(self):
-        """``int_m`` without the continuous-loss band, cached on first read.
-
-        ``int_m == int_m_hadr + dEdx_band`` bitwise at fp64; below fp64 the muon
-        diagonals of 2D databases differ by a few ulp (different summation order).
-        """
-        self._require_live_assembly("int_m_hadr")
-        if self._int_m_hadr is None:
-            blocks = dict(self.C_blocks)
-            blocks.update(self._preband_blocks)
-            self._int_m_hadr = self._csr_from_blocks(blocks, apply_muon_scattering=True)
-        return self._int_m_hadr
-
-    @property
-    def dEdx_band(self):
-        """The continuous-loss band of ``int_m`` (fp64), from the stashed bands; cached."""
-        self._require_live_assembly("dEdx_band")
-        if self._dEdx_band is None:
-            self._dEdx_band = self._csr_from_bands()
-        return self._dEdx_band
+        return self._stencils[n_rows]
 
     def _csr_from_bands(self):
         """fp64 CSR of the stashed loss bands at their species offsets, repeated per mode."""
@@ -516,8 +452,8 @@ class MatrixBuilder:
                     self._follow_chains(s, cmat, p, self.C_blocks, reclev=1)
 
     def _construct_differential_operator(self):
-        """Build the shared ``d/du`` operator :attr:`op_matrix` (:mod:`MCEq.operators.loss_stencil`)
-        and reset the cache of per-species variants."""
+        """Build the shared ``d/du`` operator :attr:`op_matrix`
+        (:mod:`MCEq.operators.loss_stencil`) and reset its per-species variants."""
         method = config.loss_stencil_method
         low_upwind_rows = config.loss_stencil_low_upwind_rows
         self.op_matrix = loss_stencil.differential_operator(
@@ -528,9 +464,7 @@ class MatrixBuilder:
             low_upwind_rows=low_upwind_rows,
             dtype=config.floatlen,
         )
-        # Row count of op_matrix after the clamp of differential_operator.
-        self._op_matrix_rows = min(
-            max(3, int(low_upwind_rows)), int(self._energy_grid.d) - 2
-        )
-        # Per-species variants, keyed by upwind row count.
-        self._adaptive_ops = {}
+        # Variants by upwind row count; op_matrix under its count after the
+        # clamp of differential_operator.
+        rows = min(max(3, int(low_upwind_rows)), int(self._energy_grid.d) - 2)
+        self._stencils = {rows: self.op_matrix}

@@ -169,18 +169,6 @@ def test_unknown_model_raises(monkeypatch, db):
         builder._muon_scattering_damping()
 
 
-def test_scattering_model_invalidates_split_assembly(monkeypatch):
-    builder = MatrixBuilder.__new__(MatrixBuilder)
-    builder.is_2d = True
-    monkeypatch.setattr(config, "floatlen", None)
-    monkeypatch.setattr(config, "muon_multiple_scattering", True)
-    monkeypatch.setattr(config, "muon_scattering_model", "gaussian")
-    monkeypatch.setattr(config, "muon_scattering_finite_nuclei", True)
-    old_key = builder._current_assembly_key()
-    monkeypatch.setattr(config, "muon_scattering_model", "screened-coulomb")
-    assert old_key != builder._current_assembly_key()
-
-
 # Legendre modes: Goudsmit-Saunderson rates of the Wentzel kernel.
 
 

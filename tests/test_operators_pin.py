@@ -478,51 +478,6 @@ def test_int_m_is_the_sum_of_the_hadronic_part_and_the_loss_band(mceq_sib21):
         assert canonical_csr_problems(matrix.tocsr(), name) == []
 
 
-def test_the_two_halves_are_cached_and_reuse_the_stashed_band(mceq_sib21, monkeypatch):
-    """Repeat access is the same object, and `cont_loss_operator` is not re-run.
-
-    The band arrays are stashed as the accumulation adds them, so assembling
-    ``dEdx_band`` cannot re-enter ``cont_loss_operator`` — which under
-    ``losses.average_operator`` goes through ``np.linalg.matrix_power`` and
-    which a stencil changed since the assembly would answer differently.
-    ``boom`` is what says the property is not quietly recomputing it.
-    """
-    mb = mceq_sib21.matrix_builder
-    mb._int_m_hadr = mb._dEdx_band = None  # force a fresh assembly
-
-    def boom(self, pdg_id):
-        raise AssertionError("dEdx_band recomputed the band instead of reusing it")
-
-    monkeypatch.setattr(MatrixBuilder, "cont_loss_operator", boom)
-    band, hadr = mb.dEdx_band, mb.int_m_hadr
-    assert mb.dEdx_band is band
-    assert mb.int_m_hadr is hadr
-
-
-def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch):
-    """Neither half is served against settings the live ``int_m`` was not built at.
-
-    Both are assembled on demand through ``_csr_from_blocks``, which reads
-    ``grid.dtype`` and the muon-damping flag at call time, so a global changed
-    since ``construct_matrices`` would return a half of an operator nobody
-    holds. ``floatlen`` is the trigger the 1D fixture has: the damping flag
-    reaches the assembly only when ``is_2d``, so flipping it here is genuinely
-    a no-op and the key says so.
-    """
-    mb = mceq_sib21.matrix_builder
-    assert mb.int_m_hadr is not None
-
-    monkeypatch.setattr(
-        config, "muon_multiple_scattering", not config.muon_multiple_scattering
-    )
-    assert mb.int_m_hadr is not None, "the 1D assembly does not read the damping flag"
-
-    monkeypatch.setattr(config, "floatlen", np.float32)
-    for name in ("int_m_hadr", "dEdx_band"):
-        with pytest.raises(RuntimeError, match="not be a part of the int_m in hand"):
-            getattr(mb, name)
-
-
 # ---------------------------------------------------------------------------
 # operators rebuilt on one run == a fresh MCEqRun
 # ---------------------------------------------------------------------------
