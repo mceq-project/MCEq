@@ -498,6 +498,33 @@ class MCEqParticle:
         """
         cmat[:, :] = self.decay_dists[child][:, :]
 
+    def parent_column(self, mat, eidx, kind="int"):
+        """Secondaries of this particle at the centre of bin ``eidx``.
+
+        ``kind`` is ``"int"`` for a yield table, ``"dec"`` for a decay table.
+
+        Column ``eidx`` of ``mat`` (a yield or decay table on the run grid) for
+        bin-centre tables. Stencil-averaged tables (:mod:`MCEq.species.bin_average`)
+        read neighbouring cell contents as a smooth density, so a single column
+        is not the spectrum of one parent energy; the table is applied to the
+        delta deposition at the bin centre instead, which reproduces that
+        spectrum to the stencil order (a few per cent at x -> 1 for kernels with
+        sharp kinematic edges, below a per cent elsewhere). Bins within the
+        stencil radius of the grid edge return the column.
+        """
+        r = getattr(self, "_dec_stencil" if kind == "dec" else "_int_stencil", 0)
+        mat = np.asarray(mat)
+        if not r:
+            return mat[:, eidx]
+        grid = self._energy_grid
+        try:
+            first, contents = bin_average.delta_deposition(grid.b, grid.c[eidx], r)
+        except ValueError:
+            return mat[:, eidx]
+        sl = slice(first, first + len(contents))
+        # same parent count as the column (phi_eidx = 1)
+        return mat[:, sl] @ (contents * grid.w[eidx] / grid.w[sl])
+
     def dN_dxlab(self, kin_energy, sec_pdg, verbose=True, **kwargs):
         r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close
         to ``kin_energy`` for hadron-air collisions on this projectile.
@@ -516,10 +543,10 @@ class MCEqParticle:
         en = self._energy_grid.c[eidx]
         info(10, "Nearest energy, index: ", en, eidx, condition=verbose)
 
-        m = self.hadr_yields[sec_pdg]
+        col = self.parent_column(self.hadr_yields[sec_pdg], eidx)
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+        xl_dist = en * xl_grid * col[: eidx + 1] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -539,10 +566,10 @@ class MCEqParticle:
         en = self._energy_grid.c[eidx]
         info(10, "Nearest energy, index: ", en, eidx, condition=verbose)
 
-        m = self.decay_dists[sec_pdg]
+        col = self.parent_column(self.decay_dists[sec_pdg], eidx, kind="dec")
         xl_grid = (self._energy_grid.c[: eidx + 1]) / en
 
-        xl_dist = en * xl_grid * m[: eidx + 1, eidx] / self._energy_grid.w[: eidx + 1]
+        xl_dist = en * xl_grid * col[: eidx + 1] / self._energy_grid.w[: eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -566,9 +593,9 @@ class MCEqParticle:
         en = self._energy_grid.c[eidx]
         info(10, "Nearest energy, index: ", en, eidx, condition=verbose)
 
-        m = self.hadr_yields[sec_pdg]
+        col = self.parent_column(self.hadr_yields[sec_pdg], eidx)
         ekin_grid = self._energy_grid.c
-        elab_dist = m[: eidx + 1, eidx] / self._energy_grid.w[eidx]
+        elab_dist = col[: eidx + 1] / self._energy_grid.w[eidx]
         return ekin_grid[: eidx + 1], elab_dist
 
     def _critical_energy(self):

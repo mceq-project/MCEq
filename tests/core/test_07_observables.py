@@ -129,3 +129,40 @@ def test_decay_z_factor(mceq_sib21):
     assert z.shape == mceq_sib21.e_grid.shape
     assert np.any(z > 0)
     assert not np.any(np.isnan(z))
+
+
+M_MU, M_PI = 0.1056583755, 0.13957039
+
+
+@pytest.mark.parametrize("gamma", [-2.7, -3.7])
+def test_decay_z_factor_row_matches_lipari_two_body(mceq_sib21, gamma):
+    """pi+ -> nu_mu and pi+ -> mu+ (both helicities) against Lipari's moment
+    int x^(-gamma-1) dN/dx dx of the flat two-body spectra, away from the grid
+    edges (the row needs parents above the daughter). The CI tables are
+    bin-centre tables: pi -> mu carries their known +2..5 % bias (sharp
+    kinematic edge at x = (m_mu/m_pi)^2), pi -> nu_mu does not."""
+    r = (M_MU / M_PI) ** 2
+    a = -gamma - 1.0
+    z_nu = mceq_sib21.decay_z_factor(211, 14, gamma=gamma)
+    z_mu = sum(
+        mceq_sib21.decay_z_factor((211, 0), (-13, h), gamma=gamma) for h in (-1, 1)
+    )
+    inner = slice(3, -12)
+    assert np.allclose(z_nu[inner], (1 - r) ** a / (a + 1), rtol=0.01)
+    ratio = z_mu[inner] / ((1 - r ** (a + 1)) / ((a + 1) * (1 - r)))
+    assert np.all((ratio > 1.0) & (ratio < 1.06))
+
+
+def test_thunman_z_factor_is_a_flux_weighted_row(mceq_sib21):
+    """The Thunman Z is the row against the nucleon flux: p -> pi+ between 0.01
+    and 0.2 (SIBYLL 2.1, 1-100 TeV), and equal to the explicit row sum."""
+    z = mceq_sib21.z_factor(2212, 211, definition="thunman", use_cs_scaling=True)
+    e = mceq_sib21.e_grid
+    phi = mceq_sib21.pmodel.p_and_n_flux(e)[1]
+    p = mceq_sib21.pman[2212]
+    c = np.asarray(p.hadr_yields[mceq_sib21.pman[211]], dtype=float)
+    w = phi * p.prod_cross_section()
+    i = int(np.argmin(abs(e - 1e4)))
+    assert z[i] == pytest.approx(c[i] @ w / w[i], rel=1e-12)
+    sel = (e > 1e3) & (e < 1e5)
+    assert np.all((z[sel] > 0.01) & (z[sel] < 0.2))

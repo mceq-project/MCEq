@@ -1455,6 +1455,71 @@ Two small UX warts surfaced during Task 3.1:
 Both are isolated to user-code workarounds today; neither blocks
 downstream work.
 
+## 12. Bin-averaged tables and derived observables
+
+### 12.1 Stencil-averaged tables
+
+A table column tabulated with the parent at its bin centre is a first-order
+error in the bin width for daughters near the parent energy (π → μ +2…4 %,
+diagonal yields +8 % for steep spectra). The v2 databases built with
+mceq-maintenance-tools' `bin_average` step replace each column by a fixed
+5-cell quartic stencil: the parent count density inside bin j, per unit
+ξ = log10(E/E_j)/h, is the degree-4 polynomial reproducing the cell contents
+of bins j−2…j+2, integrated against the column's within-bin moments M0…M4.
+No spectral index enters; the operator is exact to fourth order for any
+smooth parent spectrum. The database marks the parents it averaged
+(`bin_average_parents` on the decay group, `bin_average_projectiles` on each
+yield table).
+
+The counted decays and interactions are then bin integrals of r(E) φ(E), so
+for marked parents MCEq replaces diag(r) by the same stencil applied to the
+rate, R = diag(1/w) R′ diag(w) with R′_{j,j+m} = Σ_k W_{km} ∫ ξ^k r(ξ) dξ
+(`MCEq.species.bin_average.rate_operator`; decay rate m/(cτ p) exact, σ
+log-log between centres; `physics.bin_average_rates`). Databases without the
+marks are unchanged.
+
+### 12.2 Single primaries
+
+The three-bin deposition of `set_single_primary_particle` matches E^0, E^1,
+E^2 with point values at the bin centres, which is what bin-centre tables
+read. Stencil-averaged tables read the same contents as a smooth density, so
+the deposition becomes a broad bump. For marked species the particle goes on
+five bins whose reconstructed density has the log-energy moments k ≤ 4 of a
+delta at the primary energy (`delta_deposition`). A primary at a bin centre
+remains the stencil's worst case: kernels with sharp edges near x → 1 are
+reproduced to a few per cent there.
+
+### 12.3 Row and column observables, Z-factors
+
+A table C_ij (daughter bin i, parent bin j, acting on φ) can be read two ways:
+
+* **row** (fixed daughter energy, sum over parents) — the table applied to a
+  parent flux. Valid for both kinds of table; for stencil-averaged tables it
+  is exactly what they are built for.
+* **column** (fixed parent energy, sum over daughters) — the spectrum of one
+  parent energy. A column of a stencil-averaged table is an operator column,
+  not such a spectrum; `MCEqParticle.parent_column` applies the table to the
+  delta deposition instead (`dN_dxlab`, `dNdec_dxlab`, `dN_dEkin`).
+
+The published Z-factor is a row. Thunman, Ingelman & Gondolo (1996):
+
+    Z(E) = ∫_E^∞ dE′ [φ_N(E′)/φ_N(E)] [λ_N(E)/λ_N(E′)] dn(E′,E)/dE
+    → Z_i = Σ_j C_ij σ_j φ_j / (σ_i φ_i),
+
+which under Feynman scaling and φ ∝ E^−(γ+1) is the x-moment
+∫ x^(γ−1) F(x) dx (F = x dn/dx) of Lipari (1993) and Gaisser's book. MCEq 1.x
+evaluated `z_factor(definition="thunman")` with a length-one slice of the
+flux and cross-section ratios (no weighting: ~1e9 for p → π⁺) and
+`decay_z_factor` from one parent column, which did not reproduce the
+analytic two-body moment (π⁺ → ν_μ 0.357 vs 0.093). Both are rows in v2:
+`z_factor` against the nucleon flux, `decay_z_factor` against a power-law
+parent decay spectrum E^γ (`gamma`, default the primary model's nucleon
+index). On stencil-averaged tables the decay Z of π → μ and π → ν_μ matches
+the analytic moment to 1e-4 above 100 GeV (bin-centre tables: π → μ +2.2 % at
+γ = −2.7, +4.3 % at −3.7). `definition="primary_e"`, MCEq's own column
+definition with respect to the cosmic-ray energy, is unchanged on bin-centre
+tables.
+
 ## References
 
 * Cox D. A., Matthews P. C., 2002. *Exponential time differencing for
