@@ -1580,6 +1580,43 @@ def test_etd2_cuda_stable_at_high_zenith():
         config.mceq_db_fname = saved_db
 
 
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_solve_honours_cuda_fp_precision(monkeypatch):
+    """Regression: ``solve()`` ignored ``config.cuda_fp_precision`` and ran
+    every CUDA solve in fp64. At 32 the device state is fp32 and the
+    solution comes back in fp64, close to the fp64 solve."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+    from MCEq.solvers.backends import cuda as cu
+
+    states = []
+    bind = cu.CudaBackend.bind
+
+    def spy(self, *args, **kwargs):
+        out = bind(self, *args, **kwargs)
+        states.append(self._state[0].dtype)
+        return out
+
+    monkeypatch.setattr(cu.CudaBackend, "bind", spy)
+    monkeypatch.setattr(config, "kernel_config", "cuda_etd2")
+    mceq = MCEqRun(
+        interaction_model="SIBYLL23E",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
+    solutions = {}
+    for fp in (64, 32):
+        monkeypatch.setattr(config, "cuda_fp_precision", fp)
+        mceq.solve()
+        solutions[fp] = mceq._solution.copy()
+        assert mceq._solution.dtype == np.float64
+    assert states[0] == np.float64 and states[-1] == np.float32
+    ref, got = solutions[64], solutions[32]
+    mask = np.abs(ref) > 1e-6 * np.abs(ref).max()
+    assert np.max(np.abs(got[mask] - ref[mask]) / np.abs(ref[mask])) < 1e-3
+
+
 # ---------------------------------------------------------------------------
 # ETD2 on GeneralizedTarget (uniform-density profile)
 # ---------------------------------------------------------------------------
@@ -2462,6 +2499,68 @@ def test_cuda_diag_factors_f64diag_accuracy():
             f"{name}: fp64-internal diag kernel rel err {rel.max():.2e} "
             f"exceeds fp32-roundoff budget 5e-7"
         )
+
+
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+@pytest.mark.parametrize("fp,values", [(64, None), (32, None), (64, 32)])
+@pytest.mark.parametrize("pattern", ["same", "near", "distinct"])
+def test_cuda_apply_off_mode_blocks(pattern, fp, values):
+    """The SpMM kernel against scipy on ``n_k`` diagonal blocks: one pattern,
+    patterns that differ by a few entries (shared as their union, as the
+    Legendre modes), or a pattern per block (full CSR), over a partial tile,
+    K across the lane maps, one ``ri`` and one per lane."""
+    from types import SimpleNamespace
+
+    import cupy as cp
+    import scipy.sparse as sp
+
+    from MCEq.solvers.backends import cuda as cu
+
+    rng = np.random.default_rng(5)
+    n_k, N = 5, 300
+
+    def blocks(density):
+        base = sp.random(N, N, density=density, random_state=rng, format="csr")
+        out = []
+        for k in range(n_k):
+            if pattern == "distinct":
+                b = sp.random(N, N, density=density, random_state=rng, format="csr")
+            else:
+                b = base.copy()
+                if pattern == "near" and k == 0:  # mode 0 carries a few extras
+                    b = (b + sp.random(N, N, density=1e-4, random_state=rng)).tocsr()
+            b.data = rng.standard_normal(b.nnz)
+            out.append(b)
+        return sp.block_diag(out, format="csr")
+
+    A, B = blocks(0.1), blocks(0.03)
+    dim = n_k * N
+    dev = cu.CudaOperator(
+        A,
+        B,
+        np.zeros(dim),
+        np.zeros(dim),
+        config.cuda_gpu_id,
+        fp,
+        n_k,
+        operator_precision=values,
+    )
+    assert dev.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
+    assert dev.n_blk == (1 if pattern == "distinct" else n_k)
+    be = cu.CudaBackend(
+        dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
+    )
+    # fp32 values under an fp64 state: the values' rounding, no fp32 sums
+    tol = 1e-5 if fp == 32 else 1e-6 if values == 32 else 1e-13
+    for K in (1, 3, 8, 64):
+        be.bind(dim, K, False, 1)
+        x = rng.standard_normal((dim, K))
+        for ri in (np.float64(1.7), rng.uniform(0.5, 2.0, K)):
+            out = cp.empty((dim, K), dtype=be.dtype)
+            be.apply_off(be.asarray(x), out, be.asarray(ri))
+            ref = A @ x + ri * (B @ x)
+            err = np.max(np.abs(cp.asnumpy(out) - ref)) / np.max(np.abs(ref))
+            assert err < tol, f"K={K}, ri {np.shape(ri)}: rel err {err:.1e}"
 
 
 @pytest.mark.skipif(

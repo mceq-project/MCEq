@@ -79,9 +79,13 @@ def _preload_nvidia_pip_libs():
 # ``S * C`` lanes of a warp: slice ``s`` strides the row's nonzeros, column
 # group ``c`` owns ``K / C`` contiguous columns of the ``(dim, K)`` C-ordered
 # state, so a group reads a state row as one coalesced segment; the slices
-# are summed with warp shuffles. ``csr_spmm_acc`` adds one operator's
-# product to ``out`` on the same lane layout (the Legendre band).
-# :func:`_lane_map` picks ``(S, C)``.
+# are summed with warp shuffles; :func:`_lane_map` picks ``(S, C)``.
+# The operators are ``n_blk`` diagonal blocks with one sparsity pattern each
+# (the modes of a 2D operator, else ``n_blk = 1``), stored once.
+# Groups walk tiles of ``_SPMM_TILE`` pattern rows through every block in
+# turn, so a tile's indices are read from cache after the first block.
+# ``csr_spmm_acc`` adds one operator's product to ``out`` on the same lane
+# layout (the Legendre continuous-loss band).
 # --------------------------------------------------------------------
 _CSR_SPMM_SRC = r"""
 template <typename T, int KC>
@@ -112,11 +116,12 @@ __device__ __forceinline__ void load_chunk(const T* __restrict__ p, T (&v)[KC])
 }
 
 // acc[i] = sum over the row's nonzeros of data[j] * x[indices[j], c*KC + i],
-// summed over the S slices into the lanes with s == 0 (lane < C).
-template <typename T, int K, int S, int C>
+// summed over the S slices into the lanes with s == 0 (lane < C). The values
+// are read as V and widened to the state type T before the product.
+template <typename T, typename V, int K, int S, int C>
 __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
                                         const int* __restrict__ indices,
-                                        const T* __restrict__ data,
+                                        const V* __restrict__ data,
                                         const T* __restrict__ x,
                                         const int row, const bool active,
                                         const int lane, T (&acc)[K / C])
@@ -130,7 +135,7 @@ __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
     T v[KC];
     for (int j = start + s; j < end; j += S) {
         load_chunk<T, KC>(x + (size_t)indices[j] * K + c * KC, v);
-        const T a = data[j];
+        const T a = T(data[j]);
         #pragma unroll
         for (int i = 0; i < KC; ++i) acc[i] += a * v[i];
     }
@@ -142,43 +147,50 @@ __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
     }
 }
 
-// y = A x + ri B x over (n_rows, K) C-ordered x and y; ri is read as
-// ri[k * ri_stride]: stride 0 for one shared value, 1 for one per lane.
-// Every lane of a warp reaches the shuffles (inactive rows sum nothing).
-template <typename T, int K, int S, int C>
-__global__ void csr_spmm_off(const int n_rows,
+// y = A x + ri B x over (n_blk * N, K) C-ordered x and y. A and B are n_blk
+// diagonal blocks of N rows with one pattern (ip, idx) each; block b's values
+// start at b * nnz. ri is read as ri[k * ri_stride]: stride 0 for one shared
+// value, 1 for one per lane. Every lane of a warp reaches the shuffles
+// (inactive rows sum nothing).
+template <typename T, typename V, int K, int S, int C>
+__global__ void csr_spmm_off(const int N, const int n_blk, const int tile,
                              const int* __restrict__ ipA,
                              const int* __restrict__ idxA,
-                             const T* __restrict__ dA,
+                             const V* __restrict__ dA, const int nnzA,
                              const int* __restrict__ ipB,
                              const int* __restrict__ idxB,
-                             const T* __restrict__ dB,
+                             const V* __restrict__ dB, const int nnzB,
                              const T* __restrict__ x,
                              const T* __restrict__ ri, const int ri_stride,
                              T* __restrict__ y)
 {
     constexpr int LPR = S * C, KC = K / C;
     const int lane = threadIdx.x & (LPR - 1);
-    const int row = (blockIdx.x * blockDim.x + threadIdx.x) / LPR;
-    const bool active = row < n_rows;
+    const int g = (blockIdx.x * blockDim.x + threadIdx.x) / LPR;
+    // group g -> tile t, block b, pattern row i
+    const int per_tile = tile * n_blk;
+    const int t = g / per_tile, b = (g % per_tile) / tile, i = t * tile + g % tile;
+    const bool active = i < N;
+    const T* xb = x + (size_t)b * N * K;
     T accA[KC], accB[KC];
-    row_dot<T, K, S, C>(ipA, idxA, dA, x, row, active, lane, accA);
-    row_dot<T, K, S, C>(ipB, idxB, dB, x, row, active, lane, accB);
+    row_dot<T, V, K, S, C>(ipA, idxA, dA + (size_t)b * nnzA, xb, i, active, lane, accA);
+    row_dot<T, V, K, S, C>(ipB, idxB, dB + (size_t)b * nnzB, xb, i, active, lane, accB);
     if (active && lane < C) {
+        const size_t row = (size_t)b * N + i;
         #pragma unroll
-        for (int i = 0; i < KC; ++i) {
-            const int k = lane * KC + i;
-            y[(size_t)row * K + k] = accA[i] + ri[k * ri_stride] * accB[i];
+        for (int q = 0; q < KC; ++q) {
+            const int k = lane * KC + q;
+            y[row * K + k] = accA[q] + ri[k * ri_stride] * accB[q];
         }
     }
 }
 
 // y += A x: the continuous-loss band of a Legendre operator.
-template <typename T, int K, int S, int C>
+template <typename T, typename V, int K, int S, int C>
 __global__ void csr_spmm_acc(const int n_rows,
                              const int* __restrict__ ipA,
                              const int* __restrict__ idxA,
-                             const T* __restrict__ dA,
+                             const V* __restrict__ dA,
                              const T* __restrict__ x,
                              T* __restrict__ y)
 {
@@ -187,7 +199,7 @@ __global__ void csr_spmm_acc(const int n_rows,
     const int row = (blockIdx.x * blockDim.x + threadIdx.x) / LPR;
     const bool active = row < n_rows;
     T acc[KC];
-    row_dot<T, K, S, C>(ipA, idxA, dA, x, row, active, lane, acc);
+    row_dot<T, V, K, S, C>(ipA, idxA, dA, x, row, active, lane, acc);
     if (active && lane < C) {
         #pragma unroll
         for (int i = 0; i < KC; ++i) y[(size_t)row * K + lane * KC + i] += acc[i];
@@ -198,23 +210,26 @@ __global__ void csr_spmm_acc(const int n_rows,
 #: Threads per block of the SpMM kernel; ``S * C`` divides it.
 _SPMM_BLOCK = 256
 
+#: Pattern rows per tile of the SpMM kernel's row order.
+_SPMM_TILE = 256
+
 #: ``(S, C)`` of the SpMM kernel per state itemsize and K (powers of two),
-#: tuned on an RTX 3090 with the 2D FLUKA operator (K = 64 with the 2D
-#: production operator).
+#: tuned on an RTX 3090 with the 2D production operator (about 800 nonzeros
+#: per row); :func:`_lane_map` narrows S for shorter rows.
 _LANE_MAPS = {
     8: {
         1: (32, 1),
         2: (16, 2),
         4: (8, 4),
         8: (4, 8),
-        16: (2, 16),
-        32: (1, 32),
+        16: (4, 8),
+        32: (2, 16),
         64: (2, 16),
     },
     4: {
         1: (32, 1),
         2: (32, 1),
-        4: (16, 2),
+        4: (32, 1),
         8: (16, 2),
         16: (8, 4),
         32: (4, 8),
@@ -223,29 +238,34 @@ _LANE_MAPS = {
 }
 
 
-def _lane_map(K, itemsize, kernel="csr_spmm_off"):
-    """``(S, C)`` of the SpMM kernel for ``K`` state columns: the tuned entry
-    of :data:`_LANE_MAPS`, or one column group of 16 slices for any other
-    ``K`` (each lane then holds all K accumulators). The band kernel
-    ``csr_spmm_acc`` keeps the column groups and takes one slice: its rows
-    hold about two nonzeros (S = 1 is within 3 % of the best S on the 2D
-    Legendre band)."""
+def _lane_map(K, itemsize, row_nnz=None, kernel="csr_spmm_off"):
+    """``(S, C)`` for ``K`` state columns: the :data:`_LANE_MAPS` entry, else
+    ``(16, 1)``; ``S`` is halved while ``16 S`` exceeds ``row_nnz``, the
+    nonzeros per row of both operators together. The band kernel
+    ``csr_spmm_acc`` takes ``S = 1`` (about two nonzeros per row; within 3 %
+    of the best S on the 2D Legendre band)."""
     S, C = _LANE_MAPS[itemsize].get(K, (16, 1))
-    return (1, C) if kernel == "csr_spmm_acc" else (S, C)
+    if kernel == "csr_spmm_acc":
+        return 1, C
+    while row_nnz is not None and S > 1 and 16 * S > row_nnz:
+        S //= 2
+    return S, C
 
 
 _SPMM_KERNELS = {}
 
 
-def _spmm_kernel(cp, dtype, K, kernel="csr_spmm_off"):
-    """The compiled ``kernel<T, K, S, C>`` of :data:`_CSR_SPMM_SRC` for the
-    state ``dtype`` and ``K``, with its lanes per row; compiled once per
-    process."""
-    key = (np.dtype(dtype), int(K), kernel)
+def _spmm_kernel(cp, dtype, K, row_nnz=None, kernel="csr_spmm_off", value_dtype=None):
+    """The compiled ``kernel<T, V, K, S, C>`` of :data:`_CSR_SPMM_SRC` (state
+    ``dtype``, operator values ``value_dtype``, default the state's) and its
+    lanes per row; cached per process."""
+    dtype = np.dtype(dtype)
+    value_dtype = dtype if value_dtype is None else np.dtype(value_dtype)
+    S, C = _lane_map(K, dtype.itemsize, row_nnz, kernel)
+    key = (dtype, value_dtype, int(K), kernel, S, C)
     if key not in _SPMM_KERNELS:
-        T = {8: "double", 4: "float"}[key[0].itemsize]
-        S, C = _lane_map(key[1], key[0].itemsize, kernel)
-        name = f"{kernel}<{T},{key[1]},{S},{C}>"
+        T, V = ({8: "double", 4: "float"}[d.itemsize] for d in (dtype, value_dtype))
+        name = f"{kernel}<{T},{V},{K},{S},{C}>"
         mod = cp.RawModule(
             code=_CSR_SPMM_SRC, options=("-std=c++17",), name_expressions=(name,)
         )
@@ -253,16 +273,58 @@ def _spmm_kernel(cp, dtype, K, kernel="csr_spmm_off"):
     return _SPMM_KERNELS[key]
 
 
-class _DeviceCsr:
-    """The three arrays of a CSR matrix on the device, ``data`` in the state
-    dtype; an empty matrix is a zero ``indptr`` and nothing else."""
+#: Largest growth of the shared pattern over the fullest block, see
+#: :func:`_block_pattern`.
+_PATTERN_SLACK = 0.05
 
-    def __init__(self, cp, csr, dtype):
-        csr = csr.tocsr()
-        self.nnz = int(csr.nnz)
-        self.indptr = cp.asarray(csr.indptr, dtype=cp.int32)
-        self.indices = cp.asarray(csr.indices, dtype=cp.int32)
-        self.data = cp.asarray(csr.data, dtype=dtype)
+
+def _block_pattern(csr, n_blk):
+    """``(indptr, indices, data)`` of one sparsity pattern shared by the
+    ``n_blk`` diagonal blocks of ``csr``, with every block's values on it
+    (block ``b`` at ``data[b * nnz:]``), or None.
+
+    The pattern is the union of the blocks' patterns, explicit zeros where a
+    block lacks an entry: the 2D modes nearly share one (the Legendre
+    operators differ by a few residual entries at l = 0). None when ``csr``
+    has entries off the diagonal blocks or the union exceeds the fullest
+    block by more than :data:`_PATTERN_SLACK`; the full CSR is then kept.
+    """
+    dim = csr.shape[0]
+    N = dim // n_blk
+    if n_blk < 2 or N * n_blk != dim:
+        return None
+    blocks = [
+        csr[b * N : (b + 1) * N, b * N : (b + 1) * N].tocsr() for b in range(n_blk)
+    ]
+    if sum(blk.nnz for blk in blocks) != csr.nnz:
+        return None
+    keys = [
+        np.repeat(np.arange(N, dtype=np.int64), np.diff(blk.indptr)) * N + blk.indices
+        for blk in blocks
+    ]
+    union = np.unique(np.concatenate(keys))
+    if union.size > (1 + _PATTERN_SLACK) * max(blk.nnz for blk in blocks):
+        return None
+    data = np.zeros((n_blk, union.size), dtype=csr.dtype)
+    for b, (blk, key) in enumerate(zip(blocks, keys)):
+        data[b, np.searchsorted(union, key)] = blk.data
+    indptr = np.searchsorted(union // N, np.arange(N + 1)).astype(np.int64)
+    return indptr, union % N, data.ravel()
+
+
+class _DeviceCsr:
+    """The three arrays of a CSR matrix on the device, ``data`` in the
+    operator value dtype; with a ``pattern`` of :func:`_block_pattern` the shared pattern
+    once and every block's values on it. ``nnz`` is per block."""
+
+    def __init__(self, cp, csr, dtype, pattern=None):
+        indptr, indices, data = (
+            (csr.indptr, csr.indices, csr.data) if pattern is None else pattern
+        )
+        self.nnz = int(indices.size)
+        self.indptr = cp.asarray(indptr, dtype=cp.int32)
+        self.indices = cp.asarray(indices, dtype=cp.int32)
+        self.data = cp.asarray(data, dtype=dtype)
 
 
 # --------------------------------------------------------------------
@@ -345,13 +407,24 @@ class CudaOperator:
     Legendre operator, ``band_off`` (:class:`_DeviceCsr`) in the state dtype
     of ``fp_precision`` (32 or 64), and the diagonals in fp64 whatever the
     precision (see
-    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). The state and
-    scratch buffers are allocated per solve by :class:`CudaBackend`; one
-    device operator serves every K.
+    :data:`MCEq.solvers.backends.base._PRECISION_CONTRACT`). When both
+    off-diagonal matrices are ``n_k`` diagonal blocks whose patterns (nearly)
+    agree, one shared pattern is kept (``n_blk = n_k``, :func:`_block_pattern`). The state and scratch
+    buffers are allocated per solve by :class:`CudaBackend`; one device
+    operator serves every K.
     """
 
     def __init__(
-        self, int_off, dec_off, d_int, d_dec, device_id, fp_precision, band_off=None
+        self,
+        int_off,
+        dec_off,
+        d_int,
+        d_dec,
+        device_id,
+        fp_precision,
+        n_k=1,
+        band_off=None,
+        operator_precision=None,
     ):
         # CuPy 13.x does not auto-discover the nvidia-* pip packages that
         # ship the CUDA 12 runtime libs; dlopen them before the first JIT
@@ -365,15 +438,26 @@ class CudaOperator:
                 "cupy matching your CUDA runtime."
             ) from e
         fl_pr = _state_dtype(fp_precision)
+        # the operator values: the state dtype, or fp32 under fp64 states
+        # (mixed precision: half the bytes the SpMM streams per step)
+        val = fl_pr if operator_precision is None else _state_dtype(operator_precision)
+        if np.dtype(val).itemsize > np.dtype(fl_pr).itemsize:
+            raise ValueError("operator_precision above the state precision")
         self.cp = cp
         self.fl_pr = fl_pr
+        self.value_dtype = np.dtype(val)
         self.fp_precision = int(fp_precision)
         self.device_id = int(device_id)
         cp.cuda.Device(self.device_id).use()
         self.dim = int(d_int.shape[0])
-        self.cu_int_off = _DeviceCsr(cp, int_off, fl_pr)
-        self.cu_dec_off = _DeviceCsr(cp, dec_off, fl_pr)
-        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, fl_pr)
+        int_off, dec_off = int_off.tocsr(), dec_off.tocsr()
+        patterns = [_block_pattern(m, n_k) for m in (int_off, dec_off)]
+        if None in patterns:
+            patterns = [None, None]
+        self.n_blk = 1 if patterns[0] is None else int(n_k)
+        self.cu_int_off = _DeviceCsr(cp, int_off, val, patterns[0])
+        self.cu_dec_off = _DeviceCsr(cp, dec_off, val, patterns[1])
+        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, val)
         self.cu_d_int = cp.asarray(d_int, dtype=cp.float64)
         self.cu_d_dec = cp.asarray(d_dec, dtype=cp.float64)
 
@@ -412,16 +496,23 @@ class CudaBackend:
         cp.cuda.Device(self.dev.device_id).use()
         self._per_lane = per_lane
         self._state = tuple(cp.empty((dim, K), dtype=dtype) for _ in range(4))
-        self._spmm, lanes = _spmm_kernel(cp, dtype, K)
-        self._spmm_grid = ((dim * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
-        self._spmm_args = tuple(
-            getattr(m, a)
-            for m in (self.dev.cu_int_off, self.dev.cu_dec_off)
-            for a in ("indptr", "indices", "data")
+        A, B, n_blk = self.dev.cu_int_off, self.dev.cu_dec_off, self.dev.n_blk
+        N = dim // n_blk
+        vdt = self.dev.value_dtype
+        self._spmm, lanes = _spmm_kernel(
+            cp, dtype, K, (A.nnz + B.nnz) / N, value_dtype=vdt
+        )
+        n_tiles = (N + _SPMM_TILE - 1) // _SPMM_TILE
+        groups = n_tiles * _SPMM_TILE * n_blk
+        self._spmm_grid = ((groups * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
+        self._spmm_args = (np.int32(N), np.int32(n_blk), np.int32(_SPMM_TILE)) + tuple(
+            v for m in (A, B) for v in (m.indptr, m.indices, m.data, np.int32(m.nnz))
         )
         band = self.dev.cu_band_off
         if band is not None:
-            kern, lanes = _spmm_kernel(cp, dtype, K, "csr_spmm_acc")
+            kern, lanes = _spmm_kernel(
+                cp, dtype, K, kernel="csr_spmm_acc", value_dtype=vdt
+            )
             grid = ((dim * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
             self._band = (kern, grid, (band.indptr, band.indices, band.data))
         # (dim, 1) for one shared integration path, (dim, K) for one per lane;
@@ -461,10 +552,9 @@ class CudaBackend:
         """``out = int_off x + ri dec_off x`` in one launch. ``ri`` is a
         device array in the state dtype, 0-d for a shared path or ``(K,)``
         per lane."""
-        n = np.int32(x.shape[0])
         stride = np.int32(0 if ri.ndim == 0 else 1)
         self._spmm(
-            self._spmm_grid, (_SPMM_BLOCK,), (n, *self._spmm_args, x, ri, stride, out)
+            self._spmm_grid, (_SPMM_BLOCK,), (*self._spmm_args, x, ri, stride, out)
         )
 
     def left_matmul(self, matrix, plane, out=None):
@@ -510,8 +600,10 @@ class CudaBackend:
         self._spmm = self._spmm_args = self._coupling = self._band = None
 
 
-def cuda_backend(op, device_id=0, fp_precision=64):
-    """Device backend; uploads the compiled operator's split once."""
+def cuda_backend(op, device_id=0, fp_precision=64, operator_precision=None):
+    """Device backend; uploads the compiled operator's split once.
+    ``operator_precision=32`` stores the off-diagonal values in fp32 under an
+    fp64 state (mixed precision); None keeps them in the state precision."""
     dev = CudaOperator(
         op.int_off,
         op.dec_off,
@@ -519,6 +611,8 @@ def cuda_backend(op, device_id=0, fp_precision=64):
         op.d_dec,
         device_id,
         fp_precision,
+        op.layout.n_k,
         band_off=op.band_off,
+        operator_precision=operator_precision,
     )
     return CudaBackend(dev, op)

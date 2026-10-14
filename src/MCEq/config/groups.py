@@ -167,7 +167,12 @@ GROUPS = {
     # only seen after force=True or an explicit solve(eps=...) argument.
     "solver": _same("X_start", "etd2_path"),
     "backend": _same(
-        "kernel_config", "cuda_gpu_id", "cuda_fp_precision", "mkl_threads", "mkl_path"
+        "kernel_config",
+        "cuda_gpu_id",
+        "cuda_fp_precision",
+        "cuda_operator_precision",
+        "mkl_threads",
+        "mkl_path",
     ),
     "output": _same("return_as", "excpt_on_missing_particle"),
     "debug": _same("override_max_level", "print_module")
