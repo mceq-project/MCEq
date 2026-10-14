@@ -50,10 +50,14 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # Values on the v2 CI data (mceq_ci_base_air_1d_v2 + SIBYLL21 from the CI
 # extra package, no e+- in the system). At 1e3 both neutrino sums are the
 # small negative grid-floor artifact described above.
+# Recalibrated 2026-10-14 for the stencil-averaged CI data (banded rates,
+# 5-bin deposition): 1e4/1e5 move by -0.5..-1.1 %. The 1e3 primary sits in the
+# window's bottom bin and is deposited there whole; all three sums are then
+# the small negative grid-floor artifact.
 testdata_primary = [
-    [1000.0, 1.0763565114039787e-05, -3.8211165123485035e-07, -2.7933454251557005e-08],
-    [10000.0, 0.09845102404809755, 0.024696568807229105, 0.0009492346512922123],
-    [100000.0, 0.903930589516515, 0.28457628033654175, 0.01358841023352725],
+    [1000.0, -2.9003951412724785e-06, -2.4910732672426333e-06, -1.974010187449733e-08],
+    [10000.0, 0.09741721126754312, 0.024575276002663494, 0.0009408426985247038],
+    [100000.0, 0.8971998138182111, 0.2839005632398807, 0.013565562484574582],
 ]
 
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]

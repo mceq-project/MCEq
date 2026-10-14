@@ -88,12 +88,34 @@ def test_particle_operators_need_the_marks():
     assert stable.decay_rate_operator() is None
 
 
+def _strip_marks(f):
+    for obj in [f["decays"]] + [
+        f["hadronic_interactions/air"][m]
+        for m in f["hadronic_interactions/air"]
+        if not m.endswith("_indptrs")
+    ]:
+        for key in [k for k in obj.attrs if k.startswith("bin_average")]:
+            del obj.attrs[key]
+
+
+def _unmarked_db(tmp_path, src):
+    """Copy of a CI database without its stencil marks: the same tables, read
+    with diagonal rates and the three-bin single-primary deposition."""
+    dst = tmp_path / "unmarked.h5"
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        _strip_marks(f)
+    return dst
+
+
 def _marked_db(tmp_path, src):
     """Copy of a CI database with stencil marks on pions/kaons (decays) and on
-    every projectile of every air model (yields); the tables stay as they are."""
+    every projectile of every air model (yields) only, in place of the ones it
+    ships with; the tables stay as they are."""
     dst = tmp_path / "marked.h5"
     shutil.copy(src, dst)
     with h5py.File(dst, "r+") as f:
+        _strip_marks(f)
         f["decays"].attrs["bin_average_radius"] = 2
         f["decays"].attrs["bin_average_parents"] = np.array([211, -211, 321, -321])
         air = f["hadronic_interactions/air"]
@@ -127,7 +149,7 @@ def _run(db, model="SIBYLL23E"):
 
 
 def test_marked_database_bands_only_marked_parents(tmp_path, ci_db_path):
-    plain = _run(ci_db_path)
+    plain = _run(str(_unmarked_db(tmp_path, ci_db_path)))
     marked = _run(str(_marked_db(tmp_path, ci_db_path)))
     pman = marked.pman
     pi = pman[(211, 0)]
@@ -148,8 +170,19 @@ def test_marked_database_bands_only_marked_parents(tmp_path, ci_db_path):
         assert np.allclose(np.diag(blk_b)[2:-2], np.diag(blk_a)[2:-2], rtol=0.05)
 
 
+def test_ci_database_carries_the_stencil_marks(ci_db_path):
+    """The CI packages are cut from the stencil-averaged release databases."""
+    with h5py.File(ci_db_path, "r") as f:
+        assert f["decays"].attrs["bin_average_radius"] == 2
+        assert 211 in set(f["decays"].attrs["bin_average_parents"])
+        for m in ("FLUKA20251", "SIBYLL23E"):
+            ds = f["hadronic_interactions/air"][m]
+            assert ds.attrs["bin_average_radius"] == 2
+            assert 2212 in set(ds.attrs["bin_average_projectiles"])
+
+
 def test_switch_off_restores_the_plain_operator(tmp_path, ci_db_path, monkeypatch):
-    plain = _run(ci_db_path)
+    plain = _run(str(_unmarked_db(tmp_path, ci_db_path)))
     monkeypatch.setattr(config, "bin_average_rates", False)
     marked = _run(str(_marked_db(tmp_path, ci_db_path)))
     for name in ("dec_m", "int_m"):
@@ -212,7 +245,7 @@ def test_delta_deposition_needs_neighbours_on_the_grid():
 def test_single_primary_uses_the_stencil_deposition_on_marked_databases(
     tmp_path, ci_db_path
 ):
-    plain = _run(ci_db_path)
+    plain = _run(str(_unmarked_db(tmp_path, ci_db_path)))
     marked = _run(str(_marked_db(tmp_path, ci_db_path)))
     e0 = 2.0e4
     for m in (plain, marked):

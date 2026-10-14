@@ -202,6 +202,19 @@ class InitialState:
         if self._deposit_for_stencil(En, n_nucleons, n_protons, n_neutrons, pdg_id):
             return
 
+        if cenbin == 0 or cenbin == len(egrid) - 1:
+            # The outermost bin has no neighbour on one side for the
+            # three-bin moment match; deposit the particle there whole.
+            if n_nucleons == 0:
+                parts = [(pdg_id, 1.0)]
+            else:
+                parts = [(2212, n_protons), (2112, n_neutrons)]
+            for pid, k in parts:
+                if k > 0:
+                    lidx = self._system.pman[pid].lidx
+                    self.phi0[lidx + cenbin] += k / ewidths[cenbin]
+            return
+
         # Equalize the first three moments for 3 normalizations around the central
         # bin
         emat = np.vstack(
@@ -250,7 +263,8 @@ class InitialState:
         comes out low by ~5 %. The particle is then deposited on 2r + 1 bins
         whose reconstructed density has the log-energy moments of a delta.
         Returns False (nothing deposited) when no deposited species carries a
-        stencil mark.
+        stencil mark, or when the particle sits within r bins of the grid edge,
+        where the three-bin deposition is used instead.
         """
         from MCEq.species.bin_average import delta_deposition
 
@@ -273,6 +287,17 @@ class InitialState:
             )
         r = radius.pop()
         grid = self._system._energy_grid
+        c = int(np.searchsorted(grid.b, En, side="right")) - 1
+        if c < r or c > len(grid.c) - 1 - r:
+            # The 2r + 1 bins would leave the grid; near the edge the tables
+            # read a constant density anyway, and a one-sided moment match
+            # oscillates. Use the three-bin deposition there.
+            info(
+                2,
+                f"single primary at {En:5.3g} GeV is within {r} bins of the grid "
+                "edge; using the three-bin deposition",
+            )
+            return False
         first, contents = delta_deposition(grid.b, En, r)
         sl = slice(first, first + len(contents))
         for p, k in parts:

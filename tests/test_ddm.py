@@ -195,17 +195,13 @@ def test_generate_DDM_matrix(mceq_qgs, data_driven_model):
         channel, mceq_qgs, e_min=20, e_max=50, average=True
     )
 
-    # Values on the v2 CI data.
+    # Values on the stencil-averaged v2 CI data. No projectile energy of the
+    # 31-bin window is in 20..50 GeV, so this is the table's own corner; the
+    # stencil leaves small negative cells at x -> 1 on the diagonal.
     expected_matrix = np.array(
         [
-            [
-                8.00000000e-06,
-                4.70861943e-04,
-            ],
-            [
-                0.00000000e00,
-                4.00016800e-06,
-            ],
+            [-4.357559950827538e-06, 3.557753560490889e-04],
+            [3.0378289191345977e-06, -9.953006029864926e-06],
         ]
     )
 
