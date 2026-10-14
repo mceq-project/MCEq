@@ -31,3 +31,20 @@ def test_state_index_maps_hold_only_cascade_particles(mceq_sib21):
         res.mceqidx, res.is_resonance = len(cascade) - 1, False
         pman.cascade_particles, pman.resonances = cascade, resonances
         pman._update_particle_tables()
+
+
+def test_track_leptons_from_keeps_all_leptons_without_exclude_em(mceq_sib21):
+    pman = mceq_sib21.pman
+    added = []
+    real_add = pman.add_tracking_particle
+    pman.add_tracking_particle = lambda parents, pdg, *a, **k: added.append(pdg)
+    try:
+        pman.track_leptons_from([(211, 0)], "x_", exclude_em=False)
+    finally:
+        pman.add_tracking_particle = real_add
+    leptons = {
+        p.pdg_id
+        for p in pman.all_particles
+        if p.is_lepton and not p.is_tracking and p.pdg_id[1] == 0
+    }
+    assert set(added) == leptons

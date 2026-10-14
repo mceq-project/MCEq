@@ -327,7 +327,7 @@ class ParticleManager:
         leptons = [
             p
             for p in self.all_particles
-            if p.is_lepton and not (p.is_em == exclude_em) and not p.is_tracking
+            if p.is_lepton and not (exclude_em and p.is_em) and not p.is_tracking
         ]
 
         for lepton in leptons:
