@@ -2628,3 +2628,14 @@ def test_condition_paths_fall_back_to_serial_without_fork(mceq_sib21, monkeypatc
         assert one[0] == other[0]
         assert np.array_equal(one[1], other[1])
         assert np.array_equal(one[2], other[2])
+
+
+def test_solve_fullsky_returns_the_pixel_index_on_request(mceq_sib21):
+    zenith_grid = np.array([0.0, 60.0])
+    azimuth_grid = np.array([0.0, 90.0, 180.0])
+    res, index = mceq_sib21.solve_fullsky(
+        zenith_grid, azimuth_grid, return_pixel_index=True
+    )
+    assert index.tolist() == [[i, j] for i in range(2) for j in range(3)]
+    assert index is res.pixel_index
+    assert res.sol.shape[1] == 6

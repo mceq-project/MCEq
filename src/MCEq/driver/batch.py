@@ -317,7 +317,7 @@ def solve_fullsky(
         X_start, eps, dX_max, dX_min, fd_span: per-pixel path-builder
             knobs.
         return_pixel_index: also return the ``(K, 2)`` mapping
-            ``(i_zen, i_az)`` for reshaping back to grid.
+            ``(i_zen, i_az)`` of the columns (also ``result.pixel_index``).
         path_workers: fork-pool size for parallel path build.
         geomagnetic_cutoff: override the constructor-level toggle for
             this call. ``None`` means "use ``run.geomagnetic_cutoff``"
@@ -330,7 +330,8 @@ def solve_fullsky(
         :class:`MCEqBatchResult`: final state per pixel
         ``(dim_states, K)`` and the sky grid, with per-pixel
         extraction (:meth:`MCEqBatchResult.get_solution`,
-        :meth:`MCEqBatchResult.skymap`).
+        :meth:`MCEqBatchResult.skymap`); with ``return_pixel_index``, the
+        tuple ``(result, pixel_index)``.
     """
     info(2, f"solve_fullsky: kernel={run.config.backend.kernel_config}")
     start = time()
@@ -465,4 +466,6 @@ def solve_fullsky(
     res.azimuth_grid = azimuth_grid
 
     info(2, f"solve_fullsky: total wall {time() - start:.2f}s")
+    if return_pixel_index:
+        return res, pixel_index
     return res
