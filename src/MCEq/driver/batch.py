@@ -19,6 +19,22 @@ from MCEq.driver.results import MCEqBatchResult
 from MCEq.misc import info
 
 
+def resolve_dtype(run, dtype=None, where="solve"):
+    """The state dtype of a solve: ``dtype`` if given, else float32 when the
+    kernel is CUDA and ``config.cuda_fp_precision`` is 32, else float64."""
+    if dtype is None:
+        backend = run.config.backend
+        on_cuda = backend.kernel_config.lower() in ("cuda", "cuda_etd2")
+        fp = int(backend.cuda_fp_precision) if on_cuda else 64
+        if fp not in (32, 64):
+            raise ValueError(f"config.cuda_fp_precision must be 32 or 64, got {fp}")
+        dtype = np.float32 if fp == 32 else np.float64
+    dtype = np.dtype(dtype)
+    if dtype not in (np.float32, np.float64):
+        raise ValueError(f"{where}: dtype must be float32 or float64, got {dtype}")
+    return dtype
+
+
 def _warn_low_energy_cuda_fp32(run, dtype, sec_ops):
     """Warn for the low-energy CUDA/secant precision regime, without changing it."""
     if (
@@ -48,7 +64,7 @@ def solve_batch(
     int_grid=None,
     grid_var="X",
     *,
-    dtype=np.float64,
+    dtype=None,
     carousel_K=None,
     path_workers=0,
     X_start=None,
@@ -124,8 +140,9 @@ def solve_batch(
       int_grid (list | None): X values at which to record snapshots.
         Only supported for shared-path batches (``conditions=None``).
       grid_var (str): only ``"X"`` is supported.
-      dtype (np.float32 | np.float64): precision of the state
-        buffers, on every backend and every route. The diagonal-factor
+      dtype (np.float32 | np.float64 | None): precision of the state
+        buffers, on every backend and every route. ``None``: float32 on
+        CUDA with ``config.cuda_fp_precision = 32``, else float64. The diagonal-factor
         pipeline (``exp(h·D)``, φ₁, φ₂) is always computed in fp64
         (fp32 φ-functions suffer catastrophic cancellation) and cast
         once on the way out. Accuracy remains workload dependent;
@@ -147,9 +164,7 @@ def solve_batch(
       requested depth snapshots in ``res.grid_sol``, with per-column
       named-spectrum extraction.
     """
-    dtype = np.dtype(dtype)
-    if dtype not in (np.float32, np.float64):
-        raise ValueError(f"solve_batch: dtype must be float32 or float64, got {dtype}")
+    dtype = resolve_dtype(run, dtype, "solve_batch")
 
     sec_ops = run._resolve_secant()
     _warn_low_energy_cuda_fp32(run, dtype, sec_ops)
@@ -303,7 +318,7 @@ def solve_fullsky(
     phi0=None,
     *,
     carousel_K=None,
-    dtype=np.float64,
+    dtype=None,
     X_start=None,
     eps=None,
     dX_max=None,

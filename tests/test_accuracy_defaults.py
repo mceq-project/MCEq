@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from MCEq.driver.batch import _warn_low_energy_cuda_fp32
+from MCEq.driver.batch import _warn_low_energy_cuda_fp32, resolve_dtype
 from MCEq.driver.paths import calculate_integration_path
 from MCEq.operators.matrix_builder import MatrixBuilder
 
@@ -82,6 +82,38 @@ def test_precision_warning_is_informative(kernel, twod, secant, floor, dtype, ex
         assert caught[0].category is RuntimeWarning
         assert "same integration path" in str(caught[0].message)
     assert run.e_bins[0] == floor
+
+
+@pytest.mark.parametrize(
+    "kernel,fp,dtype,expected",
+    [
+        ("cuda_etd2", 32, None, np.float32),
+        ("CUDA", 32, None, np.float32),
+        ("cuda_etd2", 64, None, np.float64),
+        ("cuda_etd2", 32, np.float64, np.float64),
+        ("numpy_etd2", 32, None, np.float64),
+        ("mkl_etd2", 32, np.float32, np.float32),
+    ],
+)
+def test_state_precision_follows_cuda_fp_precision(kernel, fp, dtype, expected):
+    """``config.cuda_fp_precision`` selects the CUDA state dtype when the call
+    names none; an explicit dtype wins; host kernels ignore the setting."""
+    run = SimpleNamespace(
+        config=SimpleNamespace(
+            backend=SimpleNamespace(kernel_config=kernel, cuda_fp_precision=fp)
+        )
+    )
+    assert resolve_dtype(run, dtype) == np.dtype(expected)
+
+
+def test_invalid_cuda_fp_precision_raises():
+    run = SimpleNamespace(
+        config=SimpleNamespace(
+            backend=SimpleNamespace(kernel_config="cuda_etd2", cuda_fp_precision=16)
+        )
+    )
+    with pytest.raises(ValueError, match="cuda_fp_precision"):
+        resolve_dtype(run)
 
 
 @pytest.mark.parametrize("twod", [False, True])

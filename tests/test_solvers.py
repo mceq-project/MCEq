@@ -1580,6 +1580,43 @@ def test_etd2_cuda_stable_at_high_zenith():
         config.mceq_db_fname = saved_db
 
 
+@pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
+def test_solve_honours_cuda_fp_precision(monkeypatch):
+    """Regression: ``solve()`` ignored ``config.cuda_fp_precision`` and ran
+    every CUDA solve in fp64. At 32 the device state is fp32 and the
+    solution comes back in fp64, close to the fp64 solve."""
+    import crflux.models as pm
+
+    from MCEq.core import MCEqRun
+    from MCEq.solvers.backends import cuda as cu
+
+    states = []
+    bind = cu.CudaBackend.bind
+
+    def spy(self, *args, **kwargs):
+        out = bind(self, *args, **kwargs)
+        states.append(self._state[0].dtype)
+        return out
+
+    monkeypatch.setattr(cu.CudaBackend, "bind", spy)
+    monkeypatch.setattr(config, "kernel_config", "cuda_etd2")
+    mceq = MCEqRun(
+        interaction_model="SIBYLL23E",
+        theta_deg=0.0,
+        primary_model=(pm.HillasGaisser2012, "H3a"),
+    )
+    solutions = {}
+    for fp in (64, 32):
+        monkeypatch.setattr(config, "cuda_fp_precision", fp)
+        mceq.solve()
+        solutions[fp] = mceq._solution.copy()
+        assert mceq._solution.dtype == np.float64
+    assert states[0] == np.float64 and states[-1] == np.float32
+    ref, got = solutions[64], solutions[32]
+    mask = np.abs(ref) > 1e-6 * np.abs(ref).max()
+    assert np.max(np.abs(got[mask] - ref[mask]) / np.abs(ref[mask])) < 1e-3
+
+
 # ---------------------------------------------------------------------------
 # ETD2 on GeneralizedTarget (uniform-density profile)
 # ---------------------------------------------------------------------------

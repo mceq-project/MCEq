@@ -685,6 +685,7 @@ class MCEqRun:
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        dtype=None,
         **kwargs,
     ):
         """Launches the solver.
@@ -710,6 +711,9 @@ class MCEqRun:
           fd_span (float | None): forward-FD probe span for the ETD2
             schedule's local rate estimate. ``None`` →
             ``config.etd2_path["fd_span"]``.
+          dtype (np.float32 | np.float64 | None): state precision.
+            ``None``: float32 on CUDA with ``config.cuda_fp_precision = 32``,
+            else float64. The solution is returned in float64 either way.
           kwargs (dict): Reserved for advanced flags. Currently only
             ``skip_integration_path=True`` is recognised — it bypasses
             the call to ``_calculate_integration_path`` and reuses the
@@ -757,13 +761,8 @@ class MCEqRun:
 
         start = time()
 
-        self._solution, self.grid_sol = self._run_etd2(
-            nsteps,
-            dX,
-            rho_inv,
-            phi0,
-            grid_idcs,
-            sec_ops=self._resolve_secant(),
+        self._solution, self.grid_sol = self._run_etd2_resolved(
+            nsteps, dX, rho_inv, phi0, grid_idcs, dtype
         )
 
         if isinstance(self.grid_sol, list):
@@ -771,7 +770,20 @@ class MCEqRun:
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
 
-    def solve_from_integration_path(self, nsteps, dX, rho_inv, grid_idcs):
+    def _run_etd2_resolved(self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype):
+        """:meth:`_run_etd2` at the precision :func:`batch.resolve_dtype`
+        picks, with the low-energy CUDA FP32 warning; results in float64."""
+        dtype = batch.resolve_dtype(self, dtype)
+        sec_ops = self._resolve_secant()
+        batch._warn_low_energy_cuda_fp32(self, dtype, sec_ops)
+        sol, grid_sol = self._run_etd2(
+            nsteps, dX, rho_inv, phi0, grid_idcs, dtype=dtype, sec_ops=sec_ops
+        )
+        return np.asarray(sol, dtype=np.float64), np.asarray(grid_sol, dtype=np.float64)
+
+    def solve_from_integration_path(
+        self, nsteps, dX, rho_inv, grid_idcs, *, dtype=None
+    ):
         """Launches the solver directly for parameters of the integration path.
 
 
@@ -804,13 +816,8 @@ class MCEqRun:
         else:
             phi0 = np.copy(self._phi0)
 
-        self._solution, self.grid_sol = self._run_etd2(
-            nsteps,
-            dX,
-            rho_inv,
-            phi0,
-            grid_idcs,
-            sec_ops=self._resolve_secant(),
+        self._solution, self.grid_sol = self._run_etd2_resolved(
+            nsteps, dX, rho_inv, phi0, grid_idcs, dtype
         )
 
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
