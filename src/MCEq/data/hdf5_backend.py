@@ -176,7 +176,7 @@ class HDF5Backend:
     def energy_grid(self):
         return self._energy_grid
 
-    def _gen_db_dictionary(self, pack, equivalences={}):
+    def _gen_db_dictionary(self, pack, eqv=None):
         index_d = {}
         relations = defaultdict(list)
         particle_list = []
@@ -198,7 +198,7 @@ class HDF5Backend:
         available_parents = sorted(list(set(available_parents)))
 
         # Reverse equivalences
-        eqv_lookup = reverse_equivalences(equivalences)
+        eqv_lookup = reverse_equivalences(eqv or {})
 
         for tupidx, tup in enumerate(tuple_idcs):
             # In 2D each channel stores n_k mode blocks back-to-back,
@@ -242,7 +242,7 @@ class HDF5Backend:
                 20,
                 f"This parent {parent_pdg[0]} is used for interactions of",
                 [p[0] for p in eqv_lookup[parent_pdg]],
-                condition=len(equivalences) > 0,
+                condition=bool(eqv),
             )
             if self._physics.assume_nucleon_interactions_for_exotics:
                 # The stand-in shares this parent's matrix and `relations` list.
@@ -390,7 +390,7 @@ class HDF5Backend:
         else:
             int_index = self._gen_db_dictionary(
                 store.read_channel_pack(f"{had}/{medium}", mname),
-                equivalences=eqv,
+                eqv=eqv,
             )
             int_index["bin_average"] = self._bin_average_marks(
                 store.attrs(f"{had}/{medium}/{mname}"),
