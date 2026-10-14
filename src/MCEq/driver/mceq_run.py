@@ -349,8 +349,8 @@ class MCEqRun:
 
         if (
             not force
-            and (self._interactions.iam == interaction_model)
-            and particle_list != self._particle_list
+            and self._interactions.iam == interaction_model
+            and particle_list in (None, self._system.parent_list)
         ):
             info(2, "Skip, since current model identical to", interaction_model + ".")
             return

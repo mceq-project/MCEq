@@ -86,6 +86,8 @@ class CascadeSystem:
 
         # Particle list to keep track of previously initialized particles
         self._particle_list = None
+        # Parent list requested by the caller (None: all particles of the model)
+        self.parent_list = None
 
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
@@ -115,7 +117,7 @@ class CascadeSystem:
 
         elif self._particle_list is None:
             info(10, "New initialization of particle list.")
-            # First initialization
+            self.parent_list = particle_list
             if particle_list is None:
                 self._interactions.load(interaction_model)
             else:
@@ -144,9 +146,9 @@ class CascadeSystem:
                 physics=self._physics,
             )
 
-        elif update_particle_list and particle_list != self._particle_list:
+        else:
             info(10, "Updating particle list.")
-            # Updated particle list received
+            self.parent_list = particle_list
             if particle_list is None:
                 self._interactions.load(interaction_model)
             else:
@@ -162,9 +164,6 @@ class CascadeSystem:
             )
             self.pman.set_decay_channels(self._decays)
             self.pman.set_continuous_losses(self._cont_losses)
-
-        else:
-            raise Exception("Should not happen in practice.")
 
     def build_matrices(self, skip_decay_matrix=False):
         """Assemble ``int_m``/``dec_m`` from the current particle manager."""

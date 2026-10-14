@@ -1,0 +1,1 @@
+`MCEqRun.set_interaction_model(model, particle_list=...)` reloads when the parent list changes for the current model, which it used to skip; `force=True` or repeating the current list no longer raises "Should not happen in practice".

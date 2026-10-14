@@ -48,3 +48,19 @@ def test_track_leptons_from_keeps_all_leptons_without_exclude_em(mceq_sib21):
         if p.is_lepton and not p.is_tracking and p.pdg_id[1] == 0
     }
     assert set(added) == leptons
+
+
+def test_set_interaction_model_reloads_for_a_new_parent_list():
+    from MCEq.core import MCEqRun
+
+    nucleons = [(2212, 0), (2112, 0)]
+    run = MCEqRun("SIBYLL23E", None, 0.0)
+    assert len(run._interactions.parents) > 2
+    run.set_interaction_model("SIBYLL23E", particle_list=nucleons)
+    assert sorted(run._interactions.parents) == sorted(nucleons)
+    assert sum(p.is_projectile for p in run.pman.cascade_particles) == 2
+    # the same request again, None (keep) and force=True do not raise
+    run.set_interaction_model("SIBYLL23E", particle_list=nucleons)
+    run.set_interaction_model("SIBYLL23E")
+    run.set_interaction_model("SIBYLL23E", particle_list=nucleons, force=True)
+    assert sorted(run._interactions.parents) == sorted(nucleons)
