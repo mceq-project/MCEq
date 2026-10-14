@@ -596,12 +596,6 @@ class MCEqParticle:
             return self.name == other.name
         return NotImplemented
 
-    def __neq__(self, other):
-        """Check names for inequality"""
-        if isinstance(other, MCEqParticle):
-            return self.name != other.name
-        return NotImplemented
-
     def __hash__(self):
         """Hash of the name."""
         return hash(self.name)
