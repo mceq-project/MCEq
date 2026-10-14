@@ -32,21 +32,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOTS = ("src/MCEq", "mceq_config")
-LIMIT = 700
+LIMIT = 1200
 
 #: The limit was 600 through Phase 3 (2026-09-06: raised to 700 -- modules in
 #: the 500-700 band read as complete units, not arbitrary shingles; the split
-#: targets, not the limit, carry the design).
+#: targets, not the limit, carry the design). 2026-10-15: raised to 1200 by the
+#: maintainer; features were being bent to fit 700 (rate application moved out of
+#: the matrix builder, loader lines squeezed), and the allowlist empties.
 #:
 #: Modules still over budget, with the phase that removes each entry. Each
 #: number is the size measured at the latest re-pin (2026-09-06), not the
 #: Phase-0 size: an extraction commit re-tightens its entry in place with
 #: ``--update``, so recorded == measured and no entry ever grants regrowth
 #: headroom.
-ALLOW = {
-    "src/MCEq/driver/mceq_run.py": 1086,  # re-pinned at the Hankel removal (secant ops cache key); remaining: env binding ~160, model load ~70
-    "src/MCEq/models/ddm/ddm.py": 866,  # re-pinned by the prose pass; split by a later follow-up
-}
+ALLOW: dict[str, int] = {}
 
 
 def count_lines(path: Path) -> int:
