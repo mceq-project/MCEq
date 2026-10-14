@@ -638,7 +638,7 @@ class DataDrivenModel:
         _ddm_mat = dict()
         for channel in self.spline_db.channels:
             info(
-                0, f"Generating {channel.projectile} -> {channel.secondary} DDM matrix"
+                2, f"Generating {channel.projectile} -> {channel.secondary} DDM matrix"
             )
             mat = _generate_DDM_matrix(channel=channel, mceq=mceq)
             # projectile energies outside [e_min, e_max] keep the MCEq columns

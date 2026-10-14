@@ -110,13 +110,13 @@ def _generate_DDM_matrix(
         info(
             5,
             f"Dataset 0 ({projectile}, {secondary}): mceq_eidx={ie0}, "
-            + "mceq_ebeam={mceq_ebeam:4.3f}, ebeam={entry.ebeam}",
+            + f"mceq_ebeam={elab_proj_centers[ie0]:4.3f}, ebeam={entry.ebeam}",
         )
         averaged_dndx = dndx_generator(xgrid, entry)
 
         for ie, eproj in enumerate(elab_proj_centers[:-1]):
             if (eproj < e_min) or (eproj > e_max):
-                info(0, "Skipping out of range energy", eproj)
+                info(10, "Skipping out of range energy", eproj)
                 continue
 
             mat[: ie + 1, ie] = (
