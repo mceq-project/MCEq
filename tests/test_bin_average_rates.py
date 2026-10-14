@@ -148,11 +148,79 @@ def test_marked_database_bands_only_marked_parents(tmp_path, ci_db_path):
         assert np.allclose(np.diag(blk_b)[2:-2], np.diag(blk_a)[2:-2], rtol=0.05)
 
 
-def test_switch_off_restores_the_plain_operator(tmp_path, ci_db_path):
+def test_switch_off_restores_the_plain_operator(tmp_path, ci_db_path, monkeypatch):
     plain = _run(ci_db_path)
-    config.bin_average_rates = False
+    monkeypatch.setattr(config, "bin_average_rates", False)
     marked = _run(str(_marked_db(tmp_path, ci_db_path)))
     for name in ("dec_m", "int_m"):
         a = getattr(plain.matrix_builder, name)
         b = getattr(marked.matrix_builder, name)
         assert (a != b).nnz == 0
+
+
+def _toy_tables():
+    """Yield-like toy kernel dN/dx ~ (1 - x)^3 / x: bin-centre table, stencil table."""
+    lx = np.linspace(-4, 0, 20001)[:-1] + 1e-4
+    fx = (1 - 10**lx) ** 3 * np.log(10) * 2e-4
+    lb = np.log10(E_BINS)
+    n = len(E_BINS) - 1
+    c = np.sqrt(E_BINS[1:] * E_BINS[:-1])
+
+    def hist(e):
+        i = np.searchsorted(lb, np.log10(e) + lx, side="right") - 1
+        ok = (i >= 0) & (i < n)
+        return np.bincount(i[ok], weights=fx[ok], minlength=n)
+
+    nu = 100
+    u = -H / 2 + (np.arange(nu) + 0.5) * H / nu
+    mom = np.zeros((5, n, n))
+    for j in range(n):
+        for uu in u:
+            h = hist(c[j] * 10**uu)
+            for k in range(5):
+                mom[k, :, j] += uu**k * h / nu
+    w = bin_average.stencil_weights(2) * (H ** -np.arange(5))[:, None]
+    table = np.zeros((n, n))
+    for j in range(2, n - 2):
+        for mi, d in enumerate(range(-2, 3)):
+            table[:, j + d] += np.einsum("k,ki->i", w[:, mi], mom[:, :, j])
+    return hist, table
+
+
+@pytest.mark.parametrize("e0", [1000.0, 1071.5, 912.0])
+def test_delta_deposition_closes_the_first_generation(e0):
+    """Stencil tables + delta deposition: the top daughter band (x 0.5-1) within
+    0.8 % of the kernel at e0 (three-bin centre deposition: ~4 % low); lower
+    daughters to 0.2 % (away from the toy table's grid edge)."""
+    hist, table = _toy_tables()
+    first, s = bin_average.delta_deposition(E_BINS, e0, 2)
+    assert s.sum() == pytest.approx(1.0, rel=1e-12)
+    dep = np.zeros(len(E_BINS) - 1)
+    dep[first : first + 5] = s
+    truth = hist(e0)
+    top = (E_BINS[:-1] >= 0.5 * e0) & (E_BINS[1:] <= e0 * 1.0001)
+    assert (table @ dep)[top].sum() / truth[top].sum() == pytest.approx(1.0, abs=8e-3)
+    low = slice(5, np.argmax(top) - 3)
+    assert np.allclose((table @ dep)[low], truth[low], rtol=2e-3)
+
+
+def test_delta_deposition_needs_neighbours_on_the_grid():
+    with pytest.raises(ValueError, match="edge"):
+        bin_average.delta_deposition(E_BINS, 0.11, 2)
+
+
+def test_single_primary_uses_the_stencil_deposition_on_marked_databases(
+    tmp_path, ci_db_path
+):
+    plain = _run(ci_db_path)
+    marked = _run(str(_marked_db(tmp_path, ci_db_path)))
+    e0 = 2.0e4
+    for m in (plain, marked):
+        m.set_single_primary_particle(e0, pdg_id=2212)
+    p_plain, p_marked = (
+        m._phi0[m.pman[2212].lidx : m.pman[2212].lidx + m.dim] for m in (plain, marked)
+    )
+    w = marked.e_widths
+    assert np.count_nonzero(p_plain) == 3
+    assert np.count_nonzero(p_marked) == 5
+    assert (p_marked * w).sum() == pytest.approx(1.0, rel=1e-10)

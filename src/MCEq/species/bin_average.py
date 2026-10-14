@@ -86,3 +86,45 @@ def apply_right(block, op, r):
         else:
             out[..., : d + m] += block[..., -m:] * diag.astype(block.dtype)
     return out
+
+
+def delta_deposition(e_bins, energy, r):
+    """Cell contents on bins ``c - r .. c + r`` (``c`` the bin holding ``energy``)
+    for one particle at ``energy`` under stencil-averaged tables.
+
+    The tables read the cell contents of bins ``j - r .. j + r`` as the
+    degree-``2 r`` polynomial density inside bin ``j`` (bins within ``r`` of the
+    grid edge: a constant). The deposition is chosen so that this reconstructed
+    density has the log-energy moments ``k <= 2 r`` of a delta at ``energy``:
+    the first generation then equals the kernel at ``energy`` to the order of the
+    stencil. Returns ``(first_bin, contents)``; contents sum to 1.
+    """
+    lb = np.log10(np.asarray(e_bins, dtype=np.float64))
+    h = float(lb[1] - lb[0])
+    d = len(lb) - 1
+    c = int(np.searchsorted(lb, np.log10(energy), side="right")) - 1
+    if c - r < 0 or c + r > d - 1:
+        raise ValueError(
+            f"energy {energy:g} GeV is within {r} bins of the grid edge; the "
+            "stencil deposition needs its neighbours on the grid"
+        )
+    x0 = np.log10(energy)
+    w = stencil_weights(r)
+    xg, wg = np.polynomial.legendre.leggauss(2 * r + 2)
+    xi, wg = 0.5 * xg, 0.5 * wg
+    powers = xi[:, None] ** np.arange(2 * r + 1)  # (nodes, coefficient)
+    kk = np.arange(2 * r + 1)
+    b = np.zeros((2 * r + 1, 2 * r + 1))
+    for a, src in enumerate(range(c - r, c + r + 1)):
+        for j in range(max(src - r, 0), min(src + r, d - 1) + 1):
+            if r <= j <= d - 1 - r:
+                coef = w[:, src - j + r]  # polynomial of window j per unit s_src
+            else:
+                if j != src:
+                    continue
+                coef = np.eye(2 * r + 1)[0]
+            p = powers @ coef
+            dx = lb[j] + h * (0.5 + xi) - x0
+            b[:, a] += (wg * p) @ (dx[:, None] ** kk)
+    rhs = np.eye(2 * r + 1)[0]
+    return c - r, np.linalg.solve(b, rhs)
