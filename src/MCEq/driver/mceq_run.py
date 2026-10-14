@@ -989,7 +989,7 @@ class MCEqRun:
         r_em = em_step_scale(
             int_m,
             self.pman.all_particles,
-            dense_eig_max=getattr(config, "em_step_dense_eig_max", 4000),
+            dense_eig_max=self._cfg.em.step_dense_eig_max,
         )
         self._em_step_scale_cache = (int_m, r_em)
         return r_em

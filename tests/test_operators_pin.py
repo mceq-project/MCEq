@@ -758,6 +758,7 @@ def _em_matrix(block, dim):
 
 
 class _EmStub:
+    _cfg = config
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
 
     def __init__(self, block, n_em, dim):
