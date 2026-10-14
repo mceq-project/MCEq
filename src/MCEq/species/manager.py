@@ -446,11 +446,13 @@ class ParticleManager:
         for p in self.all_particles:
             self.pdg2mceqidx[p.unique_pdg_id] = p.mceqidx
             self.pname2mceqidx[p.name] = p.mceqidx
+            self.pdg2pref[p.unique_pdg_id] = p
+            self.pname2pref[p.name] = p
+        # resonances have no state-vector index (mceqidx = -1)
+        for p in self.cascade_particles:
             self.mceqidx2pdg[p.mceqidx] = p.unique_pdg_id
             self.mceqidx2pname[p.mceqidx] = p.name
             self.mceqidx2pref[p.mceqidx] = p
-            self.pdg2pref[p.unique_pdg_id] = p
-            self.pname2pref[p.name] = p
 
         self.print_particle_tables(20)
 
