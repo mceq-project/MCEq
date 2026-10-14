@@ -18,7 +18,7 @@ Submodules
   driver
   environment
   misc
-  models
+  ddm
   operators
   solvers
   species

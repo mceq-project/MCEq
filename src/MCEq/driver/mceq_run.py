@@ -15,7 +15,6 @@ from MCEq.environment.msis21 import MSIS21Atmosphere
 from MCEq.environment.parameters import LOCATIONS
 from MCEq.environment.target import GeneralizedTarget
 from MCEq.misc import info, normalize_hadronic_model_name
-from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
 from MCEq.operators.compiled import compile_operator, em_step_scale
 from MCEq.operators.secant import build_secant_kernel_ops
 
@@ -538,37 +537,15 @@ class MCEqRun:
         self.set_zenith_azimuth(theta_deg)
 
     def inject_ddm(self, ddm):
-        """Set a DDM object as interaction model.
+        """Install the matrices of the :class:`MCEq.ddm.DataDrivenModel` ``ddm``.
 
-        The argument requires a DDM model object. Calling `set_interaction_model`
-        overwrites DDM with a different model.
-
-        The DDM matrices are installed as channel overrides of the
-        interaction tables and the matrices are rebuilt. The overrides survive
-        same-model reloads and ``regenerate_matrices``; selecting a
-        different interaction model clears them.
+        They become channel overrides of the interaction tables, which survive
+        same-model reloads and ``regenerate_matrices``; selecting a different
+        interaction model clears them.
         """
-
-        injected = []
         for (prim, sec), mati in ddm.ddm_matrices(self).items():
             info(5, f"Injecting DDM {prim} --> {sec}")
-            iso_part = isospin_partners[prim]
-
             self._interactions.set_channel_override(prim, sec, mati)
-            info(5, "Injecting isopart", iso_part, isospin_symmetries[iso_part][sec])
-            self._interactions.set_channel_override(
-                iso_part, isospin_symmetries[iso_part][sec], mati
-            )
-            injected.append(
-                ((prim, sec), (iso_part, isospin_symmetries[iso_part][sec]))
-            )
-
-        if config.debug_level > 2:
-            s = "DDM matrices injected into MCEq:\n"
-            for (prim, sec), (iprim, isec) in injected:
-                s += f"\t{prim}-->{sec}, isospin: {iprim} --> {isec}\n"
-            print(s)
-
         self.regenerate_matrices()
 
     def set_mod_pprod(self, prim_pdg, sec_pdg, x_func, x_func_args, delay_init=False):

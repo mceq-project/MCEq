@@ -58,8 +58,6 @@ IMPORT_TABLE = [
     ("MCEq.geometry.msis21_atmosphere", "MCEq.environment.msis21", "removed"),
     ("MCEq.geometry.nrlmsise00_mceq", "MCEq.environment.msis00_backend", "removed"),
     ("MCEq.geometry.registry", "MCEq.environment.registry", "removed"),
-    ("MCEq.ddm", "MCEq.models.ddm.ddm", "removed-rr"),
-    ("MCEq.ddm_utils", "MCEq.models.ddm.ddm_utils", "removed"),
     ("MCEq.hankel", "MCEq.operators.legendre.theta_density", "legendre"),
     ("MCEq.download", "MCEq.data.download", "removed"),
     ("MCEq.secant", "MCEq.operators.secant", "removed"),
