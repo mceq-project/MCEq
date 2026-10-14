@@ -20,13 +20,18 @@ from MCEq.environment.parameters import LOCATIONS
 from MCEq.environment.target import GeneralizedTarget
 from MCEq.initial_state import deposit_single_primary, fill_nucleons
 from MCEq.misc import info, normalize_hadronic_model_name
-from MCEq.operators.compiled import compile_operator, em_step_scale
+from MCEq.operators.compiled import compile_operator
 from MCEq.operators.legendre import backward_removal, dense_count, theta_density
 from MCEq.operators.matrix_builder import MatrixBuilder
 from MCEq.operators.secant import build_secant_kernel_ops
-from MCEq.operators.stiffness import LOSS_STEP_SAFETY, continuous_loss_rate
 from MCEq.particlemanager import ParticleManager
-from MCEq.solvers.path import em_cascade_dx_cap, etd2_nonuniform_path
+from MCEq.solvers.path import (
+    LOSS_STEP_SAFETY,
+    continuous_loss_rate,
+    em_cascade_dx_cap,
+    em_step_scale,
+    etd2_nonuniform_path,
+)
 
 __all__ = ["MCEqRun", "MatrixBuilder"]
 

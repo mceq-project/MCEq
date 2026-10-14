@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 
 from MCEq.core import MCEqRun
-from MCEq.operators.stiffness import continuous_loss_rate
-from MCEq.solvers.path import etd2_nonuniform_path
+from MCEq.solvers.path import continuous_loss_rate, etd2_nonuniform_path
 
 
 def test_stiffness_tracks_grid_and_secant():

@@ -157,7 +157,7 @@ def test_loss_band_one_step_map_is_contractive(v13_hadronic_run):
     The ETD2 ETD1 proxy ``G = exp(h d) (1 + h phi1 Off/d)`` on the loss band
     alone, per species block; before the fix rho(p+) was 2.467 at h=1 and
     2.662 at h=20. e+- are excluded: their block is stepped under the Cure-B
-    cap (``operators/compiled.em_step_scale``), not at ``etd2_path["dX_max"]``,
+    cap (``solvers/path.em_step_scale``), not at ``etd2_path["dX_max"]``,
     and its documented blowup caveat is a separate, contained story.
     """
     run = v13_hadronic_run

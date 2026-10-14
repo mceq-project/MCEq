@@ -229,38 +229,3 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
         if op.exact_slot_diagonals[0].max() >= eig_max:
             op.coupling = coupling
     return op
-
-
-def em_step_scale(int_m, particles, dense_eig_max=4000):
-    """Spectral radius of the off-diagonal e+/-/gamma block of ``int_m``, in cm^2/g.
-
-    The EM off-diagonal is strongly non-normal, so its spectral radius, not a
-    norm, sets the step scale r_EM. ``particles`` supply ``is_em`` and the
-    ``lidx``/``uidx`` of one ``dim_states`` block (mode l = 0 on a 2D
-    operator). Returns 0.0 if no species is EM.
-    """
-    col_ranges = [
-        np.arange(p.lidx, p.uidx) for p in particles if getattr(p, "is_em", False)
-    ]
-    if not col_ranges:
-        return 0.0
-    idx = np.concatenate(col_ranges)
-    diag = int_m.diagonal()
-    int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
-    block = int_off[idx][:, idx].tocsc().astype(np.float64)
-    # Dense eigvals up to dense_eig_max (ARPACK often fails to converge on
-    # this non-normal block); ARPACK beyond.
-    n = block.shape[0]
-    try:
-        if n <= int(dense_eig_max):
-            ev = np.linalg.eigvals(block.toarray())
-        else:
-            from scipy.sparse.linalg import eigs
-
-            ev = eigs(block, k=1, which="LM", return_eigenvectors=False, maxiter=10000)
-        return float(np.max(np.abs(ev)))
-    except Exception:
-        # The spectral radius is bounded by both induced norms; take the smaller.
-        n1 = float(np.abs(block).sum(axis=0).max())
-        ninf = float(np.abs(block).sum(axis=1).max())
-        return min(n1, ninf)

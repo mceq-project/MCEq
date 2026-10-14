@@ -187,8 +187,8 @@ at
 
 with :math:`\lambda_j` the eigenvalues of the :math:`\sec\theta` coupling
 of the next section (one without it):
-:func:`~MCEq.operators.stiffness.continuous_loss_rate`,
-:data:`~MCEq.operators.stiffness.LOSS_STEP_SAFETY`,
+:func:`~MCEq.solvers.path.continuous_loss_rate`,
+:data:`~MCEq.solvers.path.LOSS_STEP_SAFETY`,
 :meth:`~MCEq.core.MCEqRun._continuous_loss_dx_cap`. The closure rows are
 left out because they are sized for the design depth already and their
 one-step map is bounded for any step under the diagonal-exact splitting;
