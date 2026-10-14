@@ -935,7 +935,8 @@ class MCEqRun:
         fp = 32 if np.dtype(dtype) == np.float32 else 64
         op = self._compiled_operator(sec_ops)
         cache = self.__dict__.setdefault("_backend_cache", {})
-        key = (kc, fp, op.coupled)
+        op_fp = self._cfg.backend.cuda_operator_precision if on_cuda else None
+        key = (kc, fp, op.coupled, op_fp)
         be = cache.get(key)
         if be is not None and (
             be.op is not op or (on_cuda and be.dev.device_id != self._cuda_device)
@@ -952,7 +953,10 @@ class MCEqRun:
                 be = solvers.mkl_backend(op, fp_precision=fp)
             elif on_cuda:
                 be = solvers.cuda_backend(
-                    op, device_id=self._cuda_device, fp_precision=fp
+                    op,
+                    device_id=self._cuda_device,
+                    fp_precision=fp,
+                    operator_precision=op_fp,
                 )
             else:
                 raise Exception(

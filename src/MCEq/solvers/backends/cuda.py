@@ -116,11 +116,12 @@ __device__ __forceinline__ void load_chunk(const T* __restrict__ p, T (&v)[KC])
 }
 
 // acc[i] = sum over the row's nonzeros of data[j] * x[indices[j], c*KC + i],
-// summed over the S slices into the lanes with s == 0 (lane < C).
-template <typename T, int K, int S, int C>
+// summed over the S slices into the lanes with s == 0 (lane < C). The values
+// are read as V and widened to the state type T before the product.
+template <typename T, typename V, int K, int S, int C>
 __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
                                         const int* __restrict__ indices,
-                                        const T* __restrict__ data,
+                                        const V* __restrict__ data,
                                         const T* __restrict__ x,
                                         const int row, const bool active,
                                         const int lane, T (&acc)[K / C])
@@ -134,7 +135,7 @@ __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
     T v[KC];
     for (int j = start + s; j < end; j += S) {
         load_chunk<T, KC>(x + (size_t)indices[j] * K + c * KC, v);
-        const T a = data[j];
+        const T a = T(data[j]);
         #pragma unroll
         for (int i = 0; i < KC; ++i) acc[i] += a * v[i];
     }
@@ -151,14 +152,14 @@ __device__ __forceinline__ void row_dot(const int* __restrict__ indptr,
 // start at b * nnz. ri is read as ri[k * ri_stride]: stride 0 for one shared
 // value, 1 for one per lane. Every lane of a warp reaches the shuffles
 // (inactive rows sum nothing).
-template <typename T, int K, int S, int C>
+template <typename T, typename V, int K, int S, int C>
 __global__ void csr_spmm_off(const int N, const int n_blk, const int tile,
                              const int* __restrict__ ipA,
                              const int* __restrict__ idxA,
-                             const T* __restrict__ dA, const int nnzA,
+                             const V* __restrict__ dA, const int nnzA,
                              const int* __restrict__ ipB,
                              const int* __restrict__ idxB,
-                             const T* __restrict__ dB, const int nnzB,
+                             const V* __restrict__ dB, const int nnzB,
                              const T* __restrict__ x,
                              const T* __restrict__ ri, const int ri_stride,
                              T* __restrict__ y)
@@ -172,8 +173,8 @@ __global__ void csr_spmm_off(const int N, const int n_blk, const int tile,
     const bool active = i < N;
     const T* xb = x + (size_t)b * N * K;
     T accA[KC], accB[KC];
-    row_dot<T, K, S, C>(ipA, idxA, dA + (size_t)b * nnzA, xb, i, active, lane, accA);
-    row_dot<T, K, S, C>(ipB, idxB, dB + (size_t)b * nnzB, xb, i, active, lane, accB);
+    row_dot<T, V, K, S, C>(ipA, idxA, dA + (size_t)b * nnzA, xb, i, active, lane, accA);
+    row_dot<T, V, K, S, C>(ipB, idxB, dB + (size_t)b * nnzB, xb, i, active, lane, accB);
     if (active && lane < C) {
         const size_t row = (size_t)b * N + i;
         #pragma unroll
@@ -185,11 +186,11 @@ __global__ void csr_spmm_off(const int N, const int n_blk, const int tile,
 }
 
 // y += A x: the continuous-loss band of a Legendre operator.
-template <typename T, int K, int S, int C>
+template <typename T, typename V, int K, int S, int C>
 __global__ void csr_spmm_acc(const int n_rows,
                              const int* __restrict__ ipA,
                              const int* __restrict__ idxA,
-                             const T* __restrict__ dA,
+                             const V* __restrict__ dA,
                              const T* __restrict__ x,
                              T* __restrict__ y)
 {
@@ -198,7 +199,7 @@ __global__ void csr_spmm_acc(const int n_rows,
     const int row = (blockIdx.x * blockDim.x + threadIdx.x) / LPR;
     const bool active = row < n_rows;
     T acc[KC];
-    row_dot<T, K, S, C>(ipA, idxA, dA, x, row, active, lane, acc);
+    row_dot<T, V, K, S, C>(ipA, idxA, dA, x, row, active, lane, acc);
     if (active && lane < C) {
         #pragma unroll
         for (int i = 0; i < KC; ++i) y[(size_t)row * K + lane * KC + i] += acc[i];
@@ -254,15 +255,17 @@ def _lane_map(K, itemsize, row_nnz=None, kernel="csr_spmm_off"):
 _SPMM_KERNELS = {}
 
 
-def _spmm_kernel(cp, dtype, K, row_nnz=None, kernel="csr_spmm_off"):
-    """The compiled ``kernel<T, K, S, C>`` of :data:`_CSR_SPMM_SRC` and its
+def _spmm_kernel(cp, dtype, K, row_nnz=None, kernel="csr_spmm_off", value_dtype=None):
+    """The compiled ``kernel<T, V, K, S, C>`` of :data:`_CSR_SPMM_SRC` (state
+    ``dtype``, operator values ``value_dtype``, default the state's) and its
     lanes per row; cached per process."""
     dtype = np.dtype(dtype)
+    value_dtype = dtype if value_dtype is None else np.dtype(value_dtype)
     S, C = _lane_map(K, dtype.itemsize, row_nnz, kernel)
-    key = (dtype, int(K), kernel, S, C)
+    key = (dtype, value_dtype, int(K), kernel, S, C)
     if key not in _SPMM_KERNELS:
-        T = {8: "double", 4: "float"}[dtype.itemsize]
-        name = f"{kernel}<{T},{K},{S},{C}>"
+        T, V = ({8: "double", 4: "float"}[d.itemsize] for d in (dtype, value_dtype))
+        name = f"{kernel}<{T},{V},{K},{S},{C}>"
         mod = cp.RawModule(
             code=_CSR_SPMM_SRC, options=("-std=c++17",), name_expressions=(name,)
         )
@@ -310,8 +313,8 @@ def _block_pattern(csr, n_blk):
 
 
 class _DeviceCsr:
-    """The three arrays of a CSR matrix on the device, ``data`` in the state
-    dtype; with a ``pattern`` of :func:`_block_pattern` the shared pattern
+    """The three arrays of a CSR matrix on the device, ``data`` in the
+    operator value dtype; with a ``pattern`` of :func:`_block_pattern` the shared pattern
     once and every block's values on it. ``nnz`` is per block."""
 
     def __init__(self, cp, csr, dtype, pattern=None):
@@ -421,6 +424,7 @@ class CudaOperator:
         fp_precision,
         n_k=1,
         band_off=None,
+        operator_precision=None,
     ):
         # CuPy 13.x does not auto-discover the nvidia-* pip packages that
         # ship the CUDA 12 runtime libs; dlopen them before the first JIT
@@ -434,8 +438,14 @@ class CudaOperator:
                 "cupy matching your CUDA runtime."
             ) from e
         fl_pr = _state_dtype(fp_precision)
+        # the operator values: the state dtype, or fp32 under fp64 states
+        # (mixed precision: half the bytes the SpMM streams per step)
+        val = fl_pr if operator_precision is None else _state_dtype(operator_precision)
+        if np.dtype(val).itemsize > np.dtype(fl_pr).itemsize:
+            raise ValueError("operator_precision above the state precision")
         self.cp = cp
         self.fl_pr = fl_pr
+        self.value_dtype = np.dtype(val)
         self.fp_precision = int(fp_precision)
         self.device_id = int(device_id)
         cp.cuda.Device(self.device_id).use()
@@ -445,9 +455,9 @@ class CudaOperator:
         if None in patterns:
             patterns = [None, None]
         self.n_blk = 1 if patterns[0] is None else int(n_k)
-        self.cu_int_off = _DeviceCsr(cp, int_off, fl_pr, patterns[0])
-        self.cu_dec_off = _DeviceCsr(cp, dec_off, fl_pr, patterns[1])
-        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, fl_pr)
+        self.cu_int_off = _DeviceCsr(cp, int_off, val, patterns[0])
+        self.cu_dec_off = _DeviceCsr(cp, dec_off, val, patterns[1])
+        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, val)
         self.cu_d_int = cp.asarray(d_int, dtype=cp.float64)
         self.cu_d_dec = cp.asarray(d_dec, dtype=cp.float64)
 
@@ -488,7 +498,10 @@ class CudaBackend:
         self._state = tuple(cp.empty((dim, K), dtype=dtype) for _ in range(4))
         A, B, n_blk = self.dev.cu_int_off, self.dev.cu_dec_off, self.dev.n_blk
         N = dim // n_blk
-        self._spmm, lanes = _spmm_kernel(cp, dtype, K, (A.nnz + B.nnz) / N)
+        vdt = self.dev.value_dtype
+        self._spmm, lanes = _spmm_kernel(
+            cp, dtype, K, (A.nnz + B.nnz) / N, value_dtype=vdt
+        )
         n_tiles = (N + _SPMM_TILE - 1) // _SPMM_TILE
         groups = n_tiles * _SPMM_TILE * n_blk
         self._spmm_grid = ((groups * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
@@ -497,7 +510,9 @@ class CudaBackend:
         )
         band = self.dev.cu_band_off
         if band is not None:
-            kern, lanes = _spmm_kernel(cp, dtype, K, kernel="csr_spmm_acc")
+            kern, lanes = _spmm_kernel(
+                cp, dtype, K, kernel="csr_spmm_acc", value_dtype=vdt
+            )
             grid = ((dim * lanes + _SPMM_BLOCK - 1) // _SPMM_BLOCK,)
             self._band = (kern, grid, (band.indptr, band.indices, band.data))
         # (dim, 1) for one shared integration path, (dim, K) for one per lane;
@@ -585,8 +600,10 @@ class CudaBackend:
         self._spmm = self._spmm_args = self._coupling = self._band = None
 
 
-def cuda_backend(op, device_id=0, fp_precision=64):
-    """Device backend; uploads the compiled operator's split once."""
+def cuda_backend(op, device_id=0, fp_precision=64, operator_precision=None):
+    """Device backend; uploads the compiled operator's split once.
+    ``operator_precision=32`` stores the off-diagonal values in fp32 under an
+    fp64 state (mixed precision); None keeps them in the state precision."""
     dev = CudaOperator(
         op.int_off,
         op.dec_off,
@@ -596,5 +613,6 @@ def cuda_backend(op, device_id=0, fp_precision=64):
         fp_precision,
         op.layout.n_k,
         band_off=op.band_off,
+        operator_precision=operator_precision,
     )
     return CudaBackend(dev, op)

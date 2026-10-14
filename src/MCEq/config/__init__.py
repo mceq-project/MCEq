@@ -141,8 +141,15 @@ _kernel_config_request = "auto"
 #: Select CUDA device ID if you have multiple GPUs
 cuda_gpu_id = 0
 
-#: CUDA floating-point precision (default 64 bits)
+#: CUDA floating-point precision of the state (default 64 bits); ``solve()``
+#: and the batch routes use it when the call names no ``dtype``.
 cuda_fp_precision = 64
+
+#: CUDA precision of the stored off-diagonal operator values: None keeps the
+#: state precision; 32 under an fp64 state is mixed precision -- fp32 values,
+#: fp64 state and accumulation -- which halves the bytes the sparse product
+#: streams per step.
+cuda_operator_precision = None
 
 #: Floating point precision (is set automatically)
 floatlen = None

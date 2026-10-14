@@ -2502,9 +2502,9 @@ def test_cuda_diag_factors_f64diag_accuracy():
 
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
-@pytest.mark.parametrize("fp", [64, 32])
+@pytest.mark.parametrize("fp,values", [(64, None), (32, None), (64, 32)])
 @pytest.mark.parametrize("pattern", ["same", "near", "distinct"])
-def test_cuda_apply_off_mode_blocks(pattern, fp):
+def test_cuda_apply_off_mode_blocks(pattern, fp, values):
     """The SpMM kernel against scipy on ``n_k`` diagonal blocks: one pattern,
     patterns that differ by a few entries (shared as their union, as the
     Legendre modes), or a pattern per block (full CSR), over a partial tile,
@@ -2536,13 +2536,22 @@ def test_cuda_apply_off_mode_blocks(pattern, fp):
     A, B = blocks(0.1), blocks(0.03)
     dim = n_k * N
     dev = cu.CudaOperator(
-        A, B, np.zeros(dim), np.zeros(dim), config.cuda_gpu_id, fp, n_k
+        A,
+        B,
+        np.zeros(dim),
+        np.zeros(dim),
+        config.cuda_gpu_id,
+        fp,
+        n_k,
+        operator_precision=values,
     )
+    assert dev.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
     assert dev.n_blk == (1 if pattern == "distinct" else n_k)
     be = cu.CudaBackend(
         dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
     )
-    tol = 1e-13 if fp == 64 else 1e-5
+    # fp32 values under an fp64 state: the values' rounding, no fp32 sums
+    tol = 1e-5 if fp == 32 else 1e-6 if values == 32 else 1e-13
     for K in (1, 3, 8, 64):
         be.bind(dim, K, False, 1)
         x = rng.standard_normal((dim, K))
