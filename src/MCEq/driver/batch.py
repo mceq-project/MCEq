@@ -7,7 +7,12 @@ import numpy as np
 
 from MCEq import config
 from MCEq.driver.results import MCEqBatchResult
+from MCEq.environment.geomagnetic.cutoff import (
+    build_phi0_with_cutoff,
+    get_cutoff_map,
+)
 from MCEq.misc import info
+from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
 
 def resolve_dtype(run, dtype=None, where="solve"):
@@ -240,8 +245,6 @@ def solve_batch(
             sec_ops=sec_ops,
         )
     else:
-        from MCEq.solvers import compile_carousel_schedule, schedule_lpt
-
         if carousel_K is None:
             carousel_K = min(K, 128)
         K_pipe = max(1, min(int(carousel_K), K))
@@ -396,11 +399,6 @@ def solve_fullsky(
             stacklevel=2,
         )
     if cutoff_flag and not phi0_is_2d:
-        from MCEq.environment.geomagnetic.cutoff import (
-            build_phi0_with_cutoff,
-            get_cutoff_map,
-        )
-
         az_centres = azimuth_grid if azimuth_grid is not None else np.array([0.0])
         primary = getattr(run, "pmodel", None)
         if primary is None:

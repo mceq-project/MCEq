@@ -5,6 +5,7 @@ from os.path import join
 import numpy as np
 
 from MCEq.environment.base import EarthsAtmosphere
+from MCEq.environment.msis00 import MSIS00Atmosphere
 from MCEq.environment.parameters import MONTH_TO_DAY_OF_YEAR
 from MCEq.misc import info
 
@@ -92,8 +93,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
         self.interp_tab_t = {}
         self.dates = {}
         dates = data_collection["alti"][0]
-
-        from MCEq.environment.msis00 import MSIS00Atmosphere
 
         msis = MSIS00Atmosphere(location, "January")
         for didx, date in enumerate(dates):

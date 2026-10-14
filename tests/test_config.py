@@ -138,23 +138,16 @@ class PreFspathCDLL:
 
 
 def test_load_mkl_passes_a_string_path(monkeypatch):
-    """``mkl_runtime.load`` hands ``LoadLibrary`` a ``str``.
-
-    ``detect.mkl_library_path`` returns a ``Path``, which the Windows loader
-    on Python 3.10/3.11 cannot take. Retargeted from ``config._load_mkl``
-    at M4: the memo and the load moved to :mod:`MCEq.mkl_runtime`; the
-    config entry point is a thin delegate and ``config.mkl`` a read-only
-    view of the runtime handle.
+    """``load_mkl`` hands ``LoadLibrary`` a ``str``: the Windows loader on
+    Python 3.10/3.11 cannot take the ``Path`` from ``detect.mkl_library_path``.
     """
     import ctypes
 
-    from MCEq import mkl_runtime
-
-    monkeypatch.setattr(mkl_runtime, "_LIB", None)
+    monkeypatch.setattr(cfg, "mkl", None)
     monkeypatch.setattr(cfg.detect, "has_mkl", lambda: True)
     monkeypatch.setattr(ctypes.cdll, "_dlltype", PreFspathCDLL)
 
-    cfg._load_mkl()
+    cfg.load_mkl()
 
     assert isinstance(cfg.mkl, PreFspathCDLL)
 

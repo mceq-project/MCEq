@@ -10,6 +10,7 @@ import numpy as np
 
 from MCEq import config
 from MCEq.misc import info
+from MCEq.operators.legendre import theta_density
 
 
 class MCEqBatchResult:
@@ -471,8 +472,6 @@ def convert_to_theta_space(run, modes, pdg_id, hel, theta_res=1200, log_theta=Fa
         is the density in the planar measure ``theta dtheta``, normalised as
         ``int_0^pi f theta dtheta = a_0``.
     """
-    from MCEq.operators.legendre import theta_density
-
     if log_theta:
         theta_range = np.logspace(-5, np.log10(np.pi / 2), theta_res)
     else:

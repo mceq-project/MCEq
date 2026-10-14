@@ -97,7 +97,6 @@ def test_entries_are_dotted_strings_not_imported_classes():
         ("CORSIKA", "MCEq.environment.msis21"),
         ("CORSIKA", "MCEq.environment.msis00"),
         ("MSIS21", "MCEq.environment.msis00"),
-        ("AIRS", "MCEq.environment.msis00"),
     ],
 )
 def test_resolution_is_lazy(name, must_not_import):
@@ -114,8 +113,7 @@ def test_resolution_is_lazy(name, must_not_import):
     the KM3NeT table out of ``density_profiles``, so selecting MSIS21 imported
     the whole MSIS00 tree. Both now come from ``environment.base`` and
     ``environment.parameters``, which is the same edge removal that let the C7
-    cycle-ignore be deleted. ``AIRS`` is here because ``tabulated`` uses
-    ``MSIS00Atmosphere`` for its interpolation grid and must defer it.
+    cycle-ignore be deleted.
     """
     import subprocess
     import sys

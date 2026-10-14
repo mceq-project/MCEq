@@ -37,6 +37,7 @@ reproduces the S-corrected equilibrium in the stiff limit.
 import numpy as np
 
 from MCEq.misc import info
+from MCEq.operators.legendre import dense_count, l_interpolation, path_elongation
 
 #: Max ``|imag|/real`` accepted for an eigenvalue of ``S_P``.
 _PAIR_SPLIT_MAX = 1e-5
@@ -109,8 +110,6 @@ def legendre_coupling(l_grid, theta_cap_deg):
     zero: the sparse high-l modes describe narrow cones, which are not
     elongated.
     """
-    from MCEq.operators.legendre import dense_count, l_interpolation, path_elongation
-
     l_grid = np.asarray(l_grid)
     n_d = dense_count(l_grid)
     l_int = np.arange(int(l_grid[-1]) + 1)
@@ -141,8 +140,6 @@ def build_secant_kernel_ops(l_grid, e_centers, n_species, theta_cap_deg, e_max=N
                     E_kin < e_max
       n_k        -- number of angular modes
     """
-    from MCEq.operators.legendre import dense_count
-
     theta_cap_deg = float(theta_cap_deg)
     T = legendre_coupling(l_grid, theta_cap_deg)
     P = np.arange(dense_count(l_grid))

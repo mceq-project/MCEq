@@ -19,7 +19,6 @@ layers =
     data
     misc
     config
-    mkl_runtime
 ignore_imports =
     MCEq.misc -> MCEq.data.*
 

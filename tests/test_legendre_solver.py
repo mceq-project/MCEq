@@ -243,7 +243,6 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
     from threadpoolctl import ThreadpoolController, threadpool_limits
 
     import MCEq.solvers.etd2 as etd2
-    from MCEq import mkl_runtime
 
     if backend == "mkl" and not config.has_mkl:
         pytest.skip("MKL runtime not available")
@@ -267,7 +266,7 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
         return {p["num_threads"] for p in info if p["internal_api"] == api}
 
     def mkl_threads():
-        lib = mkl_runtime.lib()
+        lib = config.mkl
         return None if lib is None else lib.mkl_get_max_threads()
 
     phi0 = np.random.default_rng(4).random(N_K * N)

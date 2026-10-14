@@ -6,6 +6,7 @@ import numpy as np
 
 from MCEq import config
 from MCEq.environment.column import fit_column_splines
+from MCEq.environment.geometry import EarthGeometry
 from MCEq.misc import info
 
 
@@ -44,8 +45,6 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     def __init__(self, *args, **kwargs):
         geometry = kwargs.pop("geometry", None)
         if geometry is None:
-            from MCEq.environment.geometry import EarthGeometry
-
             geometry = EarthGeometry(
                 r_E=config.r_E,
                 h_atm=config.h_atm,

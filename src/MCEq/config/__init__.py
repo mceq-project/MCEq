@@ -5,7 +5,6 @@ import sys
 import warnings
 
 from MCEq import base_path
-from MCEq import mkl_runtime as _mkl_runtime
 
 from . import detect
 
@@ -385,10 +384,11 @@ standard_particles += [-pid for pid in standard_particles]
 #: append 221, 223, 333, if eta, omega and phi needed directly
 standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 
+#: Loaded ``libmkl_rt`` handle, or None until :func:`load_mkl` loads it.
+mkl = None
+
 # Platform probes resolve on first read through __getattr__ (see detect.py)
-# and are then cached as module attributes; ``config.mkl`` is the loaded
-# handle of MCEq.mkl_runtime.
-_mkl_runtime.set_resolver(lambda: detect.has_mkl(), detect.mkl_library_path)
+# and are then cached as module attributes.
 
 _LAZY = {
     "has_mkl": lambda: detect.has_mkl(),
@@ -402,9 +402,6 @@ _LAZY = {
 
 
 def __getattr__(name):
-    if name == "mkl":
-        # Return the existing MKL handle without loading the library.
-        return _mkl_runtime.lib()
     probe = _LAZY.get(name)
     if probe is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -417,9 +414,15 @@ def __dir__():
     return sorted(set(globals()) | set(_LAZY))
 
 
-def _load_mkl():
-    """Load ``libmkl_rt`` once (:func:`MCEq.mkl_runtime.load`)."""
-    return _mkl_runtime.load()
+def load_mkl():
+    """Load ``libmkl_rt`` once if it is installed; return the handle or None."""
+    global mkl
+    if mkl is None and detect.has_mkl():
+        from ctypes import cdll
+
+        # The Windows loader on Python 3.10/3.11 does not accept a Path.
+        mkl = cdll.LoadLibrary(os.fspath(detect.mkl_library_path()))
+    return mkl
 
 
 #: Environment variables every BLAS MCEq can reach reads when it loads.
@@ -450,11 +453,9 @@ def set_mkl_threads(nthreads):
     global mkl_threads
     from ctypes import byref, c_int
 
-    _mkl_runtime.load()
     mkl_threads = nthreads
-    lib = _mkl_runtime.lib()
-    if lib is not None:
-        lib.mkl_set_num_threads(byref(c_int(nthreads)))
+    if load_mkl() is not None:
+        mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     global _blas_limiter
     _publish_thread_env(nthreads)
 

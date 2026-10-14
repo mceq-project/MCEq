@@ -49,7 +49,7 @@ def _restore_config(saved):
     ``mkl_threads`` is process-wide BLAS state, so it is put back through
     ``config.set_mkl_threads`` -- and only when it actually changed, because
     that call re-registers the threadpoolctl limiter (and dlopens ``libmkl_rt``
-    on its first use in the process; ``_load_mkl`` returns early afterwards).
+    on its first use in the process; ``load_mkl`` returns early afterwards).
     ``set_mkl_threads`` is safe when MKL is absent (it checks ``mkl is not
     None``). ``config.has_mkl`` is deliberately not read here: it is a lazy
     probe with side effects.

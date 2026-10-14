@@ -2,14 +2,23 @@ from time import time
 
 import numpy as np
 
+import MCEq.solvers as solvers
 from MCEq import config
 from MCEq.data.download import ensure_db_available
 from MCEq.data.model_names import normalize_hadronic_model_name
 from MCEq.driver import angular, batch, observables, paths, results
 from MCEq.driver.initial_state import InitialState
 from MCEq.driver.system import CascadeSystem
+from MCEq.environment import registry
+from MCEq.environment.base import EarthsAtmosphere
+from MCEq.environment.msis00 import MSIS00Atmosphere
+from MCEq.environment.msis21 import MSIS21Atmosphere
+from MCEq.environment.parameters import LOCATIONS
+from MCEq.environment.target import GeneralizedTarget
 from MCEq.misc import info
+from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
 from MCEq.operators.compiled import compile_operator, em_step_scale
+from MCEq.operators.secant import build_secant_kernel_ops
 
 
 class MCEqRun:
@@ -426,15 +435,10 @@ class MCEqRun:
           density_model_or_config (obj or tuple of strings):
             (parametrization type, arguments)
         """
-        from MCEq.environment.base import EarthsAtmosphere
-        from MCEq.environment.target import GeneralizedTarget
-
         # Check if string arguments or an instance of the density class is provided
         if not isinstance(
             density_model_or_config, (EarthsAtmosphere, GeneralizedTarget)
         ):
-            from MCEq.environment import registry
-
             base_model, model_config = density_model_or_config
 
             if base_model not in registry.DENSITY_MODELS:
@@ -488,8 +492,6 @@ class MCEqRun:
                 ``None`` (default) triggers azimuth-averaging for capable
                 models.
         """
-        from MCEq.environment.target import GeneralizedTarget
-
         info(
             2,
             f"Zenith angle {zenith_deg:6.2f}"
@@ -547,8 +549,6 @@ class MCEqRun:
         same-model reloads and ``regenerate_matrices``; selecting a
         different interaction model clears them.
         """
-
-        from MCEq.models.ddm.ddm import isospin_partners, isospin_symmetries
 
         injected = []
         for (prim, sec), mati in ddm.ddm_matrices(self).items():
@@ -760,10 +760,6 @@ class MCEqRun:
         Decides the :meth:`solve_fullsky` geomagnetic cutoff when
         ``geomagnetic_cutoff`` is None.
         """
-        from MCEq.environment.msis00 import MSIS00Atmosphere
-        from MCEq.environment.msis21 import MSIS21Atmosphere
-        from MCEq.environment.parameters import LOCATIONS
-
         dm = self.density_model
         if dm is None:
             return False
@@ -795,8 +791,6 @@ class MCEqRun:
     def _build_secant_ops(self):
         """sec(theta) operator set (:mod:`MCEq.operators.secant`), cached per
         grid, species count and secant parameters."""
-        from MCEq.operators.secant import build_secant_kernel_ops
-
         k_grid = np.asarray(self._mceq_db.k_grid)
         e_centers = np.asarray(self._energy_grid.c)
         n_species = self.dim_states // self.dim
@@ -843,8 +837,6 @@ class MCEqRun:
         Cached per kernel, precision and coupling; rebuilt when the operator
         or the CUDA device changes.
         """
-        import MCEq.solvers as solvers
-
         kc = config.kernel_config.lower()
         on_cuda = kc in ("cuda", "cuda_etd2")
         fp = 32 if np.dtype(dtype) == np.float32 else 64
@@ -885,8 +877,6 @@ class MCEqRun:
         self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
     ):
         """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
-        import MCEq.solvers as solvers
-
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
@@ -907,8 +897,6 @@ class MCEqRun:
     ):
         """Integrate K states along per-column paths with the LPT carousel;
         returns the ``(dim, K)`` final states in column order."""
-        import MCEq.solvers as solvers
-
         be = self._etd2_backend(sec_ops, dtype)
         sol = solvers.etd2_driver(
             schedule.T,

@@ -10,6 +10,7 @@ from typing import Optional
 import numpy as np
 
 from MCEq import config
+from MCEq.environment.parameters import LOCATIONS
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
 # or the gtracr API changes in a backward-incompatible way).
@@ -93,8 +94,6 @@ def _gtracr_location_from_atmosphere(density_model):
     Raises:
         ValueError: if neither detector coordinates nor a known location exist.
     """
-    from MCEq.environment.parameters import LOCATIONS
-
     # Detector-centred MSIS
     lat = getattr(density_model, "_detector_latitude", None)
     lon = getattr(density_model, "_detector_longitude", None)

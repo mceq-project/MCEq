@@ -3,7 +3,8 @@
 import numpy as np
 
 from MCEq import config
-from MCEq.misc import info
+from MCEq.misc import getAZN, info
+from MCEq.species.bin_average import delta_deposition
 
 
 class InitialState:
@@ -118,8 +119,6 @@ class InitialState:
 
         from scipy.linalg import solve
 
-        from MCEq.misc import getAZN
-
         if corsika_id and pdg_id:
             raise Exception("Provide either corsika or PDG ID")
 
@@ -226,8 +225,6 @@ class InitialState:
         species carries a stencil mark, or within r bins of the grid edge,
         where the three-bin deposition is used.
         """
-        from MCEq.species.bin_average import delta_deposition
-
         pman = self._system.pman
         if n_nucleons == 0:
             parts = [(pman[pdg_id], 1.0)]
