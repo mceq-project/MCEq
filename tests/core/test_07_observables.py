@@ -107,6 +107,7 @@ def test_n_e_energy_cutoff_and_grid(mceq_sib21):
     ["definition", "use_cs_scaling"],
     [
         ["primary_e", False],
+        ["primary_e", True],
         ["no_name_definition", True],
     ],
 )

@@ -85,7 +85,7 @@ def z_factor(
     (\sigma_i\phi_i)` with :math:`\phi` the proton (neutron for a neutron
     projectile) flux of the primary model at the bin centres and
     :math:`\sigma` the production cross section (``use_cs_scaling=False``
-    drops the ratio). Under Feynman scaling and a power law
+    drops the ratio; it applies to this definition only). Under Feynman scaling and a power law
     :math:`E^{-(\gamma+1)}` this is :math:`\int_0^1 x^{\gamma-1}F(x)dx`.
     The row form is the table acting on a smooth flux, which is what
     stencil-averaged tables are built for. Values below ``min_energy`` are 0.
@@ -123,7 +123,6 @@ def z_factor(
     zfac = np.zeros_like(e)
 
     if definition == "primary_e":
-        assert use_cs_scaling is False, f"cs_scaling has when definition = {definition}"
         below = np.flatnonzero(e < min_energy)
         min_idx = int(below[-1]) if len(below) else 0
         for p_eidx in np.flatnonzero(e >= min_energy):
