@@ -206,21 +206,11 @@ def strip_em_species(
 
 
 def getAZN(pdg_id):
-    """Returns mass number :math:`A`, charge :math:`Z` and neutron
-    number :math:`N` of ``pdg_id``.
+    """Mass number A, charge Z and neutron number N of a nucleon or nucleus.
 
-    Note::
-
-        PDG ID for nuclei is coded according to 10LZZZAAAI.
-        For iron-52 it is 1000260520.
-
-    Args:
-        pdgid (int): PDG ID of nucleus/mass group
-    Returns:
-        (int,int,int): (A, Z, N) tuple
+    Nuclei are coded 10LZZZAAAI (iron-52 is 1000260520); any other particle
+    gives (0, 0, 0).
     """
-    if pdg_id < 2000:
-        return 0, 0, 0
     if pdg_id == 2112:
         return 1, 0, 1
     if pdg_id == 2212:
@@ -229,7 +219,7 @@ def getAZN(pdg_id):
         A = (pdg_id % 1000) // 10
         Z = (pdg_id % 1000000) // 10000
         return A, Z, A - Z
-    return 1, 0, 0  # anfe: this doesn't make sense as default case, A=1 but Z=0 and N=0
+    return 0, 0, 0
 
 
 def caller_name(skip=2):

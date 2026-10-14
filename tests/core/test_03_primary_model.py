@@ -110,3 +110,11 @@ def test_single_primary_e_too_low(mceq_sib21):
     mceq_sib21.set_theta_deg(0.0)
     with pytest.raises(Exception):
         mceq_sib21.set_single_primary_particle(E=1e0, pdg_id=2212)
+
+
+def test_single_primary_hyperon_is_deposited_as_itself(mceq_sib21):
+    mceq_sib21.set_single_primary_particle(1e4, pdg_id=3122)
+    lam = mceq_sib21.pman[3122]
+    phi0 = mceq_sib21._phi0
+    assert phi0[lam.lidx : lam.uidx].sum() > 0
+    assert phi0.sum() == pytest.approx(phi0[lam.lidx : lam.uidx].sum(), rel=1e-12)
