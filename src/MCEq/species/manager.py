@@ -518,12 +518,12 @@ class ParticleManager:
         )
 
     def __contains__(self, pdg_id_or_name):
-        """Defines the `in` operator to look for particles"""
-        if isinstance(pdg_id_or_name, (int,)):
-            pdg_id_or_name = (pdg_id_or_name, 0)
-        elif isinstance(pdg_id_or_name, (str,)):
-            pdg_id_or_name = (_pdata.pdg_id(pdg_id_or_name), 0)
-        return pdg_id_or_name in list(self.pdg2pref)
+        """True if :meth:`__getitem__` finds the particle."""
+        try:
+            self[pdg_id_or_name]
+        except KeyError:
+            return False
+        return True
 
     def __getitem__(self, pdg_id_or_name):
         """Returns reference to particle object."""
