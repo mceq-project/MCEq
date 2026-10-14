@@ -35,13 +35,9 @@ import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.operators.compiled import compile_operator
-from MCEq.solvers import (
-    HostBackend,
-    ScipyApplyOff,
-    SpaccApplyOff,
-    etd2_driver,
-    mkl_backend,
-)
+from MCEq.solvers import etd2_driver, mkl_backend
+from MCEq.solvers.backends.accelerate import SpaccApplyOff
+from MCEq.solvers.backends.host import HostBackend, ScipyApplyOff
 
 
 class FakeSpaccMatrix:
@@ -442,9 +438,9 @@ def test_spacc_close_releases_bind_scratch(K):
     be = HostBackend(op, ao)
     dX, rho_inv = _path(p, False)
     sol, _ = etd2_driver(p["nsteps"], dX, rho_inv, be, p["phi0"], [])
-    refs = [weakref.ref(ao._dec)]
+    refs = [weakref.ref(ao._dec_buf)]
     del sol
     be.close()
     assert _alive(refs) == 0
-    assert (ao._dec, ao._dec_p, ao._x_p, ao._out_p) == (None,) * 4
+    assert ao._dec_buf is None
     assert ao._ptrs == {}

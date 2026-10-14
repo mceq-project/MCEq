@@ -1,7 +1,7 @@
 """`import MCEq.solvers` stays cheap on a machine with no accelerator.
 
 The package pulls in all four backend modules through
-``MCEq.solvers.etd2._BACKENDS``, so a dlopen, a cupy import or a hardware probe
+``MCEq.solvers.backends.make_backend``, so a dlopen, a cupy import or a hardware probe
 at the top of any one of them would be paid by every user -- including one who
 only ever runs the scipy backend, and one on a machine where the library is not
 installed at all. Each backend defers that work into the constructor or the

@@ -49,21 +49,6 @@ def test_the_new_module_owns_the_definitions(new):
         assert owner == new, f"{new}.{name} is defined in {owner}"
 
 
-def test_solvers_still_re_exports_the_operator_names():
-    """`MCEq.solvers` is the path callers outside the package use."""
-    import MCEq.operators.compiled as compiled
-    import MCEq.solvers as solvers
-
-    for name in (
-        "CompiledOperator",
-        "compile_operator",
-        "secant_layout",
-        "split_diagonal",
-    ):
-        assert name in solvers.__all__
-        assert getattr(solvers, name) is getattr(compiled, name)
-
-
 def test_importing_the_operators_package_is_free():
     """`MCEq.operators` re-exports nothing, so it pulls in no numerics.
 

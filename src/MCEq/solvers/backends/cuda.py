@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from MCEq.operators.compiled import coupled_corner
-from MCEq.solvers.backends.base import _state_dtype
+from MCEq.solvers.backends.host import state_dtype
 from MCEq.solvers.numerics import CORRECTOR_EXPR, PHI_C_BODY, PREDICTOR_EXPR
 
 
@@ -361,101 +361,65 @@ def _cuda_etd2_kernels():
     return _CUDA_ETD2_KERNELS
 
 
-class CudaOperator:
-    """Device copy of a compiled operator's split for the CUDA backend.
+class CudaBackend:
+    """Stage execution on the device for :func:`MCEq.solvers.etd2.etd2_driver`.
 
-    Owns the device CSR arrays of ``int_off`` / ``dec_off`` and, for a
-    Legendre operator, ``band_off`` (:class:`_DeviceCsr`) in the state dtype
-    of ``fp_precision`` (32 or 64), and the diagonals in fp64 whatever the
-    precision (see
-    the precision rule of :mod:`MCEq.solvers.backends.base`). When both
-    off-diagonal matrices are ``n_k`` diagonal blocks whose patterns (nearly)
-    agree, one shared pattern is kept (``n_blk = n_k``, :func:`_block_pattern`). The state and scratch
-    buffers are allocated per solve by :class:`CudaBackend`; one device
-    operator serves every K.
+    Uploads the split of the compiled operator ``op`` once: the off-diagonal
+    CSR arrays (and a Legendre operator's ``band_off``) in ``operator_dtype``
+    (default: the state ``dtype``; float32 under a float64 state halves the
+    bytes the SpMM streams), the diagonals in fp64. When both off-diagonal
+    matrices are ``n_k`` diagonal blocks of (nearly) one pattern, a shared
+    pattern is kept (:func:`_block_pattern`). The stages are the CSR SpMM of
+    :func:`_spmm_kernel`, cublas GEMMs and the fused kernels of
+    :func:`_cuda_etd2_kernels`, in the order of
+    :class:`MCEq.solvers.backends.host.HostBackend`; the diagonals and the
+    phi factors are evaluated in fp64 and cast on the way out.
     """
 
-    def __init__(
-        self,
-        int_off,
-        dec_off,
-        d_int,
-        d_dec,
-        device_id,
-        fp_precision,
-        n_k=1,
-        band_off=None,
-        operator_precision=None,
-    ):
+    def __init__(self, op, device_id=0, dtype=np.float64, operator_dtype=None):
         _preload_nvidia_pip_libs()
         try:
             import cupy as cp
         except ImportError as e:
             raise RuntimeError(
-                "CudaOperator: CuPy is not available. Install a build of "
+                "CudaBackend: CuPy is not available. Install a build of "
                 "cupy matching your CUDA runtime."
             ) from e
-        fl_pr = _state_dtype(fp_precision)
-        # the operator values: the state dtype, or fp32 under fp64 states
-        # (mixed precision: half the bytes the SpMM streams per step)
-        val = fl_pr if operator_precision is None else _state_dtype(operator_precision)
-        if np.dtype(val).itemsize > np.dtype(fl_pr).itemsize:
-            raise ValueError("operator_precision above the state precision")
-        self.cp = cp
-        self.fl_pr = fl_pr
-        self.value_dtype = np.dtype(val)
-        self.device_id = int(device_id)
-        cp.cuda.Device(self.device_id).use()
-        self.dim = int(d_int.shape[0])
-        int_off, dec_off = int_off.tocsr(), dec_off.tocsr()
-        patterns = [_block_pattern(m, n_k) for m in (int_off, dec_off)]
-        if None in patterns:
-            patterns = [None, None]
-        self.n_blk = 1 if patterns[0] is None else int(n_k)
-        self.cu_int_off = _DeviceCsr(cp, int_off, val, patterns[0])
-        self.cu_dec_off = _DeviceCsr(cp, dec_off, val, patterns[1])
-        self.cu_band_off = None if band_off is None else _DeviceCsr(cp, band_off, val)
-        self.cu_d_int = cp.asarray(d_int, dtype=cp.float64)
-        self.cu_d_dec = cp.asarray(d_dec, dtype=cp.float64)
-
-
-class CudaBackend:
-    """Stage execution on the device for
-    :func:`MCEq.solvers.etd2.etd2_driver`.
-
-    The CSR SpMM kernel of :func:`_spmm_kernel`, cublas GEMMs, and the fused
-    ElementwiseKernels of :func:`_cuda_etd2_kernels`. ``dev`` is the
-    :class:`CudaOperator` of ``op``'s split, and carries the state dtype.
-    At ``fp_precision=32`` everything runs in fp32 except the diagonals
-    and the phi factors: those come out of fp64 inputs, are evaluated in
-    fp64 inside the kernels, and are cast on the kernels' way out: the
-    same stages in the same order as
-    :class:`MCEq.solvers.backends.host.HostBackend`. See
-    the precision rule of :mod:`MCEq.solvers.backends.base`.
-    """
-
-    def __init__(self, dev, op):
-        if dev.dim != op.dim:
-            raise ValueError(f"CudaBackend: device operator dim {dev.dim} != {op.dim}")
+        dtype = state_dtype(dtype)
+        val = dtype if operator_dtype is None else state_dtype(operator_dtype)
+        if val.itemsize > dtype.itemsize:
+            raise ValueError("operator precision above the state precision")
         self.op = op
         self.name = "cuda"
-        self.dev = dev
-        self.cp = self.xp = dev.cp
-        self.dtype = dev.fl_pr
-        self.d_int = dev.cu_d_int
-        self.d_dec = dev.cu_d_dec
+        self.cp = self.xp = cp
+        self.dtype = dtype.type
+        self.value_dtype = val
+        self.device_id = int(device_id)
+        cp.cuda.Device(self.device_id).use()
+        int_off, dec_off = op.int_off.tocsr(), op.dec_off.tocsr()
+        patterns = [_block_pattern(m, op.layout.n_k) for m in (int_off, dec_off)]
+        if None in patterns:
+            patterns = [None, None]
+        self.n_blk = 1 if patterns[0] is None else int(op.layout.n_k)
+        self.cu_int_off = _DeviceCsr(cp, int_off, val, patterns[0])
+        self.cu_dec_off = _DeviceCsr(cp, dec_off, val, patterns[1])
+        self.cu_band_off = (
+            None if op.band_off is None else _DeviceCsr(cp, op.band_off, val)
+        )
+        self.d_int = cp.asarray(op.d_int, dtype=cp.float64)
+        self.d_dec = cp.asarray(op.d_dec, dtype=cp.float64)
         self._kernels = _cuda_etd2_kernels()
         self._coupling = None
         self._band = None
 
     def bind(self, dim, K, per_lane, nsteps):
         cp, dtype = self.cp, self.dtype
-        cp.cuda.Device(self.dev.device_id).use()
+        cp.cuda.Device(self.device_id).use()
         self._per_lane = per_lane
         self._state = tuple(cp.empty((dim, K), dtype=dtype) for _ in range(4))
-        A, B, n_blk = self.dev.cu_int_off, self.dev.cu_dec_off, self.dev.n_blk
+        A, B, n_blk = self.cu_int_off, self.cu_dec_off, self.n_blk
         N = dim // n_blk
-        vdt = self.dev.value_dtype
+        vdt = self.value_dtype
         self._spmm, lanes = _spmm_kernel(
             cp, dtype, K, (A.nnz + B.nnz) / N, value_dtype=vdt
         )
@@ -465,7 +429,7 @@ class CudaBackend:
         self._spmm_args = (np.int32(N), np.int32(n_blk), np.int32(_SPMM_TILE)) + tuple(
             v for m in (A, B) for v in (m.indptr, m.indices, m.data, np.int32(m.nnz))
         )
-        band = self.dev.cu_band_off
+        band = self.cu_band_off
         if band is not None:
             kern, lanes = _spmm_kernel(
                 cp, dtype, K, kernel="csr_spmm_acc", value_dtype=vdt
@@ -553,21 +517,3 @@ class CudaBackend:
     def close(self):
         self._state = self._factors = self._diag = self._corner_diag = None
         self._spmm = self._spmm_args = self._coupling = self._band = None
-
-
-def cuda_backend(op, device_id=0, fp_precision=64, operator_precision=None):
-    """Device backend; uploads the compiled operator's split once.
-    ``operator_precision=32`` stores the off-diagonal values in fp32 under an
-    fp64 state (mixed precision); None keeps them in the state precision."""
-    dev = CudaOperator(
-        op.int_off,
-        op.dec_off,
-        op.d_int,
-        op.d_dec,
-        device_id,
-        fp_precision,
-        op.layout.n_k,
-        band_off=op.band_off,
-        operator_precision=operator_precision,
-    )
-    return CudaBackend(dev, op)

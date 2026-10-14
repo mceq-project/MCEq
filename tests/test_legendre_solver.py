@@ -88,7 +88,7 @@ def _solve(s, sec_ops, ri, X, phi0, nsteps=4000, backend="numpy", fp=64):
         sec_ops=sec_ops,
         band=sp.csr_matrix(s.band),
         mode_mix=s.mix,
-        fp_precision=fp,
+        dtype=np.float32 if fp == 32 else np.float64,
     )
     return sol
 
@@ -222,8 +222,8 @@ def test_cuda_band_is_uploaded_with_the_operator(system, monkeypatch):
         band=sp.csr_matrix(system.band),
         mode_mix=system.mix,
     )
-    be = cuda.cuda_backend(op)
-    assert be.dev.cu_band_off.nnz == op.band_off.nnz
+    be = cuda.CudaBackend(op)
+    assert be.cu_band_off.nnz == op.band_off.nnz
 
     def no_upload(*args):
         raise AssertionError("CSR upload during a solve")
@@ -247,7 +247,7 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
     if backend == "mkl" and not config.has_mkl:
         pytest.skip("MKL runtime not available")
     seen = []
-    make = etd2._BACKENDS[backend]
+    make = etd2.make_backend
 
     def recording(*args):
         be = make(*args)
@@ -260,7 +260,7 @@ def test_step_loop_runs_openblas_serial_on_mkl(system, backend, monkeypatch):
         be.diag_factors = diag_factors
         return be
 
-    monkeypatch.setitem(etd2._BACKENDS, backend, recording)
+    monkeypatch.setattr(etd2, "make_backend", recording)
 
     def threads(info, api):
         return {p["num_threads"] for p in info if p["internal_api"] == api}

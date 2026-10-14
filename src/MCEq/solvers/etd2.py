@@ -3,8 +3,7 @@
 :func:`etd2_driver` is one loop for every route -- paraxial and
 sec(theta)-coupled, single axis, shared-path multi-RHS and the LPT carousel
 -- on numpy, MKL, Accelerate and CUDA. :func:`solve_etd2` compiles the
-operator, binds the backend named in :data:`_BACKENDS`, runs the loop and
-releases the handles.
+operator, binds a backend, runs the loop and releases the handles.
 """
 
 from contextlib import nullcontext
@@ -14,12 +13,7 @@ import numpy as np
 
 from MCEq.misc import info
 from MCEq.operators.compiled import compile_operator, coupled_corner
-from MCEq.solvers.backends import (
-    accelerate_backend,
-    cuda_backend,
-    mkl_backend,
-    numpy_backend,
-)
+from MCEq.solvers.backends import make_backend
 
 #: ``log2`` of the largest initial value the fp32 state carries.
 _FP32_PEAK_EXP = 76
@@ -87,7 +81,7 @@ def etd2_driver(
 
     The step size and ``rho_inv`` reach the factor stage in fp64 and the
     SpMM in the state dtype
-    (the precision rule of :mod:`MCEq.solvers.backends.base`).
+    (the precision rule of :mod:`MCEq.solvers.backends.host`).
     """
     xp = be.xp
     dtype = be.dtype
@@ -284,21 +278,6 @@ def etd2_driver(
 # --- the entry point -------------------------------------------------------
 
 
-#: Backend factories :func:`solve_etd2` binds by name. Each takes the
-#: compiled operator, the device and the state precision; the host
-#: backends ignore the device.
-_BACKENDS = {
-    "numpy": lambda op, device_id, fp_precision: numpy_backend(op, fp_precision),
-    "mkl": lambda op, device_id, fp_precision: mkl_backend(
-        op, fp_precision=fp_precision
-    ),
-    "accelerate": lambda op, device_id, fp_precision: accelerate_backend(
-        op, fp_precision=fp_precision
-    ),
-    "cuda": cuda_backend,
-}
-
-
 def solve_etd2(
     nsteps,
     dX,
@@ -313,7 +292,7 @@ def solve_etd2(
     schedule=None,
     phi0_per_pixel=None,
     device_id=0,
-    fp_precision=64,
+    dtype=np.float64,
     band=None,
     mode_mix=None,
 ):
@@ -331,7 +310,8 @@ def solve_etd2(
       phi: initial state, ``(dim,)`` or ``(dim, K)``; the solution has the
         same rank.
       grid_idcs: step indices to snapshot.
-      backend: ``"numpy"``, ``"mkl"``, ``"accelerate"`` or ``"cuda"``.
+      backend: a kernel name of :func:`MCEq.solvers.backends.make_backend`,
+        e.g. ``"numpy"``, ``"mkl"``, ``"accelerate"`` or ``"cuda"``.
       sec_ops: sec(theta) operator set of :mod:`MCEq.operators.secant`, or ``None``
         for the paraxial transport.
       schedule, phi0_per_pixel: LPT carousel of
@@ -343,23 +323,14 @@ def solve_etd2(
       band, mode_mix: Legendre databases: the continuous-loss band kept out
         of ``int_m`` and the backward removal of
         :func:`MCEq.operators.compiled.compile_operator`.
-      fp_precision: 32 or 64, the state precision on every backend: the
-        state, the scratch buffers and the off-diagonal operator are
-        stored in it while the diagonals and the phi factors stay fp64.
-        See the precision rule of :mod:`MCEq.solvers.backends.base`.
+      dtype: float64 or float32, the state precision (the precision rule of
+        :mod:`MCEq.solvers.backends.host`).
 
     Returns:
       ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.
     """
-    try:
-        make_backend = _BACKENDS[backend]
-    except KeyError:
-        raise ValueError(
-            f"solve_etd2: unknown backend {backend!r}; "
-            f"choose one of {', '.join(sorted(_BACKENDS))}"
-        ) from None
     op = compile_operator(int_m, dec_m, sec_ops, band=band, mode_mix=mode_mix)
-    be = make_backend(op, device_id, fp_precision)
+    be = make_backend(op, backend, dtype, device_id)
     try:
         return etd2_driver(
             schedule.T if schedule is not None else nsteps,

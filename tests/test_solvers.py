@@ -658,7 +658,7 @@ def test_solve_etd2_rejects_unknown_backend():
     from MCEq.solvers import solve_etd2
 
     int_m = sp.csr_matrix(-0.1 * np.eye(3))
-    with pytest.raises(ValueError, match="accelerate, cuda, mkl, numpy"):
+    with pytest.raises(ValueError, match="numpy_etd2"):
         solve_etd2(
             1, np.ones(1), np.ones(1), int_m, int_m, np.ones(3), [], backend="opencl"
         )
@@ -736,7 +736,7 @@ def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
         phi0_multi,
         [],
         backend=backend,
-        fp_precision=32,
+        dtype=np.float32,
     )
     assert sol_f32.dtype == np.float64  # the driver hands back fp64
     rel_l2 = np.linalg.norm(sol_f32 - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
@@ -763,7 +763,7 @@ def test_solve_etd2_fp32_below_normal_range():
 
     sol64, _ = solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy")
     sol32, _ = solve_etd2(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", fp_precision=32
+        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", dtype=np.float32
     )
     np.testing.assert_allclose(sol32, sol64, rtol=1e-4, atol=0)
 
@@ -915,7 +915,7 @@ def test_solve_etd2_cuda_multirhs_f32_matches_numpy_multirhs_toy(K):
         [],
         backend="cuda",
         device_id=config.cuda_gpu_id,
-        fp_precision=32,
+        dtype=np.float32,
     )
     rel_l2 = np.linalg.norm(sol_cuda32 - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
@@ -1296,13 +1296,8 @@ def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
     order as the scipy SpMV, so the two backends agree to round-off
     (~1e-12) rather than to a looser storage-dependent bound.
     """
-    from MCEq.solvers import (
-        compile_operator,
-        etd2_driver,
-        mkl_backend,
-        solve_etd2,
-        split_diagonal,
-    )
+    from MCEq.operators.compiled import compile_operator, split_diagonal
+    from MCEq.solvers import etd2_driver, mkl_backend, solve_etd2
 
     mceq = mceq_sib21_full_db
     nsteps, dX, rho_inv = _uniform_path_theta60(mceq)
@@ -1406,7 +1401,7 @@ def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
             phi0.copy(),
             [],
             backend=backend,
-            fp_precision=32,
+            dtype=np.float32,
             device_id=config.cuda_gpu_id,
         )
         return sol
@@ -2493,21 +2488,23 @@ def test_cuda_apply_off_mode_blocks(pattern, fp, values):
 
     A, B = blocks(0.1), blocks(0.03)
     dim = n_k * N
-    dev = cu.CudaOperator(
-        A,
-        B,
-        np.zeros(dim),
-        np.zeros(dim),
-        config.cuda_gpu_id,
-        fp,
-        n_k,
-        operator_precision=values,
+    op = SimpleNamespace(
+        dim=dim,
+        int_off=A,
+        dec_off=B,
+        d_int=np.zeros(dim),
+        d_dec=np.zeros(dim),
+        band_off=None,
+        layout=SimpleNamespace(coupled=False, n_k=n_k),
     )
-    assert dev.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
-    assert dev.n_blk == (1 if pattern == "distinct" else n_k)
     be = cu.CudaBackend(
-        dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
+        op,
+        config.cuda_gpu_id,
+        np.float32 if fp == 32 else np.float64,
+        None if values is None else (np.float32 if values == 32 else np.float64),
     )
+    assert be.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
+    assert be.n_blk == (1 if pattern == "distinct" else n_k)
     # fp32 values under an fp64 state: the values' rounding, no fp32 sums
     tol = 1e-5 if fp == 32 else 1e-6 if values == 32 else 1e-13
     for K in (1, 3, 8, 64):

@@ -11,6 +11,7 @@ import MCEq.data
 import MCEq.solvers as solvers
 from MCEq import config
 from MCEq.batch import BatchSolver, resolve_dtype
+from MCEq.config import detect
 from MCEq.data.download import ensure_db_available
 from MCEq.environment import registry
 from MCEq.environment.base import EarthsAtmosphere
@@ -1075,40 +1076,27 @@ class MCEqRun(BatchSolver):
         """Solver backend of ``kernel_config`` for the compiled operator, cached
         per kernel, precision and coupling; rebuilt when the operator or the
         CUDA device changes."""
-        kc = config.kernel_config.lower()
-        on_cuda = kc in ("cuda", "cuda_etd2")
-        fp = 32 if np.dtype(dtype) == np.float32 else 64
+        kernel = config.kernel_config.lower()
+        on_cuda = detect.ALIASES.get(kernel, kernel) == "cuda_etd2"
         op = self._compiled_operator(sec_ops)
+        op_dtype = None
+        if on_cuda and config.cuda_operator_precision is not None:
+            op_dtype = {32: np.float32, 64: np.float64}[
+                int(config.cuda_operator_precision)
+            ]
+        key = (kernel, np.dtype(dtype), op.coupled, op_dtype)
         cache = self.__dict__.setdefault("_backend_cache", {})
-        op_fp = config.cuda_operator_precision if on_cuda else None
-        key = (kc, fp, op.coupled, op_fp)
         be = cache.get(key)
         if be is not None and (
-            be.op is not op or (on_cuda and be.dev.device_id != self._cuda_device)
+            be.op is not op or (on_cuda and be.device_id != self._cuda_device)
         ):
             be.close()
             del cache[key]
             be = None
         if be is None:
-            if kc == "numpy_etd2":
-                be = solvers.numpy_backend(op, fp_precision=fp)
-            elif kc in ("accelerate", "accelerate_etd2"):
-                be = solvers.accelerate_backend(op, fp_precision=fp)
-            elif kc in ("mkl", "mkl_etd2"):
-                be = solvers.mkl_backend(op, fp_precision=fp)
-            elif on_cuda:
-                be = solvers.cuda_backend(
-                    op,
-                    device_id=self._cuda_device,
-                    fp_precision=fp,
-                    operator_precision=op_fp,
-                )
-            else:
-                raise Exception(
-                    f"Unsupported integrator setting '{config.kernel_config}'. "
-                    "Choose one of: numpy_etd2, accelerate_etd2, mkl_etd2, cuda_etd2."
-                )
-            cache[key] = be
+            be = cache[key] = solvers.make_backend(
+                op, kernel, dtype, self._cuda_device, op_dtype
+            )
         return be
 
     def _run_etd2(

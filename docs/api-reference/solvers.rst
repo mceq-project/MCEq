@@ -55,17 +55,17 @@ The solver is layered like the matrix build:
    coupling operators. Host-only and backend-agnostic; every backend sums
    the same products in the same order, so the cross-backend agreement of
    the kernels (≤ 1e-11 relative in fp64) is a property of this object.
-3. A backend binds the compiled operator to its library: :func:`numpy_backend`
-   (scipy CSR SpMM), :func:`mkl_backend` (MKL sparse BLAS handles,
-   row-major SpMM over the ``(dim, K)`` state), :func:`accelerate_backend`
-   (Apple Accelerate sparse handles, column-major SpMM in 64-column tiles
-   over staged buffers) or :func:`cuda_backend` (one CSR SpMM kernel for both
-   operators, which keeps the sparsity pattern shared by the Hankel modes
-   once; fp64 or fp32 with fp64 diagonal factors). The backend owns the
-   handles / device buffers and executes the stages of the step on its array
-   module — nothing else differs between backends. The sparse product itself
-   is one small ``apply_off`` binding per library: :class:`ScipyApplyOff`,
-   :class:`MklApplyOff`, :class:`SpaccApplyOff`.
+3. :func:`make_backend` binds the compiled operator to the library of a
+   kernel: :func:`numpy_backend` (scipy CSR SpMM), :func:`mkl_backend` (MKL
+   sparse BLAS handles), :func:`accelerate_backend` (Apple Accelerate sparse
+   handles), both row-major SpMM over the ``(dim, K)`` state, or
+   :class:`CudaBackend` (one CSR SpMM kernel for both operators, which keeps
+   the sparsity pattern shared by the Legendre modes once; fp64 or fp32 with
+   fp64 diagonal factors). The backend owns the handles / device buffers and
+   executes the stages of the step on its array module — nothing else differs
+   between backends. On the host the sparse product is one ``apply_off``
+   binding per library: ``ScipyApplyOff``, and ``MklApplyOff`` and
+   ``SpaccApplyOff`` on the shared ctypes binding ``CtypesApplyOff``.
 4. :func:`etd2_driver` is the one step loop. It runs the single-axis solve
    (``K = 1``), the shared-path multi-RHS solve (``(dim, K)`` state, one
    path) and the LPT carousel (``(nsteps, K)`` per-lane paths with harvest /
@@ -84,11 +84,10 @@ multi-RHS, the LPT carousel, the sec(θ) coupling — is available on all four,
 as is fp32, and so is any combination of them: the coupled route at fp32
 agrees between the host kernels and ``cuda_etd2`` to ~1e-6 per species.
 
-:func:`~MCEq.solvers.solve_etd2` is the entry point: it compiles the
-operator, binds the backend named by ``backend=`` and runs the driver,
-releasing the handles it created. ``MCEqRun`` does not use it — it caches
-its own operator and backend and calls :func:`~MCEq.solvers.etd2_driver`
-directly.
+:func:`~MCEq.solvers.solve_etd2` compiles the operator, binds the backend
+named by ``backend=`` and runs the driver, releasing the handles it created.
+``MCEqRun`` caches its operator and backend instead; both get the backend
+from :func:`make_backend`.
 
 Sparse storage
 ==============
@@ -101,14 +100,9 @@ dropped from the driver. MKL's row-major SpMM over the C-ordered ``(dim, K)``
 state runs 1.3–2× faster than the column-major tiled SpMM the former
 multi-RHS kernels used.
 
-Accelerate offers no row-major SpMM, so :class:`SpaccApplyOff` keeps the
-column-major staging: it copies the row-major state into Fortran-ordered
-scratch allocated once per bind, and issues one accumulating SpMM per
-64-column tile (``solvers.backends.accelerate._SPACC_SPMM_TILE``, from the
-K-to-1000 bench —
-Accelerate peaks at K ≈ 32–64 and drops to ≈ 1.4× per RHS at K ≥ 128). At
-K = 1 the two layouts are the same bytes and the driver's own buffers go
-straight to the SpMV.
+Accelerate is called row-major with ``ldb = ldc = K`` on the driver's own
+buffers; it accumulates without a beta, so an overwritten output is zeroed
+first. At K = 1 both libraries run the SpMV.
 
 Reference/API
 =============
@@ -119,6 +113,6 @@ Reference/API
   :include-all-objects:
   :no-inheritance-diagram:
 
-.. automodapi:: MCEq.solvers.backends.base
+.. automodapi:: MCEq.solvers.backends.host
   :include-all-objects:
   :no-inheritance-diagram:

@@ -6,8 +6,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from MCEq import config
-from MCEq.solvers.backends.base import _state_dtype
-from MCEq.solvers.backends.host import HostBackend
+from MCEq.solvers.backends.host import CtypesApplyOff, HostBackend, state_dtype
 
 
 class _MklMatrixDescr(Structure):
@@ -258,46 +257,20 @@ class MklSparseMatrix:
             pass
 
 
-class MklApplyOff:
-    """``out = int_off x + ri dec_off x`` through MKL sparse BLAS.
-
-    The driver's ``(dim, K)`` buffers are C-contiguous, so one row-major
-    ``mkl_sparse_d_mm`` (or ``mkl_sparse_s_mm`` at float32) per stage covers
-    all lanes (SpMV at K = 1). A scalar ``ri`` is fused into the dec SpMM's alpha; a ``(K,)`` lane row
-    scales a separate accumulator. ``owns`` closes the handles with the
-    binding. ``dtype`` is the state precision and matches the handles'.
-    """
+class MklApplyOff(CtypesApplyOff):
+    """The apply-off binding on MKL: one row-major ``mkl_sparse_?_mm`` per
+    product (``mkl_sparse_?_mv`` at K = 1); the handles' dtype is the state's."""
 
     name = "mkl"
 
-    def __init__(self, mkl_int_off, mkl_dec_off, owns=False, dtype=np.float64):
-        self.int_off, self.dec_off = (
-            m if m is not None and m.nnz else None for m in (mkl_int_off, mkl_dec_off)
-        )
-        self.handles = [m for m in (self.int_off, self.dec_off) if m is not None]
-        self.owns = owns
-        self.dtype = np.dtype(dtype)
-
     def bind(self, dim, K, nsteps):
-        self.K = K
-        self.dim = dim
         if K > 1:
             for m in self.handles:
                 m.set_mm_hint(K, expected_calls=2 * nsteps, layout=101)
-        # Dropped first (the memo pins its arrays), so two generations of
-        # staging never coexist.
-        self._dec_buf = None
-        self._ptrs = {}
-        self._ptr_type = POINTER(_MKL_TYPES[self.dtype][1])
-        self._dec_buf = np.empty((self.dim, K), dtype=self.dtype)
+        super().bind(dim, K, nsteps)
 
-    def _ptr(self, arr):
-        p = self._ptrs.get(id(arr))
-        if p is None:
-            p = self._ptrs[id(arr)] = arr.ctypes.data_as(self._ptr_type)
-        return p
-
-    def _spmm(self, m, alpha, x, beta, out):
+    def _spmm(self, m, alpha, x, out, overwrite):
+        beta = 0.0 if overwrite else 1.0
         if self.K == 1:
             m.gemv_ctargs(alpha, self._ptr(x), beta, self._ptr(out))
         else:
@@ -306,30 +279,10 @@ class MklApplyOff:
                 alpha, K, self._ptr(x), K, self._ptr(out), K, beta=beta, layout=101
             )
 
-    def __call__(self, x, out, ri):
-        if self.int_off is None:
-            out.fill(0.0)
-        else:
-            self._spmm(self.int_off, 1.0, x, 0.0, out)
-        if self.dec_off is not None:
-            if np.ndim(ri) == 0:
-                self._spmm(self.dec_off, float(ri), x, 1.0, out)
-            else:
-                self._spmm(self.dec_off, 1.0, x, 0.0, self._dec_buf)
-                np.multiply(self._dec_buf, ri, out=self._dec_buf)
-                np.add(out, self._dec_buf, out=out)
 
-    def close(self):
-        self._dec_buf = None
-        self._ptrs = {}
-        if self.owns:
-            for m in self.handles:
-                m.close()
-
-
-def mkl_backend(op, expected_calls=2000, fp_precision=64):
+def mkl_backend(op, dtype=np.float64, expected_calls=2000):
     """Host backend on MKL sparse BLAS; owns the handles it creates."""
-    dtype = _state_dtype(fp_precision)
+    dtype = state_dtype(dtype)
     handles = tuple(
         MklSparseMatrix(off, expected_calls=expected_calls, dtype=dtype)
         if off.nnz
