@@ -169,3 +169,14 @@ def test_thunman_z_factor_is_a_flux_weighted_row(mceq_sib21):
     assert z[i] == pytest.approx(c[i] @ w / w[i], rel=1e-12)
     sel = (e > 1e3) & (e < 1e5)
     assert np.all((z[sel] > 0.01) & (z[sel] < 0.2))
+
+
+def test_neutron_z_factor_uses_the_neutron_flux(mceq_sib21):
+    """n -> pi+ is weighted with the neutron flux of the primary model."""
+    z = mceq_sib21.z_factor(2112, 211, definition="thunman", use_cs_scaling=False)
+    e = mceq_sib21.e_grid
+    phi_n = mceq_sib21.pmodel.p_and_n_flux(e)[2]
+    n = mceq_sib21.pman[2112]
+    c = np.asarray(n.hadr_yields[mceq_sib21.pman[211]], dtype=float)
+    i = int(np.argmin(abs(e - 1e4)))
+    assert z[i] == pytest.approx(c[i] @ phi_n / phi_n[i], rel=1e-12)

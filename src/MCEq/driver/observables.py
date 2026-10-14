@@ -110,11 +110,10 @@ def z_factor(
     if not proj.is_secondary(sec):
         raise Exception(f"{sec.name} is not a secondary particle of {proj.name}.")
 
-    if proj == 2112:
-        nuc_flux = run.pmodel.p_and_n_flux(run.e_grid)[2]
-    else:
-        nuc_flux = run.pmodel.p_and_n_flux(run.e_grid)[1]
-    nuc_flux = np.asarray(nuc_flux, dtype=np.float64)
+    p_flux, n_flux = run.pmodel.p_and_n_flux(run.e_grid)[1:]
+    nuc_flux = np.asarray(
+        n_flux if proj.pdg_id[0] == 2112 else p_flux, dtype=np.float64
+    )
 
     smat = proj.hadr_yields[sec]
     proj_cs = proj.prod_cross_section()
