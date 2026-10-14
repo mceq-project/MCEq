@@ -130,7 +130,7 @@ class MatrixBuilder:
         # interaction part
         # -I + C
         self.max_lint = 0.0
-        int_rate_ops = {}
+        int_rates = {}
 
         for parent, child in product(cparts, cparts):
             idx = (child.mceqidx, parent.mceqidx)
@@ -151,13 +151,8 @@ class MatrixBuilder:
                 self.max_lint = np.max(
                     [self.max_lint, np.max(parent.inverse_interaction_length())]
                 )
-                if parent.mceqidx not in int_rate_ops:
-                    int_rate_ops[parent.mceqidx] = parent.interaction_rate_operator()
-                self.C_blocks[idx] = self._apply_rate(
-                    self.C_blocks[idx],
-                    parent.inverse_interaction_length(),
-                    int_rate_ops[parent.mceqidx],
-                    getattr(parent, "_int_stencil", 0),
+                self.C_blocks[idx] = bin_average.apply_rate(
+                    self.C_blocks[idx], parent, "int", int_rates, self._grid.dtype
                 )
 
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
@@ -190,7 +185,7 @@ class MatrixBuilder:
 
         if not skip_decay_matrix or self.dec_m is None:
             self.max_ldec = 0.0
-            dec_rate_ops = {}
+            dec_rates = {}
             for parent, child in product(cparts, cparts):
                 idx = (child.mceqidx, parent.mceqidx)
                 # Main diagonal
@@ -216,13 +211,8 @@ class MatrixBuilder:
                     [self.max_ldec, np.max(parent.inverse_decay_length())]
                 )
 
-                if parent.mceqidx not in dec_rate_ops:
-                    dec_rate_ops[parent.mceqidx] = parent.decay_rate_operator()
-                self.D_blocks[idx] = self._apply_rate(
-                    self.D_blocks[idx],
-                    parent.inverse_decay_length(),
-                    dec_rate_ops[parent.mceqidx],
-                    getattr(parent, "_dec_stencil", 0),
+                self.D_blocks[idx] = bin_average.apply_rate(
+                    self.D_blocks[idx], parent, "dec", dec_rates, self._grid.dtype
                 )
 
             self.dec_m = self._csr_from_blocks(self.D_blocks)
@@ -238,14 +228,6 @@ class MatrixBuilder:
         info(3, "Done filling matrices.")
 
         return self.int_m, self.dec_m
-
-    def _apply_rate(self, block, rate, rate_op, radius):
-        """``block @ diag(rate)``, or ``block @ rate_op`` for a parent whose
-        tables are stencil-averaged (:mod:`MCEq.species.bin_average`)."""
-        if rate_op is None:
-            block *= np.asarray(rate, dtype=self._grid.dtype)
-            return block
-        return bin_average.apply_right(block, rate_op, radius)
 
     def _average_operator(self, op_mat):
         """Averages the continuous loss operator by performing

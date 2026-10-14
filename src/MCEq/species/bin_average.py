@@ -88,6 +88,37 @@ def apply_right(block, op, r):
     return out
 
 
+def apply_rate(block, parent, kind, cache, dtype):
+    """``block @ diag(rate)`` for a channel of ``parent``, or ``block @ R`` when
+    its tables are stencil-averaged; ``kind`` is ``"int"`` or ``"dec"``.
+
+    ``cache`` (a dict the caller keeps for one matrix build) holds each
+    parent's rate and operator, so ``R`` is built once per parent, not per
+    channel. Scales ``block`` in place on the diagonal route.
+    """
+    if parent.mceqidx not in cache:
+        if kind == "int":
+            rate = parent.inverse_interaction_length()
+            entry = (
+                rate,
+                parent.interaction_rate_operator(),
+                getattr(parent, "_int_stencil", 0),
+            )
+        else:
+            rate = parent.inverse_decay_length()
+            entry = (
+                rate,
+                parent.decay_rate_operator(),
+                getattr(parent, "_dec_stencil", 0),
+            )
+        cache[parent.mceqidx] = entry
+    rate, op, r = cache[parent.mceqidx]
+    if op is None:
+        block *= np.asarray(rate, dtype=dtype)
+        return block
+    return apply_right(block, op, r)
+
+
 def delta_deposition(e_bins, energy, r):
     """Cell contents on bins ``c - r .. c + r`` (``c`` the bin holding ``energy``)
     for one particle at ``energy`` under stencil-averaged tables.
