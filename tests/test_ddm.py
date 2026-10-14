@@ -341,3 +341,20 @@ def test_default_spline_file_follows_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "data_dir", tmp_path)
     with pytest.raises(FileNotFoundError, match=str(tmp_path)):
         DDMSplineDB()
+
+
+def test_ddm_matrices_replace_only_columns_inside_the_energy_range(mceq_sib21):
+    from MCEq.models.ddm.ddm import DataDrivenModel
+
+    kw = dict(enable_channels=[(2212, 211)], enable_K0_from_isospin=False)
+    full = DataDrivenModel(**kw).ddm_matrices(mceq_sib21)[(2212, 211)]
+    part = DataDrivenModel(e_min=1e2, e_max=1e4, **kw).ddm_matrices(mceq_sib21)[
+        (2212, 211)
+    ]
+    p = mceq_sib21.pman[2212]
+    orig = np.asarray(p.hadr_yields[mceq_sib21.pman[211]])
+    e = mceq_sib21.e_grid + p.mass
+    inside = (e >= 1e2) & (e <= 1e4)
+    assert inside.any() and not inside.all()
+    assert np.array_equal(part[:, inside], full[:, inside])
+    assert np.array_equal(part[:, ~inside], orig[:, ~inside])

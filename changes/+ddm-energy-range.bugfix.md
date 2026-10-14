@@ -1,0 +1,1 @@
+`DataDrivenModel(e_min=..., e_max=...)` replaces the MCEq yield columns only for total projectile energies inside `[e_min, e_max]`; the arguments were ignored and the DDM was applied on the whole grid.

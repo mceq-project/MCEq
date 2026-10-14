@@ -601,11 +601,11 @@ class DataDrivenModel:
             The DDM spline data file, by default "DDM_1.0.npy" in
             ``config.data_dir``.
         e_min : float, optional
-            The minimum energy range where DDM cross sections
-            overwrite original MCEq matrices, by default 0.
+            Lowest total projectile energy (GeV) at which DDM matrices replace the
+            MCEq ones; negative (default) means the lower grid edge.
         e_max : float, optional
-            The maximum energy range where DDM cross sections
-            overwrite original MCEq matrices, by default np.inf.
+            Highest total projectile energy (GeV) at which DDM matrices replace the
+            MCEq ones; negative (default) means the upper grid edge.
         enable_channels : List[Tuple[int, int]], optional
             List of projectile and secondary combinations to enable,
             by default an empty list.
@@ -640,9 +640,19 @@ class DataDrivenModel:
             info(
                 0, f"Generating {channel.projectile} -> {channel.secondary} DDM matrix"
             )
-            _ddm_mat[(channel.projectile, channel.secondary)] = _generate_DDM_matrix(
-                channel=channel, mceq=mceq, e_min=mceq.e_bins[0], e_max=mceq.e_bins[-1]
-            )
+            mat = _generate_DDM_matrix(channel=channel, mceq=mceq)
+            # projectile energies outside [e_min, e_max] keep the MCEq columns
+            proj = mceq.pman[channel.projectile]
+            e_proj = mceq.e_grid + proj.mass
+            keep = np.zeros(len(e_proj), dtype=bool)
+            if self.e_min >= 0:
+                keep |= e_proj < self.e_min
+            if self.e_max >= 0:
+                keep |= e_proj > self.e_max
+            if keep.any():
+                orig = np.asarray(proj.hadr_yields[mceq.pman[channel.secondary]])
+                mat[:, keep] = orig[:, keep]
+            _ddm_mat[(channel.projectile, channel.secondary)] = mat
 
         if self.enable_K0_from_isospin:
             info(3, "Generating DDM K0 matrices from isospin symm.")
