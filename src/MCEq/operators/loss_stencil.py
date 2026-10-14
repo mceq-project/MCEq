@@ -25,7 +25,7 @@ Exactness on a constant
 -----------------------
 A constant is ``a = 0``, where (19) reads ``sum_k c_k = 0`` (zero row sum).
 
-* ``centered``, ``biased``, ``upwind``, ``upwind2``: exact in every row
+* ``upwind``, ``upwind2``: exact in every row
   (polynomial fits including ``p = 0``).
 * ``expfit`` interior: not exact. ``a = 0`` lies outside the fitted band at
   the default ``alpha0 = 3``; every interior row carries the residual
@@ -55,8 +55,6 @@ STENCIL_METHODS = (
     "expfit_low_upwind2",
     "expfit_low_upwind",
     "expfit",
-    "centered",
-    "biased",
     "upwind",
     "upwind2",
 )
@@ -107,14 +105,6 @@ def expfit_coefficients(h, alpha0, offsets=None):
 
 def _interior_row(method, h, alpha0):
     """``(offsets, coefficients)`` of a high-order interior row, before division by ``h``."""
-    if method == "biased":
-        offsets, coeffs, denom = _LOW_EDGE_ROWS[2]
-        return np.asarray(offsets), np.asarray(coeffs, dtype=np.float64) / float(denom)
-    if method == "centered":
-        return (
-            np.asarray([-3, -2, -1, 1, 2, 3]),
-            np.asarray([-1, 9, -45, 45, -9, 1], dtype=np.float64) / 60.0,
-        )
     if method == "expfit":
         offsets = np.arange(-3, 4)
         # One fit at the mean log spacing; the grid is log-uniform.

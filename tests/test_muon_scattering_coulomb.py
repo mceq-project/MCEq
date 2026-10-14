@@ -240,7 +240,7 @@ def test_transport_cross_sections_branches_agree():
 def test_single_scattering_moments_mc():
     """``<P_l> = 1 - sigma_l / sigma_tot`` against samples of the Wentzel
     kernel (inverse CDF ``mu = 1 - 2 A u / (1 + A - u)``)."""
-    from MCEq.operators.legendre import moments
+    from tests.helpers.legendre import moments
 
     a, n = 1e-3, 400_000
     u = np.random.default_rng(7).random(n)

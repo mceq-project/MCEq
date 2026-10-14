@@ -248,8 +248,6 @@ loss_step_for_average = 1e-1
 #:   "expfit_low_upwind" -- the same with first-order upwind rows.
 #:   "expfit"   -- 7-point exponentially fitted stencil anchored at
 #:                 ``loss_stencil_alpha0``.
-#:   "centered" -- 6th-order centered FD.
-#:   "biased"   -- 7-point biased stencil (v1 default).
 #:   "upwind", "upwind2" -- first-/second-order upwind everywhere.
 loss_stencil_method = "expfit_low_upwind2"
 

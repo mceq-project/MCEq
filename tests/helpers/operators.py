@@ -75,16 +75,14 @@ RUN_KWARGS = {
 #: Every interior stencil ``MatrixBuilder._construct_differential_operator``
 #: accepts (:data:`MCEq.operators.loss_stencil.STENCIL_METHODS`), in the order
 #: of the dispatch:
-#: the two ``expfit_low_upwind*`` composites, the three high-order families,
-#: then the two monotone upwind operators. ``tests/test_operators_pin.py``
+#: the two ``expfit_low_upwind*`` composites, the expfit interior, then the two
+#: monotone upwind operators. ``tests/test_operators_pin.py``
 #: reads the accepted names out of the ``ValueError`` the method raises and
 #: fails if this tuple and the source drift apart.
 STENCILS = (
     "expfit_low_upwind2",
     "expfit_low_upwind",
     "expfit",
-    "centered",
-    "biased",
     "upwind",
     "upwind2",
 )

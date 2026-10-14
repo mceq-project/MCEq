@@ -109,7 +109,7 @@ def test_every_stencil_builds_a_finite_banded_operator(method, stencil_config):
     assert np.abs(rows - cols).max() <= 3
 
 
-@pytest.mark.parametrize("method", ["centered", "biased", "upwind", "upwind2"])
+@pytest.mark.parametrize("method", ["upwind", "upwind2"])
 def test_polynomial_stencils_annihilate_a_constant(method, stencil_config):
     """The finite-difference families are exact on ``E^0``, every row.
 
@@ -190,7 +190,7 @@ def test_regenerate_matrices_does_not_rebuild_the_differential_operator(mceq_sib
     saved = config.loss_stencil_method
     before = mceq.int_m.copy()
     try:
-        config.loss_stencil_method = "centered"
+        config.loss_stencil_method = "upwind"
         mceq.regenerate_matrices()
         assert (mceq.int_m != before).nnz == 0, (
             "regenerate_matrices() picked up the stencil change on its own"
