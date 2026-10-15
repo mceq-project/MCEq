@@ -58,32 +58,21 @@ html_title = f"{project}"
 htmlhelp_basename = project + "docs"
 
 html_theme_options = {
-    "navbar_links": [
-        {"name": "Quickstart", "url": "quickstart/index", "internal": True},
-        {"name": "Tutorial", "url": "tutorial", "internal": True},
-        {"name": "Example Gallery", "url": "example-gallery", "internal": True},
-        {"name": "v1.4", "url": "v14v13_diff", "internal": True},
-        {"name": "Cite Us", "url": "citeus", "internal": True},
-        {"name": "API Reference", "url": "api-reference/index", "internal": True},
-    ],
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/mceq-project/mceq",
+            "url": "https://github.com/mceq-project/MCEq",
             "icon": "fa-brands fa-github",
         },
     ],
-    "announcement": "Latest release v1.4.1. The 2.0 layout is in development — "
-    "see the v2 layout migration guide at the docs root.",
 }
 
 html_sidebars = {
     "quickstart/index": [],  # disable sidebar on Quickstart
     "tutorial": [],
     "citeus": [],  # disable sidebar on Cite Us
-    "example-gallery": [],  # disable sidebar on References
-    "v12v11_diff": [],  # disable sidebar on References
-    "v14v13_diff": [],  # disable sidebar on References
+    "example-gallery": [],
+    "porting_to_v2": [],
 }
 
 html_show_sourcelink = False

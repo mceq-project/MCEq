@@ -98,10 +98,10 @@ build-dir = "build/{wheel_tag}"
 wheel.packages = ["mceq_config", "src/MCEq"]
 
 [project.urls]
-Changelog = "https://mceq.readthedocs.io/en/latest/en/latest/changelog.html"
+Changelog = "https://github.com/mceq-project/MCEq/blob/main/CHANGELOG.md"
 Documentation = "https://mceq.readthedocs.io/en/latest"
-Homepage = "https://github.com/afedynitch/MCEq"
-Issues = "https://github.com/afedynitch/MCEq/issues"
+Homepage = "https://github.com/mceq-project/MCEq"
+Issues = "https://github.com/mceq-project/MCEq/issues"
 
 [tool.ruff]
 # Notebooks are user-facing demonstrations, not library code, and one of them
