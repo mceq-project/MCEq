@@ -193,14 +193,17 @@ grids, ``path_workers=N`` forks a process pool for the path build
 (every atmosphere; a worker's paths are bitwise equal to the serial ones).
 
 For sky grids, ``solve_fullsky`` additionally applies the geomagnetic
-rigidity cutoff: when ``geomagnetic_cutoff`` is on (auto-detected for
-MSIS-based and location-tagged CORSIKA atmospheres), the first call
-builds the gtracr cutoff map for the detector and caches it under
-``<MCEq.data_dir>/gtracr_cutoffs/``; subsequent runs at the same
-detector hit the cache. The toggle can also be set at the ``MCEqRun``
-constructor (``geomagnetic_cutoff=True/False/None``) or overridden per
-call. Passing a 2-D ``phi0`` puts the caller in charge of the
-per-pixel primary — the cutoff is then *not* applied on top (a warning
+rigidity cutoff. It is on by default for the MSIS atmospheres and for the
+CORSIKA atmospheres of a named site, and off for ``USStd``, ``BK_USStd`` and
+the averaged ``KM3NeT`` set. Atmospheres of a named site use cutoff maps
+shipped with MCEq (downgoing directions on a 5° grid, IGRF at
+``MCEq.geometry.cutoff.CUTOFF_DATE``); detector-centred MSIS atmospheres
+trace the full sky with gtracr on first use and cache the map under
+``<MCEq.data_dir>/gtracr_cutoffs/``. Without an ``azimuth_grid`` the
+transmitted primary flux is averaged over azimuth. The toggle can also be
+set at the ``MCEqRun`` constructor (``geomagnetic_cutoff=True/False/None``)
+or overridden per call. Passing a 2-D ``phi0`` puts the caller in charge
+of the per-pixel primary — the cutoff is then *not* applied on top (a warning
 is emitted if it was requested explicitly).
 
 The ``Full_sky_carousel`` example notebook walks through the sky-grid

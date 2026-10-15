@@ -1,8 +1,11 @@
-"""Geomagnetic rigidity cutoffs from gtracr (cached per site)."""
+"""Geomagnetic rigidity cutoffs: tabulated for the named sites, traced with
+gtracr (and cached) for any other detector."""
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import json
 import time as _time
 from pathlib import Path
 from typing import Optional
@@ -12,6 +15,12 @@ import numpy as np
 from MCEq import config
 from MCEq.geometry.atmosphere_parameters import site_coordinates
 from MCEq.misc import info
+
+#: IGRF epoch of the tabulated maps and the default of the traced ones.
+CUTOFF_DATE = "2025-01-01"
+
+#: Azimuth samples of the average over azimuth, in degrees.
+AZIMUTH_SAMPLES_DEG = np.arange(0.0, 360.0, 5.0)
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
 # or the gtracr API changes in a backward-incompatible way).
@@ -87,6 +96,54 @@ def _gtracr_location_from_atmosphere(density_model):
     )
 
 
+def _fixed_site(density_model):
+    """The site name of an atmosphere tied to one named site, else None;
+    detector-centred atmospheres are not fixed."""
+    if getattr(density_model, "_detector_latitude", None) is not None:
+        return None
+    site = site_coordinates(getattr(density_model, "location", None))
+    return None if site is None else site[0]
+
+
+@functools.cache
+def _tabulated_maps():
+    """The maps of ``cutoff_maps.json``, made by ``scripts/make_cutoff_maps.py``."""
+    with open(Path(__file__).with_name("cutoff_maps.json")) as f:
+        return json.load(f)
+
+
+def _tabulated_map(site, zen_centres, az_centres):
+    """Interpolated tabulated cutoffs of ``site``; downgoing directions only."""
+    if np.max(zen_centres) > 90.0:
+        raise ValueError(
+            f"The atmosphere of {site} describes downgoing directions only; "
+            "use a detector-centred MSIS atmosphere for upgoing ones."
+        )
+    tab = _tabulated_maps()
+    return _interpolate(
+        np.array(tab["zenith_deg"]),
+        np.array(tab["azimuth_deg"]),
+        np.array(tab["cutoff_GV"][site]),
+        zen_centres,
+        az_centres,
+    )
+
+
+def _interpolate(g_zen, g_az, g_rc, zen_centres, az_centres):
+    """Bilinear interpolation of the map ``g_rc[zen, az]``, periodic in azimuth."""
+    from scipy.interpolate import RegularGridInterpolator
+
+    az_pad = np.concatenate([[g_az[-1] - 360.0], g_az, [g_az[0] + 360.0]])
+    r_pad = np.concatenate([g_rc[:, -1:], g_rc, g_rc[:, :1]], axis=1)
+    interp = RegularGridInterpolator(
+        (g_zen, az_pad), r_pad, method="linear", bounds_error=False, fill_value=None
+    )
+    z_q = np.clip(zen_centres, g_zen[0], g_zen[-1])
+    Z, A = np.meshgrid(z_q, np.mod(az_centres, 360.0), indexing="ij")
+    rc = interp(np.stack([Z.ravel(), A.ravel()], axis=-1))
+    return rc.reshape(np.size(zen_centres), np.size(az_centres))
+
+
 def get_cutoff_map(
     density_model,
     zen_centres: np.ndarray,
@@ -103,14 +160,16 @@ def get_cutoff_map(
 ) -> np.ndarray:
     """Return a rigidity-cutoff map ``R_c[zen, az]`` in GV.
 
-    Hits a per-installation cache under ``config.data_dir/gtracr_cutoffs/``;
-    if absent, runs gtracr and writes the file.
+    An atmosphere of a named site (a CORSIKA set or ``MSISAtmosphere``) reads
+    the tabulated downgoing map of :data:`CUTOFF_DATE` unless ``date`` or
+    ``force_rebuild`` is given. Otherwise gtracr traces the full sky once per
+    detector and setting and caches it under ``config.data_dir/gtracr_cutoffs/``.
 
     Args:
         density_model: an MCEq atmosphere object with detector geography.
         zen_centres, az_centres: target grid centres in degrees.
         bfield_type: ``"igrf"`` (default) or ``"table"`` (faster lookup).
-        date: ISO-format date string; defaults to today.
+        date: ISO-format date of the field; defaults to :data:`CUTOFF_DATE`.
         particle_altitude: top-of-atmosphere altitude in km (gtracr trajectory
             launch height). 100 km is the gtracr default.
         iter_num: number of MC trajectories. Production maps use 30 000.
@@ -120,21 +179,15 @@ def get_cutoff_map(
     Returns:
         ``(n_zen, n_az)`` array of rigidity cutoffs in GV.
     """
-    try:
-        import gtracr
-        from gtracr.geomagnetic_cutoffs import GMRC
-        from gtracr.location import Location
-    except ImportError as e:
-        raise ImportError(
-            "gtracr is required for the geomagnetic cutoff feature. "
-            "Install from https://github.com/afedynitch/gtracr or set "
-            "geomagnetic_cutoff=False on MCEqRun."
-        ) from e
+    site = _fixed_site(density_model)
+    if site is not None and date is None and not force_rebuild:
+        return _tabulated_map(site, zen_centres, az_centres)
 
-    if date is None:
-        from datetime import date as _date
+    import gtracr
+    from gtracr.geomagnetic_cutoffs import GMRC
+    from gtracr.location import Location
 
-        date = str(_date.today())
+    date = CUTOFF_DATE if date is None else date
 
     location_name, lat, lon = _gtracr_location_from_atmosphere(density_model)
     key_str, key_hash = _cache_key(
@@ -147,9 +200,6 @@ def get_cutoff_map(
         max_rigidity,
         delta_rigidity,
     )
-
-    n_zen = int(zen_centres.size)
-    n_az = int(az_centres.size)
 
     cache_dir = _cache_dir()
     cache_file = cache_dir / (
@@ -222,22 +272,4 @@ def get_cutoff_map(
             gtracr_version=np.array(getattr(gtracr, "__version__", "unknown")),
         )
 
-    # Linear interpolation onto the caller's grid. Azimuth wraps at 360°,
-    # so pad the native grid by one column on each side for periodic
-    # interpolation.
-    from scipy.interpolate import RegularGridInterpolator
-
-    az_pad = np.concatenate([[g_az[-1] - 360.0], g_az, [g_az[0] + 360.0]])
-    r_pad = np.concatenate([g_rc[:, -1:], g_rc, g_rc[:, :1]], axis=1)
-    interp = RegularGridInterpolator(
-        (g_zen, az_pad),
-        r_pad,
-        method="linear",
-        bounds_error=False,
-        fill_value=None,
-    )
-    z_q = np.clip(zen_centres, g_zen[0], g_zen[-1])
-    a_q = np.mod(az_centres, 360.0)
-    Z, A = np.meshgrid(z_q, a_q, indexing="ij")
-    rc = interp(np.stack([Z.ravel(), A.ravel()], axis=-1)).reshape(n_zen, n_az)
-    return rc
+    return _interpolate(g_zen, g_az, g_rc, zen_centres, az_centres)

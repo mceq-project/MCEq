@@ -7,7 +7,7 @@ from time import time
 import numpy as np
 
 from MCEq import config
-from MCEq.geometry.cutoff import get_cutoff_map
+from MCEq.geometry.cutoff import AZIMUTH_SAMPLES_DEG, get_cutoff_map
 from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
@@ -45,9 +45,13 @@ def build_phi0_with_cutoff(mceq, primary_model, rc_GV_per_pixel):
     A mass group ``(Z, A)`` contributes where ``A * E_nuc > Z * R_c``
     (ultrarelativistic, ``R ≈ E / Z``) and is split into nucleons by
     superposition as in :meth:`crflux.models.PrimaryFlux.p_and_n_flux`.
+    A ``(K, n)`` array gives each column ``n`` cutoffs, for example over
+    azimuth, and the column takes the mean transmitted flux.
     """
     _require_mass_groups(primary_model)
-    K = int(rc_GV_per_pixel.size)
+    rc = np.asarray(rc_GV_per_pixel, dtype=np.float64)
+    rc = rc.reshape(rc.shape[0], -1)
+    K = rc.shape[0]
     e_grid = mceq._energy_grid.c
     p_mass = mceq.pman[(2212, 0)].mass
     n_mass = mceq.pman[(2112, 0)].mass
@@ -62,9 +66,7 @@ def build_phi0_with_cutoff(mceq, primary_model, rc_GV_per_pixel):
         phi_nuc = np.asarray(
             primary_model.nucleus_flux(corsika_id, E_nucleus_tot), dtype=np.float64
         )
-        mask = (E_nucleus_tot[:, None] > Z * rc_GV_per_pixel[None, :]).astype(
-            np.float64
-        )
+        mask = np.mean(E_nucleus_tot[:, None, None] > Z * rc[None], axis=2)
         p_flux += Z * A * (phi_nuc[:, None] * mask)
         n_flux += (A - Z) * A * (phi_nuc[:, None] * mask)
 
@@ -479,7 +481,8 @@ class BatchSolver:
 
         Args:
             zenith_grid: zenith angles in degrees.
-            azimuth_grid: azimuth angles in degrees, or ``None`` for zenith only.
+            azimuth_grid: azimuth angles in degrees, or ``None`` for zenith
+              only; the cutoff is then averaged over azimuth.
             phi0: ``(dim_states,)`` (all pixels) or ``(dim_states, K)``, columns
               in ``(i_zen, i_az)`` order with azimuth inner; ``None`` uses the
               run's initial state.
@@ -531,19 +534,16 @@ class BatchSolver:
                 info(1, "solve_fullsky: no primary model, skipping the cutoff.")
             else:
                 _require_mass_groups(self.pmodel)
+                averaged = azimuth_grid is None
                 rc_grid = get_cutoff_map(
                     self.density_model,
                     zenith_grid,
-                    azimuth_grid if azimuth_grid is not None else np.array([0.0]),
+                    AZIMUTH_SAMPLES_DEG if averaged else azimuth_grid,
                     **dict(cutoff_kwargs or {}),
                 )
-                rc_flat = rc_grid.flatten(order="C")  # azimuth inner
-                if rc_flat.size != K:
-                    raise RuntimeError(
-                        f"solve_fullsky: cutoff map size {rc_flat.size} "
-                        f"does not match K={K}"
-                    )
-                phi0_arr = build_phi0_with_cutoff(self, self.pmodel, rc_flat)
+                # one column per zenith, or per (zenith, azimuth) azimuth inner
+                rc_cols = rc_grid if averaged else rc_grid.reshape(-1)
+                phi0_arr = build_phi0_with_cutoff(self, self.pmodel, rc_cols)
                 info(
                     2,
                     f"solve_fullsky: per-pixel cutoff, R_c in "
