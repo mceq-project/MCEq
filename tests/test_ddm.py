@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pytest
 from scipy.interpolate import splrep
@@ -237,7 +239,7 @@ def test_default_spline_file_follows_data_dir(tmp_path, monkeypatch):
     from MCEq.ddm import DataDrivenModel
 
     monkeypatch.setattr(config, "data_dir", tmp_path)
-    with pytest.raises(FileNotFoundError, match=str(tmp_path)):
+    with pytest.raises(FileNotFoundError, match=re.escape(str(tmp_path))):
         DataDrivenModel()
 
 
