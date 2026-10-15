@@ -42,7 +42,7 @@ Architecture
 
 The solver is layered like the matrix build:
 
-1. :class:`MCEq.core.MatrixBuilder` produces the constant operator as two
+1. :class:`~MCEq.operators.matrix_builder.MatrixBuilder` produces the constant operator as two
    sparse matrices, ``int_m`` (:math:`A`) and ``dec_m`` (:math:`B`);
    :mod:`MCEq.operators.secant` produces the constant sec(θ) mode-coupling
    operators.

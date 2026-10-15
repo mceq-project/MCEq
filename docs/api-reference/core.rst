@@ -15,6 +15,7 @@ Reference/API
 =============
 .. automodapi:: MCEq.core
   :inherited-members:
+  :skip: MatrixBuilder
 
 .. autodata:: MCEq.core.DENSITY_MODELS
    :no-value:

@@ -36,6 +36,8 @@ from MCEq import bin_average, config
 from MCEq.misc import info
 from MCEq.operators import loss_stencil, scattering
 
+__all__ = ["MatrixBuilder", "UPWIND_ROWS_FLOOR", "UPWIND_STIFFNESS_THRESHOLD"]
+
 #: Stiffness threshold of the species-adaptive upwind layer, see
 #: :meth:`MatrixBuilder._upwind_rows_for`. The row count covers every row whose
 #: explicit one-step stiffness ``dX_max * |dEdX| / (E * dlnE)`` reaches this

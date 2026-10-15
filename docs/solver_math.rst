@@ -38,7 +38,7 @@ the energy grid the fluxes form a state vector :math:`\Phi \in
 :math:`A` (``int_m``) holds the interaction losses on the diagonal, the
 production kernels off it and the energy-loss band; :math:`B` (``dec_m``)
 holds the decay rates on the diagonal and the decay kernels off it. Both are
-constant along the path, built by :class:`MCEq.core.MatrixBuilder`; only
+constant along the path, built by :class:`~MCEq.operators.matrix_builder.MatrixBuilder`; only
 :math:`\rho^{-1}(X)` changes. Every short time scale sits on the diagonal.
 
 Diagonal-exact splitting and the exponential integrator

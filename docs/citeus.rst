@@ -126,14 +126,10 @@ Hadronic interaction models
     | A. Fedynitch
     | CERN-THESIS-2015-371
 
-* `FLUKA <https://doi.org/10.3389/fphy.2021.788253>`_:
-    | *New Capabilities of the FLUKA Multi-Purpose Code*
-    | C. Ahdida et al.
-    | Front. Phys. 9 (2022) 788253, doi:10.3389/fphy.2021.788253
-    |
-    | *Overview of the FLUKA code*
-    | G. Battistoni et al.
-    | Annals Nucl. Energy 82 (2015) 10-18, doi:10.1016/j.anucene.2014.11.007
+* `FLUKA <https://www.fluka.eu>`_:
+    | *The FLUKA code: Overview and new developments*
+    | F. Ballarini et al.
+    | EPJ Nucl. Sci. Technol. 10 (2024) 16, doi:10.1051/epjn/2024015
 
 * `PYTHIA 8 <https://pythia.org>`_:
     | *A comprehensive guide to the physics and usage of PYTHIA 8.3*
