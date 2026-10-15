@@ -1,1 +1,0 @@
-`set_single_primary_particle(E, pdg_id=...)` with a hyperon or other non-nucleus baryon (PDG id >= 2000) deposits that particle; it used to produce an empty initial state because `misc.getAZN` returned (1, 0, 0) for it.

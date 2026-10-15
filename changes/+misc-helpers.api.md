@@ -1,1 +1,0 @@
-Removed from `MCEq.misc`: `theta_deg`, `is_charm_pdgid`, `getAZN_corsika`, `corsikaid2pdg`, `pdg2corsikaid`, `reset_plt` and `put_ticks`. `MCEq.core` exports `MCEqRun` and `MatrixBuilder`; `MCEqBatchResult` is imported from `MCEq.driver.results`. `MCEq.__version__` and `MCEq.version.__version__` read the installed package version.

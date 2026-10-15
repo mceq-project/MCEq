@@ -18,6 +18,7 @@ Reference/API
 =============
 .. automodule:: MCEq.geometry.density_profiles
    :members:
+   :exclude-members: ABCMeta, MONTH_TO_DAY_OF_YEAR, abstractmethod, get_atmosphere_parameters, info, join, list_available_corsika_atmospheres, np
 .. automodule:: MCEq.geometry.msis21
    :members:
 .. automodule:: MCEq.geometry.target

@@ -19,7 +19,19 @@ from MCEq.geometry.geometry import EarthGeometry
 from MCEq.geometry.target import GeneralizedTarget
 from MCEq.misc import info
 
-__all__ = [
+# The imported helpers stay in the star export of v1.4, which notebooks rely on.
+_V14_STAR_EXPORTS = [
+    "ABCMeta",
+    "MONTH_TO_DAY_OF_YEAR",
+    "abstractmethod",
+    "get_atmosphere_parameters",
+    "info",
+    "join",
+    "list_available_corsika_atmospheres",
+    "np",
+]
+
+__all__ = _V14_STAR_EXPORTS + [
     "AIRSAtmosphere",
     "CorsikaAtmosphere",
     "EarthsAtmosphere",

@@ -689,3 +689,15 @@ def test_corsika_sets_resolve_to_their_site(location, season, site):
     atm = dp.CorsikaAtmosphere(location, season)
     found = site_coordinates(atm.location)
     assert (found and found[0]) == site
+
+
+def test_star_import_keeps_the_v14_names():
+    namespace = {}
+    exec("from MCEq.geometry.density_profiles import *", namespace)
+    for name in (
+        "np",
+        "CorsikaAtmosphere",
+        "MSIS00Atmosphere",
+        "get_atmosphere_parameters",
+    ):
+        assert name in namespace
