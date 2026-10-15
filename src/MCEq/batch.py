@@ -12,6 +12,13 @@ from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
+__all__ = [
+    "BatchSolver",
+    "MCEqBatchResult",
+    "build_phi0_with_cutoff",
+    "resolve_dtype",
+]
+
 # Run instance shared with forked path workers (inherited, not pickled).
 _PATH_WORKER_MCEQ = None
 

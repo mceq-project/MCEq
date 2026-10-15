@@ -42,7 +42,6 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     Attributes:
       thrad (float): current zenith angle :math:`\\theta` in radians
       theta_deg (float): current zenith angle :math:`\\theta` in degrees
-      max_X (float): slant depth at the observation level
       geom (EarthGeometry): the geometry; ``geometry=`` replaces the default
     """
 

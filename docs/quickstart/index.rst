@@ -1,5 +1,6 @@
-.. _quickstart:
 :html_theme.sidebar_primary.remove: true
+
+.. _quickstart:
 
 **********
 Quickstart
@@ -14,17 +15,16 @@ The installation via PyPi is the simplest method
 
    pip install MCEq
 
-Optionally, one can (and is encouraged to) accelerate calculations with BLAS
-libraries. For Intel CPUs the Math Kernel Library (MKL) provides quite some
-speed-up compared to plain numpy. MCEq will auto-detect MKL if it is already
-installed. To enable MKL by default use
+Calculations can be accelerated with BLAS libraries. On macOS MCEq uses
+Apple Accelerate. On Linux and Windows MCEq uses Intel MKL if its runtime
+library ``libmkl_rt`` is installed in the Python environment, for example by
 
 .. code-block::
 
-    pip install MCEq[MKL]
+    pip install mkl
 
 More speed-up can be achieved on an NVIDIA GPU through the cupy library,
-selected with ``kernel_config = "cuda_etd2"`` (never chosen by ``"auto"``).
+selected with ``config.kernel_config = "cuda_etd2"`` (never chosen by ``"auto"``).
 To install MCEq with cupy for CUDA 12 (any driver from 525 on) or for a
 CUDA 13 driver and toolkit
 
@@ -35,15 +35,11 @@ CUDA 13 driver and toolkit
 
 Alternatively, install cupy by yourself (see `cupy homepage <https://cupy.dev>`__).
 
-Supported architectures:
+Supported platforms (Python 3.10 or later):
 
-- Linux 32- and 64-bit (x86_64 and AArch64)
-- Mac OS X
-- Windows
-
-.. note:: 
-   pip installations of scipy on Windows may be faulty. If scipy throws errors
-   on import, use `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_
+- Linux 64-bit (x86_64 and AArch64)
+- macOS (Apple silicon and Intel)
+- Windows 64-bit (x86_64 and ARM64)
 
 Upgrading
 .........
@@ -54,13 +50,14 @@ For installations with pip, upgrading the code and data tables can be done with
 
     pip install MCEq --upgrade
 
-In case of major updates the database file will be updated on first import and the old
-one will be removed. For installations from source, pull the latest release or master branch. The database file will be updated automatically as well.
+For installations from source, pull the latest release or the main branch.
+Database files that are missing are downloaded into ``config.data_dir`` when
+the first :class:`MCEq.core.MCEqRun` is created.
 
 .. note::
-   Since v2 the data is distributed as packages described by a YAML manifest
-   (a 1D base with FLUKA20251 + SIBYLL23E, an extra-models package, 2D
-   packages), so an install carries only the models it runs; a model missing
+   The data are distributed as several files described by a YAML manifest
+   (a 1D base file with FLUKA20251 and SIBYLL23E, an extra-models file and 2D
+   files), so an install carries only the models it runs; a model missing
    from the selected database is fetched from the data release on first use.
    See :doc:`../data_installation` for the file list, the cluster pre-fetch
    CLI and how to register a database of your own.
@@ -72,7 +69,7 @@ To modify the code and contribute, the code needs to be installed from the githu
 
 .. code-block::
 
-    git clone https://github.com/afedynitch/MCEq.git
+    git clone https://github.com/mceq-project/MCEq.git
     cd MCEq
     pip install -e .
 
@@ -80,13 +77,13 @@ This will build and install MCEq in editable mode, and changes to this source di
 be immediately reflected in any code that imports MCEq in the current python enviroment.
 
 Running MCEq
-...........
+............
 
 Open an new python file or jupyter notebook/lab
 
 .. code-block::
 
-    from MCEq.core import config, MCEqRun
+    from MCEq.core import MCEqRun
     import crflux.models as crf
     # matplotlib used plotting. Not required to run the code.
     import matplotlib.pyplot as plt
@@ -96,29 +93,32 @@ Open an new python file or jupyter notebook/lab
     mceq = MCEqRun(
 
         # High-energy hadronic interaction model
-        interaction_model='SIBYLL23C',
+        interaction_model='SIBYLL23E',
+
+        # Low-energy hadronic interaction model, below about 80 GeV
+        low_energy_model='FLUKA20251',
 
         # cosmic ray flux at the top of the atmosphere
-        primary_model = (crf.HillasGaisser2012, 'H3a'), 
-        
+        primary_model=(crf.HillasGaisser2012, 'H3a'),
+
         # zenith angle
-        theta_deg = 0. 
+        theta_deg=0.
     )
-    
+
     # Solve the equation system
     mceq.solve()
 
     # Obtain the result
     # Multiply fluxes be E**mag to resolve the features of the steep spectrum
     mag = 3
-    muon_flux = (mceq.get_solution('mu+', mag) + 
+    muon_flux = (mceq.get_solution('mu+', mag) +
                  mceq.get_solution('mu-', mag))
-    numu_flux = (mceq.get_solution('numu', mag) + 
+    numu_flux = (mceq.get_solution('numu', mag) +
                  mceq.get_solution('antinumu', mag))
     nue_flux = (mceq.get_solution('nue', mag) +
                 mceq.get_solution('antinue', mag))
 
-    # The lines below are for plotting with matplotlib 
+    # The lines below are for plotting with matplotlib
     plt.loglog(mceq.e_grid, muon_flux, label='muons')
     plt.loglog(mceq.e_grid, numu_flux, label='muon neutrinos')
     plt.loglog(mceq.e_grid, nue_flux, label='electron neutrinos')
@@ -126,14 +126,6 @@ Open an new python file or jupyter notebook/lab
     plt.xlim(1., 1e9)
     plt.xlabel('Kinetic energy (GeV)')
     plt.ylim(1e-6, 1.)
-    plt.ylabel(r'$(E/\text{GeV})^3\,\Phi$ (GeV cm$^{-2}$\,$s$^{-1}\,$sr$^{-1}$) (GeV)')
+    plt.ylabel(r'$E^3\,\Phi$ (GeV$^2$ cm$^{-2}$ s$^{-1}$ sr$^{-1}$)')
     plt.legend()
     plt.show()
-
-
-.. warning::
-
-  Due to a bug found in the decay table generation for the "new" MCEq versions
-  there are some larger changes for the lowest energies at tens of GeV. To estimate
-  if your computations may be affected check out :ref:`v12v11_diff`.
-

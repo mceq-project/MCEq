@@ -8,6 +8,17 @@ import numpy as np
 
 from MCEq import config
 
+__all__ = [
+    "average_A_target",
+    "caller_name",
+    "energy_grid",
+    "gen_xmat",
+    "getAZN",
+    "info",
+    "normalize_hadronic_model_name",
+    "print_in_rows",
+]
+
 #: Energy grid: centers, bin edges, bin widths, bin count
 energy_grid = namedtuple("energy_grid", ("c", "b", "w", "d"))
 
@@ -119,7 +130,7 @@ def getAZN(pdg_id):
 
 
 def caller_name(skip=2):
-    """Name of a caller as ``module.Class::method(): ``.
+    """Name of a caller as ``module.Class::method():`` followed by a space.
 
     `skip` counts stack levels above this function: skip=1 is "who calls me",
     skip=2 "who calls my caller". Returns "" if the stack is shallower.
