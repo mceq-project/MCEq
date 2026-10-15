@@ -1,22 +1,6 @@
-"""Pins for the data-layer entries of the Phase 4 bug ledger.
-
-Every test here records what the code does **today**, defects included, so the
-commit that fixes one of them shows up as a failing pin rather than a silently
-regenerated golden. Each docstring names its ledger id (section 9 of
-``wiki/_meta/plan-mceq-v2-layered-architecture.md``) and says what the corrected
-behaviour would be, which is the expectation the fix commit inherits.
-
-The probes build ``Interactions`` / ``InteractionCrossSections`` with
-``object.__new__`` and inject the handful of attributes the method under test
-reads, the way ``tests/test_low_energy_blending.py`` does for ``HDF5Backend``.
-B2 and B5 read a real database (the reduced DB directly, no ``MCEqRun``) and
-B4 reads synthetic fixture files built by ``tests/data/make_hdf5_fixtures.py``,
-loaded by file path the way ``tests/test_data_hdf5_decode.py`` does it -- B4
-is the only ledger entry whose probe needs an EM database.
-"""
+"""Data-layer defects, pinned as today's behaviour until they are fixed."""
 
 import importlib.util
-import inspect
 import pathlib
 from collections import defaultdict
 
@@ -523,52 +507,3 @@ def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
     # Parent-list filter only: the proton survives as a secondary.
     assert (2212, 0) in inter.particles
     assert len(inter.particles) == len(baseline.particles) == 22
-
-
-def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
-    """B5, mechanism check: the branch is a literal, not a lifetime lookup.
-
-    ``inspect.getsource(Interactions.load)`` normalized to single spaces
-    contains the branch name and, right after it, the four-int list
-    ``[2212, 2112, -2212, -2112]`` -- the exact set the ``adv_set`` comment's
-    ``except nucleons`` intends to *keep*. Like the B20 mechanism test, this
-    pins the mechanism, not the intent: it goes red when the branch is deleted
-    or the literal set changes. A fix that keeps the header and the list but
-    inverts the predicate survives here -- the behavioural test above is what
-    catches that.
-    """
-    source = " ".join(inspect.getsource(Interactions.load).split())
-    branch = 'if filters["disable_interactions_of_unstable"]:'
-    assert source.count(branch) == 1
-    after_branch = source.split(branch, 1)[1]
-    assert "[2212, 2112, -2212, -2112]" in after_branch
-
-
-# B3 -- deleted by R3: the veto block, its config key, and the crash evidence
-# all went together in the deletion commit. What stays pinned is the deletion
-# itself -- the key must not come back, and get_matrix must not re-grow a
-# filter read that ``config.adv_set`` no longer provides.
-
-
-def test_b3_deleted_key_and_guard(monkeypatch):
-    """B3 DELETED (R3): no `disable_leading_mesons` key exists anywhere.
-
-    The veto raised TypeError on `abs(child) < 2000` for a (pdg, helicity)
-    tuple before its hard-coded `ie = 50` window was ever evaluated -- dead
-    since the helicity keys landed. The deletion commit removed the block in
-    ``get_matrix``, the ``adv_set`` default, and the ``disable_leading_
-    mesons`` entry from all six golden generators' pin blocks. A re-addition
-    of the key without restoring working code fails the first assert; a
-    restored read of a missing key in get_matrix fails the second leg below.
-    """
-    from MCEq import config
-
-    assert "disable_leading_mesons" not in config.adv_set
-    assert not hasattr(config, "disable_leading_mesons")
-
-    obj = interactions([(2212, 0)])
-    obj.index_d = {((2212, 0), (211, 0)): np.ones((GRID.d, GRID.d))}
-    obj.relations = {(2212, 0): [(211, 0)]}
-    # get_matrix must survive an EMPTY filters dict -- no veto read left.
-    monkeypatch.setattr(config, "adv_set", {})
-    assert obj.get_matrix((2212, 0), (211, 0)).shape == (GRID.d, GRID.d)

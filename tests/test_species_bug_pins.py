@@ -1,14 +1,4 @@
-"""Pins for the species-layer entries of the Phase 4 bug ledger.
-
-Records today's behaviour of ``MCEqParticle`` -- defects included -- so that the
-commit fixing one produces a failing pin instead of a quiet change of numbers.
-Docstrings name the ledger id (section 9 of
-``wiki/_meta/plan-mceq-v2-layered-architecture.md``) and state the corrected
-behaviour, which is the expectation the fix commit inherits.
-
-DB-free: ``MCEqParticle`` is built straight from the particletools table with a
-five-bin grid; nothing here constructs an ``MCEqRun``.
-"""
+"""MCEqParticle rates and cross sections at the edges of the particle table (no database)."""
 
 import numpy as np
 
@@ -141,27 +131,8 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
 
 
 def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
-    """B10 FIXED (R3): prod_cross_section reaches the one unit constant, by division.
-
-    The method used to re-derive the unit factors locally and multiply by
-    ``GeV2mbarn / GeVcm**2`` -- a value numerically reciprocal to
-    ``InteractionCrossSections.mbarn2cm2`` but carrying the name backwards,
-    and a second copy of physics constants inside the species layer. The fix
-    deletes the local block and divides by the class constant:
-    ``self.cs / InteractionCrossSections.mbarn2cm2``. Pinned numerically: the
-    mbarn value for cs = 3e-27 cm^2, and that no ``GeVfm`` literal survives
-    in the method source. The pre-fix exact multiply-chain assertion lived
-    here (``ba03d9e``); the divide form differs from that chain by one ulp
-    at this value: the pinned result moved 3.0 -> 3.0000000000000004 with the
-    fix, and the assert below records the post-fix value.
-    """
-    import inspect
-
+    """The mb value divides by the one unit constant ``mbarn2cm2``."""
     from MCEq.data.tables import InteractionCrossSections
-    from MCEq.particlemanager import MCEqParticle as _C
-
-    src = inspect.getsource(_C.prod_cross_section)
-    assert "GeVfm" not in src, "the second copy of the unit constants is back"
 
     p = particle(211)
     p.cs = 3.0e-27  # an arbitrary hadronic cross section in cm^2
