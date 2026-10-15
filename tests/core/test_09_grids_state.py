@@ -125,3 +125,9 @@ def test_get_set_state_vector_checkpoint_restore(mceq_sib21):
 
     # Should match original solution
     assert np.allclose(solution1, solution1_prime, atol=1e-10)
+
+
+def test_int_grid_of_a_new_length_rebuilds_the_path(mceq_sib21):
+    mceq_sib21.solve(int_grid=np.linspace(10.0, 900.0, 7))
+    mceq_sib21.solve(int_grid=np.linspace(10.0, 900.0, 4))
+    assert mceq_sib21.grid_sol.shape == (4, mceq_sib21.dim_states)

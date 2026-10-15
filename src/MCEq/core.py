@@ -650,8 +650,8 @@ class MCEqRun(BatchSolver):
 
         if (
             self.integration_path
-            and np.all(int_grid == self.int_grid)
-            and np.all(self.grid_var == grid_var)
+            and np.array_equal(int_grid, self.int_grid)
+            and self.grid_var == grid_var
             and getattr(self, "_cached_etd2_path_params", None) == etd2_params
             and not force
         ):
