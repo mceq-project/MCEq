@@ -683,14 +683,9 @@ def test_location_and_season_survive_construction(atm):
         ("KM3NeT", None, None),
     ],
 )
-def test_corsika_sites_get_the_cutoff_by_default(location, season, site):
-    from types import SimpleNamespace
-
-    from MCEq.core import MCEqRun
+def test_corsika_sets_resolve_to_their_site(location, season, site):
     from MCEq.geometry.atmosphere_parameters import site_coordinates
 
     atm = dp.CorsikaAtmosphere(location, season)
-    run = SimpleNamespace(density_model=atm)
-    assert MCEqRun._is_geomag_eligible_atmosphere(run) is (site is not None)
     found = site_coordinates(atm.location)
     assert (found and found[0]) == site

@@ -491,8 +491,7 @@ class BatchSolver:
             return_pixel_index: also return the ``(K, 2)`` ``(i_zen, i_az)``
               of the columns.
             geomagnetic_cutoff: apply the rigidity cutoff per pixel; ``None``
-              uses the run setting, which by default is on for MSIS and
-              location-tagged atmospheres.
+              uses the run setting, which is off by default.
             cutoff_kwargs: keywords of
               :func:`MCEq.geometry.cutoff.get_cutoff_map`.
 
@@ -502,11 +501,11 @@ class BatchSolver:
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
         start = time()
 
-        cutoff_flag = geomagnetic_cutoff
-        if cutoff_flag is None:
-            cutoff_flag = self.geomagnetic_cutoff
-        if cutoff_flag is None:
-            cutoff_flag = self._is_geomag_eligible_atmosphere()
+        cutoff_flag = (
+            self.geomagnetic_cutoff
+            if geomagnetic_cutoff is None
+            else geomagnetic_cutoff
+        )
 
         zenith_grid = np.asarray(zenith_grid, dtype=np.float64).reshape(-1)
         if azimuth_grid is not None:
@@ -519,10 +518,7 @@ class BatchSolver:
 
         phi0_arr = self._phi0_columns(phi0, K, "solve_fullsky")
         phi0_is_2d = phi0_arr.ndim == 2
-        if phi0_is_2d and (
-            geomagnetic_cutoff is True
-            or (geomagnetic_cutoff is None and self.geomagnetic_cutoff is True)
-        ):
+        if phi0_is_2d and cutoff_flag:
             warnings.warn(
                 "solve_fullsky: the geomagnetic cutoff is not applied to a 2-D "
                 "phi0; build it with MCEq.batch.build_phi0_with_cutoff, or pass "

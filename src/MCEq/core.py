@@ -15,7 +15,6 @@ from MCEq.config import detect
 from MCEq.data.download import ensure_db_available
 from MCEq.geometry import density_profiles as dp
 from MCEq.geometry import msis21
-from MCEq.geometry.atmosphere_parameters import site_coordinates
 from MCEq.initial_state import deposit_single_primary, fill_nucleons
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.operators.compiled import compile_operator
@@ -119,9 +118,8 @@ class MCEqRun(BatchSolver):
         )
 
         self._cuda_device = kwargs.pop("cuda_gpu_id", config.cuda_gpu_id)
-        # Geomagnetic rigidity cutoff of solve_fullsky: None auto-enables it
-        # for MSIS and location-tagged atmospheres; True/False override.
-        self.geomagnetic_cutoff = kwargs.pop("geomagnetic_cutoff", None)
+        # Geomagnetic rigidity cutoff of solve_fullsky (off by default)
+        self.geomagnetic_cutoff = kwargs.pop("geomagnetic_cutoff", False)
 
         self.pman.print_particle_tables(2)
 
@@ -612,13 +610,6 @@ class MCEqRun(BatchSolver):
             return np.copy(phi0)
         reps = (self._mceq_db.n_k,) + (1,) * (np.ndim(phi0) - 1)
         return np.ascontiguousarray(np.tile(phi0, reps))
-
-    def _is_geomag_eligible_atmosphere(self):
-        """MSIS atmospheres and atmospheres of a named site get the cutoff by default."""
-        dm = self.density_model
-        if isinstance(dm, dp.MSISAtmosphere):
-            return True
-        return site_coordinates(getattr(dm, "location", None)) is not None
 
     def _calculate_integration_path(
         self,
