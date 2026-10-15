@@ -5,7 +5,6 @@ import sys
 import warnings
 
 from MCEq import base_path
-from MCEq import mkl_runtime as _mkl_runtime
 
 from . import detect
 
@@ -119,14 +118,6 @@ e_max = 1e11
 #: (``em_db_fname``)
 enable_em = False
 
-#: Air density in g/cm³ used to select a density slice from a
-#: ρ-stratified EM database (one produced by
-#: ``mceq-maintenance-tools/database_generator/5_assemble_em_db.py``
-#: with ``--air-density-grid``). The loader chooses the nearest stored
-#: density in log10 space; ``None`` selects the legacy single-density
-#: slice for back-compat with un-stratified EM databases.
-em_air_density = None
-
 #: ETD2RK kernel implementation. Choices:
 #:   "auto"            — pick the best available ETD2 kernel (see below).
 #:   "numpy_etd2"      — pure-numpy ETD2RK (always available).
@@ -155,9 +146,6 @@ cuda_operator_precision = None
 floatlen = None
 
 
-#: BLAS thread limit. Matrix products plateau beyond ~16 threads, so more
-#: cores do not buy speed. Override with
-#: ``MCEq.config.set_mkl_threads(n)``.
 def _available_cpus():
     """CPUs this process may run on (the affinity mask, else ``cpu_count``)."""
     if hasattr(os, "sched_getaffinity"):
@@ -176,17 +164,16 @@ def _default_threads():
     return min(16, _available_cpus())
 
 
+#: BLAS thread count; change with ``MCEq.config.set_mkl_threads(n)``.
 mkl_threads = _default_threads()
 
 # =========================================================================
 # Advanced settings
 # =========================================================================
 
-#: Default parameters for the non-uniform integration path used by
-#: ETD2 kernels (`numpy_etd2`, `accelerate_etd2`, ...). See
-#: docs/mceq_v1.x_v2_diff.md and `MCEq.solvers.etd2_nonuniform_path`.
-#: Each value can be overridden per-call via
-#: `MCEqRun.solve(..., eps=..., dX_max=...)`.
+#: Default parameters of the non-uniform ETD2 integration path
+#: (:func:`MCEq.solvers.etd2_nonuniform_path`); each can be overridden per
+#: call via ``MCEqRun.solve(..., eps=..., dX_max=...)``.
 etd2_path = {
     #: Within-step log inverse-density variation. None selects .03 for
     #: 1D hadronic/lepton transport and .01 for 2D or electron transport.
@@ -207,33 +194,15 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
-#: Additionally cap EM integration steps at ``em_step_safety / r_EM``, where
-#: ``r_EM`` estimates the stiffness of the EM off-diagonal interaction block
-#: (the e+/-/gamma block of ``int_m``; the density-gradient schedule alone does
-#: not refine on its own in homogeneous media or at a low-density shower start,
-#: and the legacy 20 g/cm^2 step over-integrates the EM cascade and biases the
-#: charged-shower X_max deep). EM multiplication rates can require finer steps
-#: than the density-gradient criterion. Because r_EM tracks the operator, the
-#: cap also tightens automatically as the energy grid is refined. Disabled by
-#: default, which preserves the legacy schedule exactly.
+#: Cap EM integration steps at ``em_step_safety / r_EM``, with ``r_EM`` the
+#: spectral radius of the e+/-/gamma off-diagonal block of ``int_m``.
 em_adaptive_step = False
 
-#: Dimensionless safety factor for the EM step cap: ``dX = em_step_safety /
-#: r_EM`` in g/cm^2. Smaller values use finer steps; default 0.12 holds the
-#: EM shower maximum to <0.05 g/cm^2 and the ground spectrum to <0.05% of the
-#: zero-step limit while cutting step counts ~3x versus a value twice as
-#: small; the largest value still inside a <0.1 g/cm^2 / <0.1% tolerance is
-#: 0.16. Nmax is step-independent to <0.001% throughout.
+#: Safety factor of the EM step cap ``dX = em_step_safety / r_EM`` (g/cm^2).
 em_step_safety = 0.12
 
-#: Max EM off-diagonal block dimension for which ``r_EM`` (the EM step cap
-#: scale) is computed with a dense ``np.linalg.eigvals``. The EM block is a
-#: small sub-system (a few e+/-/gamma species x dim_e) and strongly
-#: NON-NORMAL, on which sparse ``eigs(k=1)`` routinely fails to converge and
-#: silently degrades to a matrix-norm over-estimate. Dense eigenvalues are
-#: estimates, not exact values, but are deterministic and cheap at this size
-#: (~1-2 s at dim 2000, computed once per matrix build and cached). Above this
-#: guard, fall back to ARPACK then matrix-norm.
+#: Largest EM block dimension for which ``r_EM`` uses dense ``eigvals``
+#: (ARPACK above).
 em_step_dense_eig_max = 4000
 
 #: Minimal CR nucleon energy in primary model. If (low energy)
@@ -250,17 +219,9 @@ enable_default_tracking = True
 #: Ionization and radiative losses according to stopping power tables (PDG)
 enable_energy_loss = True
 
-#: Apply stopping power to all charged hadrons using the generic hadron loss
-#: table, interpolated in beta-gamma. This allows low-energy charged hadrons to
-#: range out; without it, sub-4-GeV protons and charged hadrons never stop
-#: (~2 MeV/g/cm^2 x 2000 g/cm^2 ~ 4 GeV of ionization loss across a slant
-#: column) and pile up unphysically at the low-energy end of deep-atmosphere
-#: spectra. The default stencil ``loss_stencil_method =
-#: "expfit_low_upwind2"`` uses second-order upwind rows near the lower energy
-#: boundary; with the pure ``"expfit"`` operator the extra hadronic loss rows
-#: excite the low-energy boundary cliff and deep-slant solves diverge outright.
-#: Set False for the v1.x behaviour where only muons (and e+-, see
-#: ``enable_em_ion``) carried continuous losses.
+#: Apply stopping power to all charged hadrons with the generic hadron loss
+#: table, interpolated in beta-gamma, so low-energy charged hadrons range out.
+#: False: only muons (and e+-, see ``enable_em_ion``) carry continuous losses.
 generic_losses_all_charged = True
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
@@ -273,47 +234,28 @@ fallback_to_air_cs = True
 #: enable EM ionization loss for electrons and positrons
 enable_em_ion = True
 
-#: Average the continuous-loss operator through repeated finite steps.
-#: Disabled by default: averaging changes the effective operator and can shift
-#: EM shower observables (inflating the EM number Xmax by a few g/cm^2 and Nmax
-#: by several percent). Set True only to reproduce pre-2026-06 numbers.
+#: Average the continuous-loss operator through repeated finite steps of size
+#: ``loss_step_for_average``. This changes the effective operator.
 average_loss_operator = False
 
 #: Step size (dX) for averaging
 loss_step_for_average = 1e-1
 
-#: Stencil for the continuous-loss differential operator on the
-#: log-uniform energy grid. Choices:
-#:   "expfit_low_upwind2" (default) -- exponentially-fitted 7-point interior
-#:                 stencil with the low-energy boundary layer
-#:                 (``loss_stencil_low_upwind_rows`` rows) replaced by
-#:                 second-order upwind rows in the low-energy boundary region.
-#:                 This is the validated canonical configuration: it removes
-#:                 the low-energy boundary cliff of the pure "expfit" operator
-#:                 (essential for the 1 MeV EM grid, harmless on hadronic-only
-#:                 grids where it touches only the lowest rows).
-#:   "expfit_low_upwind" -- same with first-order upwind rows.
-#:   "expfit"   -- pure 7-point exponentially-fitted stencil anchored at
-#:                 ``loss_stencil_alpha0``. Designed to be near-exact for
-#:                 power-law spectra E^{-alpha} with alpha ~ alpha0 on the
-#:                 default 10 bins/decade grid; orders of magnitude smaller
-#:                 truncation error than plain FD on steep spectra. Uses
-#:                 one-sided polynomial-fit boundary rows that develop
-#:                 large non-normal transients at a low-energy grid floor
-#:                 (the "boundary cliff", see ``docs/mceq_v1.x_v2_diff.md``).
-#:   "centered" -- symmetric 6th-order centered FD ([-3..3], [-1,9,-45,45,-9,1]/60).
-#:   "biased"   -- legacy 7-point biased "6th-order" stencil (v1 default).
-#: "expfit"/"centered"/"biased" share the same one-sided polynomial-fit
-#: stencils on the boundary rows (0,1,2 and last-2,last-1,last).
+#: Stencil of the continuous-loss operator ``d/du``, ``u = ln E``
+#: (:mod:`MCEq.operators.loss_stencil`):
+#:
+#: - ``"expfit_low_upwind2"``: expfit interior, second-order upwind rows in
+#:   the low-energy layer (``loss_stencil_low_upwind_rows``).
+#: - ``"expfit_low_upwind"``: the same with first-order upwind rows.
+#: - ``"expfit"``: 7-point exponentially fitted stencil anchored at
+#:   ``loss_stencil_alpha0``.
+#: - ``"upwind"``, ``"upwind2"``: first-/second-order upwind everywhere.
 loss_stencil_method = "expfit_low_upwind2"
 
 #: Number of low-energy rows replaced by the selected upwind stencil when
 #: ``loss_stencil_method`` is ``"expfit_low_upwind"`` or
-#: ``"expfit_low_upwind2"`` (the default); default 8. Increasing this region
-#: reduces exposure to the polynomial boundary rows (whose non-normal
-#: transients grow at a low-energy grid floor) but shrinks the region using the
-#: exponentially fitted stencil. The solver also widens this layer per species
-#: when a particle's loss stiffness requires it; this value is the floor.
+#: ``"expfit_low_upwind2"``. The layer is widened per species where the loss
+#: stiffness requires it.
 loss_stencil_low_upwind_rows = 8
 
 #: Anchor exponent for the "expfit" stencil. The stencil is constructed to
@@ -330,18 +272,9 @@ excpt_on_missing_particle = False
 #: modification for neutrons and K0L/K0S
 use_isospin_sym = True
 
-#: Helicity dependent muon decays from analytical expressions. Default True.
-#: KEEP THIS ON for flux calculations: the alternative ``decays/unpolarized``
-#: DB dataset carries a construction defect (the inclusive K± -> mu nu entry
-#: was averaged with its 3-body duplicate, halving the dominant K_mu2
-#: channel), which suppresses conventional nu_mu by up to ~40% at TeV
-#: energies (all DBs up to and including v150; fix pending a DB rebuild).
-#: The EM cascade is the exception: the helicity L/R variants add e±/mu
-#: semi-Lagrangian rows without diagonal damping that blow up in the EM
-#: system (the ``_EM_BLOWUP_CAVEAT``), so ``enable_em`` runs force this
-#: flag off at MCEqRun construction (with a warning). EM shower-maximum
-#: observables do not involve kaon neutrinos and are unaffected by the
-#: dataset defect.
+#: Helicity-dependent muon decays from analytical expressions. Keep on: the
+#: ``decays/unpolarized`` DB dataset halves the K_mu2 channel. Forced off when
+#: ``enable_em`` is set.
 muon_helicity_dependence = True
 
 #: Coulomb scattering of muons in the 2D transport (see
@@ -367,9 +300,8 @@ muon_scattering_finite_nuclei = True
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.operators.secant`. All angles are relative to the shower axis (like
 #: the angular modes), independent of the axis' zenith angle.
-#: "auto" (default) and True both apply it on every solve with a 2D
-#: database — every entry point, every kernel, fp32 and fp64. False: off.
-#: Ignored on 1D databases.
+#: "auto" (default) and True apply it on every solve with a 2D database;
+#: False: off. Ignored on 1D databases.
 secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
@@ -381,9 +313,8 @@ secant_theta_cap_deg = 75.0
 #: transports them as if they moved downward at the cap angle.
 legendre_backward_removal = True
 #: apply the coupling only to state columns with E_kin (GeV) below this
-#: threshold. The correction is 30-60% at 0.1 GeV, ~1% at 2-4 GeV and
-#: <0.1% above 10 GeV, so the default excludes energies where it is
-#: numerically irrelevant. None applies it to all energies.
+#: threshold, above which the correction is negligible. None applies it to
+#: all energies.
 secant_theta_e_max = 31.6
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
@@ -402,7 +333,7 @@ low_energy_extension = {
 
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
-    #: Exclude proton, neutron, antiproton, and antineutron projectiles
+    #: Only (anti)nucleons interact; unstable hadrons decay or reach the ground
     "disable_interactions_of_unstable": False,
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
@@ -425,10 +356,8 @@ adv_set = {
     #: Switch off decays. E.g., disable muon decay with [13,-13]
     "disable_decays": [],
     #: Force particles (by absolute PDG id, excluding standard_particles) to
-    #: be treated as resonances — folded into other particles' matrices at
-    #: build time and not propagated as their own state vector entries.
-    #: Empty list = full propagation for everything (the default after the
-    #: ETD2RK migration). Retained as an opt-in escape hatch.
+    #: be treated as resonances: folded into other particles' matrices, with
+    #: no state vector entries of their own. Empty: propagate everything.
     "force_resonance": [],
     #: Force the interaction cross sections to a specific model
     "forced_int_cs": None,
@@ -446,18 +375,11 @@ standard_particles += [-pid for pid in standard_particles]
 #: append 221, 223, 333, if eta, omega and phi needed directly
 standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 
-#: Platform and backend detection resolve on first read, through the module
-#: ``__getattr__`` below: importing MCEq must not dlopen a BLAS, probe a GPU or
-#: decide which kernel will run. Reading any of ``has_mkl``, ``has_cuda``,
-#: ``has_accelerate``, ``mkl_path`` or ``kernel_config`` caches the answer as a
-#: real module attribute, so the cost is paid once and later reads are ordinary
-#: attribute lookups.
+#: Loaded ``libmkl_rt`` handle, or None until :func:`load_mkl` loads it.
+mkl = None
 
-#: ``libmkl_rt`` handle. :mod:`MCEq.mkl_runtime` owns the process-wide MKL
-#: handle (one owner below config, shared by the MKL backend and
-#: :func:`set_mkl_threads`); ``config.mkl`` exposes it through
-#: ``__getattr__``; no local binding should shadow that view.
-_mkl_runtime.set_resolver(lambda: detect.has_mkl(), detect.mkl_library_path)
+# Platform probes resolve on first read through __getattr__ (see detect.py)
+# and are then cached as module attributes.
 
 _LAZY = {
     "has_mkl": lambda: detect.has_mkl(),
@@ -471,9 +393,6 @@ _LAZY = {
 
 
 def __getattr__(name):
-    if name == "mkl":
-        # Return the existing MKL handle without loading the library.
-        return _mkl_runtime.lib()
     probe = _LAZY.get(name)
     if probe is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -486,17 +405,15 @@ def __dir__():
     return sorted(set(globals()) | set(_LAZY))
 
 
-def _load_mkl():
-    """Lazily load ``libmkl_rt`` exactly once (compat entry point).
+def load_mkl():
+    """Load ``libmkl_rt`` once if it is installed; return the handle or None."""
+    global mkl
+    if mkl is None and detect.has_mkl():
+        from ctypes import cdll
 
-    Delegate to :func:`MCEq.mkl_runtime.load`, which owns the cached
-    process-wide handle. The single-handle rule that motivated splitting the
-    load from :func:`set_mkl_threads` — every ``MklSparseMatrix`` wrapper must
-    see one symbol table for the process lifetime — moved with the memo. Kept
-    as the name user code (and ``tests/test_config.py``) already reaches; the
-    load-path test targets the new owner.
-    """
-    return _mkl_runtime.load()
+        # The Windows loader on Python 3.10/3.11 does not accept a Path.
+        mkl = cdll.LoadLibrary(os.fspath(detect.mkl_library_path()))
+    return mkl
 
 
 #: Environment variables every BLAS MCEq can reach reads when it loads.
@@ -510,13 +427,7 @@ _THREAD_ENV = (
 
 
 def _publish_thread_env(nthreads):
-    """Announce the thread count to BLAS libraries not yet in the process.
-
-    A BLAS reads its thread count once, when it loads, and numpy loads its own
-    lazily on the first product. Publishing costs microseconds and needs no
-    library present, which is why it is the only part of the thread setting
-    that runs at import.
-    """
+    """Set the thread environment variables read by BLAS libraries loaded later."""
     for var in _THREAD_ENV:
         os.environ[var] = str(nthreads)
 
@@ -526,28 +437,16 @@ _blas_limiter = None
 
 
 def set_mkl_threads(nthreads):
-    """Set the thread count of every BLAS pool MCEq can reach.
+    """Set the thread count of MKL and, with threadpoolctl, every other loaded BLAS pool.
 
-    MKL through ``mkl_set_num_threads`` (loading ``libmkl_rt`` on the first
-    call) and, when threadpoolctl is available, every other pool it finds —
-    OpenBLAS above all, which is what numpy links against in most wheels.
-    One process-wide setting; only the step loop on the MKL backend runs
-    OpenBLAS and BLIS at one thread
-    (:func:`MCEq.solvers.etd2.etd2_driver`).
-
-    Idempotent on the library side: reuse the loaded MKL handle. Each call
-    updates the thread environment and reapplies limits to supported, loaded
-    BLAS libraries. The cached cdll handle is preserved, so handles in
-    ``MklSparseMatrix`` wrappers stay valid across thread-count changes.
+    Also sets the thread environment variables for BLAS libraries loaded later.
     """
     global mkl_threads
     from ctypes import byref, c_int
 
-    _mkl_runtime.load()
     mkl_threads = nthreads
-    lib = _mkl_runtime.lib()
-    if lib is not None:
-        lib.mkl_set_num_threads(byref(c_int(nthreads)))
+    if load_mkl() is not None:
+        mkl.mkl_set_num_threads(byref(c_int(nthreads)))
     global _blas_limiter
     _publish_thread_env(nthreads)
 
@@ -628,27 +527,15 @@ def secant_theta_cap():
     return cap
 
 
-def secant_mode(is_2d):
-    """Resolve :data:`secant_theta_transport` against the database
-    dimensionality.
-
-    Returns ``"off"`` (1D database, or the flag is False) or one of
-    ``"auto"`` (the default) and ``"require"`` (flag is True), which the
-    resolver treats alike: the coupling is available on every kernel at
-    every precision, so no configuration is left to downgrade or refuse.
-    """
+def secant_enabled(is_2d):
+    """True if the sec(theta) coupling applies: a 2D database and
+    :data:`secant_theta_transport` set ("auto" or True)."""
     flag = secant_theta_transport
-    if not is_2d:
-        return "off"
-    if isinstance(flag, str) and flag.lower() == "auto":
-        return "auto"
-    return "require" if flag else "off"
+    auto = isinstance(flag, str) and flag.lower() == "auto"
+    return bool(is_2d and (auto or flag))
 
 
-# Grouped views over the names above. They read and write the corresponding
-# flat configuration attributes, so a component handed
-# `config.grid` still sees a later `config.e_min = ...`.
-from . import groups as _groups  # noqa: E402
-
-globals().update(_groups.build())
-GROUP_OF = _groups.FLAT_TO_GROUP
+def muon_helicity():
+    """True if helicity-dependent muon decays are used: forced off with
+    :data:`enable_em`, whose cascade the helicity rows destabilize."""
+    return muon_helicity_dependence and not enable_em

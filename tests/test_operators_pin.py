@@ -48,19 +48,13 @@ def _stencil_stub(dim=31, e_min=1.0, e_max=1e6):
     """A `MatrixBuilder` stand-in carrying only what the stencil builder reads.
 
     ``_construct_differential_operator`` uses ``_energy_grid.b`` (the bin edges,
-    for the log spacings ``h``) and ``_energy_grid.d``, the three stencil
-    settings off the injected ``losses`` group and the dtype off ``grid``, and
-    writes ``self.op_matrix``. Nothing else of the builder is involved, so the
-    real unbound method runs against a log-uniform grid of the production
-    shape. The groups are the live views, so the flat names the tests below
-    monkeypatch still reach it.
+    for the log spacings ``h``) and ``_energy_grid.d``, the three
+    ``config.loss_stencil_*`` settings and ``config.floatlen``, and writes
+    ``self.op_matrix``. Nothing else of the builder is involved, so the real
+    unbound method runs against a log-uniform grid of the production shape.
     """
     edges = np.logspace(np.log10(e_min), np.log10(e_max), dim + 1)
-    return SimpleNamespace(
-        _energy_grid=SimpleNamespace(b=edges, d=dim),
-        _grid=config.grid,
-        _losses=config.losses,
-    )
+    return SimpleNamespace(_energy_grid=SimpleNamespace(b=edges, d=dim))
 
 
 def _op_matrix(method, stub=None):
@@ -115,7 +109,7 @@ def test_every_stencil_builds_a_finite_banded_operator(method, stencil_config):
     assert np.abs(rows - cols).max() <= 3
 
 
-@pytest.mark.parametrize("method", ["centered", "biased", "upwind", "upwind2"])
+@pytest.mark.parametrize("method", ["upwind", "upwind2"])
 def test_polynomial_stencils_annihilate_a_constant(method, stencil_config):
     """The finite-difference families are exact on ``E^0``, every row.
 
@@ -196,7 +190,7 @@ def test_regenerate_matrices_does_not_rebuild_the_differential_operator(mceq_sib
     saved = config.loss_stencil_method
     before = mceq.int_m.copy()
     try:
-        config.loss_stencil_method = "centered"
+        config.loss_stencil_method = "upwind"
         mceq.regenerate_matrices()
         assert (mceq.int_m != before).nnz == 0, (
             "regenerate_matrices() picked up the stencil change on its own"
@@ -321,13 +315,12 @@ class _BlocksStub:
     """A `MatrixBuilder` stand-in carrying only what the assembly reads.
 
     ``_csr_from_blocks`` reads ``is_2d``, the three dimensions, ``k_grid``,
-    ``_grid.dtype`` and the particle manager's ``mceqidx2pref``;
+    ``config.floatlen`` and the particle manager's ``mceqidx2pref``;
     ``_muon_scattering_damping`` additionally reads ``_energy_grid.c``,
-    ``pdg2pref`` and ``_physics.muon_multiple_scattering``. Both are borrowed
+    ``pdg2pref`` and ``config.muon_multiple_scattering``. Both are borrowed
     unbound, so the production assembly runs — including the COO scatter, the
-    ``block_diag`` stitch and the ``kappa^2`` damping — with no database. The
-    two settings groups are the live views, so `assembly_config`'s
-    monkeypatches of the flat names still reach them.
+    ``block_diag`` stitch and the ``kappa^2`` damping — with no database;
+    `assembly_config` monkeypatches the globals they read.
 
     Three species of ``dim`` bins each, one of them a muon so the damping has
     somewhere to land. ``k_grid`` starts at ``kappa = 0``, as a real one does,
@@ -338,8 +331,6 @@ class _BlocksStub:
     _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
 
     def __init__(self, is_2d, n_k=3, dim=8):
-        self._grid = config.grid
-        self._physics = config.physics
         self.is_2d = is_2d
         self.n_k = n_k if is_2d else 1
         self.k_grid = np.arange(self.n_k, dtype=np.float64)
@@ -376,7 +367,7 @@ class _BlocksStub:
 
 @pytest.fixture
 def assembly_config(monkeypatch):
-    """Fix the globals `_csr_from_blocks` reads through its groups. The stub
+    """Fix the globals `_csr_from_blocks` reads. The stub
     has no database, so the Gaussian model (no medium composition) is used."""
     monkeypatch.setattr(config, "floatlen", np.float64)
     monkeypatch.setattr(config, "muon_multiple_scattering", True)
@@ -485,51 +476,6 @@ def test_int_m_is_the_sum_of_the_hadronic_part_and_the_loss_band(mceq_sib21):
     assert _pruned_digest(total) == _pruned_digest(int_m)
     for name, matrix in (("int_m_hadr", hadr), ("dEdx_band", band)):
         assert canonical_csr_problems(matrix.tocsr(), name) == []
-
-
-def test_the_two_halves_are_cached_and_reuse_the_stashed_band(mceq_sib21, monkeypatch):
-    """Repeat access is the same object, and `cont_loss_operator` is not re-run.
-
-    The band arrays are stashed as the accumulation adds them, so assembling
-    ``dEdx_band`` cannot re-enter ``cont_loss_operator`` — which under
-    ``losses.average_operator`` goes through ``np.linalg.matrix_power`` and
-    which a stencil changed since the assembly would answer differently.
-    ``boom`` is what says the property is not quietly recomputing it.
-    """
-    mb = mceq_sib21.matrix_builder
-    mb._int_m_hadr = mb._dEdx_band = None  # force a fresh assembly
-
-    def boom(self, pdg_id):
-        raise AssertionError("dEdx_band recomputed the band instead of reusing it")
-
-    monkeypatch.setattr(MatrixBuilder, "cont_loss_operator", boom)
-    band, hadr = mb.dEdx_band, mb.int_m_hadr
-    assert mb.dEdx_band is band
-    assert mb.int_m_hadr is hadr
-
-
-def test_a_settings_change_since_the_assembly_is_refused(mceq_sib21, monkeypatch):
-    """Neither half is served against settings the live ``int_m`` was not built at.
-
-    Both are assembled on demand through ``_csr_from_blocks``, which reads
-    ``grid.dtype`` and the muon-damping flag at call time, so a global changed
-    since ``construct_matrices`` would return a half of an operator nobody
-    holds. ``floatlen`` is the trigger the 1D fixture has: the damping flag
-    reaches the assembly only when ``is_2d``, so flipping it here is genuinely
-    a no-op and the key says so.
-    """
-    mb = mceq_sib21.matrix_builder
-    assert mb.int_m_hadr is not None
-
-    monkeypatch.setattr(
-        config, "muon_multiple_scattering", not config.muon_multiple_scattering
-    )
-    assert mb.int_m_hadr is not None, "the 1D assembly does not read the damping flag"
-
-    monkeypatch.setattr(config, "floatlen", np.float32)
-    for name in ("int_m_hadr", "dEdx_band"):
-        with pytest.raises(RuntimeError, match="not be a part of the int_m in hand"):
-            getattr(mb, name)
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +587,7 @@ class _CacheStub:
     close = MCEqRun.close
 
     def __init__(self, dim=6):
+        self._mceq_db = SimpleNamespace(is_2d=False)
         self.int_m = sp.csr_matrix(_toy_matrix(dim, 0.3))
         self.dec_m = sp.csr_matrix(_toy_matrix(dim, 0.1))
 

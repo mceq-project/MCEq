@@ -658,7 +658,7 @@ def test_solve_etd2_rejects_unknown_backend():
     from MCEq.solvers import solve_etd2
 
     int_m = sp.csr_matrix(-0.1 * np.eye(3))
-    with pytest.raises(ValueError, match="accelerate, cuda, mkl, numpy"):
+    with pytest.raises(ValueError, match="numpy_etd2"):
         solve_etd2(
             1, np.ones(1), np.ones(1), int_m, int_m, np.ones(3), [], backend="opencl"
         )
@@ -736,7 +736,7 @@ def test_solve_etd2_fp32_matches_numpy_multirhs_toy(backend, K):
         phi0_multi,
         [],
         backend=backend,
-        fp_precision=32,
+        dtype=np.float32,
     )
     assert sol_f32.dtype == np.float64  # the driver hands back fp64
     rel_l2 = np.linalg.norm(sol_f32 - sol_numpy) / max(np.linalg.norm(sol_numpy), 1e-30)
@@ -763,7 +763,7 @@ def test_solve_etd2_fp32_below_normal_range():
 
     sol64, _ = solve_etd2(nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy")
     sol32, _ = solve_etd2(
-        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", fp_precision=32
+        nsteps, dX, rho_inv, int_m, dec_m, phi0, [], backend="numpy", dtype=np.float32
     )
     np.testing.assert_allclose(sol32, sol64, rtol=1e-4, atol=0)
 
@@ -915,7 +915,7 @@ def test_solve_etd2_cuda_multirhs_f32_matches_numpy_multirhs_toy(K):
         [],
         backend="cuda",
         device_id=config.cuda_gpu_id,
-        fp_precision=32,
+        dtype=np.float32,
     )
     rel_l2 = np.linalg.norm(sol_cuda32 - sol_numpy) / max(
         np.linalg.norm(sol_numpy), 1e-30
@@ -1296,13 +1296,8 @@ def test_etd2_mkl_matches_numpy_real(mceq_sib21_full_db):
     order as the scipy SpMV, so the two backends agree to round-off
     (~1e-12) rather than to a looser storage-dependent bound.
     """
-    from MCEq.solvers import (
-        compile_operator,
-        etd2_driver,
-        mkl_backend,
-        solve_etd2,
-        split_diagonal,
-    )
+    from MCEq.operators.compiled import compile_operator, split_diagonal
+    from MCEq.solvers import etd2_driver, mkl_backend, solve_etd2
 
     mceq = mceq_sib21_full_db
     nsteps, dX, rho_inv = _uniform_path_theta60(mceq)
@@ -1406,7 +1401,7 @@ def test_etd2_fp32_mkl_vs_cuda_per_species_real(mceq_sib21_full_db):
             phi0.copy(),
             [],
             backend=backend,
-            fp_precision=32,
+            dtype=np.float32,
             device_id=config.cuda_gpu_id,
         )
         return sol
@@ -1968,6 +1963,7 @@ def test_solve_fullsky_2d_phi0_shape_validation(mceq_sib21):
 # ---------------------------------------------------------------------------
 
 from MCEq.core import MCEqRun  # noqa: E402
+from MCEq.solvers.path import em_cascade_dx_cap  # noqa: E402
 
 
 class _StubParticle:
@@ -1990,7 +1986,7 @@ class _StubMCEq:
     # Borrow the real methods under test (unbound) so the stub exercises the
     # exact production code paths, including their internal self-calls.
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
-    _em_cascade_dx_cap = MCEqRun._em_cascade_dx_cap
+    _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
     _calculate_integration_path = MCEqRun._calculate_integration_path
 
     def __init__(self, r_known=0.5, density_model=None):
@@ -2081,11 +2077,13 @@ def test_em_cascade_step_scale_dense_for_large_nonnormal_block():
 def test_em_cascade_dx_cap_gating():
     stub = _StubMCEq(r_known=0.5)
     config.em_adaptive_step = False
-    assert MCEqRun._em_cascade_dx_cap(stub) == np.inf
+    assert em_cascade_dx_cap(MCEqRun._em_cascade_step_scale(stub)) == np.inf
 
     config.em_adaptive_step = True
     config.em_step_safety = 0.04
-    assert MCEqRun._em_cascade_dx_cap(stub) == pytest.approx(0.04 / 0.5)
+    assert em_cascade_dx_cap(MCEqRun._em_cascade_step_scale(stub)) == pytest.approx(
+        0.04 / 0.5
+    )
 
 
 def test_em_cascade_step_scale_zero_without_em():
@@ -2097,7 +2095,7 @@ def test_em_cascade_step_scale_zero_without_em():
     assert MCEqRun._em_cascade_step_scale(stub) == 0.0
 
     config.em_adaptive_step = True
-    assert MCEqRun._em_cascade_dx_cap(stub) == np.inf
+    assert em_cascade_dx_cap(MCEqRun._em_cascade_step_scale(stub)) == np.inf
 
 
 def test_em_adaptive_step_refines_path():
@@ -2303,51 +2301,6 @@ def test_solve_batch_phi0_shape_validation(mceq_sib21):
         mceq_sib21.solve_batch(conditions=[{"zenith": 0.0}])
 
 
-def test_initial_state_builder(mceq_sib21):
-    """initial_state() must reproduce the set_single_primary_particle /
-    set_initial_spectrum vectors and leave the instance state untouched.
-    """
-    phi0_before = mceq_sib21.get_initial_state()
-    restore_before = list(mceq_sib21._restore_initial_condition)
-
-    # Single primary (proton, superposition path for a nucleus)
-    col_p = mceq_sib21.initial_state({"E": 1e5, "pdg_id": 2212})
-    col_fe = mceq_sib21.initial_state({"E": 1e6, "corsika_id": 5626})
-    assert np.array_equal(mceq_sib21.get_initial_state(), phi0_before), (
-        "initial_state mutated the instance phi0"
-    )
-    assert mceq_sib21._restore_initial_condition == restore_before
-
-    mceq_sib21.set_single_primary_particle(1e5, pdg_id=2212)
-    assert np.array_equal(col_p, mceq_sib21._phi0)
-    mceq_sib21.set_single_primary_particle(1e6, corsika_id=5626)
-    assert np.array_equal(col_fe, mceq_sib21._phi0)
-
-    # Composition: two components == append chain
-    col_both = mceq_sib21.initial_state(
-        [{"E": 1e5, "pdg_id": 2212}, {"E": 1e6, "corsika_id": 5626}]
-    )
-    assert np.array_equal(col_both, col_p + col_fe)
-
-    # Spectrum component
-    spec = np.ones(mceq_sib21.dim) * 1e-8
-    col_spec = mceq_sib21.initial_state({"spectrum": spec, "pdg_id": 2212})
-    mceq_sib21.set_initial_spectrum(spec, pdg_id=2212)
-    assert np.array_equal(col_spec, mceq_sib21._phi0)
-
-    # Error cases
-    with pytest.raises(ValueError, match="components must not be empty"):
-        mceq_sib21.initial_state([])
-    with pytest.raises(ValueError, match="unknown keys"):
-        mceq_sib21.initial_state({"E": 1e5, "pdg": 2212})
-    with pytest.raises(ValueError, match="each component needs"):
-        mceq_sib21.initial_state({"corsika_id": 5626})
-
-    # Restore the fixture's initial condition (H3a primary model)
-    mceq_sib21._phi0[:] = phi0_before
-    mceq_sib21._restore_initial_condition = restore_before
-
-
 def test_batch_result_get_solution_matches_serial(mceq_sib21):
     """MCEqBatchResult.get_solution must agree with MCEqRun.get_solution
     after an equivalent serial solve, for plain, tracking-prefixed and
@@ -2443,7 +2396,7 @@ def test_solve_fullsky_2d_phi0_explicit_cutoff_warns(mceq_sib21):
             mceq_sib21.get_initial_state()[:, None],
             (mceq_sib21.dim_states, 2),
         ).copy()
-        with pytest.warns(UserWarning, match="NOT applied"):
+        with pytest.warns(UserWarning, match="not applied to a 2-D phi0"):
             mceq_sib21.solve_fullsky(zenith_grid, phi0=phi0_2d, geomagnetic_cutoff=True)
     finally:
         config.kernel_config = saved_kernel
@@ -2535,21 +2488,23 @@ def test_cuda_apply_off_mode_blocks(pattern, fp, values):
 
     A, B = blocks(0.1), blocks(0.03)
     dim = n_k * N
-    dev = cu.CudaOperator(
-        A,
-        B,
-        np.zeros(dim),
-        np.zeros(dim),
-        config.cuda_gpu_id,
-        fp,
-        n_k,
-        operator_precision=values,
+    op = SimpleNamespace(
+        dim=dim,
+        int_off=A,
+        dec_off=B,
+        d_int=np.zeros(dim),
+        d_dec=np.zeros(dim),
+        band_off=None,
+        layout=SimpleNamespace(coupled=False, n_k=n_k),
     )
-    assert dev.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
-    assert dev.n_blk == (1 if pattern == "distinct" else n_k)
     be = cu.CudaBackend(
-        dev, SimpleNamespace(dim=dim, layout=SimpleNamespace(coupled=False))
+        op,
+        config.cuda_gpu_id,
+        np.float32 if fp == 32 else np.float64,
+        None if values is None else (np.float32 if values == 32 else np.float64),
     )
+    assert be.value_dtype == (np.float32 if 32 in (fp, values) else np.float64)
+    assert be.n_blk == (1 if pattern == "distinct" else n_k)
     # fp32 values under an fp64 state: the values' rounding, no fp32 sums
     tol = 1e-5 if fp == 32 else 1e-6 if values == 32 else 1e-13
     for K in (1, 3, 8, 64):
@@ -2627,3 +2582,14 @@ def test_condition_paths_fall_back_to_serial_without_fork(mceq_sib21, monkeypatc
         assert one[0] == other[0]
         assert np.array_equal(one[1], other[1])
         assert np.array_equal(one[2], other[2])
+
+
+def test_solve_fullsky_returns_the_pixel_index_on_request(mceq_sib21):
+    zenith_grid = np.array([0.0, 60.0])
+    azimuth_grid = np.array([0.0, 90.0, 180.0])
+    res, index = mceq_sib21.solve_fullsky(
+        zenith_grid, azimuth_grid, return_pixel_index=True
+    )
+    assert index.tolist() == [[i, j] for i in range(2) for j in range(3)]
+    assert index is res.pixel_index
+    assert res.sol.shape[1] == 6

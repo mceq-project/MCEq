@@ -1,6 +1,7 @@
-.. _citeus:
 :html_theme.sidebar_secondary.remove: true
 :html_theme.sidebar_primary.remove: true
+
+.. _citeus:
 
 ********
 Cite Us!
@@ -42,10 +43,26 @@ Atmosphere
     | D. Heck, J. Knapp, J. Capdevielle, G. Schatz, T. Thouw
     | Tech. Rep. FZKA 6019, Karsruhe (1998)
 
-* `NRLMSISE-00 <http://ccmc.gsfc.nasa.gov/modelweb/atmos/nrlmsise00.html>`_
+* `NRLMSISE-00 <https://doi.org/10.1029/2002JA009430>`_
     | *NRLMSISE-00 empirical model of the atmosphere: Statistical comparisons and scientific issues*
     | J.M. Picone, A.E. Hedin, D.P. Drob, and A.C. Aikin
     | J. Geophys. Res., 107(A12), 1468, doi:10.1029/2002JA009430, (2002)
+
+* `NRLMSIS 2.1 <https://doi.org/10.1029/2020EA001321>`_ (model description of NRLMSIS 2.0, on which 2.1 builds)
+    | *NRLMSIS 2.0: A whole-atmosphere empirical model of temperature and neutral species densities*
+    | J. T. Emmert et al.
+    | Earth and Space Science 8 (2021) e2020EA001321, doi:10.1029/2020EA001321
+
+Geomagnetic cutoff
+==================
+
+* `gtracr <https://github.com/kwat0308/gtracr>`_ (rigidity cutoffs from cosmic-ray trajectory tracing)
+    | K. Watanabe, *gtracr*, https://github.com/kwat0308/gtracr
+
+* `IGRF-13 <https://doi.org/10.1186/s40623-020-01288-x>`_
+    | *International Geomagnetic Reference Field: the thirteenth generation*
+    | P. Alken et al.
+    | Earth Planets Space 73 (2021) 49, doi:10.1186/s40623-020-01288-x
 
 Hadronic interaction models
 ===========================
@@ -108,3 +125,25 @@ Hadronic interaction models
     | *Cascade equations and hadronic interactions at very high energies*
     | A. Fedynitch
     | CERN-THESIS-2015-371
+
+* `FLUKA <https://www.fluka.eu>`_:
+    | *The FLUKA code: Overview and new developments*
+    | F. Ballarini et al.
+    | EPJ Nucl. Sci. Technol. 10 (2024) 16, doi:10.1051/epjn/2024015
+
+* `PYTHIA 8 <https://pythia.org>`_:
+    | *A comprehensive guide to the physics and usage of PYTHIA 8.3*
+    | C. Bierlich et al.
+    | SciPost Phys. Codeb. 2022 (2022) 8
+    | `arXiv:2203.11601 <https://arxiv.org/abs/2203.11601>`_
+    |
+    | *Hadron interactions for arbitrary energies and species, with applications to cosmic rays*
+    | T. Sjöstrand, M. Utheim
+    | Eur.Phys.J.C 82 (2022) 1, 21
+    | `arXiv:2108.03481 <https://arxiv.org/abs/2108.03481>`_
+
+* `PYTHIA 8 Angantyr <https://arxiv.org/abs/1806.10820>`_:
+    | *The Angantyr model for Heavy-Ion Collisions in PYTHIA8*
+    | C. Bierlich, G. Gustafson, L. Lönnblad, H. Shah
+    | JHEP 10 (2018) 134
+    | `arXiv:1806.10820 <https://arxiv.org/abs/1806.10820>`_

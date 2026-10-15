@@ -52,7 +52,7 @@ Facts verified while building this, worth not rediscovering
 * A decay pack that stops at ``pi/K -> mu nu`` cannot even reach particle
   setup. ``MCEqRun`` on such a file raises ``Exception('Unstable particle
   without decay distribution:', (-13, np.int64(0)), 'mu+')`` from
-  ``particlemanager.MCEqParticle.set_decay_channels``. Hence
+  ``ParticleManager.set_decay_channels``. Hence
   ``mu+- -> e nu nu`` in :data:`DECAY_CHANNELS`. These fixtures are still not
   ``MCEqRun``-able -- with the muon channels present the same probe gets one
   step further and raises ``Exception('No nucleons in eqn system, primary

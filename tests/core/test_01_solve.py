@@ -25,9 +25,9 @@ def test_solve_default(mceq_sib21):
     assert np.sum(muons) != 0
 
 
-def test_solve_skip_integration_path(mceq_sib21):
+def test_solve_from_integration_path(mceq_sib21):
     mceq_sib21._calculate_integration_path(int_grid=None, grid_var="X")
-    mceq_sib21.solve(skip_integration_path=True)
+    mceq_sib21.solve_from_integration_path(*mceq_sib21.integration_path)
     sol = mceq_sib21.get_solution("mu+", mag=0, integrate=True)
     assert sol is not None
 
@@ -72,7 +72,7 @@ def test_integration_path_grid_idcs(mceq_sib21):
 )
 @pytest.mark.parametrize("append", [False, True])
 def test_set_initial_spectrum(mceq_sib21, pdg_id, append):
-    cond = mceq_sib21._restore_initial_condition
+    cond = list(mceq_sib21._initial_condition)
     phi0_backup = mceq_sib21._phi0.copy()
 
     particle = mceq_sib21.pman[pdg_id]
@@ -89,4 +89,4 @@ def test_set_initial_spectrum(mceq_sib21, pdg_id, append):
         assert np.allclose(spectrum, phi1)
 
     mceq_sib21._phi0 = phi0_backup
-    mceq_sib21._restore_initial_condition = cond
+    mceq_sib21._initial_condition = cond

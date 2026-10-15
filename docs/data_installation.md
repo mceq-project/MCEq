@@ -11,9 +11,9 @@ packages, listed with their checksums and models in a YAML manifest.
 
 | file | grid | contents |
 |---|---|---|
-| `mceq_base_air_1d_v2.h5` | 1D, 150 bins (1 MeV–1 EeV) | decays, continuous losses (air, hydrogen, ice, rock, water), FLUKA20251, SIBYLL23E (air and hydrogen). **Default 1D database.** |
+| `mceq_base_air_1d_v2.h5` | 1D, 150 bins (1 MeV–1 EeV) | decays, continuous losses (air, hydrogen, ice, rock, water), FLUKA20251 and SIBYLL23E for air, SIBYLL23E for hydrogen. **Default 1D database.** |
 | `mceq_extra_models_air_1d_v2.h5` | 1D, 150 bins | the same tables plus DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8CASCADE, PYTHIA8ANGANTYR, QGSJETII04, QGSJETIII, SIBYLL21, SIBYLL23D, SIBYLL23ESTAR{BAR,MIXED,RHO,STRANGE} |
-| `mceq_base_air_2d_legendre_v2.h5` | 2D, 150 bins × 90 Legendre modes | 2D decays, continuous losses, FLUKA20251 (both hemispheres), air composition for muon scattering. **Default 2D database.** |
+| `mceq_base_air_2d_legendre_v2.h5` | 2D, 150 bins × 90 Legendre modes | 2D decays, continuous losses, FLUKA20251 (both hemispheres), muon scattering rates. **Default 2D database.** |
 | `mceq_model_SIBYLL23E_air_2d_legendre_v2.h5` | 2D, 150 × 90 | SIBYLL23E 2D yields only; used together with the 2D base file. |
 | `mceq_db_manifest_v2.yaml` | — | grid, sha256, size and models per medium of each file |
 
@@ -26,12 +26,7 @@ The files are assets of the `v2.0.0` release of the MCEq repository, each with a
 `.sha256` file. A copy of the manifest is installed with the package.
 
 2D databases carry the angular distribution as Legendre moments
-⟨P_l(cos θ)⟩ and declare it with the `common` attribute
-`angular_basis = "legendre"`. The yield and decay tables of the 2D packages are
-stored in single precision (`values_dtype: float32` in the manifest), which
-halves the files; MCEq reads them into its working precision. The earlier
-Hankel-mode 2D files of the release (`mceq_base_air_2d_v2.h5`,
-`mceq_model_SIBYLL23E_air_2d_v2.h5`) are refused with an error.
+⟨P_l(cos θ)⟩.
 
 ## How a run finds its data
 
@@ -55,9 +50,9 @@ cross sections of SIBYLL23ESTARRHO are read from it. Decays and losses always
 come from the primary database. The result is identical to a run on a single
 file that contains all models.
 
-A download is written to a temporary file, checked against the sha256 in the
-manifest and then renamed. When several jobs start at once, one downloads and
-the others stop with a message to pre-fetch the data (below).
+A download is checked against the sha256 in the manifest before it is put in
+place. When several jobs start at once, one downloads and the others stop with a
+message to pre-fetch the data (below).
 
 For 2D runs point `config.mceq_db_fname` at a Legendre 2D base file; a model
 it does not hold is resolved through the manifest in the same way, from the
@@ -69,7 +64,7 @@ models that are available.
 ## Pre-fetching on clusters
 
 ```bash
-# the default database of each grid family the manifest lists (1D here)
+# the default 1D and 2D databases
 python -m MCEq.data.download --defaults
 # the files that provide given models (1D by default, --dim 2d for 2D)
 python -m MCEq.data.download --model SIBYLL23ESTARRHO --model QGSJETIII
@@ -100,15 +95,9 @@ and `cross_sections/air/MYMODEL`, in the same layout as the release files.
 
 ## Test data
 
-The test suite and the example notebooks use a reduced copy of the 1D release,
-31 energy bins from 891 GeV to 891 TeV: `mceq_ci_base_air_1d_v2.h5`
-(FLUKA20251, SIBYLL23E), `mceq_ci_extra_models_air_1d_v2.h5` (the other models)
-and `mceq_db_manifest_ci_v2.yaml`, assets of the `ci-assets` release, cut from
-the stencil-averaged release databases. They are published under
-digest-stamped names (`mceq_ci_base_air_1d_v2_<sha256[:12]>.h5`, which the CI
-manifest's `url` entries name), so an older commit keeps its files. They are
-not meant for physics. Each package names its manifest in the root attribute
-`mceq_db_manifest`, which takes precedence over `config.mceq_db_manifest`.
+The test suite and the example notebooks use `mceq_ci_*` databases with
+31 energy bins from 891 GeV to 891 TeV, listed in `mceq_db_manifest_ci_v2.yaml`.
+They are for tests only, not for physics.
 
 ## Older databases
 

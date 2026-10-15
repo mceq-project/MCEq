@@ -1,47 +1,10 @@
-"""The integration path the ETD2 kernels step along.
-
-:func:`etd2_nonuniform_path` turns a density model into the
-``(nsteps, dX, rho_inv, grid_idcs)`` tuple of the kernel-dispatch contract:
-step sizes from the local variation of ``1/rho``, and ``rho_inv`` as the
-per-step integral mean rather than a point sample. The module also carries
-the documented EM-row caveat the kernels tolerate.
-
-Step-size policy and the depth grid belong here. The step formulas are in
-:mod:`MCEq.solvers.numerics` and the loop that consumes the path is
-:func:`MCEq.solvers.etd2.etd2_driver`.
-"""
+"""The non-uniform integration path of the ETD2 step loop and its stiffness caps."""
 
 import numpy as np
+import scipy.sparse as sp
 
+from MCEq import config
 from MCEq.misc import info
-
-
-def _live_config():
-    """The :mod:`MCEq.config` module, fetched dynamically.
-
-    Same device as :func:`MCEq.misc._views`: the remaining
-    ``None -> global`` fallbacks (a standalone ``etd2_nonuniform_path``
-    call, a user-built ``EarthGeometry()``) must keep reading the live
-    module, but this layer must not carry a static import edge to it.
-    These are the process-level defaults for standalone calls that omit
-    path settings; run-level callers pass their own settings.
-    """
-    from importlib import import_module
-
-    return import_module("MCEq.config")
-
-
-#: The EM-row blowup at extreme zenith; see ``docs/mceq_v1.x_v2_diff.md``
-#: "EM cascade caveat". Photons and electrons are out of the system unless
-#: ``enable_em`` is set, so this branch is not reached by default.
-_EM_BLOWUP_CAVEAT = """\
-At extreme zenith the e± semi-Lagrangian L/R rows produce ``inf`` in
-``F_phi`` / ``F_a`` (no diagonal damping). Each ETD2 kernel wraps its loop
-with ``np.errstate(over='ignore', invalid='ignore')`` to suppress the
-resulting overflow / NaN warnings; that suppression does not establish
-that the returned lepton spectra are finite or unaffected. The EM block is
-absent unless ``config.enable_em`` is set.
-"""
 
 
 def etd2_nonuniform_path(
@@ -53,7 +16,6 @@ def etd2_nonuniform_path(
     dX_min=None,
     fd_span=None,
     int_grid=None,
-    step=None,
 ):
     """Build a non-uniform integration path for ETD2 kernels.
 
@@ -62,40 +24,31 @@ def etd2_nonuniform_path(
     integral mean of ``density_model.r_X2rho`` over each step, estimated from
     a cumulative trapezoid integral on a hybrid log/linear sample grid;
     ``scipy.integrate.quad`` is used per step only when ``ri`` does not accept
-    array input. The step mean — not a point sample — is essential at
-    the very first step which crosses the spline-saturation cap.
-
-    See ``docs/mceq_v1.x_v2_diff.md`` ("Step-size control and the resonance
-    approximation") for the design.
+    array input. The step mean, not a point sample, is needed at the first
+    step, which crosses the spline-saturation cap.
 
     Args:
       density_model: object with ``r_X2rho(X)`` and ``max_X``.
       X_start (float | None): starting depth in g/cm^2; ``None`` →
-        ``step.X_start``.
+        ``config.X_start``.
       eps (float | None): within-step ``rho_inv`` variation tolerance;
-        ``None`` → ``step.etd2_path["eps"]``.
+        ``None`` → ``config.etd2_path["eps"]``.
       dX_max (float | None): cap on step size (off-diagonal stability
-        cliff); ``None`` → ``step.etd2_path["dX_max"]``.
+        cliff); ``None`` → ``config.etd2_path["dX_max"]``.
       dX_min (float | None): floor on step size; ``None`` →
-        ``step.etd2_path["dX_min"]``.
+        ``config.etd2_path["dX_min"]``.
       fd_span (float | None): forward-FD probe span; ``None`` →
-        ``step.etd2_path["fd_span"]``.
+        ``config.etd2_path["fd_span"]``.
       int_grid (np.ndarray | None): X values at which to record snapshots.
         Steps are truncated to land exactly on each ``int_grid`` entry.
-      step: the ``solver`` setting group (``X_start``, ``etd2_path``);
-        ``None`` → ``MCEq.config.solver``. Read here, when the path is
-        planned. Run-level path caching uses the resolved values, so changes
-        to live settings invalidate a previously built path.
 
     Returns:
       (nsteps, dX, rho_inv, grid_idcs): tuple compatible with the
       kernel-dispatch contract used by ``MCEqRun.integration_path``.
     """
-    if step is None:
-        step = _live_config().solver
     if X_start is None:
-        X_start = step.X_start
-    p = step.etd2_path
+        X_start = config.X_start
+    p = config.etd2_path
     if eps is None:
         eps = 0.01 if p["eps"] is None else p["eps"]
     if dX_max is None:
@@ -139,10 +92,7 @@ def etd2_nonuniform_path(
         h = max(h, dX_min)
         h = min(h, max_X - X)
         # Truncate the step to land exactly on the next user-requested
-        # snapshot point. The truncation can drive h below dX_min — that's
-        # the user's intent, not a stability issue (smaller h is always
-        # more stable for ETD2). It can chain across many short steps if
-        # the user's grid is finer than the natural schedule.
+        # snapshot point; this can drive h below dX_min.
         if n_int and grid_step < n_int and X + h >= int_grid[grid_step]:
             h = float(int_grid[grid_step]) - X
             grid_idcs.append(step)
@@ -156,28 +106,11 @@ def etd2_nonuniform_path(
     dXs = np.asarray(dXs, dtype=np.float64)
     rho_inv = np.empty(len(dXs), dtype=np.float64)
 
-    # Compute per-step integral means of ``r_X2rho`` via differences on
-    # a cumulative-trapezoid antiderivative built once on a hybrid
-    # log+linear sample.
-    #
-    # Why a hybrid sample (and not a uniform one): ``r_X2rho`` is
-    # ``1/rho``, and atmosphere density splines deliberately saturate at
-    # the top of atmosphere so that the path-builder's FD probe stays
-    # well-defined. The saturation produces a step-function-like spike
-    # near ``X = 0``: ``ri(0) ~ 1e9 cm^3/g`` falls to ``~1e7`` by
-    # ``X = 0.01``. A uniform-grid quadrature smears that spike across
-    # samples and over-estimates the mean by ~2-20x for the first few
-    # steps. Sampling logarithmically near ``X = 0`` (concentrated where
-    # ``ri`` varies fast) and linearly in the bulk recovers
-    # ``quad(epsrel=1e-6)``-class accuracy at ``O(1)`` per step.
-    #
-    # Why a spline of the *cumulative* and not of ``r_X2rho`` directly:
-    # the cumulative is smooth and strictly monotone, so a cubic spline
-    # through it is well-behaved even though ``r_X2rho`` spans 5+ decades.
-    # A direct fit overshoots and yields non-physical (negative) means
-    # near the top of atmosphere.
-    #
-    # Falls back to ``quad`` only if ``ri`` rejects array input.
+    # Per-step integral means of ``r_X2rho`` from a cubic spline of the
+    # cumulative trapezoid integral on a hybrid log/linear sample: the log part
+    # resolves the saturation spike of 1/rho near X = 0, and the cumulative is
+    # monotone where a direct fit of r_X2rho would overshoot. Falls back to
+    # ``quad`` if ``ri`` rejects array input.
     use_cum = False
     cum_spline = None
     if len(dXs) > 0:
@@ -190,15 +123,9 @@ def etd2_nonuniform_path(
             # Cap at the model's max depth (numerical drift on the last step).
             X_max = min(X_max, float(max_X))
             if X_max > X_min:
-                # Concentrated log-sample plus a dense linear sample for
-                # the bulk. The log part must span the whole domain, not
-                # stop at X = 1: on near-horizontal trajectories
-                # (max_X ~ 3e4) the interval X = 1..50 g/cm^2 still sits
-                # at 80..35 km altitude where 1/rho varies over decades,
-                # and a linear bulk sample alone (max_X/4000 ~ 7 g/cm^2
-                # per point) under-resolves it. Log sampling costs nothing
-                # in the bulk, where 1/rho is flat per log-X; the linear
-                # sample is kept so vertical-path accuracy is unchanged.
+                # Log sample over the whole domain (1/rho varies over decades
+                # at high altitude, also on near-horizontal paths) plus a
+                # linear sample for the bulk.
                 X_log_lo = max(1e-7, X_min if X_min > 0 else 1e-7)
                 if X_max > X_log_lo:
                     X_top = np.geomspace(X_log_lo, X_max, 6001)
@@ -239,24 +166,89 @@ def etd2_nonuniform_path(
     return len(dXs), dXs, rho_inv, grid_idcs
 
 
-def em_cascade_dx_cap(step_scale, em):
-    """Additional stiffness-based EM step cap: ``em.step_safety / step_scale``, or inf.
-
-    ``np.inf`` (no cap) when ``em.adaptive_step`` is off or the EM
-    cascade is inactive (``step_scale`` not > 0), so the legacy schedule is
-    reproduced exactly. The stiffness *step_scale* (r_EM of ``int_m``) is
-    computed and memoised by the driver
-    (:meth:`MCEq.driver.mceq_run.MCEqRun._em_cascade_step_scale`) and the
-    run-coupled wrapper that feeds it lives in :mod:`MCEq.driver.paths`.
-    """
-    if not em.adaptive_step:
+def em_cascade_dx_cap(step_scale):
+    """EM step cap ``config.em_step_safety / r_EM``, or inf when disabled or ``r_EM`` is not > 0."""
+    if not config.em_adaptive_step:
         return np.inf
     if not (step_scale > 0.0):
         return np.inf
-    cap = em.step_safety / step_scale
+    cap = config.em_step_safety / step_scale
     info(
         2,
-        "EM-adaptive step (cure B): r_EM={:.4g} 1/(g/cm^2) "
-        "-> dX_max <= {:.4g} g/cm^2".format(step_scale, cap),
+        "EM-adaptive step: r_EM={:.4g} 1/(g/cm^2) -> dX_max <= {:.4g} g/cm^2".format(
+            step_scale, cap
+        ),
     )
     return cap
+
+
+#: The continuous-loss cap is LOSS_STEP_SAFETY / rate (:ref:`solver-math`).
+LOSS_STEP_SAFETY = 0.5
+
+
+def continuous_loss_rate(bands, secant_eigenvalues=None, upwind_rows=None):
+    """The inverse-depth rate of the explicit part of the loss bands.
+
+    Args:
+      bands: the assembled loss stencils, one dense band per species.
+      secant_eigenvalues: eigenvalues of the sec(theta) coupling; the rate
+        is scaled by their maximum (at least 1). ``None``: paraxial.
+      upwind_rows: per band, the number of leading rows that are its
+        monotone upwind closure and do not enter the rate. ``None`` counts
+        every row.
+
+    Empty or diagonal bands impose no restriction; nonfinite coefficients
+    raise ``ValueError``.
+    """
+    rate = 0.0
+    if upwind_rows is None:
+        upwind_rows = (0 for _ in bands)
+    for band, n_up in zip(bands, upwind_rows, strict=True):
+        band = np.asarray(band, dtype=np.float64)
+        if not np.isfinite(band).all():
+            raise ValueError("Nonfinite continuous-loss stencil coefficients")
+        off = band.copy()
+        np.fill_diagonal(off, 0.0)
+        row_sums = np.sum(np.abs(off), axis=1)
+        rate = max(rate, float(np.max(row_sums[int(n_up) :], initial=0.0)))
+    if secant_eigenvalues is not None:
+        lam = np.asarray(secant_eigenvalues)
+        if not np.isfinite(lam).all() or np.any(lam <= 0):
+            raise ValueError("Secant eigenvalues must be finite and positive")
+        rate *= max(1.0, float(np.max(lam, initial=1.0)))
+    return rate
+
+
+def em_step_scale(int_m, particles, dense_eig_max=4000):
+    """Spectral radius of the off-diagonal e+/-/gamma block of ``int_m``, in cm^2/g.
+
+    The EM off-diagonal is strongly non-normal, so its spectral radius, not a
+    norm, sets the step scale r_EM. ``particles`` supply ``is_em`` and the
+    ``lidx``/``uidx`` of one ``dim_states`` block (mode l = 0 on a 2D
+    operator). Returns 0.0 if no species is EM.
+    """
+    col_ranges = [
+        np.arange(p.lidx, p.uidx) for p in particles if getattr(p, "is_em", False)
+    ]
+    if not col_ranges:
+        return 0.0
+    idx = np.concatenate(col_ranges)
+    diag = int_m.diagonal()
+    int_off = (int_m - sp.diags(diag, format="csr")).tocsc()
+    block = int_off[idx][:, idx].tocsc().astype(np.float64)
+    # Dense eigvals up to dense_eig_max (ARPACK often fails to converge on
+    # this non-normal block); ARPACK beyond.
+    n = block.shape[0]
+    try:
+        if n <= int(dense_eig_max):
+            ev = np.linalg.eigvals(block.toarray())
+        else:
+            from scipy.sparse.linalg import eigs
+
+            ev = eigs(block, k=1, which="LM", return_eigenvectors=False, maxiter=10000)
+        return float(np.max(np.abs(ev)))
+    except Exception:
+        # The spectral radius is bounded by both induced norms; take the smaller.
+        n1 = float(np.abs(block).sum(axis=0).max())
+        ninf = float(np.abs(block).sum(axis=1).max())
+        return min(n1, ninf)

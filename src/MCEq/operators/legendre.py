@@ -13,9 +13,7 @@ and a uniform azimuth about the parent, has
     a_l(secondary) = k_l a_l(parent),   k_l = <P_l(cos alpha)>_kernel,
 
 exactly on the sphere. Production, decay and scattering therefore stay
-diagonal in ``l``. For ``theta -> 0`` at fixed ``(l + 1/2) theta``,
-``P_l(cos theta) -> J_0((l + 1/2) theta)`` (Hilb's formula), so the Hankel
-modes are the flat-sky limit with ``kappa = l + 1/2``.
+diagonal in ``l``.
 
 Operations that act on ``mu`` couple the modes through
 
@@ -38,12 +36,9 @@ import numpy as np
 __all__ = [
     "backward_removal",
     "dense_count",
-    "forward_weights",
-    "hemisphere_projection",
     "jackson_weights",
     "l_interpolation",
     "legendre_p",
-    "moments",
     "path_elongation",
     "series",
     "theta_density",
@@ -66,46 +61,12 @@ def legendre_p(l_max, mu):
     return p
 
 
-def moments(mu, ls, weights=None, chunk=1 << 16):
-    """``sum_i w_i P_l(mu_i)`` for every ``l`` in the integer array ``ls``.
-
-    The recurrence runs to ``max(l)`` over chunks of ``mu``, so sparse high
-    ``l`` sets cost ``O(max(l) n_mu)`` time and ``O(chunk)`` memory per row.
-    """
-    mu = np.ravel(np.asarray(mu, dtype=float))
-    w = np.ones_like(mu) if weights is None else np.ravel(weights).astype(float)
-    ls = np.asarray(ls, dtype=int)
-    out = np.zeros(ls.shape)
-    rows = {int(li): np.flatnonzero(ls == li) for li in np.unique(ls)}
-    for lo in range(0, mu.size, chunk):
-        x, wx = mu[lo : lo + chunk], w[lo : lo + chunk]
-        p_prev, p = np.ones_like(x), x.copy()
-        for li in range(int(ls.max()) + 1):
-            if li in rows:
-                out[rows[li]] += wx @ (p_prev if li == 0 else p)
-            if li >= 1:
-                p_prev, p = p, ((2 * li + 1) * x * p - li * p_prev) / (li + 1)
-    return out
-
-
 def series(a, mu):
     """``f(mu) = sum_l (2l + 1)/2 a_l P_l(mu)`` from the moments ``a[..., l]``,
     ``l = 0..a.shape[-1] - 1``."""
     a = np.asarray(a, dtype=float)
     ell = np.arange(a.shape[-1])
     return (a * (2 * ell + 1) / 2) @ legendre_p(ell.size - 1, mu)
-
-
-def forward_weights(l_max):
-    """``c_l = (2l + 1)/2 int_0^1 P_l dmu``, so ``int_0^1 f dmu = sum_l c_l a_l``.
-
-    ``int_0^1 P_l dmu = (P_{l-1}(0) - P_{l+1}(0)) / (2l + 1)`` for ``l >= 1``.
-    """
-    p0 = legendre_p(l_max + 1, 0.0)
-    c = np.empty(l_max + 1)
-    c[0] = 0.5
-    c[1:] = 0.5 * (p0[:l_max] - p0[2:])
-    return c
 
 
 def _coupling(l_max, pieces, extra_nodes, n_rows=None):
@@ -119,15 +80,6 @@ def _coupling(l_max, pieces, extra_nodes, n_rows=None):
         p = legendre_p(l_max, mu)
         m += (p[:n_rows] * (0.5 * (hi - lo) * w * g(mu))) @ p.T
     return m * ((2 * np.arange(l_max + 1) + 1) / 2)[None, :]
-
-
-def hemisphere_projection(l_max):
-    """``B_{ll'} = (2l' + 1)/2 int_0^1 P_l P_l' dmu``: removes ``mu < 0``.
-
-    Gauss-Legendre with ``l_max + 1`` nodes integrates the degree ``2 l_max``
-    integrand exactly.
-    """
-    return _coupling(l_max, [(0.0, 1.0, np.ones_like)], 0)
 
 
 def path_elongation(l_max, theta_cap_deg=75.0, extra_nodes=64, n_rows=None):
@@ -165,12 +117,13 @@ def jackson_weights(l_max):
 def backward_removal(l_max):
     """``I - R``: removes the backward hemisphere of produced particles.
 
-    ``R = M[1(mu < 0)] diag(sigma_l)`` takes the backward part of the Jackson
-    smoothed distribution. For wide distributions this is the exact removal
-    ``hemisphere_projection`` up to the smoothing near ``mu = 0``; collimated
-    distributions (``a_l ~ 1`` up to ``l_max``) have no smoothed backward
-    tail, where the sharp projection would leave Gibbs residues
-    ``~ l_max^-1/2`` at every application.
+    ``R = M[1(mu < 0)] diag(sigma_l)``, with ``sigma_l`` the
+    :func:`jackson_weights`, takes the backward part of the Jackson-smoothed
+    distribution. For wide distributions this differs from the sharp
+    projection ``M[1(mu < 0)]`` only by the smoothing near ``mu = 0``.
+    Collimated distributions (``a_l ~ 1`` up to ``l_max``) have no smoothed
+    backward tail and pass essentially unchanged, where the sharp projection
+    would leave Gibbs residues ``~ l_max^-1/2`` at every application.
     """
     r = _coupling(l_max, [(-1.0, 0.0, np.ones_like)], 0) * jackson_weights(l_max)
     return np.eye(l_max + 1) - r

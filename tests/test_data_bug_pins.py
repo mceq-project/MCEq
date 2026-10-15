@@ -1,25 +1,8 @@
-"""Pins for the data-layer entries of the Phase 4 bug ledger.
-
-Every test here records what the code does **today**, defects included, so the
-commit that fixes one of them shows up as a failing pin rather than a silently
-regenerated golden. Each docstring names its ledger id (section 9 of
-``wiki/_meta/plan-mceq-v2-layered-architecture.md``) and says what the corrected
-behaviour would be, which is the expectation the fix commit inherits.
-
-The probes build ``Interactions`` / ``InteractionCrossSections`` with
-``object.__new__`` and inject the handful of attributes the method under test
-reads, the way ``tests/test_low_energy_blending.py`` does for ``HDF5Backend``.
-B2 and B5 read a real database (the reduced DB directly, no ``MCEqRun``) and
-B4 reads synthetic fixture files built by ``tests/data/make_hdf5_fixtures.py``,
-loaded by file path the way ``tests/test_data_hdf5_decode.py`` does it -- B4
-is the only ledger entry whose probe needs an EM database.
-"""
+"""Data-layer defects, pinned as today's behaviour until they are fixed."""
 
 import importlib.util
-import inspect
 import pathlib
 from collections import defaultdict
-from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -47,7 +30,6 @@ def interactions(parents):
     obj.mod_pprod = defaultdict(dict)
     obj.channel_overrides = {}
     obj.parents = list(parents)
-    obj._physics = SimpleNamespace(use_isospin_sym=True)
     return obj
 
 
@@ -154,15 +136,7 @@ def _load_interactions(disabled):
 
     config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
     config.adv_set["disabled_particles"] = list(disabled)
-    inter = Interactions(
-        HDF5Backend(
-            paths=config.paths,
-            grid=config.grid,
-            physics=config.physics,
-            em=config.em,
-        ),
-        physics=config.physics,
-    )
+    inter = Interactions(HDF5Backend())
     inter.load("SIBYLL21")
     return inter
 
@@ -355,39 +329,39 @@ def test_gen_xmat_returns_the_cache_itself_not_a_copy(clean_xmat_cache):
 # unswapped medium
 
 
-def em_backend(had_path, em_path, medium):
-    """An ``HDF5Backend`` with ``enable_em`` on, all four groups injected.
+def em_backend(monkeypatch, had_path, em_path, medium):
+    """An ``HDF5Backend`` with ``enable_em`` on, every read setting pinned.
 
     The idiom of ``tests/test_data_hdf5_decode.py::backend``, with two
     changes the B4 pins need: ``enable_em`` is True and both database files
     exist, so the EM reads happen; ``interaction_medium`` and the constructor
-    ``medium`` agree, and nothing comes from ``MCEq.config`` except the
-    ``info`` logger's own settings.
+    ``medium`` agree. Every config global the backend reads is set here via
+    ``monkeypatch``.
     """
+    from MCEq import config
     from MCEq.data import HDF5Backend
 
-    paths = SimpleNamespace(
+    for name, value in dict(
         data_dir=had_path.parent,
         mceq_db_fname=had_path.name,
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         em_db_fname=em_path.name,
-    )
-    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
-    physics = SimpleNamespace(
-        filters={
-            "disabled_particles": [],
-            "forced_int_cs": None,
-            "replace_meson_cross_sections_with": None,
-        },
+        e_min=None,
+        e_max=None,
+        floatlen=None,
+        em_standalone_grid=False,
         assume_nucleon_interactions_for_exotics=True,
         enable_em=True,
         enable_cont_rad_loss=False,
         fallback_to_air_cs=True,
         interaction_medium=medium,
         muon_helicity_dependence=False,
-    )
-    em = SimpleNamespace(air_density=None)
-    return HDF5Backend(medium=medium, paths=paths, grid=grid, physics=physics, em=em)
+    ).items():
+        monkeypatch.setattr(config, name, value)
+    monkeypatch.setitem(config.adv_set, "disabled_particles", [])
+    monkeypatch.setitem(config.adv_set, "forced_int_cs", None)
+    monkeypatch.setitem(config.adv_set, "replace_meson_cross_sections_with", None)
+    return HDF5Backend(medium=medium)
 
 
 def b4_dbs(tmp_path):
@@ -408,7 +382,7 @@ def b4_dbs(tmp_path):
     return had, em
 
 
-def test_b4_interaction_db_reads_ice_after_saying_water(tmp_path):
+def test_b4_interaction_db_reads_ice_after_saying_water(monkeypatch, tmp_path):
     """B4: the ice->water swap in ``interaction_db`` is dead.
 
     The block at the head of the EM section rewrites the LOCAL ``medium`` and
@@ -427,7 +401,7 @@ def test_b4_interaction_db_reads_ice_after_saying_water(tmp_path):
     EM lookups still use ``self.medium``.
     """
     had, em = b4_dbs(tmp_path)
-    db = em_backend(had, em, "ice").interaction_db(fixtures.MODEL)
+    db = em_backend(monkeypatch, had, em, "ice").interaction_db(fixtures.MODEL)
     ice_pos = list(reversed(fixtures.EM_CHANNELS)).index((11, 11))
     assert ice_pos == 6
     matrix = db["index_d"][((11, 0), (11, 0))]
@@ -435,7 +409,7 @@ def test_b4_interaction_db_reads_ice_after_saying_water(tmp_path):
     assert not np.array_equal(matrix, fixtures.channel_block(0))
 
 
-def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(tmp_path):
+def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(monkeypatch, tmp_path):
     """B4, second leg: ``_cs_db_single`` never mentions ice or water.
 
     Where ``interaction_db`` at least tries a substitution (a dead one, per
@@ -456,137 +430,10 @@ def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(tmp_path):
             f["electromagnetic/water/cs"][:], fixtures.em_cs_table(2.0)
         )
         assert np.array_equal(f["electromagnetic/ice/cs"][:], fixtures.em_cs_table(1.0))
-    cs = em_backend(had, em, "ice").cs_db(fixtures.MODEL)
+    cs = em_backend(monkeypatch, had, em, "ice").cs_db(fixtures.MODEL)
     ice_table = fixtures.em_cs_table(1.0)
     water_table = fixtures.em_cs_table(2.0)
     for ip, p in enumerate(fixtures.EM_CS_PARENTS):
         assert np.array_equal(cs["index_d"][p], ice_table[ip, :])
     assert not np.array_equal(cs["index_d"][11], water_table[0, :])
     assert cs["parents"][-len(fixtures.EM_CS_PARENTS) :] == fixtures.EM_CS_PARENTS
-
-
-# B5 -- disable_interactions_of_unstable removes the nucleons instead of the
-# unstable hadrons
-
-
-def _load_b5(disable_unstable):
-    """Load SIBYLL21 from the reduced DB with the B5 flag set as given.
-
-    ``conftest``'s autouse fixture restores ``config.adv_set`` and
-    ``config.mceq_db_fname`` afterwards, so mutating them here is safe.
-    """
-    from MCEq import config
-    from MCEq.data import HDF5Backend
-
-    config.mceq_db_fname = "mceq_ci_base_air_1d_v2.h5"
-    config.adv_set["disable_interactions_of_unstable"] = disable_unstable
-    inter = Interactions(
-        HDF5Backend(
-            paths=config.paths,
-            grid=config.grid,
-            physics=config.physics,
-            em=config.em,
-        ),
-        physics=config.physics,
-    )
-    inter.load("SIBYLL21")
-    return inter
-
-
-def test_b5_flag_removes_the_nucleon_projectiles_and_keeps_the_mesons():
-    """B5: the flag is inverted -- it strips nucleons and keeps the mesons.
-
-    The config doc says ``#: Disable particle production by all hadrons,
-    except nucleons``, i.e. keep the nucleons and strip the unstable hadrons,
-    but the branch in ``Interactions.load`` removes exactly the four nucleon
-    charge states ``[2212, 2112, -2212, -2112]`` and leaves every pi/K parent
-    in place. Measured on the reduced DB (2026-09-06): baseline parents carry
-    both nucleon signs plus the meson families and a 3122 hyperon family;
-    with the flag on the same list survives minus the four nucleon tuples,
-    ``relations`` still matches ``parents`` exactly, and ``particles`` keeps
-    all 22 entries either way -- the filter acts on the parent list only, so
-    nucleons stay as secondaries.
-
-    Correct behaviour: the flag keeps nucleons and strips the unstable
-    parents, which flips the parent-set assertion below; the hyperons' fate
-    (3122 is unstable but not a meson) is decided by whatever the fixed rule
-    is, so the fix owns that part of the expectation too. A fix that rewrote
-    the filter as a *child* filter instead would also change the
-    ``particles`` pin here, which is why it is pinned.
-    """
-    baseline = _load_b5(False)
-    baseline_pdgs = {p[0] for p in baseline.parents}
-    for nucleon in (2212, 2112, -2212, -2112):
-        assert (nucleon, 0) in baseline.parents
-    assert 211 in baseline_pdgs and -211 in baseline_pdgs
-    assert 321 in baseline_pdgs and -321 in baseline_pdgs
-
-    inter = _load_b5(True)
-
-    # The bug: the surviving set is the baseline minus the four nucleons.
-    assert set(inter.parents) == {
-        (-3122, 0),
-        (-321, 0),
-        (-211, 0),
-        (111, 0),
-        (130, 0),
-        (211, 0),
-        (310, 0),
-        (321, 0),
-        (3122, 0),
-    }
-    for nucleon in (2212, 2112, -2212, -2112):
-        assert (nucleon, 0) not in inter.parents
-    assert set(inter.relations) == set(inter.parents)
-    # Parent-list filter only: the proton survives as a secondary.
-    assert (2212, 0) in inter.particles
-    assert len(inter.particles) == len(baseline.particles) == 22
-
-
-def test_b5_filter_is_a_hardcoded_nucleon_list_not_a_stability_check():
-    """B5, mechanism check: the branch is a literal, not a lifetime lookup.
-
-    ``inspect.getsource(Interactions.load)`` normalized to single spaces
-    contains the branch name and, right after it, the four-int list
-    ``[2212, 2112, -2212, -2112]`` -- the exact set the ``adv_set`` comment's
-    ``except nucleons`` intends to *keep*. Like the B20 mechanism test, this
-    pins the mechanism, not the intent: it goes red when the branch is deleted
-    or the literal set changes. A fix that keeps the header and the list but
-    inverts the predicate survives here -- the behavioural test above is what
-    catches that.
-    """
-    source = " ".join(inspect.getsource(Interactions.load).split())
-    branch = 'if filters["disable_interactions_of_unstable"]:'
-    assert source.count(branch) == 1
-    after_branch = source.split(branch, 1)[1]
-    assert "[2212, 2112, -2212, -2112]" in after_branch
-
-
-# B3 -- deleted by R3: the veto block, its config key, and the crash evidence
-# all went together in the deletion commit. What stays pinned is the deletion
-# itself -- the key must not come back, and get_matrix must not re-grow a
-# filter read that the physics views no longer provide.
-
-
-def test_b3_deleted_key_and_guard():
-    """B3 DELETED (R3): no `disable_leading_mesons` key exists anywhere.
-
-    The veto raised TypeError on `abs(child) < 2000` for a (pdg, helicity)
-    tuple before its hard-coded `ie = 50` window was ever evaluated -- dead
-    since the helicity keys landed. The deletion commit removed the block in
-    ``get_matrix``, the ``adv_set`` default, and the ``disable_leading_
-    mesons`` entry from all six golden generators' pin blocks. A re-addition
-    of the key without restoring working code fails the first assert; a
-    restored read of a missing key in get_matrix fails the second leg below.
-    """
-    from MCEq import config
-
-    assert "disable_leading_mesons" not in config.adv_set
-    assert not hasattr(config, "disable_leading_mesons")
-
-    obj = interactions([(2212, 0)])
-    obj.index_d = {((2212, 0), (211, 0)): np.ones((GRID.d, GRID.d))}
-    obj.relations = {(2212, 0): [(211, 0)]}
-    obj._physics = SimpleNamespace(use_isospin_sym=True, filters={})
-    # get_matrix must survive an EMPTY filters dict -- no veto read left.
-    assert obj.get_matrix((2212, 0), (211, 0)).shape == (GRID.d, GRID.d)

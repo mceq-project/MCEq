@@ -6,10 +6,8 @@ Transport step math
 
 .. currentmodule:: MCEq
 
-The ETD2RK transport step of MCEq 2 as implemented, with the function that
-implements each formula: the diagonal-exact splitting and the exponential
-integrator, and the :math:`\sec\theta` path elongation in the eigenbasis of
-the mode coupling.
+The ETD2RK transport step of MCEq, formula by formula, with the function that
+implements each.
 
 Cascade equations in slant depth
 ================================
@@ -39,30 +37,26 @@ the energy grid the fluxes form a state vector :math:`\Phi \in
 
 :math:`A` (``int_m``) holds the interaction losses on the diagonal, the
 production kernels off it and the energy-loss band; :math:`B` (``dec_m``)
-holds the decay rates on the diagonal and the decay kernels off it. Both
-are constant along the path; only :math:`\rho^{-1}(X)` changes. Every
-short time scale sits on the diagonal.
-:class:`~MCEq.operators.matrix_builder.MatrixBuilder` assembles the two
-matrices.
+holds the decay rates on the diagonal and the decay kernels off it. Both are
+constant along the path, built by :class:`~MCEq.operators.matrix_builder.MatrixBuilder`; only
+:math:`\rho^{-1}(X)` changes. Every short time scale sits on the diagonal.
 
 Diagonal-exact splitting and the exponential integrator
 =======================================================
 
 Over one step :math:`[X_n, X_n + h]` the inverse density is replaced by
-its step mean :math:`\rho^{-1}_n` and the operator is split into its
-diagonal and its remainder,
+its step mean :math:`\rho^{-1}_n` and the operator is split,
 
 .. math::
    :label: split
 
    A + \rho^{-1}_n B = \mathrm{diag}(D) + N, \qquad
    D = \mathrm{diag}(A) + \rho^{-1}_n \mathrm{diag}(B), \qquad
-   N = A_{\mathrm{off}} + \rho^{-1}_n B_{\mathrm{off}} .
+   N = A_{\mathrm{off}} + \rho^{-1}_n B_{\mathrm{off}}
 
-:func:`~MCEq.operators.compiled.split_diagonal` performs the split of the
-matrices once; the step combines the pieces with the current
-:math:`\rho^{-1}_n` in :func:`~MCEq.solvers.numerics.diagonal_factors`.
-The variation of constants gives the exact local solution
+(:func:`~MCEq.operators.compiled.split_diagonal` once,
+:func:`~MCEq.solvers.numerics.diagonal_factors` per step). The variation of
+constants gives the exact local solution
 
 .. math::
 
@@ -79,74 +73,38 @@ predicted end state :math:`a`:
    a &= e^{hD}\,\Phi_n + h\,\varphi_1(hD)\,F(\Phi_n),
 
    \Phi_{n+1} &= a + h\,\varphi_2(hD)\,\bigl[F(a) - F(\Phi_n)\bigr],
+   \qquad \varphi_1(z) = \frac{e^z - 1}{z}, \quad
+   \varphi_2(z) = \frac{e^z - 1 - z}{z^2}.
 
-.. math::
-   :label: phi
+The vectors :math:`e^{hD}`, :math:`h\varphi_1(hD)`, :math:`h\varphi_2(hD)`
+are computed once per step in double precision, whatever the state precision
+(:func:`~MCEq.solvers.numerics.phi_factors`), with Taylor series below
+:math:`|z| = 1.3\times10^{-4}` (:math:`\varphi_1`) and
+:math:`6.31\times10^{-3}` (:math:`\varphi_2`). The predictor and the
+corrector are then the elementwise expressions
+:data:`~MCEq.solvers.numerics.PREDICTOR_EXPR` and
+:data:`~MCEq.solvers.numerics.CORRECTOR_EXPR`, lowered by numpy
+(:func:`~MCEq.solvers.numerics.predictor`,
+:func:`~MCEq.solvers.numerics.corrector`), by the ``ETD2_PREDICT`` and
+``ETD2_CORRECT`` macros of the C kernels and by the CUDA kernels.
 
-   \varphi_1(z) = \frac{e^z - 1}{z}, \qquad
-   \varphi_2(z) = \frac{e^z - 1 - z}{z^2}, \qquad
-   \varphi_1(0) = 1,\ \varphi_2(0) = \tfrac12 .
+For :math:`hD_i \to -\infty` the predictor returns the local equilibrium
+:math:`a_i \to F_i(\Phi_n) / |D_i|`, whatever the step; for
+:math:`|hD_i| \ll 1` the rule is the trapezoidal rule for the source.
 
-The three factors :math:`e^{hD}`, :math:`h\varphi_1(hD)`,
-:math:`h\varphi_2(hD)` are vectors computed once per step by
-:func:`~MCEq.solvers.numerics.phi_factors` and
-:func:`~MCEq.solvers.numerics.diagonal_factors`. The step size is folded
-into the :math:`\varphi` factors, so the predictor and the corrector are
-products of three arrays, :data:`~MCEq.solvers.numerics.PREDICTOR_EXPR`
-and :data:`~MCEq.solvers.numerics.CORRECTOR_EXPR`. Every backend lowers
-these two strings: numpy (:func:`~MCEq.solvers.numerics.predictor`,
-:func:`~MCEq.solvers.numerics.corrector`), C (the ``ETD2_PREDICT`` and
-``ETD2_CORRECT`` macros of ``etd2_kernels.c``) and cupy (the kernel set of
-the CUDA backend). The quotients in :eq:`phi` cancel as :math:`z \to 0`
-and are replaced by Taylor series below :math:`|z| = 1.3\times10^{-4}`
-(:math:`\varphi_1`) and :math:`6.3\times10^{-3}` (:math:`\varphi_2`).
+In fp32 the high-energy fluxes would fall below the smallest normal number.
+The equation is linear, so the driver integrates :math:`s\Phi`, :math:`s`
+the power of two that puts :math:`\max|\Phi_0|` at :math:`2^{76}`
+(``MCEq.solvers.etd2._fp32_scale``), and divides :math:`s` out exactly.
 
-Two limits determine the behaviour of the rule. For a strongly damped
-component, :math:`hD_i \to -\infty`, the predictor returns the local
-equilibrium :math:`a_i \to F_i(\Phi_n) / |D_i|`, so a short-lived species
-leaves every step in equilibrium with its source, whatever the step. For
-:math:`|hD_i| \ll 1` the rule is the trapezoidal rule for the source
-term.
+The step size
+=============
 
-The step loop is :func:`~MCEq.solvers.etd2_driver`; it is the same
-loop on every backend and for every route. A backend
-(:class:`~MCEq.solvers.backends.host.HostBackend`,
-:class:`~MCEq.solvers.backends.cuda.CudaBackend`) executes the stages: the
-factor stage (``diag_factors``), the sparse product :math:`N x`
-(``apply_off``), the predictor and the corrector. The diagonals and the
-:math:`\varphi` factors are always formed in double precision, whatever the
-precision of the state, see
-:data:`~MCEq.solvers.backends.base._PRECISION_CONTRACT`.
+The remainder :math:`N` is explicit, so :math:`h\,\varrho(N) \lesssim 2`
+remains. The step is the smallest of three limits.
 
-In single precision the limit is the exponent range, not the mantissa. The
-fluxes fall roughly as :math:`E^{-3}` over the twelve decades of the energy
-grid and reach :math:`10^{-40}` near :math:`10^{10}` GeV at the surface,
-below the smallest normal single-precision number; the products
-:math:`N_{ij} x_j` inside the sparse product fall below it earlier, near
-:math:`10^{7}` GeV. The equation is linear, so the driver integrates
-:math:`s\Phi` with :math:`s` a power of two that puts :math:`\max|\Phi_0|`
-at :math:`2^{76}` (:func:`~MCEq.solvers.etd2._fp32_scale`) and divides
-:math:`s` out of the result; :math:`s` is exact and the headroom above,
-about :math:`2^{52}`, covers the growth of the secondaries and the largest
-operator entries. What remains is the rounding of the stored state, once
-per stage. On the production 2D operator (0.05 GeV to :math:`10^{11}` GeV,
-48 modes) the angle-integrated lepton fluxes then agree with double
-precision below :math:`10^{10}` GeV to :math:`10^{-5}` at 0° (1100 steps),
-:math:`2\times10^{-5}` at 60° (1600 steps) and :math:`3\times10^{-4}` at 90°
-(18 800 steps); the error grows with the number of steps.
-
-What restricts the step
------------------------
-
-The remainder :math:`N` is explicit, so a condition :math:`h\,\varrho(N)
-\lesssim 2` remains. For the production kernels this allows steps of
-hundreds of g/cm². The decay kernels carry large entries, but their rows
-have correspondingly large negative diagonals and the integrating factor
-damps them. In practice two other limits bind.
-
-**The integration path.** Freezing :math:`\rho^{-1}` over a step is
-accurate only if it changes little within it, so the step is taken from
-the local logarithmic variation of the inverse density,
+**The integration path.** :math:`\rho^{-1}` must change little within a
+step:
 
 .. math::
    :label: step
@@ -155,30 +113,33 @@ the local logarithmic variation of the inverse density,
      \frac{\epsilon}{|\mathrm{d}\ln\rho^{-1}/\mathrm{d}X|_{X_n}}\right),
    \qquad h_n \ge h_{\min},
 
-with :math:`\rho^{-1}_n` the integral mean over the step
-(:func:`~MCEq.solvers.etd2_nonuniform_path`,
-``calculate_integration_path`` of :mod:`MCEq.driver.paths`). The defaults are
-:math:`\epsilon = 0.03`, :math:`h_{\max} = 5` g/cm² for the
-one-dimensional hadron and lepton transport and :math:`\epsilon = 0.01`,
-:math:`h_{\max} = 2` g/cm² for the two-dimensional transport or retained
-electron states, :math:`h_{\min} = 0.01` g/cm².
+with :math:`\rho^{-1}_n` the integral mean over the step, and steps shortened
+to land on the requested depths (:func:`~MCEq.solvers.etd2_nonuniform_path`).
+The parameters are ``config.etd2_path`` (``eps``, ``dX_max``, ``dX_min``,
+and ``fd_span`` for the derivative) or keywords of
+:meth:`MCEq.core.MCEqRun.solve`. For ``None``,
+``MCEqRun._calculate_integration_path`` selects :math:`\epsilon = 0.03`,
+:math:`h_{\max} = 5` g/cm² in 1D hadron and lepton transport and
+:math:`\epsilon = 0.01`, :math:`h_{\max} = 2` g/cm² with a 2D database or
+electrons; :math:`h_{\min} = 0.01` g/cm². It lowers :math:`h_{\max}` to
+the smaller of the two caps below.
 
-**The continuous-loss band.** The energy loss is an advection towards
-lower energies, :math:`\partial_E[\mu_h \Phi_h] = E^{-1}\partial_u[\mu_h
-\Phi_h]` in :math:`u = \ln E`, represented per species by the band
-:math:`\mathrm{diag}(1/E)\, D_u\, \mathrm{diag}(\mu_h)` added to the
-diagonal block of :math:`A`. Its diagonal joins :math:`D`, its off-diagonal
-entries the explicit remainder. The interior rows of :math:`D_u` are
-exponentially fitted (exact on power laws :math:`E^{-\alpha}` for
-:math:`\alpha \in [1, 4]`, see :mod:`MCEq.operators.loss_stencil`); the
-lowest rows are second-order upwind rows, the *closure*, whose number the
-builder chooses per species so that every row whose explicit one-step
-stiffness :math:`h\mu_h/(E\Delta u)` exceeds :math:`1/2` at a design
-depth of 20 g/cm² is an upwind row
-(:meth:`~MCEq.operators.matrix_builder.MatrixBuilder._upwind_rows_for`).
-The largest off-diagonal row sum of the assembled bands, *excluding the
-closure rows*, defines a rate :math:`r_{\mathrm{loss}}` and caps the step
-at
+**The continuous-loss band.** The energy loss is an advection towards lower
+energies, :math:`\partial_E[\mu_h \Phi_h] = E^{-1}\partial_u[\mu_h \Phi_h]`
+in :math:`u = \ln E`, the band :math:`\mathrm{diag}(1/E)\, D_u\,
+\mathrm{diag}(\mu_h)` in the diagonal block of :math:`A`, with :math:`D_u`
+from ``config.loss_stencil_method`` (:mod:`MCEq.operators.loss_stencil`).
+With the default ``"expfit_low_upwind2"`` the interior rows are
+exponentially fitted, exact on seven power laws :math:`E^{-\alpha}`,
+:math:`\alpha \in [\alpha_0 - 2, \alpha_0 + 1]` (:math:`\alpha_0 =`
+``config.loss_stencil_alpha0`` = 3), and
+the lowest rows are second-order upwind rows, the *closure*. Per species,
+the closure covers every row whose explicit one-step stiffness
+:math:`h\mu_h/(E\Delta u)` at a design depth of 20 g/cm² reaches 1/2, and at
+least ``UPWIND_ROWS_FLOOR`` = 8 rows (``MatrixBuilder._upwind_rows_for``);
+closure rows exist only for the ``expfit_low_upwind*`` methods. The largest
+off-diagonal row sum of the assembled bands, closure rows excluded, defines
+a rate :math:`r_{\mathrm{loss}}` and caps the step at
 
 .. math::
    :label: losscap
@@ -186,67 +147,67 @@ at
    h \le \frac{1/2}{r_{\mathrm{loss}}\,\max_j \lambda_j},
 
 with :math:`\lambda_j` the eigenvalues of the :math:`\sec\theta` coupling
-of the next section (one without it):
-:func:`~MCEq.operators.stiffness.continuous_loss_rate`,
-:data:`~MCEq.operators.stiffness.LOSS_STEP_SAFETY`,
-:func:`~MCEq.driver.paths.continuous_loss_dx_cap`. The closure rows are
-left out because they are sized for the design depth already and their
-one-step map is bounded for any step under the diagonal-exact splitting;
-their row sums fall as :math:`1/E` and limit accuracy, not stability.
-The cap is a heuristic; it does not prove stability of the full
-non-normal operator.
+below (1 without it): :func:`~MCEq.solvers.path.continuous_loss_rate`,
+:data:`~MCEq.solvers.path.LOSS_STEP_SAFETY`,
+``MCEqRun._continuous_loss_dx_cap``. The closure rows are excluded because
+their one-step map is bounded for any step under the diagonal-exact
+splitting. The cap is a heuristic, not a stability proof.
+
+**The EM cascade.** With ``config.em_adaptive_step`` (off by default) the
+step is also capped at ``config.em_step_safety`` (0.12) divided by
+:math:`r_{\mathrm{EM}}`, the spectral radius of the off-diagonal
+:math:`e^\pm/\gamma` block of :math:`A` (mode :math:`l = 0` on a 2D
+operator; dense ``eigvals`` up to ``config.em_step_dense_eig_max`` rows,
+ARPACK above): :func:`~MCEq.solvers.path.em_step_scale`,
+:func:`~MCEq.solvers.path.em_cascade_dx_cap`.
+
+The step error comes from the :math:`h^2` terms of the explicit production
+and loss band, the frozen density (:math:`\epsilon`) and the daughters of
+parents that decay within a step, which see the parent only at the start
+and the predicted end of it.
 
 Two-dimensional transport
 =========================
 
 In the two-dimensional version the state carries the angular distribution
-with respect to the shower axis as :math:`n_k` Legendre moments
-:math:`a_l = \langle P_l(\cos\theta)\rangle` on a grid of degrees
-:math:`l_k`, dense from 0 and sparse above (:mod:`MCEq.operators.legendre`).
-A production, decay or scattering kernel that depends only on the angle
-between parent and secondary acts on the moments diagonally (Funk-Hecke
-theorem), so every mode obeys :eq:`linear` with its own kernels
-:math:`A(l_k)`, :math:`B(l_k)`, and the modes are decoupled in the paraxial
-approximation. For :math:`\theta \to 0` at fixed :math:`(l + 1/2)\theta`,
-:math:`P_l(\cos\theta) \to J_0((l + 1/2)\theta)`: planar Hankel modes are the
-small-angle limit with :math:`\kappa = l + 1/2`. The mode :math:`l = 0` is
-the angle-integrated flux. The only :math:`l`-dependent diagonal entry is
-the multiple-scattering rate of the muons, :math:`-\Gamma(E, l)`
-(:mod:`MCEq.operators.scattering`), which enters :math:`D` and is
-integrated exactly. The :math:`n_k` mode systems are one block-diagonal
-system of dimension :math:`n_k N`, integrated as one state array with the
-diagonal factors computed once.
+about the shower axis as :math:`n_k` Legendre moments :math:`a_l = \langle
+P_l(\cos\theta)\rangle` on a grid of degrees :math:`l_k`, dense from 0 and
+sparse above (:mod:`MCEq.operators.legendre`). A production, decay or
+scattering kernel that depends only on the angle between parent and
+secondary acts on the moments diagonally (Funk-Hecke theorem), so every
+mode obeys :eq:`linear` with its own :math:`A(l_k)`, :math:`B(l_k)`; in the
+paraxial approximation the modes are decoupled and form one block-diagonal
+system of dimension :math:`n_k N`. The mode :math:`l = 0` is the
+angle-integrated flux. The only :math:`l`-dependent diagonal entry is the
+muon multiple-scattering rate :math:`-\Gamma(E, l)`
+(:mod:`MCEq.operators.scattering`), integrated exactly as part of :math:`D`.
 
-Secondaries produced into the backward hemisphere are removed
-(``config.legendre_backward_removal``): a mode-mixing stage applies
-:math:`I - R` on the dense block to the off-diagonal production and decay
-terms, with :math:`R` the backward part of the Jackson-smoothed
-distribution (:func:`~MCEq.operators.legendre.backward_removal`). The
-continuous-loss band bypasses it, since energy loss keeps the direction.
+With ``config.legendre_backward_removal`` the off-diagonal production and
+decay terms of the dense block of modes are multiplied by :math:`I - R`,
+with :math:`R` the backward part of the Jackson-smoothed distribution
+(:func:`~MCEq.operators.legendre.backward_removal`). The continuous-loss band
+bypasses it, since energy loss keeps the direction.
 
-The :math:`\sec\theta` path elongation in the eigenbasis
-=========================================================
+The :math:`\sec\theta` path elongation
+======================================
 
-The two-dimensional equations book losses per unit of axis-projected
-depth, while a particle at angle :math:`\theta` to the axis traverses
-:math:`\sec\theta` times more matter. For populations in local
-equilibrium (sub-GeV hadrons, muons) the paraxial equations overestimate
-the wide-angle density by that factor. The correction multiplies the flux
-entering the transport operator by :math:`g(\theta) = \min(\sec\theta,
-\sec\theta_{\mathrm{cap}})`, a constant matrix :math:`S = I + T` on the
-mode index,
-
-.. math::
-
-   S_{ll'} = M[g]_{ll'} = \frac{2l' + 1}{2} \int_{-1}^{1} P_l(\mu)\,
-   g(\mu)\, P_{l'}(\mu)\,\mathrm{d}\mu,
-
-exact by Gauss-Legendre quadrature on the two smooth pieces of
-:math:`g` (:func:`~MCEq.operators.legendre.path_elongation`):
+The two-dimensional equations book losses per unit of axis-projected depth,
+while a particle at angle :math:`\theta` to the axis traverses
+:math:`\sec\theta` times more matter; for populations in local equilibrium
+(sub-GeV hadrons, muons) the paraxial equations overestimate the wide-angle
+density by that factor. The correction multiplies the flux entering the
+transport operator by :math:`g(\theta) = \min(\sec\theta,
+\sec\theta_{\mathrm{cap}})`, :math:`\theta_{\mathrm{cap}} =`
+``config.secant_theta_cap_deg`` (75°; 0 gives :math:`S = I`), a constant
+matrix :math:`S = I + T` on the mode index, exact by Gauss-Legendre
+quadrature on the two smooth pieces of :math:`g`
+(:func:`~MCEq.operators.legendre.path_elongation`):
 
 .. math::
    :label: secant
 
+   S_{ll'} = \frac{2l' + 1}{2} \int_{-1}^{1} P_l(\mu)\, g(\mu)\,
+   P_{l'}(\mu)\,\mathrm{d}\mu, \qquad
    \frac{\mathrm{d}\tilde\Phi_k}{\mathrm{d}X}
    = \bigl[A(l_k) + \rho^{-1}(X) B(l_k)\bigr]
      \sum_{k'} S_{kk'}\,\tilde\Phi_{k'} .
@@ -254,64 +215,37 @@ exact by Gauss-Legendre quadrature on the two smooth pieces of
 :mod:`MCEq.operators.secant` restricts :math:`T` to the rows :math:`P` of
 the dense block of the :math:`l` grid, whose columns reach every mode
 through the cubic interpolation in :math:`l`
-(:func:`~MCEq.operators.legendre.l_interpolation`), and to the state
-columns :math:`g` with :math:`E_{\rm kin} <`
-``config.secant_theta_e_max``. The cap may lie anywhere in
-:math:`[0, 90)` degrees; at 0, :math:`S = I`. The elongation acts on the parent's
-path length, not on the daughter's emission angle, so it must cover all
-loss channels of a species or none; loss-free daughters such as neutrinos
-are preserved.
+(:func:`~MCEq.operators.legendre.l_interpolation`), and to the state columns
+:math:`g` with :math:`E_{\rm kin} <` ``config.secant_theta_e_max``. The
+elongation acts on the parent's path length, not on the daughter's emission
+angle; it covers all loss channels of a species and preserves loss-free
+daughters such as neutrinos. In the explicit remainder :math:`T` would make
+the stiff limit a divergent fixed-point iteration across modes, so the
+coupled loss term :math:`D_i S` is integrated exactly.
 
-Placing :math:`T` in the explicit remainder fails: in the stiff limit the
-step for a fast species becomes a fixed-point iteration across modes with
-iteration matrix :math:`D_S^{-1}(S - D_S)`, whose spectral radius exceeds
-one at the production cap. The coupled loss term :math:`D_i S` has to be
-integrated exactly.
+Write the state as an :math:`n_k \times N` array with the columns :math:`g`
+first (:func:`~MCEq.operators.compiled.secant_layout`); the modes :math:`P`
+lead the mode axis, so the coupled part of the state is the corner
+:math:`\mathcal{C}(\Phi) = \Phi_{P,g}`, a strided view
+(:func:`~MCEq.operators.compiled.coupled_corner`). With :math:`S_P = I +
+T_{PP}` and :math:`D^0` the diagonal of the :math:`l = 0` operator, the
+diagonal term on the corner is :math:`D^0_i \sum_{j'} (S_P)_{jj'}\Phi_{j',i}`.
+:math:`S_P` acts on the mode index and :math:`D^0_i` on the energy index,
+so a basis :math:`S_P \approx V\mathrm{diag}(\lambda)V^{-1}` diagonalises
+the coupled block; the corner is carried as :math:`\Psi =
+V^{-1}\mathcal{C}(\Phi)`.
 
-The coupled block in the eigenbasis
------------------------------------
-
-Write the state as an :math:`n_k \times N` array and order the energy
-columns so that the coupled columns :math:`g` come first
-(:func:`~MCEq.operators.compiled.secant_layout`). The coupled modes
-:math:`P` form a leading block of the mode axis, so the coupled part of
-the state is the corner :math:`\mathcal{C}(\Phi) = \Phi_{P,g}`, a strided
-view (:func:`~MCEq.operators.compiled.coupled_corner`). With :math:`S_P =
-I + T_{PP}` the diagonal term of :eq:`secant` on the corner is
-
-.. math::
-
-   \frac{\mathrm{d}\Phi_{j,i}}{\mathrm{d}X}\Big|_{\mathrm{exact}}
-   = D^0_i \sum_{j' \in P} (S_P)_{jj'}\,\Phi_{j',i}, \qquad j \in P,\ i \in g,
-
-where :math:`D^0` is the diagonal of the :math:`l = 0` operator,
-common to all modes. :math:`S_P` acts on the mode index and :math:`D^0_i`
-on the energy index, so they commute, and the eigendecomposition
-:math:`S_P = V \mathrm{diag}(\lambda) V^{-1}` diagonalises the coupled
-block. :math:`S_P` is not normal: its cluster of eigenvalues at
-:math:`1/\mu_\mathrm{cap}` is degenerate (all directions beyond the cap
-see the same :math:`\sec\theta_\mathrm{cap}`; 33 of 65 eigenvalues at 75°
-on the 90-mode grid) and at small caps splits into conjugate pairs
-:math:`a \pm ib` with :math:`b/a` up to :math:`2.4\times10^{-7}` (caps
-7.4–7.8°); pairs with :math:`b/a > 10^{-5}` are refused. LAPACK returns an
-arbitrary basis of a degenerate eigenspace, and it changes with the BLAS
-thread count; since the basis decides how the muon damping splits between
-the exact diagonal and the remainder (below), that moved 2D solutions by up
-to 2 %. Eigenvalues whose consecutive gaps are below :math:`3\times10^{-5}`
-(relative) therefore form one cluster, spanned by the orthonormal invariant
-subspace of an ordered real Schur form and rotated to diagonalise its
-projection of :math:`\mathrm{diag}(l(l+1))`, the shape of the
-multiple-scattering damping (:func:`MCEq.operators.secant._canonical_basis`).
-:math:`\lambda` is the diagonal of :math:`V^{-1} S_P V`; the spread within a
-cluster (a pair's rotation :math:`\pm b`, up to :math:`2\times10^{-5}`
-relative at small caps) stays in the remainder below. The corner of the
-state is carried in this basis,
-
-.. math::
-
-   \Psi = V^{-1}\,\mathcal{C}(\Phi),
-
-where the exactly integrated operator is the diagonal
+``MCEq.operators.secant._canonical_basis`` builds :math:`V` from the
+eigendecomposition of :math:`S_P`. Its eigenvalues must be real within
+:math:`|\mathrm{Im}\,\lambda|/\mathrm{Re}\,\lambda \le 10^{-5}`. Directions
+beyond the cap all see :math:`\sec\theta_\mathrm{cap}`, so :math:`S_P` has a
+large near-degenerate cluster whose LAPACK basis depends on round-off.
+Eigenvalues with consecutive relative gaps below :math:`3\times10^{-5}`
+therefore form one cluster, spanned by the orthonormal invariant subspace of
+an ordered real Schur form and rotated to diagonalise its projection of
+:math:`\mathrm{diag}(l(l+1))`, the shape of the multiple-scattering damping.
+:math:`\lambda = \mathrm{diag}(V^{-1}S_PV)`; the spread within a cluster
+stays in the remainder. The exactly integrated operator is the diagonal
 
 .. math::
    :label: cornerL
@@ -320,35 +254,24 @@ where the exactly integrated operator is the diagonal
            + \bigl[V^{-1}\mathrm{diag}(\Delta_{\cdot,i})\,V\mathrm{diag}(\lambda)\bigr]_{jj},
    \qquad \Delta_{j,i} = D^f_{j,i} - D^0_i,
 
-with :math:`D^f` the full, :math:`l`-dependent diagonal on the
-coupled plane and :math:`\Delta` its :math:`l`-dependent part, the
-multiple-scattering damping of the muons
+with :math:`D^f` the full diagonal on the corner and :math:`\Delta` its
+:math:`l`-dependent part, the muon multiple-scattering damping
 (:attr:`~MCEq.operators.compiled.CompiledOperator.exact_slot_diagonals`).
-:math:`\Delta` does not commute with :math:`S_P`, so it cannot be
-integrated exactly in this basis; its eigenbasis diagonal goes into
-:math:`L` and only its mode mixing stays in the remainder. This matters
-for stability: for the lowest muon bin (:math:`E = 45` MeV, modes up to
-2000, :math:`\sec\theta` capped at 3.86) the spectral radius of the one-step
-map is 0.50 at :math:`h = 2` g/cm² and 0.42 at :math:`h = 3`; with all of
-:math:`\Delta` in the remainder it is 1.0 at :math:`h = 2` and 1.36 at
-:math:`h = 2.37` (measured with the planar Hankel modes, the small-angle
-limit of the Legendre operator).
-The eigenvectors of the near-degenerate cluster at :math:`1/\mu_\mathrm{cap}`
-are arbitrary within their span, and a skewed choice gives
-:math:`V^{-1}_{jl} V_{lj} < 0` weights that turn part of :math:`\Delta`
-into an exactly integrated growth (:math:`L_{j,i} > 0`; at caps 0.5–10°,
-25° and 85° on the 90-mode grid, with a blow-up at 7.3°).
-:func:`~MCEq.operators.compiled.compile_operator` then uses the orthogonal
-real Schur basis :math:`S_P = Q R Q^T` (:math:`V = Q`,
-:math:`\lambda = \mathrm{diag}\,R`), in which every damping weight
-:math:`Q_{lj}^2` is non-negative; the strictly upper part of :math:`R`
-joins the remainder. The eigenbasis stays the default, being the more
-accurate splitting where it is safe (at the production cap of 75°, a quarter to a half
-of the step error of the Schur basis).
-The corner therefore receives the same elementwise factors as the rest of
-the state and the predictor and corrector :eq:`etd2` apply unchanged. Only
-the remainder needs the coupling. The operand of the transport operator is
-:math:`w = S\Phi`, which differs from :math:`\Phi` only on the corner,
+:math:`\Delta` does not commute with :math:`S_P`; its diagonal in the basis
+joins :math:`L`, which keeps the step stable, and only its mode mixing stays
+in the remainder. A skewed basis with weights :math:`V^{-1}_{jl}V_{lj} < 0`
+can make :math:`L_{j,i} > 0`, an exactly integrated growth.
+:func:`~MCEq.operators.compiled.compile_operator` therefore switches to the
+orthogonal real Schur basis :math:`S_P = QRQ^T` (:math:`V = Q`,
+:math:`\lambda = \mathrm{diag}\,R`, the strictly upper part of :math:`R` in
+the remainder) if the interaction part of :math:`L` has a positive maximum
+in the eigenbasis and the Schur basis lowers that maximum
+(:func:`~MCEq.operators.compiled.secant_coupling`).
+
+The corner then receives elementwise factors built from :math:`L`, and the
+predictor and corrector :eq:`etd2` apply unchanged; only the remainder needs
+the coupling. The operand of the transport operator, :math:`w = S\Phi`,
+differs from :math:`\Phi` only on the corner,
 
 .. math::
 
@@ -357,117 +280,50 @@ the remainder needs the coupling. The operand of the transport operator is
    W = \bigl[\,S_P V\ \big|\ T_{P,P^c}\,\bigr],
 
 with :math:`\mathcal{L}(\Phi) = \Phi_{\cdot,g}` the low-energy block over
-every mode. :math:`V`,
-:math:`V^{-1}`, :math:`\lambda` and :math:`W` are the ``coupling``
-namespace of the compiled operator
-(:func:`~MCEq.operators.compiled.secant_coupling`). The remainder on the
-corner, in the eigenbasis, is everything that is not the exactly integrated
-diagonal:
+every mode. The remainder on the corner is everything except the exactly
+integrated diagonal,
 
 .. math::
    :label: cornerF
 
    \mathcal{C}(F) = V^{-1}\Bigl[(N w)_{P,g} + D^f_{P,g} \odot \mathcal{C}(w)\Bigr]
-                    - L_{j,i}\,\Psi_{j,i},
+                    - L \odot \Psi ,
 
-with :math:`D^f` as in :eq:`cornerL`
-(:attr:`~MCEq.operators.compiled.CompiledOperator.corner_diagonals`) and
-:math:`L` the exact diagonal of :eq:`cornerL`.
-Outside the corner :math:`F = Nw` as before. The step
-(:func:`~MCEq.solvers.etd2_driver`, ``eval_F``) puts :math:`\mathcal{C}(w)`
-in place of :math:`\Psi` for the sparse product, adds the diagonal term,
-rotates by :math:`V^{-1}`, subtracts :math:`L\Psi` and restores
-:math:`\Psi`. Per step this adds two dense products of the low-energy
-block around each of the two sparse products. The corner is rotated into
-the eigenbasis once before the loop and back once after it.
+(:attr:`~MCEq.operators.compiled.CompiledOperator.corner_diagonals`), and
+:math:`F = Nw` outside it. :math:`V`, :math:`V^{-1}`, :math:`\lambda` and
+:math:`W` are the ``coupling`` namespace of the compiled operator. The
+corner is rotated into the basis once before the step loop and back once
+after it.
 
 Several paths at once
 =====================
 
-The operator does not depend on the zenith angle; only the path
-:math:`(h_n, \rho^{-1}_n)` does. The state therefore carries :math:`K`
-columns, each following its own path, and all :math:`K` columns are
-multiplied by the same sparse operator in one pass over its nonzeros. The
-diagonal factors become :math:`(N, K)` arrays with
-:math:`h` and :math:`\rho^{-1}` varying along the column axis. A column
-with :math:`h = 0` has :math:`e^{hD} = 1`, :math:`h\varphi_{1,2} = 0` and is
-left unchanged by the same arithmetic; finished
-columns are read out and reloaded with the next path while the others
-continue (:class:`~MCEq.solvers.schedule.CarouselSchedule`).
+The operator does not depend on the zenith angle, only the path
+:math:`(h_n, \rho^{-1}_n)` does. The state carries :math:`K` columns, each
+on its own path, multiplied by the same sparse operator in one pass; the
+diagonal factors become :math:`(N, K)` arrays. A column with :math:`h = 0`
+has :math:`e^{hD} = 1`, :math:`h\varphi_{1,2} = 0` and stays unchanged. In
+the carousel, finished columns are read out and reloaded with the next path
+while the others continue (:func:`~MCEq.solvers.schedule_lpt`,
+:func:`~MCEq.solvers.compile_carousel_schedule`).
 
 Summary of one step
 ===================
 
-Stage by stage, with the backend method that executes it:
+Stages of :func:`~MCEq.solvers.etd2_driver`, with the backend method
+(:class:`~MCEq.solvers.backends.host.HostBackend`,
+:class:`~MCEq.solvers.CudaBackend`):
 
-1. From the path take :math:`h_n` and :math:`\rho^{-1}_n`. Form
-   :math:`D` over the full state (on the corner :math:`L_{j,i}` of
-   :eq:`cornerL`) and the factors :math:`e^{hD}`, :math:`h\varphi_1`,
-   :math:`h\varphi_2` (``diag_factors``).
-2. Evaluate :math:`F(\Phi_n) = N\Phi_n` (``apply_off``). With the
-   elongation, replace the corner by :math:`\mathcal{C}(S\Phi_n)` before
-   the sparse product and finish the corner with :eq:`cornerF`.
-3. Predictor :eq:`etd2`: :math:`a = e^{hD}\Phi_n + h\varphi_1 F(\Phi_n)`
-   (``predictor``).
-4. Evaluate :math:`F(a)` as in step 2.
-5. Corrector :math:`\Phi_{n+1} = a + h\varphi_2[F(a) - F(\Phi_n)]`
-   (``corrector``).
+1. Take :math:`h_n`, :math:`\rho^{-1}_n` from the path; form :math:`e^{hD}`,
+   :math:`h\varphi_1`, :math:`h\varphi_2`, on the corner from :math:`L`
+   (``diag_factors``).
+2. :math:`F(\Phi_n) = N\Phi_n` (``apply_off``); with the elongation, the
+   corner holds :math:`\mathcal{C}(S\Phi_n)` during the sparse product and is
+   finished with :eq:`cornerF`.
+3. :math:`a = e^{hD}\Phi_n + h\varphi_1 F(\Phi_n)` (``predictor``).
+4. :math:`F(a)` as in stage 2.
+5. :math:`\Phi_{n+1} = a + h\varphi_2[F(a) - F(\Phi_n)]` (``corrector``).
 6. Record snapshots at requested depths, or exchange finished columns.
-
-Accuracy
-========
-
-Three sources of step error remain once the diagonal is exact: the
-:math:`h^2` terms of the explicit production and of the loss band, largest
-for the low-energy muon spectrum; the frozen density, bounded by
-:math:`\epsilon` in :eq:`step`; and the daughters of parents that decay
-within a step, which see the parent only at the start and the predicted
-end of the step. The last is a first-order error; in one dimension it
-leaves a floor of about :math:`3\times10^{-3}` on the conventional and
-prompt leptons that does not shrink with the step. The table gives the
-worst relative step error :math:`|\Phi/\Phi_{\mathrm{ref}} - 1|` of
-:math:`E^3\Phi` over the conventional and prompt muon and neutrino spectra
-above 0.15, 1 and 10 GeV, in units of :math:`10^{-3}`. One dimension:
-DPMJET-III 19.3, 60°, reference at :math:`h_{\max} = 0.25` g/cm². Two
-dimensions: FLUKA, mode 0, :math:`\sec\theta` transport, 60°,
-reference at 0.5 g/cm² (measured on the planar Hankel-mode database).
-
-.. list-table::
-   :header-rows: 1
-
-   * - :math:`h_{\max}` (g/cm²)
-     - one dimension: steps
-     - ≥ 0.15 / 1 / 10 GeV
-     - two dimensions: steps
-     - ≥ 0.15 / 1 / 10 GeV
-   * - 1
-     - 2228
-     - 3.75 / 3.18 / 3.18
-     - 2546
-     - 0.32 / 0.25 / 0.23
-   * - 2
-     - 1219
-     - 4.34 / 3.23 / 3.23
-     - 1584
-     - 1.08 / 0.69 / 0.25
-   * - 3
-     -
-     -
-     - 1280
-     - 1.85 / 1.07 / 0.36
-   * - 5
-     - 631
-     - 5.36 / 3.12 / 1.78
-     - 1056
-     - 3.28 / 1.51 / 0.47
-   * - 10
-     - 448
-     - 13.1 / 6.17 / 2.27
-     - 908
-     - 7.41 / 2.05 / 0.57
-
-The default ceilings are 5 g/cm² (one dimension) and 2 g/cm² (two
-dimensions).
 
 References
 ==========

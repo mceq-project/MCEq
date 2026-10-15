@@ -1,10 +1,4 @@
-"""Platform, MKL, CUDA and Accelerate detection, resolved on first use.
-
-Importing MCEq must not dlopen a BLAS, probe a GPU or decide which solver
-kernel will run: those are properties of the machine that only matter once a
-solve is set up. Hardware and library probes run on first use and cache their
-results; :func:`reset_cache` exists for tests that need to re-probe.
-"""
+"""Platform, MKL, CUDA and Accelerate detection and kernel resolution, probed on first use and cached."""
 
 from __future__ import annotations
 
@@ -15,17 +9,15 @@ import pathlib
 import platform
 import sys
 
-#: Solver kernels, and whether ``kernel_config = "auto"`` may choose them.
-#: CUDA is never auto-selected: a GPU context costs real time to create and a
-#: matching cupy build is not always present on a machine that has a device.
+#: Solver kernels and the capability each needs.
 KERNELS = {
-    "accelerate_etd2": ("has_accelerate", True),
-    "mkl_etd2": ("has_mkl", True),
-    "numpy_etd2": (None, True),
-    "cuda_etd2": ("has_cuda", False),
+    "accelerate_etd2": "has_accelerate",
+    "mkl_etd2": "has_mkl",
+    "numpy_etd2": None,
+    "cuda_etd2": "has_cuda",
 }
 
-#: Names the dispatchers still accept for the kernels above.
+#: Short names accepted for the kernels above.
 ALIASES = {
     "accelerate": "accelerate_etd2",
     "mkl": "mkl_etd2",
@@ -33,7 +25,8 @@ ALIASES = {
     "numpy": "numpy_etd2",
 }
 
-#: Order "auto" tries. Accelerate wins on macOS, MKL on x86 Linux/Windows.
+#: Order "auto" tries. CUDA is never chosen automatically: creating a GPU
+#: context is slow and a matching cupy build may be missing.
 AUTO_ORDER = ("accelerate_etd2", "mkl_etd2", "numpy_etd2")
 
 _UNAVAILABLE = {
@@ -73,12 +66,7 @@ def has_accelerate():
 
 @functools.cache
 def has_cuda():
-    """A usable device, not merely an importable cupy.
-
-    `find_spec("cupy")` alone is True on a machine that has the wheel and no
-    driver, where every CUDA route then fails at run time instead of being
-    skipped.
-    """
+    """True if cupy imports and sees at least one device."""
     if importlib.util.find_spec("cupy") is None:
         return False
     try:
@@ -89,26 +77,19 @@ def has_cuda():
         return False
 
 
-PROBES = {"has_mkl": has_mkl, "has_cuda": has_cuda, "has_accelerate": has_accelerate}
-
-
-def available(capability):
-    """`True` when the named capability (`has_mkl`, `has_cuda`, ...) is present."""
-    return PROBES[capability]()
+def _available(capability):
+    return capability is None or globals()[capability]()
 
 
 def resolve_kernel(requested):
     """Map a `kernel_config` value onto the kernel that will actually run.
 
-    Raises when a specific kernel is named and its capability is missing. The
-    request is validated each time this function is called; assigning a
-    concrete value to ``kernel_config`` bypasses this resolution path.
+    Raises when a specific kernel is named and its capability is missing.
     """
     name = ALIASES.get(str(requested).lower(), str(requested).lower())
     if name == "auto":
         for candidate in AUTO_ORDER:
-            capability = KERNELS[candidate][0]
-            if capability is None or available(capability):
+            if _available(KERNELS[candidate]):
                 return candidate
         return "numpy_etd2"
     if name not in KERNELS:
@@ -116,13 +97,6 @@ def resolve_kernel(requested):
             f"Unsupported integrator setting '{requested}'. "
             f"Choose one of: {', '.join(KERNELS)}."
         )
-    capability = KERNELS[name][0]
-    if capability is not None and not available(capability):
-        raise Exception(_UNAVAILABLE[capability])
+    if not _available(KERNELS[name]):
+        raise Exception(_UNAVAILABLE[KERNELS[name]])
     return name
-
-
-def reset_cache():
-    """Forget every probe result. For tests that fake a platform."""
-    for probe in (mkl_library_path, has_mkl, has_cuda, has_accelerate):
-        probe.cache_clear()

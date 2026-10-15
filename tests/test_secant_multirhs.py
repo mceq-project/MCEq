@@ -17,13 +17,8 @@ import pytest
 import scipy.sparse as sp
 
 from MCEq import config
-from MCEq.solvers import (
-    compile_carousel_schedule,
-    compile_operator,
-    schedule_lpt,
-    secant_layout,
-    solve_etd2,
-)
+from MCEq.operators.compiled import compile_operator, secant_layout
+from MCEq.solvers import compile_carousel_schedule, schedule_lpt, solve_etd2
 
 RTOL = 1e-11
 ATOL = 1e-13
@@ -445,7 +440,7 @@ def test_cuda_secant_fp32_matches_fp64(secant_48mode_problem):
             [],
             backend="cuda",
             sec_ops=ops,
-            fp_precision=fp_precision,
+            dtype=np.float32 if fp_precision == 32 else np.float64,
         )
         return sol
 
@@ -512,7 +507,7 @@ def test_host_secant_fp32_matches_cuda_fp32(secant_48mode_problem, backend):
             [],
             backend=be,
             sec_ops=ops,
-            fp_precision=32,
+            dtype=np.float32,
         )
         return sol
 

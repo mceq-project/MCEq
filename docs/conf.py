@@ -6,6 +6,8 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+import importlib.metadata
+
 project = "MCEq"
 copyright = "2026, Anatoli Fedynitch, Stefan Fröse"
 author = "Anatoli Fedynitch, Stefan Fröse"
@@ -36,9 +38,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 
-# The packaged version is 2.0.0-dev (D-6: release cut deferred); the last
-# published release is 1.4.1. State both, in one place, until the cut.
-version = "2.0.0-dev"
+version = importlib.metadata.version("MCEq")
 release = version
 master_doc = "index"
 
@@ -58,32 +58,21 @@ html_title = f"{project}"
 htmlhelp_basename = project + "docs"
 
 html_theme_options = {
-    "navbar_links": [
-        {"name": "Quickstart", "url": "quickstart/index", "internal": True},
-        {"name": "Tutorial", "url": "tutorial", "internal": True},
-        {"name": "Example Gallery", "url": "example-gallery", "internal": True},
-        {"name": "v1.4", "url": "v14v13_diff", "internal": True},
-        {"name": "Cite Us", "url": "citeus", "internal": True},
-        {"name": "API Reference", "url": "api-reference/index", "internal": True},
-    ],
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/mceq-project/mceq",
+            "url": "https://github.com/mceq-project/MCEq",
             "icon": "fa-brands fa-github",
         },
     ],
-    "announcement": "Latest release v1.4.1. The 2.0 layout is in development — "
-    "see the v2 layout migration guide at the docs root.",
 }
 
 html_sidebars = {
     "quickstart/index": [],  # disable sidebar on Quickstart
     "tutorial": [],
     "citeus": [],  # disable sidebar on Cite Us
-    "example-gallery": [],  # disable sidebar on References
-    "v12v11_diff": [],  # disable sidebar on References
-    "v14v13_diff": [],  # disable sidebar on References
+    "example-gallery": [],
+    "porting_to_v2": [],
 }
 
 html_show_sourcelink = False

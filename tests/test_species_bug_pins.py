@@ -1,28 +1,16 @@
-"""Pins for the species-layer entries of the Phase 4 bug ledger.
-
-Records today's behaviour of ``MCEqParticle`` -- defects included -- so that the
-commit fixing one produces a failing pin instead of a quiet change of numbers.
-Docstrings name the ledger id (section 9 of
-``wiki/_meta/plan-mceq-v2-layered-architecture.md``) and state the corrected
-behaviour, which is the expectation the fix commit inherits.
-
-DB-free: ``MCEqParticle`` is built straight from the particletools table with a
-five-bin grid; nothing here constructs an ``MCEqRun``.
-"""
+"""MCEqParticle rates and cross sections at the edges of the particle table (no database)."""
 
 import numpy as np
 
-import MCEq.config as config
 from MCEq.misc import energy_grid
-from MCEq.species.constants import _pdata
-from MCEq.species.particle import MCEqParticle
+from MCEq.particlemanager import MCEqParticle, _pdata
 
 #: Five bins, one decade apart -- enough to tell a vector from a scalar.
 GRID = energy_grid(c=np.logspace(0.0, 3.0, 5), b=None, w=None, d=5)
 
 
 def particle(pdg_id, helicity=0):
-    return MCEqParticle(pdg_id, helicity, energy_grid=GRID, physics=config.physics)
+    return MCEqParticle(pdg_id, helicity, energy_grid=GRID)
 
 
 # B9 -- inverse_decay_length ZeroDivisionError branch
@@ -64,25 +52,8 @@ def test_b9_the_healthy_paths_all_return_length_d_vectors():
     assert np.array_equal(stable, np.zeros(GRID.d))
 
 
-def test_b9_stable_returns_zero_and_the_docstring_now_says_so():
-    """B9 second leg FIXED (R3): ``ctau = inf`` returns zeros, and the doc matches.
-
-    The pre-fix docstring promised "infinity (np.inf), if particle is
-    stable" while IEEE gives ``mass / inf / p = 0.0`` -- the physically
-    right value for an inverse decay length but the opposite of what was
-    documented. The fix rewrote the docstring to state the zeros return and
-    to reserve ``inf`` for the ``ctau == 0`` path; this test pins the numbers
-    (0.0 for p, e-, gamma) and greps the docstring so a future rewrite that
-    re-promises infinity for stability fails here.
-    """
-    import inspect
-
-    from MCEq.species.particle import MCEqParticle as _C
-
-    doc = inspect.getdoc(_C.inverse_decay_length)
-    assert "infinity" not in doc.lower() or "zeros" in doc.lower()
-    assert "``inf`` is what the ``ctau == 0``" in doc
-
+def test_b9_stable_returns_zero():
+    """``ctau = inf`` gives a zero inverse decay length."""
     for pdg_id in (2212, 11, 22):
         p = particle(pdg_id)
         assert p.ctau == np.inf
@@ -160,27 +131,8 @@ def test_b9_the_except_branch_depends_on_mass_and_ctau_being_python_floats():
 
 
 def test_b10_fixed_prod_cross_section_divides_the_single_unit_constant():
-    """B10 FIXED (R3): prod_cross_section reaches the one unit constant, by division.
-
-    The method used to re-derive the unit factors locally and multiply by
-    ``GeV2mbarn / GeVcm**2`` -- a value numerically reciprocal to
-    ``InteractionCrossSections.mbarn2cm2`` but carrying the name backwards,
-    and a second copy of physics constants inside the species layer. The fix
-    deletes the local block and divides by the class constant:
-    ``self.cs / InteractionCrossSections.mbarn2cm2``. Pinned numerically: the
-    mbarn value for cs = 3e-27 cm^2, and that no ``GeVfm`` literal survives
-    in the method source. The pre-fix exact multiply-chain assertion lived
-    here (``ba03d9e``); the divide form differs from that chain by one ulp
-    at this value: the pinned result moved 3.0 -> 3.0000000000000004 with the
-    fix, and the assert below records the post-fix value.
-    """
-    import inspect
-
-    from MCEq.data.cross_sections import InteractionCrossSections
-    from MCEq.species.particle import MCEqParticle as _C
-
-    src = inspect.getsource(_C.prod_cross_section)
-    assert "GeVfm" not in src, "the second copy of the unit constants is back"
+    """The mb value divides by the one unit constant ``mbarn2cm2``."""
+    from MCEq.data.tables import InteractionCrossSections
 
     p = particle(211)
     p.cs = 3.0e-27  # an arbitrary hadronic cross section in cm^2

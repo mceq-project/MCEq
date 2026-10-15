@@ -57,9 +57,9 @@ def test_computed_rates_are_memoised():
 
 
 def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
-    from MCEq.data.energy_grid import EnergyGrid
     from MCEq.data.hdf5_backend import HDF5Backend
     from MCEq.data.hdf5_store import HDF5Store
+    from MCEq.misc import energy_grid
 
     e_full = np.logspace(-1, 2, 13)
     k_grid = np.array([0, 1, 2, 486])
@@ -75,7 +75,7 @@ def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
     backend = HDF5Backend.__new__(HDF5Backend)
     backend._had, backend.medium = HDF5Store(path), "air"
     backend._cuts = slice(3, 9)
-    backend._energy_grid = EnergyGrid(e_full[3:9], None, None, 6)
+    backend._energy_grid = energy_grid(e_full[3:9], None, None, 6)
     reads = []
     read = backend._had.read_optional_table
     backend._had.read_optional_table = lambda *a: reads.append(a) or read(*a)

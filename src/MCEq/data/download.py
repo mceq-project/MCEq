@@ -1,11 +1,16 @@
-"""Fetching and verifying the MCEq database files.
+"""Download of the MCEq database files and the release manifest that lists them.
 
-`MCEqRun.__init__` downloads the database when it is first needed, so a
-caller can point ``config.mceq_db_fname`` elsewhere beforehand. Files are
-fetched by name and checked against the checksum the manifest records.
-Concurrent jobs are safe: one process downloads while the others are told to
-pre-fetch with ``python -m MCEq.data.download``, and only a complete,
-verified file is put in place.
+The YAML manifest (``config.mceq_db_manifest``) records for each file its
+energy grid, checksum and models per medium::
+
+    files:
+      mceq_base_air_1d_v2.h5:
+        grid: 1d-150
+        models: {air: [FLUKA20251, SIBYLL23E], hydrogen: [SIBYLL23E]}
+
+Concurrent jobs are safe: one process downloads under a lock file, the others
+are told to pre-fetch with ``python -m MCEq.data.download``, and only a
+complete, verified file is put in place.
 """
 
 from __future__ import annotations
@@ -14,6 +19,67 @@ import hashlib
 import os
 import tempfile
 from pathlib import Path
+
+import numpy as np
+import yaml
+
+#: Manifest schema version this release reads.
+SCHEMA = 1
+
+
+def array_sha256(values) -> str:
+    """sha256 of the raw C-order bytes of an array: the grid digest."""
+    return hashlib.sha256(
+        np.ascontiguousarray(np.asarray(values)).tobytes()
+    ).hexdigest()
+
+
+def grid_signature(common_attrs) -> dict:
+    """Grid identity of one file, in the manifest's ``grids`` form."""
+    sig = {
+        "e_dim": int(common_attrs["e_dim"]),
+        "k_dim": int(common_attrs["k_dim"]) if "k_dim" in common_attrs else None,
+        "e_grid_sha256": array_sha256(common_attrs["e_grid"]),
+    }
+    if sig["k_dim"] is not None:
+        sig["k_grid_sha256"] = array_sha256(common_attrs["k_grid"])
+    return sig
+
+
+def load_manifest(path) -> dict:
+    """Parse and sanity-check a manifest file."""
+    manifest = yaml.safe_load(Path(path).read_text())
+    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA:
+        raise ValueError(
+            f"{path}: not a schema-{SCHEMA} MCEq data manifest "
+            f"(schema={manifest.get('schema') if isinstance(manifest, dict) else None})"
+        )
+    for key in ("grids", "files"):
+        if not isinstance(manifest.get(key), dict):
+            raise ValueError(f"{path}: manifest lacks a '{key}' mapping")
+    return manifest
+
+
+def files_for(manifest, grid_sig, model, medium) -> list[str]:
+    """Package names on ``grid_sig`` whose ``models[medium]`` list ``model``."""
+    return [
+        name
+        for name, entry in manifest["files"].items()
+        if manifest["grids"].get(entry.get("grid")) == grid_sig
+        and model in entry.get("models", {}).get(medium, [])
+    ]
+
+
+def models_on_grid(manifest, grid_sig) -> dict[str, list[str]]:
+    """``{medium: sorted models}`` the release offers on ``grid_sig``."""
+    out: dict[str, set] = {}
+    for entry in manifest["files"].values():
+        if manifest["grids"].get(entry.get("grid")) != grid_sig:
+            continue
+        for medium, models in entry.get("models", {}).items():
+            out.setdefault(medium, set()).update(models)
+    return {m: sorted(v) for m, v in sorted(out.items())}
+
 
 # Download database file from github
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
@@ -124,22 +190,14 @@ def _download_file(url, outfile, checksum=None):
 
 
 def ensure_db_available(cfg):
-    """Download the MCEq database if not already present.
+    """Download ``cfg.mceq_db_fname`` into ``cfg.data_dir`` if missing or corrupt.
 
-    Called by ``MCEqRun.__init__`` with the run's configuration — the live
-    module or a run snapshot — so the download is deferred until the database
-    is actually needed and this module imports no configuration itself.
-    ``cfg`` must expose flat ``data_dir``, ``mceq_db_fname`` and
-    ``debug_level`` attributes; a paths-only group does not supply that
-    interface. Direct callers pass ``MCEq.config`` (or the module they
-    override):
+    A file listed in the manifest is fetched from the data release, any other
+    name from the v1 single-file release.
 
-        from MCEq import config
-        config.mceq_db_fname = "my_db.h5"
-        ensure_db_available(config)
-
-    A missing file listed in the manifest is fetched from the data release;
-    any other missing name is looked for in the legacy single-file release.
+    Args:
+        cfg: object with ``data_dir``, ``mceq_db_fname``, ``mceq_db_manifest``
+            and ``debug_level`` attributes, e.g. ``MCEq.config``.
     """
     data_dir = cfg.data_dir
     mceq_db_fname = cfg.mceq_db_fname
@@ -179,17 +237,12 @@ def _remove_old_dbs(data_dir):
             os.unlink(old_db)
 
 
-# ---------------------------------------------------------------------------
-# v2 data release: manifest-described packages
-# ---------------------------------------------------------------------------
+# Data release: manifest-described packages
 
-#: Where a manifest missing from ``data_dir`` is fetched from. The manifest's
-#: own ``url_base`` governs the package URLs, so this only bootstraps a
-#: custom data directory on a fresh machine; a copy of the manifest ships
-#: inside the package (``MCEq/data``) and is used when present.
+#: Where a manifest missing from ``data_dir`` and from the installed package is
+#: fetched from. Package URLs come from the manifest's ``url_base``.
 data_release_url = "https://github.com/mceq-project/MCEq/releases/download/v2.0.0/"
-#: Manifest file name of the current data release; ``config.mceq_db_manifest``
-#: defaults to the same literal (the data layer does not import config).
+#: Manifest file name of the current data release (``config.mceq_db_manifest``).
 DEFAULT_MANIFEST = "mceq_db_manifest_v2.yaml"
 
 
@@ -214,28 +267,23 @@ def packaged_manifest(name):
 def local_manifest(cfg, preferred=None):
     """Parsed manifest without network, or None.
 
-    Search order: ``preferred`` in ``data_dir`` (the manifest a package
-    declares in its root attribute ``mceq_db_manifest`` -- a CI or custom
-    package set names its own), then ``cfg.mceq_db_manifest`` in
-    ``data_dir``, then the copy packaged with MCEq.
+    Search order: ``preferred`` in ``data_dir`` (the manifest named in a
+    package's root attribute ``mceq_db_manifest``), then
+    ``cfg.mceq_db_manifest`` in ``data_dir``, then the copy packaged with MCEq.
     """
-    from MCEq.data import db_manifest
-
     candidates = []
     if preferred:
         candidates.append(Path(cfg.data_dir) / preferred)
     candidates += [manifest_path(cfg), packaged_manifest(cfg.mceq_db_manifest)]
     for path in candidates:
         if path is not None and path.is_file():
-            return db_manifest.load(path)
+            return load_manifest(path)
     return None
 
 
 def ensure_manifest(cfg, preferred=None):
     """The manifest (see :func:`local_manifest`), fetched into ``data_dir``
     from the data release when no local copy exists."""
-    from MCEq.data import db_manifest
-
     manifest = local_manifest(cfg, preferred)
     if manifest is not None:
         return manifest
@@ -248,7 +296,7 @@ def ensure_manifest(cfg, preferred=None):
         hint="--manifest",
         debug_level=getattr(cfg, "debug_level", 1),
     )
-    return db_manifest.load(dest)
+    return load_manifest(dest)
 
 
 def _acquire_lock(dest, hint):
@@ -335,8 +383,6 @@ def cli_main(argv=None):
     """
     import argparse
 
-    from MCEq.data import db_manifest
-
     parser = argparse.ArgumentParser(
         prog="python -m MCEq.data.download",
         description="Fetch MCEq data packages listed in the release manifest.",
@@ -415,11 +461,11 @@ def cli_main(argv=None):
             parser.error(f"manifest names no default {args.dim} package")
         grid = manifest["grids"][manifest["files"][default]["grid"]]
         for model in args.model:
-            names = db_manifest.files_for(manifest, grid, model, args.medium)
+            names = files_for(manifest, grid, model, args.medium)
             if not names:
                 parser.error(
                     f"no {args.dim} package provides {model} in {args.medium}; "
-                    f"on this grid: {db_manifest.models_on_grid(manifest, grid)}"
+                    f"on this grid: {models_on_grid(manifest, grid)}"
                 )
             wanted += names
     if not wanted and not args.manifest:

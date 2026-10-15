@@ -1,6 +1,6 @@
 ![PyPI](https://img.shields.io/pypi/v/MCEq)
 [![Documentation](https://readthedocs.org/projects/mceq/badge/?version=latest)](https://mceq.readthedocs.io/en/latest/?badge=latest)
-[![Build Status](https://dev.azure.com/afedynitch/MCEq/_apis/build/status/afedynitch.MCEq?branchName=master)](https://dev.azure.com/afedynitch/MCEq/_build/latest?definitionId=1&branchName=master)
+[![Tests](https://github.com/mceq-project/MCEq/actions/workflows/test.yaml/badge.svg)](https://github.com/mceq-project/MCEq/actions/workflows/test.yaml)
 
 # MCEq - Matrix cascade equations
 
@@ -12,11 +12,9 @@ Very early releases, previously maintained under the 'master' and 'development' 
 
 [The documentation](http://mceq.readthedocs.org/en/latest/) contains installation instructions, a tutorial and more.
 
-### Version 1.4
-With this version we update the database to contain new hadronic interaction models alongside some bug fixes and new 
-features, such as DDM.
+### Upgrading from v1
 
-Please consult the [CHANGELOG](CHANGELOG.md) and the dedicated [doc page](https://mceq.readthedocs.io/en/latest/v14v13_diff.html).
+The [v2 porting guide](docs/porting_to_v2.md) lists the API changes; the [CHANGELOG](CHANGELOG.md) lists all changes by release.
 
 ## Please cite our work
 

@@ -1,14 +1,4 @@
-"""Materialized reads for one MCEq HDF5 file: the IO seam of the backend.
-
-Methods reuse a handle inside a scoped read session and otherwise open
-the file for one call. Every read returns
-numpy arrays or plain containers; no live ``h5py`` node ever escapes.
-The module imports ``h5py``, ``numpy``, ``scipy.sparse`` and nothing from
-``MCEq``.  Decoding policy -- the ``disabled_particles`` filter
-interleaved with the read cursor, equivalence injection, the rho-stack
-choice -- stays with the backend, so :meth:`HDF5Store.read_channel_pack`
-returns the raw :class:`ChannelPack`, not a decoded channel index.
-"""
+"""Read-only access to one MCEq HDF5 file, returning numpy arrays."""
 
 from contextlib import contextmanager
 from typing import NamedTuple
@@ -21,11 +11,9 @@ from scipy.sparse import csr_matrix
 class ChannelPack(NamedTuple):
     """One channel-matrix dataset and its ``_indptrs`` sibling.
 
-    ``data`` is ``dset[:, :]`` in the stored dtype -- no cast applied,
-    the dtype cast is backend policy; ``indptrs`` is
-    ``<name>_indptrs[:]``; ``len_data`` and ``tuple_idcs`` are the
-    attributes of those names; ``description`` is the optional
-    ``description`` attribute or ``None``.
+    ``data`` is ``dset[:, :]`` in the stored dtype, ``indptrs`` is
+    ``<name>_indptrs[:]``, ``len_data`` and ``tuple_idcs`` are the dataset
+    attributes of those names, ``description`` is the optional attribute.
     """
 
     data: np.ndarray
@@ -36,12 +24,11 @@ class ChannelPack(NamedTuple):
 
 
 class HDF5Store:
-    """Materialized reader for one MCEq HDF5 file.
+    """Reader for one MCEq HDF5 file.
 
-    Construction opens nothing -- the EM database may be absent while
-    ``enable_em`` is off, and the backend builds a store for it anyway.
-    A read session keeps one handle until its context exits. Reads outside
-    a session open and close the file independently.
+    Construction opens nothing, so the file may be absent until first read.
+    Inside :meth:`session` reads share one handle; otherwise each read opens
+    and closes the file.
     """
 
     def __init__(self, fname):
@@ -126,9 +113,8 @@ def angular_basis(common, fname):
     """``"legendre"`` for a 2D ``common`` group (``k_dim`` set), ``None`` for 1D.
 
     The modes of a 2D file are the Legendre moments ``<P_l(cos theta)>`` with
-    ``l = k_grid``, declared by ``angular_basis = "legendre"``. A 2D file
-    without it, such as the Hankel-mode packages of the v2.0.0 release, is
-    refused.
+    ``l = k_grid``, declared by ``angular_basis = "legendre"``. Other 2D files
+    raise ``ValueError``.
     """
     if "k_dim" not in common:
         return None
@@ -159,23 +145,15 @@ def unpack_channel(
 ) -> np.ndarray:
     """Decode one CSR-packed channel to its dense, energy-cut matrix.
 
-    ``mat_data[0]`` carries the CSR
-    values and ``mat_data[1]`` the column indices of the whole pack;
-    ``indptr_row`` is one row of the sibling ``indptrs`` dataset;
-    ``start`` / ``length`` locate the channel's entries in the flat
-    arrays, ``length`` being the already-expanded read length
-    (``expand_len * len_data[tupidx]``, the stride that scales with
-    ``n_k`` in 2D databases).  ``is_2d`` is explicit and never inferred
-    from ``n_k``: a 2D database with ``n_k == 1`` still yields
-    ``(1, n_e, n_e)``.  A 1D channel yields ``(n_e, n_e)``.
+    ``mat_data[0]`` holds the CSR values and ``mat_data[1]`` the column
+    indices of the whole pack; ``indptr_row`` is one row of the ``indptrs``
+    dataset; ``start``/``length`` locate the channel in the flat arrays
+    (``length`` already scaled by ``n_k`` in 2D). Returns ``(n_e, n_e)`` in 1D
+    and ``(n_k, n_e, n_e)`` when ``is_2d``, also for ``n_k == 1``.
     """
     if is_2d:
-        # The stored channel matrix is block-diagonal in the mode
-        # (modes are decoupled). Slice each per-mode block out of
-        # the sparse matrix and energy-cut it straight into a
-        # preallocated ``(n_k, n_e, n_e)`` tensor -- the dense
-        # ``(dim_full, dim_full)`` intermediate would be n_k times
-        # larger than the data it carries.
+        # The stored matrix is block-diagonal in the mode; cut each
+        # per-mode block directly from the sparse matrix.
         channel_csr = csr_matrix(
             (
                 mat_data[0, start : start + length],

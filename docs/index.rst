@@ -1,15 +1,15 @@
-.. _MCEq:
 :html_theme.sidebar_secondary.remove: true
 :html_theme.sidebar_primary.remove: true
 
+.. _MCEq:
+
 MCEq documentation
 ==================
-.. currentmodule:: package
 
 **Version**: |version| | **Date**: |today|
-**Useful links**: `Source Repository <https://github.com/mceq-project/mceq>`__ |
-`Issue Tracker <https://github.com/mceq-project/mceq/issues>`__ |
-`Pull Requests <https://github.com/mceq-project/mceq/pulls>`__
+**Useful links**: `Source Repository <https://github.com/mceq-project/MCEq>`__ |
+`Issue Tracker <https://github.com/mceq-project/MCEq/issues>`__ |
+`Pull Requests <https://github.com/mceq-project/MCEq/pulls>`__
 **License**: `BSD 3 <https://github.com/mceq-project/MCEq/blob/main/LICENSE>`__
 
 This program is a toolkit to compute the evolution of particle densities that evolve
@@ -27,12 +27,9 @@ Various models/parameterizations for particle interactions and atmospheric densi
   example-gallery
   solver_math
   data_installation
-  v14v13_diff
-  migration_v2_layout
-  mceq_v1.x_v2_diff
+  porting_to_v2
   citeus
   api-reference/index
-  v12v11_diff
 
 
 .. grid:: 3

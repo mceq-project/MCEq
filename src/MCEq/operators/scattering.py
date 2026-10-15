@@ -29,10 +29,37 @@ Two models:
   the electron part ``Z`` stops at the largest angle a free electron can
   deflect the muon, ``1 - cos chi_e = m_e T_max / p^2``. The corrections to
   the point-nucleus ``sigma_l`` are integrated numerically
-  (:func:`_finite_size_losses`). Without them (``finite_nuclei=False``) the
+  (``_finite_size_losses``). Without them (``finite_nuclei=False``) the
   kernel is the point-nucleus Wentzel form, whose Rutherford tail reaches
   momentum transfers far above ``hbar c / R`` and over-populates large
   angles above ~1 GeV.
+
+  The screened Coulomb angular distribution has no finite second moment:
+  compare it with other calculations by quantiles or within a finite
+  angular acceptance, not by the RMS angle.
+
+Configuration:
+
+- ``config.muon_scattering_model``: ``"screened-coulomb"`` (default) or
+  ``"gaussian"``.
+- ``config.muon_scattering_finite_nuclei`` (default ``True``): the nuclear
+  form factor and the electron kinematic limit of the screened Coulomb model.
+- ``config.muon_multiple_scattering`` (default ``True``): ``False`` switches
+  scattering off for both models. One-dimensional runs have no angular
+  scattering.
+
+Database: the screened Coulomb model reads the elemental composition of the
+medium from ``material_scattering/<medium>/composition``, rows of ``(Z,
+A [g/mol], atom fraction)``; the Legendre 2D databases contain dry air. A
+database without the composition of the selected medium raises
+``ValueError``; the Gaussian model needs none. The finite-nucleus rate costs
+about ``l_max^2``, so the Legendre 2D databases also carry it precomputed at
+``material_scattering/<medium>/screened_coulomb_rates`` (one row per mode, one
+column per energy bin of the file, written with
+:func:`screened_coulomb_rate_legendre`). :func:`mode_rates` uses that table,
+cut to the run's energy window, when the muon mass, the ``finite_nuclei``
+switch and the grids it records match the run; otherwise it computes the
+rate, memoised for the process.
 
 Only muons are treated. Hadrons interact before scattering matters, and the
 e+- angular distribution is set by the EM cascade kinematics.
@@ -71,8 +98,7 @@ ELECTRON_MASS = (
     constants.physical_constants["electron mass energy equivalent in MeV"][0] * 1e-3
 )
 
-#: PDG muon mass, GeV. Fallback only -- a caller that has a particle manager
-#: passes the mass the tables were built with.
+#: PDG muon mass, GeV.
 MUON_MASS = 0.10566
 
 #: PDG ids and helicity states of every muon species the cascade can carry.
@@ -316,7 +342,7 @@ def _finite_size_losses(screening, b, z_elec, l_max):
 
 
 def transport_cross_sections(screening, l_max):
-    r"""``sigma_l / (pi C)`` of the Wentzel kernel for ``l = 0 .. l_max``.
+    r"""``sigma_l / (pi C)`` of the Wentzel kernel for ``l`` from 0 to ``l_max``.
 
     ``sigma_l = 2 pi int (1 - P_l(mu)) C / (1 - mu + 2A)^2 dmu`` is
     ``sigma_tot (1 - <P_l>)`` with ``sigma_tot = pi C / (A (1 + A))``; the

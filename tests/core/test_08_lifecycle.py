@@ -115,7 +115,7 @@ def test_force_resonance_folds_non_standard_particle():
 
     The reduced test DB only ships standard-particles entries, so we
     temporarily remove Lambda (3122) from ``config.standard_particles``
-    to drive the positive branch of ``_apply_force_resonance``. With
+    to drive the positive branch of the force_resonance flag. With
     the carve-out gone, putting 3122 in ``force_resonance`` should:
       - flip ``is_resonance`` to True for Λ and Λ̄,
       - drop them from ``cascade_particles`` and add them to

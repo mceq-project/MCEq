@@ -13,18 +13,16 @@ Everything here records what the code does **today**, defects included --
 ``test_width_two_file_loses_the_dedicated_antiproton_channels`` is a pinned
 defect, not a wish.
 
-The probes read the fixtures through a real ``HDF5Backend`` with all four
-config groups injected (``paths``/``grid``/``physics``/``em``), so no backend
-setting comes from the process-wide ``MCEq.config``; the tests on the shipped
-databases read ``config.data_dir`` to locate them, the ``info`` logger reads
-its debug settings, and nothing here writes ``MCEq.config`` or builds an
-``MCEqRun``. Decay packs are preferred over interaction packs where the
+The probes read the fixtures through a real ``HDF5Backend`` with every
+backend setting pinned on ``MCEq.config`` via ``monkeypatch`` (undone after
+each test); the tests on the shipped databases read ``config.data_dir`` to
+locate them, and nothing here builds an ``MCEqRun``. Decay packs are preferred over interaction packs where the
 equivalence machinery would be noise: ``decay_db`` passes ``equivalences={}``.
 """
 
 import importlib.util
 import pathlib
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -45,43 +43,43 @@ _SPEC.loader.exec_module(fixtures)
 SKIPPED_CH, NEXT_CH = 4, 5
 
 
-def backend(path, *, disabled=(), medium=fixtures.MEDIUM):
-    """An ``HDF5Backend`` on one fixture file, all four config groups injected.
+def backend(monkeypatch, path, *, disabled=(), medium=fixtures.MEDIUM):
+    """An ``HDF5Backend`` on one fixture file, every read setting pinned.
 
+    Every config global the backend reads is set via ``monkeypatch``.
     ``e_min``/``e_max`` are ``None`` so the energy cut is the whole grid and a
     decoded channel matrix is comparable to ``fixtures.channel_block`` as it
     was written.
     """
-    paths = SimpleNamespace(
+    from MCEq import config
+
+    for name, value in dict(
         data_dir=path.parent,
         mceq_db_fname=path.name,
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         # No EM database exists for these fixtures; enable_em is False, so the
         # backend never looks for it.
         em_db_fname="no_such_em_db.h5",
-    )
-    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
-    physics = SimpleNamespace(
-        filters={
-            "disabled_particles": list(disabled),
-            "forced_int_cs": None,
-            "replace_meson_cross_sections_with": None,
-        },
+        e_min=None,
+        e_max=None,
+        floatlen=None,
+        em_standalone_grid=False,
         assume_nucleon_interactions_for_exotics=True,
         enable_em=False,
         enable_cont_rad_loss=False,
         fallback_to_air_cs=True,
         interaction_medium=medium,
         muon_helicity_dependence=False,
-    )
-    # `em` is only read when `physics.enable_em` is set; injecting a stand-in
-    # keeps `__init__` from binding `config.em` off the process-wide module.
-    em = SimpleNamespace(air_density=None)
-    return HDF5Backend(medium=medium, paths=paths, grid=grid, physics=physics, em=em)
+    ).items():
+        monkeypatch.setattr(config, name, value)
+    monkeypatch.setitem(config.adv_set, "disabled_particles", list(disabled))
+    monkeypatch.setitem(config.adv_set, "forced_int_cs", None)
+    monkeypatch.setitem(config.adv_set, "replace_meson_cross_sections_with", None)
+    return HDF5Backend(medium=medium)
 
 
-def decode_decays(path, **kwargs):
-    return backend(path, **kwargs).decay_db("unpolarized")
+def decode_decays(monkeypatch, path, **kwargs):
+    return backend(monkeypatch, path, **kwargs).decay_db("unpolarized")
 
 
 # --------------------------------------------------------------------------
@@ -201,14 +199,16 @@ def test_fixture_pack_matches_the_shipped_pack_layout(hdf5_fixture_dbs):
 # --------------------------------------------------------------------------
 
 
-def test_four_column_tuples_decode_to_helicity_resolved_keys(hdf5_fixture_dbs):
+def test_four_column_tuples_decode_to_helicity_resolved_keys(
+    monkeypatch, hdf5_fixture_dbs
+):
     """The width-4 branch: ``tuple(tup[:2]), tuple(tup[2:])``.
 
     The PDG half is cast with ``int()``; the helicity half is not, so it stays
     the ``np.int64`` that h5py handed back. Pinned as measured -- the mixed key
     type is what a downstream ``repr`` or a key-ordering golden sees.
     """
-    index = decode_decays(hdf5_fixture_dbs["one_d_width4"])
+    index = decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width4"])
     parent, child = ((211, 0), (-13, 0))
 
     assert (parent, child) in index["index_d"]
@@ -217,14 +217,14 @@ def test_four_column_tuples_decode_to_helicity_resolved_keys(hdf5_fixture_dbs):
     assert [type(component) for component in key[1]] == [int, np.int64]
 
 
-def test_two_column_tuples_decode_to_zero_helicity_keys(hdf5_fixture_dbs):
+def test_two_column_tuples_decode_to_zero_helicity_keys(monkeypatch, hdf5_fixture_dbs):
     """The width-2 branch: ``(tup[0], 0), (tup[1], 0)`` -- no shipped file hits it.
 
     The helicity here is the Python literal ``0``, so the key components are
     both plain ``int``; on the width-4 file the second component is
     ``np.int64`` instead.
     """
-    index = decode_decays(hdf5_fixture_dbs["one_d_width2"])
+    index = decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width2"])
     parent, child = ((211, 0), (-13, 0))
 
     assert (parent, child) in index["index_d"]
@@ -233,29 +233,29 @@ def test_two_column_tuples_decode_to_zero_helicity_keys(hdf5_fixture_dbs):
     assert [type(component) for component in key[1]] == [int, int]
 
 
-def test_the_two_widths_produce_interchangeable_keys(hdf5_fixture_dbs):
+def test_the_two_widths_produce_interchangeable_keys(monkeypatch, hdf5_fixture_dbs):
     """``(2212, np.int64(0))`` and ``(2212, 0)`` hash and compare equal.
 
     So the type difference above is invisible to every dict lookup; it is
     pinned for what a ``repr``-based golden or a strict type check would see,
     not because it changes a decode.
     """
-    width4 = decode_decays(hdf5_fixture_dbs["one_d_width4"])["index_d"]
-    width2 = decode_decays(hdf5_fixture_dbs["one_d_width2"])["index_d"]
+    width4 = decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width4"])["index_d"]
+    width2 = decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width2"])["index_d"]
 
     assert set(width4) == set(width2)
     for key in width4:
         assert hash(key) == hash(next(k for k in width2 if k == key))
 
 
-def test_an_unsupported_tuple_width_raises(hdf5_fixture_dbs):
+def test_an_unsupported_tuple_width_raises(monkeypatch, hdf5_fixture_dbs):
     """The ``else`` arm of the width dispatch, reachable only from a built file.
 
     A 3-column ``tuple_idcs`` is neither the helicity-resolved nor the bare
     layout, so the decode gives up on the first channel.
     """
     with pytest.raises(Exception, match="Failed decoding parent-child relation."):
-        decode_decays(hdf5_fixture_dbs["one_d_width3"])
+        decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width3"])
 
 
 # --------------------------------------------------------------------------
@@ -263,9 +263,11 @@ def test_an_unsupported_tuple_width_raises(hdf5_fixture_dbs):
 # --------------------------------------------------------------------------
 
 
-def test_one_dimensional_channel_decodes_to_the_stored_block(hdf5_fixture_dbs):
+def test_one_dimensional_channel_decodes_to_the_stored_block(
+    monkeypatch, hdf5_fixture_dbs
+):
     """End-to-end: CSR triple -> energy cut -> dense, against the written block."""
-    index = decode_decays(hdf5_fixture_dbs["one_d_width4"])
+    index = decode_decays(monkeypatch, hdf5_fixture_dbs["one_d_width4"])
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
     decoded = index["index_d"][((parent, 0), (child, 0))]
 
@@ -282,14 +284,19 @@ def _hankel_copy(path, basis):
     return path
 
 
-def test_angular_basis_of_the_fixtures(hdf5_fixture_dbs):
+def test_angular_basis_of_the_fixtures(monkeypatch, hdf5_fixture_dbs):
     """2D files are Legendre, 1D files have no angular basis."""
-    assert backend(hdf5_fixture_dbs["two_d_width4"]).angular_basis == "legendre"
-    assert backend(hdf5_fixture_dbs["one_d_width4"]).angular_basis is None
+    assert (
+        backend(monkeypatch, hdf5_fixture_dbs["two_d_width4"]).angular_basis
+        == "legendre"
+    )
+    assert backend(monkeypatch, hdf5_fixture_dbs["one_d_width4"]).angular_basis is None
 
 
 @pytest.mark.parametrize("basis", [None, "hankel", b"hankel"])
-def test_two_dimensional_database_without_legendre_basis_is_refused(tmp_path, basis):
+def test_two_dimensional_database_without_legendre_basis_is_refused(
+    monkeypatch, tmp_path, basis
+):
     """2D files are read as Legendre moments only. A file without
     ``angular_basis = "legendre"`` -- the Hankel-mode packages -- is refused
     with an error naming the file, instead of being solved in the wrong basis.
@@ -297,23 +304,26 @@ def test_two_dimensional_database_without_legendre_basis_is_refused(tmp_path, ba
     path = fixtures.build_database(tmp_path / "hankel_2d.h5", n_k=fixtures.N_K)
     _hankel_copy(path, basis)
     with pytest.raises(ValueError, match=r"hankel_2d\.h5 is a 2D database.*Legendre"):
-        backend(path)
+        backend(monkeypatch, path)
 
 
 def test_two_dimensional_model_package_without_legendre_basis_is_refused(tmp_path):
     """A 2D model package found through the manifest passes the same check."""
-    from MCEq.data import db_manifest, hdf5_store
+    from MCEq.data import hdf5_store
+    from MCEq.data.hdf5_backend import ModelStoreCache
 
     path = fixtures.build_database(tmp_path / "hankel_model.h5", n_k=fixtures.N_K)
     _hankel_copy(path, None)
-    cache = db_manifest.ModelStoreCache.__new__(db_manifest.ModelStoreCache)
+    cache = ModelStoreCache.__new__(ModelStoreCache)
     cache._e_grid = np.ascontiguousarray(fixtures.E_GRID)
     cache._paths = SimpleNamespace(mceq_db_fname="primary.h5")
     with pytest.raises(ValueError, match="Legendre moments only"):
         cache._check_grid(hdf5_store.HDF5Store(str(path)), path.name)
 
 
-def test_two_dimensional_channel_decodes_to_one_block_per_mode(hdf5_fixture_dbs):
+def test_two_dimensional_channel_decodes_to_one_block_per_mode(
+    monkeypatch, hdf5_fixture_dbs
+):
     """2D channels come back as ``(n_k, n_e, n_e)``, mode block by mode block.
 
     The stored matrix is block-diagonal in the mode; the decode slices the
@@ -321,7 +331,7 @@ def test_two_dimensional_channel_decodes_to_one_block_per_mode(hdf5_fixture_dbs)
     differ between modes in the fixture, so a decode that collapsed them would
     not pass.
     """
-    index = backend(hdf5_fixture_dbs["two_d_width4"]).decay_db("polarized")
+    index = backend(monkeypatch, hdf5_fixture_dbs["two_d_width4"]).decay_db("polarized")
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
     decoded = index["index_d"][((parent, 0), (child, 0))]
 
@@ -331,7 +341,9 @@ def test_two_dimensional_channel_decodes_to_one_block_per_mode(hdf5_fixture_dbs)
     assert not np.array_equal(decoded[0], decoded[1])
 
 
-def test_a_skipped_channel_still_advances_the_flat_cursor(hdf5_fixture_dbs):
+def test_a_skipped_channel_still_advances_the_flat_cursor(
+    monkeypatch, hdf5_fixture_dbs
+):
     """A channel dropped by ``disabled_particles`` advances ``read_idx`` anyway.
 
     The pack is one flat run of CSR data; ``read_idx`` is the only thing that
@@ -344,8 +356,8 @@ def test_a_skipped_channel_still_advances_the_flat_cursor(hdf5_fixture_dbs):
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
 
     # abs() matching in the backend, hence 11 covers e+ as well (ledger B2).
-    partial = decode_decays(path, disabled=[11])["index_d"]
-    full = decode_decays(path)["index_d"]
+    partial = decode_decays(monkeypatch, path, disabled=[11])["index_d"]
+    full = decode_decays(monkeypatch, path)["index_d"]
 
     assert ((skipped_parent, 0), (skipped_child, 0)) in full
     assert ((skipped_parent, 0), (skipped_child, 0)) not in partial
@@ -356,6 +368,7 @@ def test_a_skipped_channel_still_advances_the_flat_cursor(hdf5_fixture_dbs):
 
 
 def test_a_skipped_2d_channel_advances_the_cursor_by_n_k_times_len_data(
+    monkeypatch,
     hdf5_fixture_dbs,
 ):
     """Same contract in 2D, where one channel occupies ``n_k * len_data[i]``.
@@ -368,8 +381,8 @@ def test_a_skipped_2d_channel_advances_the_cursor_by_n_k_times_len_data(
     skipped_parent, skipped_child = fixtures.DECAY_CHANNELS[SKIPPED_CH]
     parent, child = fixtures.DECAY_CHANNELS[NEXT_CH]
 
-    partial = backend(path, disabled=[11]).decay_db("polarized")["index_d"]
-    full = backend(path).decay_db("polarized")["index_d"]
+    partial = backend(monkeypatch, path, disabled=[11]).decay_db("polarized")["index_d"]
+    full = backend(monkeypatch, path).decay_db("polarized")["index_d"]
 
     # Without this pair the test says nothing about the skip path: if the
     # filter stopped dropping the channel, the block below would decode off
@@ -388,7 +401,7 @@ def test_a_skipped_2d_channel_advances_the_cursor_by_n_k_times_len_data(
 # --------------------------------------------------------------------------
 
 
-def test_width_four_keeps_a_dedicated_antiproton_channel(hdf5_fixture_dbs):
+def test_width_four_keeps_a_dedicated_antiproton_channel(monkeypatch, hdf5_fixture_dbs):
     """Contrast for the pin below: on a width-4 file the guard works.
 
     ``available_parents`` is ``sorted(set(tuple_idcs[:, :2]))``, which on a
@@ -399,7 +412,9 @@ def test_width_four_keeps_a_dedicated_antiproton_channel(hdf5_fixture_dbs):
     ``available_parents``, so the copy is skipped and the antiproton keeps its
     own, dedicated channels.
     """
-    index = backend(hdf5_fixture_dbs["one_d_width4"]).interaction_db(fixtures.MODEL)
+    index = backend(monkeypatch, hdf5_fixture_dbs["one_d_width4"]).interaction_db(
+        fixtures.MODEL
+    )
     index_d = index["index_d"]
 
     # Positive control, on this same decode: 3112 also maps to 2212 under
@@ -422,7 +437,9 @@ def test_width_four_keeps_a_dedicated_antiproton_channel(hdf5_fixture_dbs):
     ]
 
 
-def test_width_two_file_loses_the_dedicated_antiproton_channels(hdf5_fixture_dbs):
+def test_width_two_file_loses_the_dedicated_antiproton_channels(
+    monkeypatch, hdf5_fixture_dbs
+):
     """PINNED DEFECT (no ledger id -- not in plan section 9 as of c81d182).
 
     ``available_parents`` is built from ``tuple_idcs[:, :2]``, which is
@@ -441,7 +458,9 @@ def test_width_two_file_loses_the_dedicated_antiproton_channels(hdf5_fixture_dbs
     A fix would slice ``tuple_idcs[:, :2]`` only on the width-4 layout (and
     pair the PDG with helicity 0 on width-2); this test then flips.
     """
-    index = backend(hdf5_fixture_dbs["one_d_width2"]).interaction_db(fixtures.MODEL)
+    index = backend(monkeypatch, hdf5_fixture_dbs["one_d_width2"]).interaction_db(
+        fixtures.MODEL
+    )
     index_d = index["index_d"]
 
     assert np.array_equal(
@@ -486,29 +505,9 @@ def test_fluka_and_dpmjet_share_one_equivalence_table():
     assert probe not in equivalences["FLUKA"]
 
 
-def test_the_equivalences_package_attribute_is_the_dict_not_the_submodule():
-    """``MCEq.data.equivalences`` is the table; the module is in ``sys.modules``.
-
-    The name is both a submodule of ``MCEq.data`` and the dict that submodule
-    defines. The import system binds the *module* onto the package while
-    loading it, and ``data/__init__.py``'s ``from MCEq.data.equivalences import
-    equivalences`` rebinds the name to the dict afterwards. That order is what
-    keeps ``MCEq.data.equivalences`` the object it has always been
-    (``tests/test_phase4_surface.py`` pins the name; this pins the resolution),
-    and it is fragile: dropping the dict from that import list, or reaching the
-    module through the package attribute, silently swaps the two.
-    """
-    import sys
-
-    import MCEq.data
-
-    assert isinstance(MCEq.data.equivalences, dict)
-    module = sys.modules["MCEq.data.equivalences"]
-    assert isinstance(module, ModuleType)
-    assert module.equivalences is MCEq.data.equivalences
-
-
-def test_equivalence_injection_aliases_rather_than_copies(hdf5_fixture_dbs):
+def test_equivalence_injection_aliases_rather_than_copies(
+    monkeypatch, hdf5_fixture_dbs
+):
     """The stand-in shares the matrix *object* and the ``relations`` *list*.
 
     ``apply_equivalences`` does ``index_d[(eqv_parent, child)] =
@@ -527,7 +526,9 @@ def test_equivalence_injection_aliases_rather_than_copies(hdf5_fixture_dbs):
     ``test_width_four_keeps_a_dedicated_antiproton_channel`` above asserts the
     same copy with ``array_equal``, which a deep copy would satisfy too.
     """
-    index = backend(hdf5_fixture_dbs["one_d_width4"]).interaction_db(fixtures.MODEL)
+    index = backend(monkeypatch, hdf5_fixture_dbs["one_d_width4"]).interaction_db(
+        fixtures.MODEL
+    )
     index_d, relations = index["index_d"], index["relations"]
     parent, stand_in = (2212, 0), (3112, 0)
 
@@ -541,7 +542,7 @@ def test_equivalence_injection_aliases_rather_than_copies(hdf5_fixture_dbs):
     assert relations[stand_in] == children
 
 
-def test_equivalence_aliasing_on_the_shipped_reduced_database():
+def test_equivalence_aliasing_on_the_shipped_reduced_database(monkeypatch):
     """The alias counts on real data, measured: 40 matrix groups, 2 lists.
 
     The fixture test above reaches one stand-in with three channels. This one
@@ -562,7 +563,7 @@ def test_equivalence_aliasing_on_the_shipped_reduced_database():
     if not path.exists():
         pytest.skip(f"{path.name} not available (ci-assets release)")
 
-    index = backend(path, disabled=[11, -11]).interaction_db("SIBYLL2.1")
+    index = backend(monkeypatch, path, disabled=[11, -11]).interaction_db("SIBYLL2.1")
 
     def groups(mapping):
         by_id = defaultdict(list)

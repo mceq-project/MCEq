@@ -1,19 +1,15 @@
 """The runtime HE/LE blend, tested on the pure functions of the module.
 
 Every blend property is pinned by calling the free functions of
-``MCEq.data.blending`` -- ``he_le_weight``, ``blend_yields`` and
+``MCEq.data.hdf5_backend`` -- ``he_le_weight``, ``blend_yields`` and
 ``blend_cross_sections`` -- directly with explicit arguments, no backend at
 all. Only two things are about ``HDF5Backend`` itself and go through a REAL
 backend: the ``interaction_db`` and ``cs_db`` dispatch (blend on / blend off /
 LE model requested) and the channel-pack read dtype. That backend is built on
 a tiny synthetic two-model database from ``tests/data/make_hdf5_fixtures.py``
-in ``tmp_path``, with all four settings groups ``HDF5Backend.__init__`` takes
--- ``paths``/``grid``/``physics``/``em`` -- injected, so no backend setting
-comes from the process-wide ``MCEq.config`` (only the ``info`` logger reads it:
-``debug_level``, ``override_debug_fcn``/``override_max_level`` and
-``print_module``) and nothing here writes it. The one direct read of
-``MCEq.config`` is ``test_grid_dtype_is_none_by_default``, which pins the
-shipped default on purpose.
+in ``tmp_path``, with every backend setting pinned on ``MCEq.config`` via ``monkeypatch``
+(undone after each test). ``test_grid_dtype_is_none_by_default`` reads the
+unpatched ``MCEq.config`` on purpose, to pin the shipped default.
 
 The ``HDF5Backend`` shells this file used to fabricate by bypassing
 ``__init__`` are gone: the blend no longer lives on the backend, so there is
@@ -22,14 +18,17 @@ nothing left to stub.
 
 import importlib.util
 import pathlib
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from MCEq import config
 from MCEq.data import HDF5Backend
-from MCEq.data.blending import blend_cross_sections, blend_yields, he_le_weight
+from MCEq.data.hdf5_backend import (
+    blend_cross_sections,
+    blend_yields,
+    he_le_weight,
+)
 
 _SPEC = importlib.util.spec_from_file_location(
     "make_hdf5_fixtures",
@@ -70,48 +69,44 @@ def transition_window(transition=80.0, width=0.4):
     return transition * 10.0 ** np.array([-width / 2, 0.0, width / 2])
 
 
-def fixture_backend(path, *, low_energy_model=None):
-    """A real ``HDF5Backend`` on one fixture file, with injected config groups.
+def fixture_backend(monkeypatch, path, *, low_energy_model=None):
+    """A real ``HDF5Backend`` on one fixture file, every read setting pinned.
 
     ``e_min``/``e_max`` are ``None`` so the whole 1 -- 100 GeV fixture grid is
     read and the 80 GeV transition falls inside it (only the last bin, centred
     at 89.1 GeV, lies above it). The transition width is 0 -- a hard switch --
     so every real-backend blend below is exact column selection; the sigmoid is
     pinned on the free functions. ``assume_nucleon_interactions_for_exotics``
-    is off so the decoded channel set is exactly what the pack stores. ``em``
-    is injected too, although with ``enable_em`` off nothing reads it, so that
-    no settings group falls back to the live ``MCEq.config``.
+    is off so the decoded channel set is exactly what the pack stores. Every
+    config global the backend reads is set via ``monkeypatch``.
     """
-    paths = SimpleNamespace(
+    from MCEq import config as cfg
+
+    for name, value in dict(
         data_dir=path.parent,
         mceq_db_fname=path.name,
         mceq_db_manifest="mceq_db_manifest_ci_v2.yaml",
         em_db_fname="no_such_em_db.h5",
-    )
-    grid = SimpleNamespace(e_min=None, e_max=None, dtype=None, em_standalone_grid=False)
-    physics = SimpleNamespace(
-        filters={
-            "disabled_particles": [],
-            "forced_int_cs": None,
-            "replace_meson_cross_sections_with": None,
-        },
+        e_min=None,
+        e_max=None,
+        floatlen=None,
+        em_standalone_grid=False,
         assume_nucleon_interactions_for_exotics=False,
         enable_em=False,
         enable_cont_rad_loss=False,
         fallback_to_air_cs=True,
         interaction_medium=fixtures.MEDIUM,
         muon_helicity_dependence=False,
-    )
-    em = SimpleNamespace(air_density=None)
+    ).items():
+        monkeypatch.setattr(cfg, name, value)
+    monkeypatch.setitem(cfg.adv_set, "disabled_particles", [])
+    monkeypatch.setitem(cfg.adv_set, "forced_int_cs", None)
+    monkeypatch.setitem(cfg.adv_set, "replace_meson_cross_sections_with", None)
     return HDF5Backend(
         medium=fixtures.MEDIUM,
         low_energy_model=low_energy_model,
         he_le_transition=80.0,
         he_le_trwidth=0.0,
-        paths=paths,
-        grid=grid,
-        physics=physics,
-        em=em,
     )
 
 
@@ -219,10 +214,10 @@ def test_le_only_projectiles_survive_the_blend_with_mapped_he_sigma():
     assert np.array_equal(mixed["index_d"][-2112], [30.0, 6.0, 6.0])
 
 
-def test_disabled_backend_path_loads_only_selected_model(two_model_db):
+def test_disabled_backend_path_loads_only_selected_model(monkeypatch, two_model_db):
     """With ``low_energy_model=None``, ``interaction_db`` returns the single
     model's index untouched."""
-    index = fixture_backend(two_model_db).interaction_db(fixtures.MODEL)
+    index = fixture_backend(monkeypatch, two_model_db).interaction_db(fixtures.MODEL)
     # The pack's own description plus the model-name line that loading a
     # single model appends -- not the blend's "Runtime HE/LE blend" description.
     assert index["description"] == (
@@ -232,8 +227,8 @@ def test_disabled_backend_path_loads_only_selected_model(two_model_db):
     assert np.array_equal(index["index_d"][SHARED], fixtures.channel_block(HE_ICH))
 
 
-def test_enabled_backend_path_blends_the_two_models(two_model_db):
-    backend = fixture_backend(two_model_db, low_energy_model=LE_MODEL)
+def test_enabled_backend_path_blends_the_two_models(monkeypatch, two_model_db):
+    backend = fixture_backend(monkeypatch, two_model_db, low_energy_model=LE_MODEL)
     index = backend.interaction_db(fixtures.MODEL)
     assert index["description"] == (
         f"Runtime HE/LE blend: {fixtures.MODEL} + {LE_MODEL}; "
@@ -259,12 +254,14 @@ def test_enabled_backend_path_blends_the_two_models(two_model_db):
     )
 
 
-def test_requesting_the_low_energy_model_itself_skips_the_blend(two_model_db):
+def test_requesting_the_low_energy_model_itself_skips_the_blend(
+    monkeypatch, two_model_db
+):
     # The second short circuit in `interaction_db`: with the blend enabled but
     # the LE model itself requested, the db is returned raw rather than blended
     # against a copy of itself. The name is normalised first, so the spelled-out
     # alias hits the same branch.
-    backend = fixture_backend(two_model_db, low_energy_model=LE_MODEL)
+    backend = fixture_backend(monkeypatch, two_model_db, low_energy_model=LE_MODEL)
     index = backend.interaction_db("fluka-2025.1")
     # Raw, not blended: the pack's own description plus the model-name line
     # that loading a single model appends, and only the LE pack's channels.
@@ -277,7 +274,7 @@ def test_requesting_the_low_energy_model_itself_skips_the_blend(two_model_db):
     assert np.array_equal(index["index_d"][SHARED], fixtures.channel_block(LE_ICH))
 
 
-def test_disabled_backend_cs_db_returns_the_single_table(two_model_db):
+def test_disabled_backend_cs_db_returns_the_single_table(monkeypatch, two_model_db):
     """With ``low_energy_model=None``, ``cs_db`` returns the requested model's
     table untouched although the file also carries the LE model's.
 
@@ -285,7 +282,7 @@ def test_disabled_backend_cs_db_returns_the_single_table(two_model_db):
     value-identical and its ``parents`` are already sorted, so the ``None``
     short circuit in ``cs_db`` is a read optimisation this test cannot see.
     """
-    cs = fixture_backend(two_model_db).cs_db(fixtures.MODEL)
+    cs = fixture_backend(monkeypatch, two_model_db).cs_db(fixtures.MODEL)
     he_parents = fixtures.cross_section_parents(0)
     assert cs["parents"] == he_parents
     he_table = fixtures.cross_section_table(0)
@@ -293,7 +290,7 @@ def test_disabled_backend_cs_db_returns_the_single_table(two_model_db):
         assert np.array_equal(cs["index_d"][pdg], he_table[:, ip])
 
 
-def test_enabled_backend_cs_db_hands_he_first_and_le_second(two_model_db):
+def test_enabled_backend_cs_db_hands_he_first_and_le_second(monkeypatch, two_model_db):
     """The blend dispatch in ``cs_db``: the requested model is the HE index
     and ``low_energy_model`` the LE index of ``blend_cross_sections``, and the
     weight is ``he_le_weight`` on the backend's own grid and transition.
@@ -309,7 +306,7 @@ def test_enabled_backend_cs_db_hands_he_first_and_le_second(two_model_db):
     goes to which side is pinned by no test in this file, because the SIBYLL23
     and FLUKA alias tables agree on every projectile the fixtures exercise.
     """
-    backend = fixture_backend(two_model_db, low_energy_model=LE_MODEL)
+    backend = fixture_backend(monkeypatch, two_model_db, low_energy_model=LE_MODEL)
     cs = backend.cs_db(fixtures.MODEL)
     above = backend.energy_grid.c >= 80.0
     assert above.sum() == 1
@@ -332,6 +329,7 @@ def test_enabled_backend_cs_db_hands_he_first_and_le_second(two_model_db):
 
 
 def test_requesting_the_low_energy_model_itself_returns_its_raw_cs_table(
+    monkeypatch,
     two_model_db,
 ):
     # The second short circuit in `cs_db`, the analogue of the interaction_db
@@ -340,7 +338,9 @@ def test_requesting_the_low_energy_model_itself_returns_its_raw_cs_table(
     # means in FILE order: the LE table stores its parents reversed, which a
     # blend of the table with itself -- sorted by `blend_cross_sections` --
     # would not return, so the `parents` assertion is the discriminating one.
-    cs = fixture_backend(two_model_db, low_energy_model=LE_MODEL).cs_db("fluka-2025.1")
+    cs = fixture_backend(monkeypatch, two_model_db, low_energy_model=LE_MODEL).cs_db(
+        "fluka-2025.1"
+    )
     le_parents = fixtures.cross_section_parents(1)
     assert le_parents != sorted(le_parents)
     assert cs["parents"] == le_parents
@@ -351,23 +351,22 @@ def test_requesting_the_low_energy_model_itself_returns_its_raw_cs_table(
 
 def test_grid_dtype_is_none_by_default():
     # The dtype pins below hard-code `dtype=None` (the `he_le_weight` calls) or
-    # inject `grid.dtype=None` (`fixture_backend`); this ties that choice to the
-    # shipped default: `config.floatlen` is None, so the `dtype=self._grid.dtype`
-    # of the pack read in `MCEq/data/__init__.py` and the `grid.dtype` the
-    # backend hands `he_le_weight` are both `None` on a default configuration.
+    # set `config.floatlen=None` (`fixture_backend`); this ties that choice to
+    # the shipped default: `config.floatlen` is None, so the dtype of the pack
+    # read in the backend and the dtype the backend hands `he_le_weight` are
+    # both `None` on a default configuration.
     assert config.floatlen is None
-    assert config.grid.dtype is None
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_channel_pack_dtype_survives_the_read(tmp_path, dtype):
+def test_channel_pack_dtype_survives_the_read(monkeypatch, tmp_path, dtype):
     """The one `dtype=None` in `MCEq/data/__init__.py` that preserves anything.
 
     Ledger: risk 8 ("dtype") of the 2026-08-30 data-layer audit, and the Phase 4
     accept item "dtype test (float32 propagates)".
 
     `_gen_db_dictionary` reads the pack as `np.asarray(pack.data,
-    dtype=self._grid.dtype)` -- the raw rows of a ``ChannelPack``, which the
+    dtype=config.floatlen)` -- the raw rows of a ``ChannelPack``, which the
     store hands over without a cast -- and `np.asarray(x, dtype=None)` keeps
     `x`'s own
     dtype. A float32 channel pack therefore arrives as a float32 yield matrix;
@@ -377,7 +376,9 @@ def test_channel_pack_dtype_survives_the_read(tmp_path, dtype):
     path = fixtures.build_database(
         tmp_path / f"pack_{np.dtype(dtype).name}.h5", pack_dtype=dtype
     )
-    matrix = fixture_backend(path).interaction_db(fixtures.MODEL)["index_d"][SHARED]
+    matrix = fixture_backend(monkeypatch, path).interaction_db(fixtures.MODEL)[
+        "index_d"
+    ][SHARED]
     assert matrix.dtype == dtype
     assert np.array_equal(matrix, fixtures.channel_block(HE_ICH).astype(dtype))
 
@@ -429,16 +430,16 @@ def test_float32_yields_upcast_to_float64_through_the_blend():
     assert mixed["index_d"][he_only].dtype == np.float32
 
 
-def test_float32_pack_asymmetry_survives_the_real_blend(tmp_path):
+def test_float32_pack_asymmetry_survives_the_real_blend(monkeypatch, tmp_path):
     """The read hands the blend float32 matrices and the blend upcasts only
     the shared channels; this checks the two compose as claimed in the
-    ``MCEq.data.blending`` module docstring."""
+    ``blend_cross_sections`` docstring."""
     path = fixtures.build_database(
         tmp_path / "pack_float32.h5", pack_dtype=np.float32, low_energy_model=LE_MODEL
     )
-    index = fixture_backend(path, low_energy_model=LE_MODEL).interaction_db(
-        fixtures.MODEL
-    )
+    index = fixture_backend(
+        monkeypatch, path, low_energy_model=LE_MODEL
+    ).interaction_db(fixtures.MODEL)
     assert index["index_d"][SHARED].dtype == np.float64
     assert index["index_d"][HE_ONLY].dtype == np.float32
 

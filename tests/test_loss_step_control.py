@@ -5,9 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from MCEq.driver.paths import continuous_loss_dx_cap
-from MCEq.operators.stiffness import continuous_loss_rate
-from MCEq.solvers.path import etd2_nonuniform_path
+from MCEq.core import MCEqRun
+from MCEq.solvers.path import continuous_loss_rate, etd2_nonuniform_path
 
 
 def test_stiffness_tracks_grid_and_secant():
@@ -49,33 +48,44 @@ def test_cap_rebuilt_with_operator_and_secant():
         int_m=object(),
         _resolve_secant=lambda: sec,
     )
-    assert continuous_loss_dx_cap(run) == 0.25
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.25
     sec = {"lam": np.array([1.0, 4.0])}
-    assert continuous_loss_dx_cap(run) == 0.0625
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.0625
     bands[(0, 0)] *= 2
     run.int_m = object()
-    assert continuous_loss_dx_cap(run) == 0.03125
+    assert MCEqRun._continuous_loss_dx_cap(run) == 0.03125
 
 
-def test_path_floor_cannot_exceed_ceiling():
-    settings = SimpleNamespace(
-        X_start=0.0, etd2_path=dict(eps=0.01, dX_max=0.001, dX_min=0.01, fd_span=0.01)
+def test_path_floor_cannot_exceed_ceiling(monkeypatch):
+    from MCEq import config
+
+    monkeypatch.setattr(config, "X_start", 0.0)
+    monkeypatch.setattr(
+        config,
+        "etd2_path",
+        dict(eps=0.01, dX_max=0.001, dX_min=0.01, fd_span=0.01),
     )
     density = SimpleNamespace(r_X2rho=lambda x: np.ones_like(x), max_X=1.0)
     with pytest.raises(ValueError, match="dX_min"):
-        etd2_nonuniform_path(density, step=settings)
+        etd2_nonuniform_path(density)
 
 
-def test_run_guard_clamps_override_and_floor_and_refreshes_settings():
-    from MCEq.driver.paths import calculate_integration_path
+def test_run_guard_clamps_override_and_floor_and_refreshes_settings(monkeypatch):
+    from MCEq import config
 
-    settings = SimpleNamespace(
-        X_start=0.0, etd2_path=dict(eps=0.01, dX_max=20.0, dX_min=0.01, fd_span=0.01)
+    monkeypatch.setattr(config, "X_start", 0.0)
+    monkeypatch.setattr(
+        config,
+        "etd2_path",
+        dict(eps=0.01, dX_max=20.0, dX_min=0.01, fd_span=0.01),
     )
-    run = SimpleNamespace(
-        config=SimpleNamespace(
-            solver=settings, em=SimpleNamespace(adaptive_step=False)
-        ),
+    monkeypatch.setattr(config, "em_adaptive_step", False)
+
+    class _Run(SimpleNamespace):
+        _calculate_integration_path = MCEqRun._calculate_integration_path
+        _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
+
+    run = _Run(
         matrix_builder=SimpleNamespace(
             _contloss_bands={0: np.array([[-1e3, 1e3], [0.0, -1e3]])},
             _contloss_upwind_rows={0: 0},
@@ -86,11 +96,11 @@ def test_run_guard_clamps_override_and_floor_and_refreshes_settings():
         integration_path=None,
         density_model=SimpleNamespace(r_X2rho=lambda x: np.ones_like(x), max_X=0.002),
     )
-    calculate_integration_path(run, None, "X", dX_max=1e4)
+    run._calculate_integration_path(None, "X", dX_max=1e4)
     assert max(run.integration_path[1]) <= 0.0005
     before = run._cached_etd2_path_params
-    settings.etd2_path["eps"] = 0.005
-    calculate_integration_path(run, None, "X", dX_max=1e4)
+    config.etd2_path["eps"] = 0.005
+    run._calculate_integration_path(None, "X", dX_max=1e4)
     assert run._cached_etd2_path_params != before
 
 

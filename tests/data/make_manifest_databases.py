@@ -25,7 +25,7 @@ import pathlib
 import h5py
 import yaml
 
-from MCEq.data import db_manifest
+from MCEq.data import download
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 REFERENCE_DB = REPO_ROOT / "src" / "MCEq" / "data" / "mceq_ci_extra_models_air_1d_v2.h5"
@@ -93,7 +93,7 @@ def write_manifest(directory, entries, url_base=URL_BASE):
     """A schema-1 manifest for ``entries`` = ``{file: (spine, models)}``."""
     directory = pathlib.Path(directory)
     with h5py.File(REFERENCE_DB, "r") as src:
-        grid = db_manifest.grid_signature(src["common"].attrs)
+        grid = download.grid_signature(src["common"].attrs)
     files = {}
     for name, (spine, models) in entries.items():
         path = directory / name
@@ -105,7 +105,7 @@ def write_manifest(directory, entries, url_base=URL_BASE):
             "models": models,
         }
     manifest = {
-        "schema": db_manifest.SCHEMA,
+        "schema": download.SCHEMA,
         "release": "test",
         "url_base": url_base,
         "defaults": {"1d": BASE_FILE},

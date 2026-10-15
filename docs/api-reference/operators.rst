@@ -7,15 +7,23 @@ operators (:mod:`MCEq.operators`)
 
 
 The layer between the species definition and the solvers:
-:class:`~MCEq.operators.matrix_builder.MatrixBuilder` fills the interaction
-and decay matrices, :mod:`MCEq.operators.compiled` assembles them into the
-operator the ETD2RK step loop runs against, :mod:`MCEq.operators.legendre`
-holds the Legendre angular modes of the 2D transport,
-:mod:`MCEq.operators.secant` builds the sec(θ) mode coupling and
-:mod:`MCEq.operators.stiffness` the continuous-loss step cap. The math is on :ref:`solver-math`.
+:mod:`MCEq.operators.matrix_builder` fills the interaction and decay matrices
+(:class:`~MCEq.operators.matrix_builder.MatrixBuilder`, also importable as
+``MCEq.core.MatrixBuilder``),
+:mod:`MCEq.operators.compiled` assembles them into the operator the ETD2RK
+step loop runs against, :mod:`MCEq.operators.legendre` holds the Legendre
+angular modes of the 2D transport, :mod:`MCEq.operators.secant` builds the
+sec(θ) mode coupling, :mod:`MCEq.operators.loss_stencil` the
+continuous-loss stencils and :mod:`MCEq.operators.scattering` the muon
+scattering rates. The step caps are in :mod:`MCEq.solvers.path`. The math is
+on :ref:`solver-math`.
 
 Reference/API
 =============
+.. automodapi:: MCEq.operators.matrix_builder
+  :include-all-objects:
+  :no-inheritance-diagram:
+
 .. automodapi:: MCEq.operators.compiled
   :include-all-objects:
   :no-inheritance-diagram:
@@ -25,11 +33,6 @@ Reference/API
   :no-inheritance-diagram:
 
 .. automodapi:: MCEq.operators.secant
-  :no-inheritance-diagram:
-  :skip: info
-
-.. automodapi:: MCEq.operators.stiffness
-  :include-all-objects:
   :no-inheritance-diagram:
 
 .. automodapi:: MCEq.operators.loss_stencil

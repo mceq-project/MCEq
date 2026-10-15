@@ -49,7 +49,7 @@ def _restore_config(saved):
     ``mkl_threads`` is process-wide BLAS state, so it is put back through
     ``config.set_mkl_threads`` -- and only when it actually changed, because
     that call re-registers the threadpoolctl limiter (and dlopens ``libmkl_rt``
-    on its first use in the process; ``_load_mkl`` returns early afterwards).
+    on its first use in the process; ``load_mkl`` returns early afterwards).
     ``set_mkl_threads`` is safe when MKL is absent (it checks ``mkl is not
     None``). ``config.has_mkl`` is deliberately not read here: it is a lazy
     probe with side effects.
@@ -178,10 +178,10 @@ def mceq_qgs(_mceq_qgs_instance):
 
 @pytest.fixture(scope="function")
 def ddm_entry():
-    from MCEq.models.ddm import ddm, ddm_utils
+    from MCEq import ddm
 
-    entry = ddm._DDMEntry(
-        ebeam=ddm_utils.fmteb(2.0),
+    return ddm._DDMEntry(
+        ebeam="2.0",
         projectile=2212,
         secondary=211,
         x17=False,
@@ -189,44 +189,12 @@ def ddm_entry():
         cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
         tv=1.0,
         te=0.1,
-        spl_idx=1,
     )
-    return entry
-
-
-@pytest.fixture(scope="function")
-def ddm_channel():
-    from MCEq.models.ddm import ddm, ddm_utils
-
-    ch = ddm._DDMChannel(projectile=2212, secondary=211)
-    ch.add_entry(
-        ebeam=ddm_utils.fmteb(2.0),
-        projectile=2212,
-        secondary=211,
-        x17=False,
-        tck=(np.array([1, 2, 3]), np.array([4, 5, 6]), 3),
-        cov=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
-        tv=1.0,
-        te=1.0,
-    )
-
-    return ch
-
-
-@pytest.fixture(scope="function")
-def ddm_spline_db():
-    from MCEq.models.ddm import ddm
-
-    db = ddm.DDMSplineDB(
-        enable_channels=[(2212, 211)],
-        exclude_projectiles=[111, 2112],
-    )
-    return db
 
 
 @pytest.fixture(scope="function")
 def data_driven_model():
-    from MCEq.models.ddm import ddm
+    from MCEq import ddm
 
     _ddm = ddm.DataDrivenModel(
         e_min=5.0,

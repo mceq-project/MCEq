@@ -6,11 +6,8 @@ import scipy.special as sp
 from scipy.integrate import quad
 
 from MCEq.operators.legendre import (
-    forward_weights,
-    hemisphere_projection,
     l_interpolation,
     legendre_p,
-    moments,
     path_elongation,
     series,
     theta_density,
@@ -20,6 +17,7 @@ from MCEq.operators.secant import (
     build_secant_kernel_ops,
     legendre_coupling,
 )
+from tests.helpers.legendre import moments
 
 # Sparse grid from 0 to 2000 (48 modes); its tail above 64 is the sparse part
 # of the production grid.
@@ -109,7 +107,8 @@ def test_funk_hecke_composition_mc(parent):
         a_p = 0.7**ell
     else:
         mu_p = rng.random(n)
-        a_p = 2 * forward_weights(40) / (2 * ell + 1)
+        x, w = np.polynomial.legendre.leggauss(64)
+        a_p = legendre_p(40, 0.5 * x + 0.5) @ (0.5 * w)  # int_0^1 P_l dmu
     mu_s = rotate(mu_p, hg_sample(rng, 0.6, n), rng)
     a_s = moments(mu_s, ell) / n
     sigma = legendre_p(40, mu_s).std(axis=1) / np.sqrt(n)
@@ -146,39 +145,11 @@ def test_narrow_cone_moments_match_hankel(kappa):
     assert np.abs(a - hankel).max() < 0.13 / kappa
 
 
-def test_forward_weights():
-    l_max = 30
-    c = forward_weights(l_max)
-    ref = [
-        (2 * ell + 1) / 2 * quad(sp.legendre(ell), 0, 1)[0] for ell in range(l_max + 1)
-    ]
-    np.testing.assert_allclose(c, ref, atol=1e-12)
-    np.testing.assert_allclose(hemisphere_projection(l_max)[0], c, atol=1e-12)
-
-
 def _quad_coupling(ell, lp, g, lo=0.0, points=None):
     def f(mu):
         return sp.eval_legendre(ell, mu) * g(mu) * sp.eval_legendre(lp, mu)
 
     return (2 * lp + 1) / 2 * quad(f, lo, 1, points=points, limit=400)[0]
-
-
-def test_hemisphere_projection():
-    """Entries by direct quadrature, and the action on a polynomial: the
-    moments of ``f 1(mu > 0)`` for every ``ell <= l_max``."""
-    l_max = 40
-    b = hemisphere_projection(l_max)
-    for ell, lp in [(0, 0), (1, 0), (0, 1), (5, 8), (17, 40), (40, 39)]:
-        ref = _quad_coupling(ell, lp, np.ones_like)
-        assert b[ell, lp] == pytest.approx(ref, abs=1e-12)
-    x, w = np.polynomial.legendre.leggauss(64)
-
-    def f(mu):
-        return 1 + mu + 3 * mu**3 - mu**5
-
-    a = moments(x, np.arange(l_max + 1), w * f(x))
-    ref = moments(0.5 * x + 0.5, np.arange(l_max + 1), 0.5 * w * f(0.5 * x + 0.5))
-    np.testing.assert_allclose(b @ a, ref, atol=1e-12)
 
 
 @pytest.mark.parametrize("cap", [60.0, 75.0, 89.0])
@@ -270,9 +241,7 @@ def test_wide_secant_eigenbasis(cap):
     ``b/a`` up to 2.4e-7; the real basis keeps their 2x2 rotation, and the
     spread of a cluster, off the diagonal and stays well conditioned, down to
     ``S_P = I`` at cap 0."""
-    ops = build_secant_kernel_ops(
-        L_GRID, np.logspace(-1, 3, 5), 2, None, theta_cap_deg=cap
-    )
+    ops = build_secant_kernel_ops(L_GRID, np.logspace(-1, 3, 5), 2, cap)
     v, vi, lam = ops["V"], ops["Vi"], ops["lam"]
     s_p = np.eye(len(lam)) + ops["T_PP"]
     assert np.linalg.cond(v) < 1e4
@@ -299,7 +268,7 @@ def test_secant_basis_independent_of_blas_threads(cap):
     bases = []
     for threads in (1, 4):
         with threadpool_limits(limits=threads):
-            ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+            ops = build_secant_kernel_ops(L_GRID, [1.0], 1, cap)
         bases.append(ops["V"])
     np.testing.assert_allclose(bases[0], bases[1], rtol=0, atol=1e-9)
 
@@ -309,7 +278,7 @@ def test_wide_secant_cap_sweep():
     """Every cap in [0, 90) on a 0.1 deg lattice builds on the 90-mode grid
     (about 5 min)."""
     for cap in np.arange(0.0, 90.0, 0.1):
-        ops = build_secant_kernel_ops(L_GRID, [1.0], 1, None, theta_cap_deg=cap)
+        ops = build_secant_kernel_ops(L_GRID, [1.0], 1, cap)
         assert np.linalg.cond(ops["V"]) < 1e4
 
 
@@ -343,7 +312,7 @@ def test_convert_to_theta_space_reads_one_species(log_theta):
     a 5-degree cone integrates to its ``a_0`` in ``theta dtheta``."""
     from types import SimpleNamespace
 
-    from MCEq.driver.results import convert_to_theta_space
+    from MCEq.core import MCEqRun
 
     n_e, kappa = 3, 1 / np.radians(5.0) ** 2
     cone = vmf_moments(kappa, L_GRID)
@@ -354,7 +323,7 @@ def test_convert_to_theta_space_reads_one_species(log_theta):
         e_grid=np.ones(n_e),
         pman=SimpleNamespace(pdg2mceqidx={(14, 0): 1}),
     )
-    l_grid, amps, theta, f = convert_to_theta_space(
+    l_grid, amps, theta, f = MCEqRun.convert_to_theta_space(
         run, [state, 0.5 * state], 14, 0, theta_res=4000, log_theta=log_theta
     )
     np.testing.assert_array_equal(l_grid, L_GRID)
