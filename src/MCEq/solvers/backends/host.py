@@ -27,6 +27,14 @@ from MCEq.solvers.numerics import (
     step_buffers,
 )
 
+__all__ = [
+    "CtypesApplyOff",
+    "HostBackend",
+    "ScipyApplyOff",
+    "numpy_backend",
+    "state_dtype",
+]
+
 #: ctypes pointer type per state dtype, for the fused C stages.
 _C_POINTER = {np.float64: POINTER(c_double), np.float32: POINTER(c_float)}
 

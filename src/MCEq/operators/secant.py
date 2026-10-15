@@ -39,6 +39,8 @@ import numpy as np
 from MCEq.misc import info
 from MCEq.operators.legendre import dense_count, l_interpolation, path_elongation
 
+__all__ = ["build_secant_kernel_ops", "legendre_coupling"]
+
 #: Max ``|imag|/real`` accepted for an eigenvalue of ``S_P``.
 _PAIR_SPLIT_MAX = 1e-5
 

@@ -117,12 +117,13 @@ def jackson_weights(l_max):
 def backward_removal(l_max):
     """``I - R``: removes the backward hemisphere of produced particles.
 
-    ``R = M[1(mu < 0)] diag(sigma_l)`` takes the backward part of the Jackson
-    smoothed distribution. For wide distributions this is the exact removal
-    ``hemisphere_projection`` up to the smoothing near ``mu = 0``; collimated
-    distributions (``a_l ~ 1`` up to ``l_max``) have no smoothed backward
-    tail, where the sharp projection would leave Gibbs residues
-    ``~ l_max^-1/2`` at every application.
+    ``R = M[1(mu < 0)] diag(sigma_l)``, with ``sigma_l`` the
+    :func:`jackson_weights`, takes the backward part of the Jackson-smoothed
+    distribution. For wide distributions this differs from the sharp
+    projection ``M[1(mu < 0)]`` only by the smoothing near ``mu = 0``.
+    Collimated distributions (``a_l ~ 1`` up to ``l_max``) have no smoothed
+    backward tail and pass essentially unchanged, where the sharp projection
+    would leave Gibbs residues ``~ l_max^-1/2`` at every application.
     """
     r = _coupling(l_max, [(-1.0, 0.0, np.ones_like)], 0) * jackson_weights(l_max)
     return np.eye(l_max + 1) - r

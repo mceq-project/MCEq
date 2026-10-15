@@ -78,9 +78,9 @@ class MatrixBuilder:
         These are:
 
         - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} +
-            \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
+          \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
         - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} +
-            \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
+          \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
 
         Matrix-block diagnostics are logged at level 5. ``C_blocks`` and
         ``D_blocks`` remain stored after assembly.

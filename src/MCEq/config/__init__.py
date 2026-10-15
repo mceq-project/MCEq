@@ -243,12 +243,13 @@ loss_step_for_average = 1e-1
 
 #: Stencil of the continuous-loss operator ``d/du``, ``u = ln E``
 #: (:mod:`MCEq.operators.loss_stencil`):
-#:   "expfit_low_upwind2" -- expfit interior, second-order upwind rows in the
-#:                 low-energy layer (``loss_stencil_low_upwind_rows``).
-#:   "expfit_low_upwind" -- the same with first-order upwind rows.
-#:   "expfit"   -- 7-point exponentially fitted stencil anchored at
-#:                 ``loss_stencil_alpha0``.
-#:   "upwind", "upwind2" -- first-/second-order upwind everywhere.
+#:
+#: - ``"expfit_low_upwind2"``: expfit interior, second-order upwind rows in
+#:   the low-energy layer (``loss_stencil_low_upwind_rows``).
+#: - ``"expfit_low_upwind"``: the same with first-order upwind rows.
+#: - ``"expfit"``: 7-point exponentially fitted stencil anchored at
+#:   ``loss_stencil_alpha0``.
+#: - ``"upwind"``, ``"upwind2"``: first-/second-order upwind everywhere.
 loss_stencil_method = "expfit_low_upwind2"
 
 #: Number of low-energy rows replaced by the selected upwind stencil when

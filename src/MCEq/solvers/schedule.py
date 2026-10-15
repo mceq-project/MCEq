@@ -93,11 +93,13 @@ def compile_carousel_schedule(paths, slot_assignments, T, dim, phi0_per_pixel):
         phi0_per_pixel: ``(dim, K_total)`` array — per-pixel initial phi.
 
     Returns:
-        dX_carousel: ``(T, K)`` f64 — slot-concatenated step sizes,
-            zero-padded after each slot's total length.
-        rho_inv_carousel: ``(T, K)`` f64 — slot-concatenated densities.
-        phi_initial: ``(dim, K)`` f64 — first pixel's phi0 per slot.
-        schedule: :class:`CarouselSchedule`.
+        tuple: ``(dX_carousel, rho_inv_carousel, phi_initial, schedule)``:
+
+        - ``dX_carousel``: ``(T, K)`` f64, slot-concatenated step sizes,
+          zero-padded after each slot's total length.
+        - ``rho_inv_carousel``: ``(T, K)`` f64, slot-concatenated densities.
+        - ``phi_initial``: ``(dim, K)`` f64, first pixel's phi0 per slot.
+        - ``schedule``: ``CarouselSchedule``.
     """
     K = len(slot_assignments)
     K_total = sum(len(s) for s in slot_assignments)
