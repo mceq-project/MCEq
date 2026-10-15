@@ -87,9 +87,7 @@ class cNRLMSISE00(NRLMSISE00Base):
     def set_location(self, tag):
         tag = location_key(tag)
         if tag not in list(self.locations):
-            raise Exception(
-                f"NRLMSISE00::set_location(): Unknown location tag '{tag}'."
-            )
+            raise ValueError(f"Unknown location '{tag}'.")
 
         self.inp.alt = c_double(self.locations[tag][2])
         self.set_location_coord(*self.locations[tag][:2])
@@ -99,7 +97,7 @@ class cNRLMSISE00(NRLMSISE00Base):
     def set_location_coord(self, longitude, latitude):
         info(5, f"long={longitude:5.2f}, lat={latitude:5.2f}")
         if abs(latitude) > 90 or abs(longitude) > 180:
-            raise Exception("NRLMSISE00::set_location_coord(): Invalid inp.")
+            raise ValueError("Longitude or latitude out of range.")
         self.inp.g_lat = c_double(latitude)
         self.inp.g_long = c_double(longitude)
         self._update_lst()
@@ -113,16 +111,16 @@ class cNRLMSISE00(NRLMSISE00Base):
 
     def set_season(self, tag):
         if tag not in self.month2doy:
-            raise Exception("NRLMSISE00::set_location(): Unknown season tag.")
+            raise ValueError(f"Unknown season '{tag}'.")
         info(5, "Season", tag, "doy=", self.month2doy[tag])
         self.inp.doy = self.month2doy[tag]
         self._invalidate()
 
     def set_doy(self, doy):
-        if doy < 0 or doy > 365:
-            raise Exception("NRLMSISE00::set_doy(): Day of year out of range.")
+        if not 0 <= doy <= 366:
+            raise ValueError("Day of year out of range.")
         info(5, "day of year", doy)
-        self.inp.doy = c_int(doy)
+        self.inp.doy = int(doy)
         self._invalidate()
 
     def _invalidate(self):

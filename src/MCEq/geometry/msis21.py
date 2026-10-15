@@ -21,9 +21,9 @@ from MCEq.misc import info
 
 
 class Msis21:
-    """NRLMSIS 2.1 at a site and date, with the interface of
-    :class:`MCEq.geometry.nrlmsise00_mceq.cNRLMSISE00`; by default the South
-    Pole in June at noon."""
+    """NRLMSIS 2.1 at a site and date, with the interface and conventions of
+    :class:`MCEq.geometry.nrlmsise00_mceq.cNRLMSISE00`: by default the South
+    Pole in June, always at local noon."""
 
     def __init__(self):
         try:
@@ -36,7 +36,6 @@ class Msis21:
         self._model = NRLMSIS21()
         self.set_location("SouthPole")
         self._doy = MONTH_TO_DAY_OF_YEAR["June"]
-        self._sec = float(DAY_TIMES_SEC["day"])
         self._f107a = float(DEFAULT_F107A)
         self._f107 = float(DEFAULT_F107)
         self._ap = np.full(7, float(DEFAULT_AP))  # the 7-element ap vector
@@ -44,28 +43,27 @@ class Msis21:
     def set_location(self, location):
         location = location_key(location)
         if location not in LOCATIONS:
-            raise ValueError(
-                f"Location '{location}' not in MCEq's LOCATIONS table. "
-                f"Available: {list(LOCATIONS.keys())}"
-            )
+            raise ValueError(f"Unknown location '{location}'.")
         lon, lat, alt_cm = LOCATIONS[location]
-        self._lon, self._lat = float(lon), float(lat)
+        self.set_location_coord(lon, lat)
         self.current_location = location
         self.alt_surface = alt_cm
 
     def set_location_coord(self, longitude, latitude):
         if abs(latitude) > 90 or abs(longitude) > 180:
-            raise ValueError("longitude/latitude out of range")
+            raise ValueError("Longitude or latitude out of range.")
         self._lon, self._lat = float(longitude), float(latitude)
+        # UT second of local noon, lst = sec/3600 + longitude/15
+        self._sec = DAY_TIMES_SEC["day"] - 240.0 * self._lon
 
     def set_season(self, month):
         if month not in MONTH_TO_DAY_OF_YEAR:
-            raise ValueError(f"Unknown month '{month}'")
+            raise ValueError(f"Unknown season '{month}'.")
         self._doy = MONTH_TO_DAY_OF_YEAR[month]
 
     def set_doy(self, day_of_year):
-        if not (1 <= day_of_year <= 366):
-            raise ValueError("doy out of range")
+        if not 0 <= day_of_year <= 366:
+            raise ValueError("Day of year out of range.")
         self._doy = int(day_of_year)
 
     def _calc(self, method, z_km):
@@ -82,18 +80,15 @@ class Msis21:
 
     def get_density(self, h_cm):
         """Density in g/cm^3 (nrlmsis returns kg/m^3) at ``h_cm``."""
-        return (
-            self._calc(self._model.calc, max(float(h_cm) / 1e5, 0.0)).densities[0]
-            * 1e-3
-        )
+        return self._calc(self._model.calc, float(h_cm) / 1e5).densities[0] * 1e-3
 
     def get_temperature(self, h_cm):
         """Temperature in K at ``h_cm``."""
-        return self._calc(self._model.calc, max(float(h_cm) / 1e5, 0.0)).temperature
+        return self._calc(self._model.calc, float(h_cm) / 1e5).temperature
 
     def density_profile(self, h_vec):
         """Density in g/cm^3 at the heights ``h_vec`` in cm, in one call."""
-        z_km = np.maximum(np.asarray(h_vec) / 1.0e5, 0.0)
+        z_km = np.asarray(h_vec) / 1.0e5
         return self._calc(self._model.calc_altitude_array, z_km).densities[0] * 1.0e-3
 
 

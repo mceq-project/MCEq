@@ -1,8 +1,7 @@
 """Backend behaviour of the NRLMSIS atmospheres: negative heights and the noon convention.
 
 Near the observation level the sampled height can be negative by one ULP of
-``r_E``. NRLMSISE-00 receives that height; NRLMSIS 2.1 clamps ``z`` at 0 km.
-MSIS00 holds local noon, MSIS21 UT noon.
+``r_E``; both backends receive that height unclamped. Both hold local noon.
 """
 
 from __future__ import annotations
@@ -131,60 +130,6 @@ def test_the_averaged_msis00_tail_hands_the_negative_height_to_the_backend():
     )
 
 
-@pytest.mark.parametrize(
-    "maker",
-    [
-        pytest.param(
-            lambda: m21.MSIS21Atmosphere("SouthPole", "January"), id="MSIS21Atmosphere"
-        ),
-        pytest.param(
-            lambda: m21.MSIS21KM3NeTCentered("ORCA", "January", n_azimuth=2),
-            id="MSIS21KM3NeTCentered",
-        ),
-    ],
-)
-def test_the_msis21_tails_clamp_the_negative_height_to_zero(maker):
-    """Both MSIS21 tails floor ``z`` at 0 km before calling the backend.
-
-    So at a zenith where the base and averaged-MSIS00 tails pass a negative
-    height through, these ask for ``z = 0.0`` instead. The two sides of the
-    same divergence, in the same file.
-    """
-    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    atm = maker()
-
-    seen: list[np.ndarray] = []
-    real = atm._msis._model.calc_altitude_array
-    atm._msis._model.calc_altitude_array = lambda _r=real, _s=seen, **kw: (
-        _s.append(np.array(kw["z"], copy=True)),
-        _r(**kw),
-    )[1]
-    try:
-        clamped = []
-        for theta in CLAMP_SCAN_DEG:
-            atm.set_theta(theta)
-            seen.clear()
-            atm.calculate_density_spline(n_steps=50)
-            dl = np.linspace(0.0, atm.geom.path_len(atm.thrad), 50)
-            raw = atm.geom.h(dl, atm.thrad)
-            if raw.min() < 0.0:
-                assert seen, "the tail issued no calc_altitude_array call"
-                for z in seen:
-                    assert z.min() == 0.0, (
-                        f"theta {theta}: raw min(h) = {raw.min():.3e} cm and the "
-                        f"backend was asked for z = {z.min():.3e} km. The "
-                        f"np.maximum(h/1e5, 0.0) clamp is gone."
-                    )
-                clamped.append(theta)
-    finally:
-        del atm._msis._model.calc_altitude_array
-
-    assert clamped, (
-        f"no zenith in {CLAMP_SCAN_DEG} produced a negative raw height at "
-        f"n_steps=50, so the clamp was never exercised here"
-    )
-
-
 # --------------------------------------------------------------------------
 # scalar and batched NRLMSIS 2.1
 # --------------------------------------------------------------------------
@@ -219,7 +164,7 @@ def test_scalar_and_batched_msis21_agree_within_numerical_precision():
         atm._msis._model.calc_altitude_array(
             day=atm._msis._doy,
             utsec=atm._msis._sec,
-            z=np.maximum(h / 1.0e5, 0.0),
+            z=h / 1.0e5,
             lat=atm._msis._lat,
             lon=atm._msis._lon,
             sfluxavg=atm._msis._f107a,
@@ -286,38 +231,46 @@ def test_msis00_local_noon_survives_a_coordinate_change():
         assert 0.0 <= msis.inp.sec.value <= 86400.0
 
 
-def test_msis00_is_local_noon_and_msis21_is_ut_noon():
-    """The two backends deliberately sample different instants. Pin the gap.
-
-    MSIS 2.1 derives ``lst = utsec/3600 + lon/15`` from a fixed ``utsec``
-    (``nrlmsis/globe.py``), i.e. 12:00 UT, while MCEq's MSIS00 wrapper holds
-    local noon. At a non-zero longitude the two therefore describe different
-    times of day, and a density comparison between them mixes that in with the
-    genuine model difference.
-
-    This is a consequence of the ruling, not an accident, so it is pinned
-    rather than fixed: if MSIS21 is ever moved to local noon as well, this test
-    is what says so.
-    """
+def test_msis21_holds_every_site_at_local_noon():
+    """MSIS 2.1 derives ``lst = utsec/3600 + lon/15`` from ``utsec``, so the
+    backend derives ``utsec`` from the longitude as MSIS00 derives ``sec``."""
     pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    from MCEq.geometry.atmosphere_parameters import DAY_TIMES_SEC
-    from MCEq.geometry.msis21 import MSIS21Atmosphere
+    from MCEq.geometry.atmosphere_parameters import LOCATIONS
+    from MCEq.geometry.msis21 import Msis21
     from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
-    tokyo_lon = 139.0
+    msis00, msis21 = cNRLMSISE00(), Msis21()
+    for site in LOCATIONS:
+        msis00.set_location(site)
+        msis21.set_location(site)
+        assert msis21._sec / 3600.0 + msis21._lon / 15.0 == pytest.approx(12.0)
+        assert msis21._sec == pytest.approx(msis00.inp.sec.value)
 
-    msis00 = cNRLMSISE00()
-    msis00.set_location("Tokyo")
-    assert msis00.inp.lst.value == pytest.approx(12.0)
 
-    atm21 = MSIS21Atmosphere("Tokyo", "January")
-    assert atm21._msis._sec == pytest.approx(DAY_TIMES_SEC["day"]), (
-        "MSIS21 no longer uses a fixed UT second; re-derive this pin"
-    )
-    msis21_lst = (atm21._msis._sec / 3600.0 + tokyo_lon / 15.0) % 24.0
-    assert msis21_lst == pytest.approx(21.266, abs=1e-3)
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda m: m.set_location("Atlantis"),
+        lambda m: m.set_location_coord(200.0, 0.0),
+        lambda m: m.set_season("Smarch"),
+        lambda m: m.set_doy(367),
+    ],
+)
+def test_both_backends_reject_the_same_input(call):
+    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
+    from MCEq.geometry.msis21 import Msis21
+    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
-    assert abs(msis21_lst - msis00.inp.lst.value) == pytest.approx(9.266, abs=1e-3)
+    for backend in (cNRLMSISE00(), Msis21()):
+        with pytest.raises(ValueError):
+            call(backend)
+
+
+def test_doy_wins_over_season_at_construction():
+    atm = dp.MSIS00Atmosphere("SouthPole", season="January", doy=200)
+    assert atm._msis.inp.doy == 200
+    centred = dp.MSIS00LocationCentered((0.0, 45.0), 0.0, season="January", doy=200)
+    assert centred._msis.inp.doy == 200
 
 
 # --------------------------------------------------------------------------

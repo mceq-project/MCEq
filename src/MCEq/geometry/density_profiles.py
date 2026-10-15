@@ -298,7 +298,8 @@ class MSISAtmosphere(EarthsAtmosphere):
     :class:`MCEq.geometry.nrlmsise00_mceq.cNRLMSISE00`, NRLMSIS 2.1 in
     :class:`MCEq.geometry.msis21.Msis21`). ``location`` is a key of
     :data:`MCEq.geometry.atmosphere_parameters.LOCATIONS`; the date is the
-    month ``season`` or the day of year ``doy`` (default: June);
+    month ``season`` or the day of year ``doy``, which wins if both are given
+    (default: June);
     ``use_loc_altitudes`` puts the observation level at the site's altitude.
     """
 
@@ -312,10 +313,7 @@ class MSISAtmosphere(EarthsAtmosphere):
     def init_parameters(self, location, season, doy, use_loc_altitudes):
         """Set the site and the date of the model."""
         self.set_location(location)
-        if season is not None:
-            self.set_season(season)
-        elif doy is not None:
-            self.set_doy(doy)
+        self._set_date(season, doy)
         if use_loc_altitudes:
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
             self.geom.set_h_obs(self._msis.alt_surface)
@@ -324,18 +322,22 @@ class MSISAtmosphere(EarthsAtmosphere):
         """Rebuild the splines on the next ``set_theta``."""
         self.theta_deg = None
 
+    def _set_date(self, season, doy):
+        """Set the date to ``doy`` if given, else to the month ``season``."""
+        if doy is not None:
+            if season is not None:
+                info(2, "Both 'season' and 'doy' are set; 'doy' takes precedence.")
+            self.set_doy(doy)
+        elif season is not None:
+            self.set_season(season)
+
     def update_parameters(self, **kwargs):
         """Set ``location_coord=(longitude, latitude)``, ``season`` and/or
         ``doy``; ``doy`` takes precedence over ``season``."""
         self._clear_cache()
         if "location_coord" in kwargs:
             self.set_location_coord(*kwargs["location_coord"])
-        if "season" in kwargs:
-            self.set_season(kwargs["season"])
-        if "doy" in kwargs:
-            self.set_doy(kwargs["doy"])
-            if "season" in kwargs:
-                info(2, "Both 'season' and 'doy' are set; 'doy' takes precedence.")
+        self._set_date(kwargs.get("season"), kwargs.get("doy"))
 
     def get_density(self, h_cm):
         """Density in g/cm**3 at the height ``h_cm`` in cm."""
@@ -409,12 +411,9 @@ class MSISLocationCentered(MSISAtmosphere):
     ):
         longitude, latitude = detector_coord
         self._msis = backend
-        backend.set_location_coord(longitude, latitude)
-        if season is not None:
-            backend.set_season(season)
-        elif doy is not None:
-            backend.set_doy(doy)
         EarthsAtmosphere.__init__(self)
+        backend.set_location_coord(longitude, latitude)
+        self._set_date(season, doy)
 
         self._detector_longitude = longitude
         self._detector_latitude = latitude
@@ -431,7 +430,6 @@ class MSISLocationCentered(MSISAtmosphere):
             self.geom.set_h_obs(surface_elevation_m * 1e2)
         self.max_theta = max_theta
         self.location = f"({longitude:.3f}°E, {latitude:.3f}°N)"
-        self.season = season
 
     def _impact_point(self, zenith_deg, azimuth_deg):
         """``(latitude, longitude)`` in degrees where the shower axis, followed
