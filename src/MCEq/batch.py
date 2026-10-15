@@ -12,15 +12,6 @@ from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
-#: Mass groups ``(crflux id, Z, A)`` of the primary models for the cutoff.
-_DEFAULT_MASS_GROUPS = (
-    (14, 1, 1),  # p
-    (402, 2, 4),  # He
-    (1206, 6, 12),  # C-N-O
-    (2814, 14, 28),  # Si
-    (5426, 26, 56),  # Fe-56; the id is crflux's group key, not A*100+Z
-)
-
 # Run instance shared with forked path workers (inherited, not pickled).
 _PATH_WORKER_MCEQ = None
 
@@ -36,16 +27,26 @@ def _path_worker_one(args):
     return flat_idx, _PATH_WORKER_MCEQ.integration_path
 
 
-def build_phi0_with_cutoff(
-    mceq, primary_model, rc_GV_per_pixel, mass_groups=_DEFAULT_MASS_GROUPS
-):
+def _require_mass_groups(primary_model):
+    """Raise unless ``primary_model`` tabulates nuclei, which the rigidity
+    cutoff acts on; nucleon-flux models such as GlobalSplineFitBeta do not."""
+    if not primary_model.nucleus_ids:
+        raise ValueError(
+            f"{type(primary_model).__name__} gives the nucleon flux only, so no "
+            "rigidity cutoff can be applied; pick a model with mass groups or "
+            "pass geomagnetic_cutoff=False."
+        )
+
+
+def build_phi0_with_cutoff(mceq, primary_model, rc_GV_per_pixel):
     """``(dim_states, K)`` initial states of ``primary_model`` with the
     rigidity cutoff ``rc_GV_per_pixel`` of each column.
 
     A mass group ``(Z, A)`` contributes where ``A * E_nuc > Z * R_c``
     (ultrarelativistic, ``R ≈ E / Z``) and is split into nucleons by
-    superposition as in :meth:`MCEqRun.set_primary_model`.
+    superposition as in :meth:`crflux.models.PrimaryFlux.p_and_n_flux`.
     """
+    _require_mass_groups(primary_model)
     K = int(rc_GV_per_pixel.size)
     e_grid = mceq._energy_grid.c
     p_mass = mceq.pman[(2212, 0)].mass
@@ -55,9 +56,8 @@ def build_phi0_with_cutoff(
 
     p_flux = np.zeros((e_grid.size, K))
     n_flux = np.zeros((e_grid.size, K))
-    for corsika_id, Z, A in mass_groups:
-        if corsika_id not in primary_model.nucleus_ids:
-            continue
+    for corsika_id in primary_model.nucleus_ids:
+        Z, A = primary_model.Z_A(corsika_id)
         E_nucleus_tot = e_tot_nucleon * A
         phi_nuc = np.asarray(
             primary_model.nucleus_flux(corsika_id, E_nucleus_tot), dtype=np.float64
@@ -530,6 +530,7 @@ class BatchSolver:
             if self.pmodel is None:
                 info(1, "solve_fullsky: no primary model, skipping the cutoff.")
             else:
+                _require_mass_groups(self.pmodel)
                 rc_grid = get_cutoff_map(
                     self.density_model,
                     zenith_grid,
