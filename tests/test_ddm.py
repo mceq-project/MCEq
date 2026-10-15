@@ -1,4 +1,4 @@
-import re
+import pathlib
 
 import numpy as np
 import pytest
@@ -239,8 +239,9 @@ def test_default_spline_file_follows_data_dir(tmp_path, monkeypatch):
     from MCEq.ddm import DataDrivenModel
 
     monkeypatch.setattr(config, "data_dir", tmp_path)
-    with pytest.raises(FileNotFoundError, match=re.escape(str(tmp_path))):
+    with pytest.raises(FileNotFoundError) as err:
         DataDrivenModel()
+    assert pathlib.Path(err.value.filename) == tmp_path / "DDM_1.0.npy"
 
 
 def test_ddm_matrices_replace_only_columns_inside_the_energy_range(mceq_sib21):
