@@ -20,6 +20,12 @@ def _prune_relations(relations, parents):
     return sorted(particles)
 
 
+def _is_unstable_hadron(pdg_id):
+    """True for a meson or baryon other than the (anti)nucleons; leptons,
+    photons and nuclei (ids of ten digits) are not hadrons here."""
+    return 100 < abs(pdg_id) < 1_000_000_000 and abs(pdg_id) not in (2212, 2112)
+
+
 class Interactions:
     """Class for managing the dictionary of interaction yield matrices.
 
@@ -100,9 +106,7 @@ class Interactions:
                 if not (400 < abs(p[0]) < 500 or 4000 < abs(p[0]) < 5000)
             ]
         if filters["disable_interactions_of_unstable"]:
-            self.parents = [
-                p for p in self.parents if p[0] not in [2212, 2112, -2212, -2112]
-            ]
+            self.parents = [p for p in self.parents if not _is_unstable_hadron(p[0])]
         if filters["allowed_projectiles"]:
             self.parents = [
                 p for p in self.parents if p[0] in filters["allowed_projectiles"]

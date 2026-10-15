@@ -332,7 +332,7 @@ low_energy_extension = {
 
 #: Advanced settings (some options might be obsolete/not working)
 adv_set = {
-    #: Exclude proton, neutron, antiproton, and antineutron projectiles
+    #: Only (anti)nucleons interact; unstable hadrons decay or reach the ground
     "disable_interactions_of_unstable": False,
     #: Disable particle production by charm *projectiles* (interactions)
     "disable_charm_pprod": False,
