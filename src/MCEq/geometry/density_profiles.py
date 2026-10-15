@@ -224,11 +224,11 @@ class CorsikaAtmosphere(EarthsAtmosphere):
                 f"Atmosphere '{location}/{season}' not available. "
                 f"Available atmospheres: {available_atmospheres}"
             )
-        self.init_parameters(location, season)
+        EarthsAtmosphere.__init__(self)
         import MCEq.geometry.corsikaatm as corsika_acc
 
         self.corsika_acc = corsika_acc
-        EarthsAtmosphere.__init__(self)
+        self.init_parameters(location, season)
 
     def init_parameters(self, location, season):
         """Set the parameters ``_aatm, _batm, _catm, _thickl, _hlay`` of the
@@ -276,11 +276,11 @@ class IsothermalAtmosphere(EarthsAtmosphere):
     Astropart. Phys. 5 (1996) 309. ``location`` and ``season`` have no effect."""
 
     def __init__(self, location, season, hiso_km=6.3, X0=1300.0):
+        EarthsAtmosphere.__init__(self)
         self.hiso_cm = hiso_km * 1e5
         self.X0 = X0
         self.location = location
         self.season = season
-        EarthsAtmosphere.__init__(self)
 
     def get_density(self, h_cm):
         """Density in g/cm**3 at the height ``h_cm`` in cm."""

@@ -368,3 +368,27 @@ KM3NET_DETECTORS = {
     # ARCA: offshore Capo Passero (Sicily, Italy), 36°16'N 16°06'E, ~3500 m depth
     "ARCA": {"longitude": 16.1, "latitude": 36.267, "depth_m": 3500.0},
 }
+
+#: Site of each CORSIKA parameter set that belongs to one place; USStd,
+#: BK_USStd and the detector-averaged KM3NeT set belong to none.
+_CORSIKA_SITES = {
+    "SouthPole": "SouthPole",
+    "PL_SouthPole": "SouthPole",
+    "SDR_SouthPole": "SouthPole",
+    "Karlsruhe": "Karlsruhe",
+    "ANTARES/KM3NeT-ORCA": "ORCA",
+    "KM3NeT-ARCA": "ARCA",
+}
+
+
+def site_coordinates(location):
+    """``(site, longitude, latitude)`` of a :data:`LOCATIONS` entry, a KM3NeT
+    detector or a site-specific CORSIKA parameter set; None otherwise."""
+    site = _CORSIKA_SITES.get(location, location)
+    if site in LOCATIONS:
+        lon, lat, _ = LOCATIONS[site]
+        return site, lon, lat
+    if site in KM3NET_DETECTORS:
+        det = KM3NET_DETECTORS[site]
+        return site, det["longitude"], det["latitude"]
+    return None

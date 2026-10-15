@@ -657,3 +657,40 @@ def test_renamed_location_still_works():
     new = MSIS00Atmosphere("GranSasso", "January")
     assert old.location == new.location == "GranSasso"
     assert old.get_density(1e5) == new.get_density(1e5)
+
+
+@pytest.mark.parametrize(
+    "atm",
+    [
+        lambda: dp.CorsikaAtmosphere("SouthPole", "June"),
+        lambda: dp.IsothermalAtmosphere("SouthPole", "June"),
+    ],
+)
+def test_location_and_season_survive_construction(atm):
+    atm = atm()
+    assert (atm.location, atm.season) == ("SouthPole", "June")
+
+
+@pytest.mark.parametrize(
+    "location, season, site",
+    [
+        ("SouthPole", "June", "SouthPole"),
+        ("SDR_SouthPole", "March", "SouthPole"),
+        ("Karlsruhe", None, "Karlsruhe"),
+        ("ANTARES/KM3NeT-ORCA", "Summer", "ORCA"),
+        ("KM3NeT-ARCA", "Winter", "ARCA"),
+        ("USStd", None, None),
+        ("KM3NeT", None, None),
+    ],
+)
+def test_corsika_sites_get_the_cutoff_by_default(location, season, site):
+    from types import SimpleNamespace
+
+    from MCEq.core import MCEqRun
+    from MCEq.geometry.atmosphere_parameters import site_coordinates
+
+    atm = dp.CorsikaAtmosphere(location, season)
+    run = SimpleNamespace(density_model=atm)
+    assert MCEqRun._is_geomag_eligible_atmosphere(run) is (site is not None)
+    found = site_coordinates(atm.location)
+    assert (found and found[0]) == site

@@ -10,7 +10,7 @@ from typing import Optional
 import numpy as np
 
 from MCEq import config
-from MCEq.geometry.atmosphere_parameters import LOCATIONS
+from MCEq.geometry.atmosphere_parameters import site_coordinates
 from MCEq.misc import info
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
@@ -55,8 +55,8 @@ def _gtracr_location_from_atmosphere(density_model):
     """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
     Coordinates come from ``_detector_latitude/_longitude`` of detector-centred
-    models, or from :data:`MCEq.geometry.atmosphere_parameters.LOCATIONS` for a named
-    site. The name is only a cache label: ``_detector_name`` if set, ``IceCube``
+    models, or from :func:`MCEq.geometry.atmosphere_parameters.site_coordinates`
+    for a named site. The name is only a cache label: ``_detector_name`` if set, ``IceCube``
     at (-90, 0), otherwise a string encoding the coordinates.
 
     Raises:
@@ -74,17 +74,16 @@ def _gtracr_location_from_atmosphere(density_model):
                 name = f"coord_lat{lat:+07.3f}_lon{lon:+08.3f}".replace(".", "p")
         return str(name), float(lat), float(lon)
 
-    # Named MSIS or CORSIKA-style atmosphere with a location in the table
-    loc = getattr(density_model, "location", None)
-    if isinstance(loc, str) and loc in LOCATIONS:
-        lon_cm, lat_cm, _alt_cm = LOCATIONS[loc]
-        return loc, float(lat_cm), float(lon_cm)
+    site = site_coordinates(getattr(density_model, "location", None))
+    if site is not None:
+        name, lon, lat = site
+        return name, float(lat), float(lon)
 
     raise ValueError(
         f"gtracr_cutoff: cannot infer a geographic location from "
         f"density_model={type(density_model).__name__}. Pass an "
-        f"MSIS*Centered atmosphere or a CORSIKA/MSIS00 atmosphere with "
-        f"a named LOCATIONS entry."
+        f"MSIS*Centered atmosphere or an MSIS/CORSIKA atmosphere of a "
+        f"named site."
     )
 
 
