@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import MCEq.geometry.density_profiles as dp
+import MCEq.geometry.msis21 as m21
 
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
@@ -35,7 +36,7 @@ corsika_expected = [
 
 # Test that all corsika atmospheres are tested
 def test_cka_atm_completeness():
-    from MCEq.environment.parameters import list_available_corsika_atmospheres
+    from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
 
     missing = []
     expected_entries = {(loc, season) for loc, season, _ in corsika_expected}
@@ -565,7 +566,7 @@ def test_msis21_public_interface_matches_msis00(name00, name21):
     arguments must keep the same defaults so the two are drop-in
     substitutable.
     """
-    cls00, cls21 = getattr(dp, name00), getattr(dp, name21)
+    cls00, cls21 = getattr(dp, name00), getattr(m21, name21)
 
     public00 = {n for n in dir(cls00) if not n.startswith("_")}
     public21 = {n for n in dir(cls21) if not n.startswith("_")}
@@ -595,17 +596,17 @@ MSIS21_PAIRS = [
     (
         "IceCube",
         lambda: dp.MSIS00IceCubeCentered("SouthPole", "January"),
-        lambda: dp.MSIS21IceCubeCentered("SouthPole", "January"),
+        lambda: m21.MSIS21IceCubeCentered("SouthPole", "January"),
     ),
     (
         "ARCA",
         lambda: dp.MSIS00KM3NeTCentered("ARCA", season="January"),
-        lambda: dp.MSIS21KM3NeTCentered("ARCA", season="January"),
+        lambda: m21.MSIS21KM3NeTCentered("ARCA", season="January"),
     ),
     (
         "ORCA",
         lambda: dp.MSIS00KM3NeTCentered("ORCA", season="January"),
-        lambda: dp.MSIS21KM3NeTCentered("ORCA", season="January"),
+        lambda: m21.MSIS21KM3NeTCentered("ORCA", season="January"),
     ),
 ]
 
@@ -646,17 +647,6 @@ def test_msis21_impact_point_matches_msis00(label, make00, make21):
             assert np.isclose(lon0, lon1, rtol=0, atol=1e-9), (
                 f"{label}: impact longitude differs at theta={theta}, azi={azi}"
             )
-
-
-def test_msis21_shares_km3net_site_table():
-    """Site coordinates must come from one table, not a second copy.
-
-    Pinned through the ``msis21_atmosphere`` shim until the v2.0 cull deleted
-    it; the same-object property now reads on the canonical module.
-    """
-    from MCEq.environment.parameters import KM3NET_DETECTORS
-
-    assert dp._KM3NET_DETECTORS is KM3NET_DETECTORS
 
 
 def test_renamed_location_still_works():

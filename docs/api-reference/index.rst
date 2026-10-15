@@ -15,7 +15,7 @@ Submodules
   config
   core
   data
-  environment
+  geometry
   misc
   ddm
   operators

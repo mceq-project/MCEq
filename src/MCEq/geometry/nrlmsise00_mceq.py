@@ -2,8 +2,10 @@
 
 from ctypes import byref, c_double, c_int, pointer
 
-import MCEq.environment._ext.nrlmsise00 as cmsis
-from MCEq.environment.parameters import (
+import numpy as np
+
+import MCEq.geometry.nrlmsise00 as cmsis
+from MCEq.geometry.atmosphere_parameters import (
     DAY_TIMES_SEC,
     DEFAULT_AP,
     DEFAULT_F107,
@@ -16,14 +18,15 @@ from MCEq.misc import info
 
 
 class NRLMSISE00Base:
+    """NRLMSISE-00 at a site and date; :class:`cNRLMSISE00` evaluates it."""
+
     def __init__(self):
-        # Cache altitude value of last call
+        # Altitude of the last evaluation, see _retrieve_result
         self.last_alt = None
 
         self.inp = cmsis.nrlmsise_input()
         self.output = cmsis.nrlmsise_output()
         self.flags = cmsis.nrlmsise_flags()
-        # Use imported constants
         self.month2doy = MONTH_TO_DAY_OF_YEAR
         self.locations = LOCATIONS
         self.daytimes = DAY_TIMES_SEC
@@ -54,8 +57,14 @@ class NRLMSISE00Base:
         self._retrieve_result(altitude_cm)
         return self.output.d[5]
 
+    def density_profile(self, h_vec):
+        """Density in g/cm^3 at the heights ``h_vec`` in cm."""
+        return np.vectorize(self.get_density)(h_vec)
+
 
 class cNRLMSISE00(NRLMSISE00Base):
+    """NRLMSISE-00 through the C library, by default at the South Pole in June."""
+
     def init_default_values(self):
         """Sets default to June at South Pole"""
 

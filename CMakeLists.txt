@@ -17,18 +17,17 @@ else()
 endif()
 
 # Both loaders scan their own directory for `_lib*${EXT_SUFFIX}`, so the .so
-# has to land beside the __init__.py that loads it. These DESTINATIONs are the
-# only place the environment/_ext layout is written down (Phase 3, D26).
+# has to land beside the __init__.py that loads it.
 python_add_library(
-  _libnrlmsise00 MODULE src/MCEq/environment/_ext/nrlmsise00/nrlmsise-00_data.c
-  src/MCEq/environment/_ext/nrlmsise00/nrlmsise-00.c WITH_SOABI)
+  _libnrlmsise00 MODULE src/MCEq/geometry/nrlmsise00/nrlmsise-00_data.c
+  src/MCEq/geometry/nrlmsise00/nrlmsise-00.c WITH_SOABI)
 install(TARGETS _libnrlmsise00
-        DESTINATION ${INSTALL_DIR}/environment/_ext/nrlmsise00)
+        DESTINATION ${INSTALL_DIR}/geometry/nrlmsise00)
 
 python_add_library(_libcorsikaatm MODULE
-                   src/MCEq/environment/_ext/corsikaatm/corsikaatm.c WITH_SOABI)
+                   src/MCEq/geometry/corsikaatm/corsikaatm.c WITH_SOABI)
 install(TARGETS _libcorsikaatm
-        DESTINATION ${INSTALL_DIR}/environment/_ext/corsikaatm)
+        DESTINATION ${INSTALL_DIR}/geometry/corsikaatm)
 
 # Platform-neutral fused ETD2 step stages — no sparse-backend deps, builds on
 # every platform. The host backend runs them on every route and precision.

@@ -22,10 +22,10 @@ layers =
     config
 
 [importlinter:contract:environment]
-name = environment does not import the cascade stack
+name = geometry does not import the cascade stack
 type = forbidden
 source_modules =
-    MCEq.environment
+    MCEq.geometry
 forbidden_modules =
     MCEq.core
     MCEq.batch

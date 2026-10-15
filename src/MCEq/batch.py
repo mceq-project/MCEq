@@ -7,7 +7,7 @@ from time import time
 import numpy as np
 
 from MCEq import config
-from MCEq.environment.geomagnetic.cutoff import get_cutoff_map
+from MCEq.geometry.cutoff import get_cutoff_map
 from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
@@ -491,7 +491,7 @@ class BatchSolver:
               uses the run setting, which by default is on for MSIS and
               location-tagged atmospheres.
             cutoff_kwargs: keywords of
-              :func:`MCEq.environment.geomagnetic.cutoff.get_cutoff_map`.
+              :func:`MCEq.geometry.cutoff.get_cutoff_map`.
 
         Returns:
             :class:`MCEqBatchResult`, or ``(result, pixel_index)``.

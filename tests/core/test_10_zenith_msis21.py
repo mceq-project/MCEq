@@ -12,6 +12,7 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 import MCEq.geometry.density_profiles as dprof
+import MCEq.geometry.msis21 as m21
 
 # ---------------------------------------------------------------------------
 # set_zenith_azimuth / set_theta_deg deprecation tests
@@ -85,7 +86,7 @@ def test_msis21_atmosphere_smoke():
     check it returns a physically sane, monotonically decreasing density.
     """
     pytest.importorskip("nrlmsis")
-    atm = dprof.MSIS21Atmosphere("SouthPole", season="January")
+    atm = m21.MSIS21Atmosphere("SouthPole", season="January")
     rho_low = atm.get_density(2.0e5)  # 2 km in cm
     rho_high = atm.get_density(3.0e6)  # 30 km in cm
     assert rho_low > 0.0

@@ -29,7 +29,7 @@
 #include <stddef.h>
 
 /* Windows: export each function from the DLL. Mirrors the pattern in
- * src/MCEq/environment/_ext/{corsikaatm,nrlmsise00}/*.c. On non-MSVC platforms
+ * src/MCEq/geometry/{corsikaatm,nrlmsise00}/*.c. On non-MSVC platforms
  * the attribute resolves to nothing and default ELF/Mach-O symbol
  * visibility applies. */
 #if defined(_MSC_VER) && _MSC_VER >= 1200

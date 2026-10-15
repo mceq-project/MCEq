@@ -28,7 +28,6 @@ Various models/parameterizations for particle interactions and atmospheric densi
   solver_math
   data_installation
   v14v13_diff
-  migration_v2_layout
   mceq_v1.x_v2_diff
   citeus
   api-reference/index

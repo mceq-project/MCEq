@@ -80,19 +80,21 @@ under `docs/` (Sphinx).
 ## Code map
 
 1. `src/MCEq/core.py` — `MCEqRun`, the user-facing class: builds the system
-   from the HDF5 DB, owns interaction/decay matrices, orchestrates solving.
-2. `src/MCEq/config.py` — module-level configuration + DB auto-download.
-3. `src/MCEq/data.py` — HDF5 backend (`HDF5Backend`, `Interactions`, `Decays`,
-   `InteractionCrossSections`, `ContinuousLosses`).
+   from the HDF5 DB, owns interaction/decay matrices, orchestrates solving;
+   `src/MCEq/batch.py` adds the batched and full-sky solves.
+2. `src/MCEq/config/` — module-level configuration; `detect.py` probes MKL,
+   CUDA and Accelerate.
+3. `src/MCEq/data/` — HDF5 backend (`HDF5Backend`, `Interactions`, `Decays`,
+   `InteractionCrossSections`, `ContinuousLosses`), model equivalences, DB download.
 4. `src/MCEq/particlemanager.py` — `ParticleManager`/`MCEqParticle`: particle
    properties and matrix-index mapping (uses `particletools`).
-5. `src/MCEq/solvers.py` — ETD2 integration kernels (numpy/MKL/Accelerate/CUDA).
-6. `src/MCEq/environment/` — atmospheres, columns, geomagnetic cutoffs;
-   `src/MCEq/geometry/` keeps the census-kept shims (`geometry.py`,
-   `density_profiles.py`, `geometry.py`, C-extension
-   re-exports under `nrlmsise00/`, `corsikaatm/`; built via CMake into
-   `environment/_ext/`).
-7. `src/MCEq/models/ddm/` — `ddm.py`, `ddm_utils.py`: Data-Driven Model.
+5. `src/MCEq/operators/` — matrix assembly and the compiled operator;
+   `src/MCEq/solvers/` — ETD2 step loop and backends (numpy/MKL/Accelerate/CUDA).
+6. `src/MCEq/geometry/` — atmospheres (`density_profiles.py`, `msis21.py`),
+   `target.py`, `geometry.py`, `atmosphere_parameters.py`, geomagnetic
+   `cutoff.py`; the C extensions `nrlmsise00/` and `corsikaatm/` are built via
+   CMake next to their loaders.
+7. `src/MCEq/ddm.py`, `src/MCEq/ddm_utils.py` — the Data-Driven Model.
 
 ## Build & test
 

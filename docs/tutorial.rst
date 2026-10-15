@@ -120,7 +120,7 @@ Available models are:
   (Fortran-via-C), offering the same sites as the MSIS21 family. Kept for
   back-compat. Also fork-safe.
 - 'CORSIKA' - Linsley-parameterizations from the CORSIKA air-shower MC
-  (see :class:`MCEq.environment.corsika.CorsikaAtmosphere`).
+  (see :class:`MCEq.geometry.density_profiles.CorsikaAtmosphere`).
 - 'AIRS' - tabulated satellite data (not provided), extrapolated with MSIS00 above 50 km.
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.

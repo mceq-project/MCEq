@@ -13,12 +13,9 @@ from MCEq import config
 from MCEq.batch import BatchSolver, resolve_dtype
 from MCEq.config import detect
 from MCEq.data.download import ensure_db_available
-from MCEq.environment import registry
-from MCEq.environment.base import EarthsAtmosphere
-from MCEq.environment.msis00 import MSIS00Atmosphere
-from MCEq.environment.msis21 import MSIS21Atmosphere
-from MCEq.environment.parameters import LOCATIONS
-from MCEq.environment.target import GeneralizedTarget
+from MCEq.geometry import density_profiles as dp
+from MCEq.geometry import msis21
+from MCEq.geometry.atmosphere_parameters import LOCATIONS
 from MCEq.initial_state import deposit_single_primary, fill_nucleons
 from MCEq.misc import info, normalize_hadronic_model_name
 from MCEq.operators.compiled import compile_operator
@@ -35,6 +32,20 @@ from MCEq.solvers.path import (
 )
 
 __all__ = ["MCEqRun", "MatrixBuilder"]
+
+#: The atmospheres of :meth:`MCEqRun.set_density_model` by name.
+DENSITY_MODELS = {
+    "MSIS00": dp.MSIS00Atmosphere,
+    "MSIS00_IC": dp.MSIS00IceCubeCentered,
+    "MSIS00_KM3NeT": dp.MSIS00KM3NeTCentered,
+    "MSIS21": msis21.MSIS21Atmosphere,
+    "MSIS21_IC": msis21.MSIS21IceCubeCentered,
+    "MSIS21_KM3NeT": msis21.MSIS21KM3NeTCentered,
+    "CORSIKA": dp.CorsikaAtmosphere,
+    "AIRS": dp.AIRSAtmosphere,
+    "Isothermal": dp.IsothermalAtmosphere,
+    "GeneralizedTarget": dp.GeneralizedTarget,
+}
 
 
 class MCEqRun(BatchSolver):
@@ -401,32 +412,35 @@ class MCEqRun(BatchSolver):
 
         ``density_model_or_config`` is a ``(model, config)`` tuple, e.g.
         ``("CORSIKA", ("PL_SouthPole", "January"))`` (choices in
-        :mod:`MCEq.environment.registry`), or an instance of
-        :class:`~MCEq.environment.base.EarthsAtmosphere` or
-        :class:`~MCEq.environment.target.GeneralizedTarget`.
+        :data:`DENSITY_MODELS`), or an instance of
+        :class:`~MCEq.geometry.density_profiles.EarthsAtmosphere` or
+        :class:`~MCEq.geometry.target.GeneralizedTarget`.
         """
         if not isinstance(
-            density_model_or_config, (EarthsAtmosphere, GeneralizedTarget)
+            density_model_or_config, (dp.EarthsAtmosphere, dp.GeneralizedTarget)
         ):
             base_model, model_config = density_model_or_config
-            if base_model not in registry.DENSITY_MODELS:
+            if base_model not in DENSITY_MODELS:
                 info(
                     0,
                     "Unknown density model. Available choices are:\n",
-                    "\n".join(registry.available_models()),
+                    "\n".join(DENSITY_MODELS),
                 )
                 raise ValueError("Choose a different profile.")
             info(1, "Setting density profile to", base_model, model_config)
-            self.density_model = registry.build(base_model, model_config)
+            if base_model == "GeneralizedTarget":
+                self.density_model = dp.GeneralizedTarget()
+            else:
+                self.density_model = DENSITY_MODELS[base_model](*model_config)
         else:
             self.density_model = density_model_or_config
 
         self.integration_path = None  # the angle cache cannot see a model switch
         if self.theta_deg is not None and isinstance(
-            self.density_model, EarthsAtmosphere
+            self.density_model, dp.EarthsAtmosphere
         ):
             self.set_zenith_azimuth(self.theta_deg)
-        elif not isinstance(self.density_model, GeneralizedTarget):
+        elif not isinstance(self.density_model, dp.GeneralizedTarget):
             raise ValueError(f"Density model {self.density_model} not supported.")
 
     def set_zenith_azimuth(self, zenith_deg, azimuth_deg=None):
@@ -447,7 +461,7 @@ class MCEqRun(BatchSolver):
             f"Zenith angle {zenith_deg:6.2f}"
             + (f", azimuth {azimuth_deg:6.2f}" if azimuth_deg is not None else ""),
         )
-        if isinstance(self.density_model, GeneralizedTarget):
+        if isinstance(self.density_model, dp.GeneralizedTarget):
             raise Exception("GeneralizedTarget does not support angles.")
 
         cached_theta = self.density_model.theta_deg
@@ -602,7 +616,7 @@ class MCEqRun(BatchSolver):
     def _is_geomag_eligible_atmosphere(self):
         """MSIS atmospheres and atmospheres at a known location get the cutoff by default."""
         dm = self.density_model
-        if isinstance(dm, (MSIS00Atmosphere, MSIS21Atmosphere)):
+        if isinstance(dm, dp.MSISAtmosphere):
             return True
         loc = getattr(dm, "location", None)
         return isinstance(loc, str) and loc in LOCATIONS

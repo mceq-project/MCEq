@@ -12,7 +12,7 @@ if sys.platform.startswith("win") and sys.maxsize <= 2**32:
     pytest.skip("Skip model test on 32-bit Windows.", allow_module_level=True)
 
 import MCEq.geometry.density_profiles as dprof
-from MCEq.environment.parameters import list_available_corsika_atmospheres
+from MCEq.geometry.atmosphere_parameters import list_available_corsika_atmospheres
 
 msis_atmospheres = [
     "SouthPole",

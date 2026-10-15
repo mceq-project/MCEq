@@ -10,7 +10,8 @@ from typing import Optional
 import numpy as np
 
 from MCEq import config
-from MCEq.environment.parameters import LOCATIONS
+from MCEq.geometry.atmosphere_parameters import LOCATIONS
+from MCEq.misc import info
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
 # or the gtracr API changes in a backward-incompatible way).
@@ -20,39 +21,6 @@ CACHE_VERSION = 2
 # pixel grids are linearly interpolated from this.
 _NATIVE_N_ZEN = 180
 _NATIVE_N_AZ = 360
-
-
-def _try_tqdm():
-    """Return a tqdm callable or a no-op stand-in if tqdm is unavailable."""
-    try:
-        from tqdm import tqdm
-
-        return tqdm
-    except ImportError:  # pragma: no cover
-
-        class _NoTqdm:
-            def __init__(self, iterable=None, total=None, **kw):
-                self.iterable = iterable
-
-            def __iter__(self):
-                return iter(self.iterable or [])
-
-            def update(self, n=1):
-                pass
-
-            def close(self):
-                pass
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                pass
-
-            def set_postfix_str(self, *a, **k):
-                pass
-
-        return _NoTqdm
 
 
 def _cache_dir() -> Path:
@@ -87,7 +55,7 @@ def _gtracr_location_from_atmosphere(density_model):
     """Resolve an MCEq atmosphere to ``(name, lat, lon)`` for gtracr.
 
     Coordinates come from ``_detector_latitude/_longitude`` of detector-centred
-    models, or from :data:`MCEq.environment.parameters.LOCATIONS` for a named
+    models, or from :data:`MCEq.geometry.atmosphere_parameters.LOCATIONS` for a named
     site. The name is only a cache label: ``_detector_name`` if set, ``IceCube``
     at (-90, 0), otherwise a string encoding the coordinates.
 
@@ -137,7 +105,7 @@ def get_cutoff_map(
     """Return a rigidity-cutoff map ``R_c[zen, az]`` in GV.
 
     Hits a per-installation cache under ``config.data_dir/gtracr_cutoffs/``;
-    if absent, runs gtracr with a tqdm progress bar and writes the file.
+    if absent, runs gtracr and writes the file.
 
     Args:
         density_model: an MCEq atmosphere object with detector geography.
@@ -211,17 +179,11 @@ def get_cutoff_map(
             solver="rk45",
         )
 
-        tqdm_cls = _try_tqdm()
-        bar = tqdm_cls(
-            total=iter_num,
-            desc=f"gtracr {location_name} {bfield_type}",
-            unit="traj",
-        )
+        info(1, f"gtracr: {iter_num} trajectories at {location_name} ({bfield_type})")
         t0 = _time.monotonic()
         gmrc.evaluate_batch(dt=1e-5, max_time=1.0)
-        bar.update(iter_num)
-        bar.close()
         wall = _time.monotonic() - t0
+        info(1, f"gtracr: done in {wall:.0f}s")
 
         g_az, g_zen, g_rc = gmrc.bin_results(
             nbins_azimuth=_NATIVE_N_AZ,

@@ -1,35 +1,8 @@
-"""Three divergences among the four density-spline tails, pinned as behaviour.
+"""Backend behaviour of the NRLMSIS atmospheres: negative heights and the noon convention.
 
-``EarthsAtmosphere.calculate_density_spline`` and the three overrides
-(``MSIS00LocationCentered`` for azimuth-averaging mode,
-``MSIS21Atmosphere``, ``MSIS21LocationCentered``) compute the same
-:math:`\\rho(X)` from the same geometry, and they do not agree bitwise. Phase 3
-merges them into one ``environment/atmosphere`` tail, so each divergence is
-recorded here first: every test below FAILS once the tails are unified, which
-is the point — the unification has to come with a statement of which form it
-kept, not a silent choice.
-
-The three:
-
-1. **``geom.h`` on an array against ``geom.h`` per scalar.** Two tails call it
-   once on the whole ``dl`` vector, two loop over the samples, and the results
-   differ by one ULP of ``r_E``.
-2. **The ``z >= 0`` clamp.** The two MSIS21 tails clamp with
-   ``np.maximum(h / 1e5, 0.0)``; the base tail and the azimuth-averaged MSIS00
-   tail hand the raw height to the backend, and the height *is* negative — by
-   one ULP of ``r_E`` — at one or two of the 2000 samples for a good fraction
-   of the zenith range.
-3. **The kg -> g scaling order in the azimuth average.**
-   ``MSIS21LocationCentered.get_density`` multiplies each direction's density
-   by 1e-3 and then sums; its ``calculate_density_spline`` sums and then
-   multiplies once.
-
-Sizes are asserted with bounds, not equalities: the exact counts are host
-libm's, and they live in the ``environment`` golden section
-(``geom_h/forms``, ``extra.n_geometries_where_h_forms_differ``), which is
-``golden_host`` for exactly this reason. What is asserted here is the
-structure — that the divergence exists, which code path takes which side, and
-that the magnitude is the one-ULP cancellation and not something larger.
+Near the observation level the sampled height can be negative by one ULP of
+``r_E``. NRLMSISE-00 receives that height; NRLMSIS 2.1 clamps ``z`` at 0 km.
+MSIS00 holds local noon, MSIS21 UT noon.
 """
 
 from __future__ import annotations
@@ -37,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import MCEq.geometry.msis21 as m21
 from MCEq.geometry import density_profiles as dp
 from MCEq.geometry.geometry import EarthGeometry
 
@@ -64,139 +38,7 @@ def _h_both_ways(geom, thrad, n_steps=N_STEPS):
 
 
 # --------------------------------------------------------------------------
-# 1. geom.h: array against scalar
-# --------------------------------------------------------------------------
-
-
-def test_geom_h_disagrees_between_an_array_call_and_a_scalar_loop():
-    """One ULP of ``r_E``, at 258 of 901 zeniths -- 29 %, not a fifth.
-
-    ``h`` returns ``sqrt(A_2^2 + (A_1 + l - dl)^2) - r_E``. numpy lowers
-    ``arr ** 2`` to a multiply and sends a float64 *scalar* ``** 2`` through
-    libm ``pow``, which is 1 ULP off at some arguments; the ``- r_E`` then
-    rewrites that as 1 ULP of 6.37e8 cm on a height of order 1e6.
-
-    Measured on this host at 0.1 deg resolution: 258 of 901 zeniths, always
-    one or two of the 2000 samples, always exactly 1.1920929e-07 cm. The
-    counts are the golden section's (``geom_h/forms``); here only the
-    structure is asserted.
-    """
-    geom = EarthGeometry()
-    differing, worst = [], 0.0
-    for theta in ZENITH_GRID_DEG:
-        as_array, per_scalar = _h_both_ways(geom, np.deg2rad(theta))
-        delta = np.abs(as_array - per_scalar)
-        if np.any(delta):
-            differing.append(float(theta))
-            worst = max(worst, float(delta.max()))
-
-    assert differing, (
-        "geom.h now agrees on an array and per scalar over the whole zenith "
-        "grid. If the tails were unified, say which form was kept and update "
-        "the environment golden's geom_h/forms; if libm changed, this test "
-        "and that array both move."
-    )
-    ulp = float(np.spacing(geom.r_E))
-    assert worst <= 2 * ulp, (
-        f"array-vs-scalar geom.h differs by {worst:.3e} cm, more than two ULP "
-        f"of r_E ({2 * ulp:.3e} cm). That is no longer the pow-against-multiply "
-        f"cancellation this pins."
-    )
-
-
-def test_scalar_and_array_squares_agree_within_roundoff():
-    """libm pow may differ from a multiply by one ULP, or agree exactly.
-
-    Exact agreement is valid (notably Windows); a rounding witness is not
-    a portable requirement of either Python or the geometry calculation.
-    """
-    geom = EarthGeometry()
-    thrad = np.deg2rad(0.1)
-    xs = (
-        geom._A_1(thrad)
-        + geom.path_len(thrad)
-        - np.linspace(0.0, geom.path_len(thrad), N_STEPS)
-    )
-
-    squared_as_array = xs**2
-    assert np.array_equal(squared_as_array, xs * xs), (
-        "numpy no longer lowers `arr ** 2` to a multiply, so the array tails "
-        "and the scalar ones may have swapped sides"
-    )
-
-    scalar_squared = np.array([float(x) ** 2 for x in xs])
-    np.testing.assert_array_max_ulp(scalar_squared, squared_as_array, maxulp=1)
-
-
-def test_the_environment_golden_labels_each_tail_with_the_form_it_uses():
-    """``gen_environment.h_form`` against a count of the ``geom.h`` calls.
-
-    The golden section stores a per-cell ``h_form``, and a claim in a golden is
-    worth what verifies it. This counts the calls the tail actually makes: one
-    for an array tail, ``O(n_steps)`` for a scalar one.
-
-    ``calculate_density_spline`` is called directly at ``n_steps=50`` after
-    ``set_theta`` has established the mode, so the count is cheap and the two
-    azimuth modes of the detector-centred models are both reachable.
-    """
-    from tests.helpers.atmosphere import h_form
-
-    cases = (
-        ("CorsikaAtmosphere", dp.CorsikaAtmosphere("BK_USStd", None), (60.0,)),
-        (
-            "IsothermalAtmosphere",
-            dp.IsothermalAtmosphere("SouthPole", "January"),
-            (60.0,),
-        ),
-        ("MSIS00Atmosphere", dp.MSIS00Atmosphere("SouthPole", "January"), (60.0,)),
-        (
-            "MSIS00KM3NeTCentered",
-            dp.MSIS00KM3NeTCentered("ORCA", "January", n_azimuth=2),
-            (60.0, None),
-        ),
-    )
-    if _have_nrlmsis():
-        cases += (
-            ("MSIS21Atmosphere", dp.MSIS21Atmosphere("SouthPole", "January"), (60.0,)),
-            (
-                "MSIS21KM3NeTCentered",
-                dp.MSIS21KM3NeTCentered("ORCA", "January", n_azimuth=2),
-                (60.0, None),
-            ),
-        )
-
-    for cls_name, atm, azimuths in cases:
-        for azimuth in azimuths:
-            if azimuth is None:
-                atm.set_theta(60.0)
-            elif atm.depends_on_azimuth:
-                atm.set_theta(60.0, azimuth)
-            else:
-                atm.set_theta(60.0)
-
-            calls = []
-            real = atm.geom.h
-            atm.geom.h = lambda dl, thrad, _r=real, _c=calls: (
-                _c.append(np.size(dl)),
-                _r(dl, thrad),
-            )[1]
-            try:
-                atm.calculate_density_spline(n_steps=50)
-            finally:
-                del atm.geom.h
-
-            measured = "array" if max(calls) > 1 else "scalar"
-            assert measured == h_form(cls_name), (
-                f"{cls_name} (azimuth {azimuth}) calls geom.h in {len(calls)} "
-                f"call(s) of width {sorted(set(calls))}, which reads as "
-                f"{measured!r}, while gen_environment.h_form says "
-                f"{h_form(cls_name)!r}. The golden section's h_form array and "
-                f"the tails have drifted apart."
-            )
-
-
-# --------------------------------------------------------------------------
-# 2. the z >= 0 clamp
+# the z >= 0 clamp
 # --------------------------------------------------------------------------
 
 
@@ -293,10 +135,10 @@ def test_the_averaged_msis00_tail_hands_the_negative_height_to_the_backend():
     "maker",
     [
         pytest.param(
-            lambda: dp.MSIS21Atmosphere("SouthPole", "January"), id="MSIS21Atmosphere"
+            lambda: m21.MSIS21Atmosphere("SouthPole", "January"), id="MSIS21Atmosphere"
         ),
         pytest.param(
-            lambda: dp.MSIS21KM3NeTCentered("ORCA", "January", n_azimuth=2),
+            lambda: m21.MSIS21KM3NeTCentered("ORCA", "January", n_azimuth=2),
             id="MSIS21KM3NeTCentered",
         ),
     ],
@@ -312,8 +154,8 @@ def test_the_msis21_tails_clamp_the_negative_height_to_zero(maker):
     atm = maker()
 
     seen: list[np.ndarray] = []
-    real = atm._model.calc_altitude_array
-    atm._model.calc_altitude_array = lambda _r=real, _s=seen, **kw: (
+    real = atm._msis._model.calc_altitude_array
+    atm._msis._model.calc_altitude_array = lambda _r=real, _s=seen, **kw: (
         _s.append(np.array(kw["z"], copy=True)),
         _r(**kw),
     )[1]
@@ -335,7 +177,7 @@ def test_the_msis21_tails_clamp_the_negative_height_to_zero(maker):
                     )
                 clamped.append(theta)
     finally:
-        del atm._model.calc_altitude_array
+        del atm._msis._model.calc_altitude_array
 
     assert clamped, (
         f"no zenith in {CLAMP_SCAN_DEG} produced a negative raw height at "
@@ -344,67 +186,8 @@ def test_the_msis21_tails_clamp_the_negative_height_to_zero(maker):
 
 
 # --------------------------------------------------------------------------
-# 3. the kg -> g scaling order in the azimuth average
+# scalar and batched NRLMSIS 2.1
 # --------------------------------------------------------------------------
-
-
-def test_the_azimuth_average_scales_before_summing_in_one_tail_and_after_in_the_other():
-    """``get_density`` converts per direction; the spline tail converts once.
-
-    ``MSIS21LocationCentered.get_density`` accumulates
-    ``densities[0] * 1.0e-3`` and divides by ``n``;
-    ``calculate_density_spline`` accumulates ``densities[0]``, divides, then
-    multiplies by ``1.0e-3``. Floating-point multiplication does not commute
-    with a sum, so the two orders disagree on most samples.
-
-    Measured on this host over the tail's own 36 per-direction arrays at
-    zenith 60: 1497 of 2000 samples differ for IceCube and 1548 for ORCA, at
-    9.2e-16 and 1.1e-15 relative. Asserted here as "they differ, by less than
-    an ULP-scale bound".
-    """
-    pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    atm = dp.MSIS21IceCubeCentered("SouthPole", "January")
-
-    captured: list[np.ndarray] = []
-    real = atm._model.calc_altitude_array
-    atm._model.calc_altitude_array = lambda _r=real, _c=captured, **kw: _capture(
-        _c, _r(**kw)
-    )
-    try:
-        atm.set_theta(60.0)  # averaged over n_azimuth directions
-    finally:
-        del atm._model.calc_altitude_array
-
-    assert atm._azimuth_averaging
-    assert len(captured) == atm._n_azimuth, (
-        f"the averaged tail issued {len(captured)} backend calls for "
-        f"{atm._n_azimuth} directions"
-    )
-
-    n = len(captured)
-    sum_then_scale = np.zeros_like(captured[0])
-    scale_then_sum = np.zeros_like(captured[0])
-    for rho_kg in captured:
-        sum_then_scale += rho_kg
-        scale_then_sum += rho_kg * 1.0e-3
-    sum_then_scale = sum_then_scale / n * 1.0e-3
-    scale_then_sum = scale_then_sum / n
-
-    assert not np.array_equal(sum_then_scale, scale_then_sum), (
-        "the two kg->g orders now agree bitwise, so either "
-        "MSIS21LocationCentered.get_density and its calculate_density_spline "
-        "have been unified — say which order was kept — or the arrays are "
-        "degenerate"
-    )
-    n_diff = int(np.count_nonzero(sum_then_scale != scale_then_sum))
-    maxrel = float(
-        np.max(np.abs(sum_then_scale - scale_then_sum) / np.abs(scale_then_sum))
-    )
-    assert 0 < maxrel < 1e-14, (
-        f"the scaling order moves the averaged density by {maxrel:.3e} "
-        f"relative at {n_diff} of {sum_then_scale.size} samples. Above an "
-        f"ULP-scale bound that is not a reassociation any more."
-    )
 
 
 def _capture(sink, result):
@@ -427,21 +210,21 @@ def test_scalar_and_batched_msis21_agree_within_numerical_precision():
     API requirement.
     """
     pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    atm = dp.MSIS21Atmosphere("SouthPole", "January")
+    atm = m21.MSIS21Atmosphere("SouthPole", "January")
     atm.set_theta(60.0)
 
     dl = np.linspace(0.0, atm.geom.path_len(atm.thrad), 200)
     h = atm.geom.h(dl, atm.thrad)
     batched = (
-        atm._model.calc_altitude_array(
-            day=atm._doy,
-            utsec=atm._sec,
+        atm._msis._model.calc_altitude_array(
+            day=atm._msis._doy,
+            utsec=atm._msis._sec,
             z=np.maximum(h / 1.0e5, 0.0),
-            lat=atm._lat,
-            lon=atm._lon,
-            sfluxavg=atm._f107a,
-            sflux=atm._f107,
-            ap=atm._ap,
+            lat=atm._msis._lat,
+            lon=atm._msis._lon,
+            sfluxavg=atm._msis._f107a,
+            sflux=atm._msis._f107,
+            ap=atm._msis._ap,
         ).densities[0]
         * 1.0e-3
     )
@@ -473,8 +256,8 @@ def test_msis00_holds_every_site_at_local_noon():
     non-Greenwich site at 12:00 UT -- Tokyo came out at lst 21.3, a night
     atmosphere).
     """
-    from MCEq.environment.msis00_backend import cNRLMSISE00
-    from MCEq.environment.parameters import LOCATIONS
+    from MCEq.geometry.atmosphere_parameters import LOCATIONS
+    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
     for site, (lon, _lat, _alt) in LOCATIONS.items():
         msis = cNRLMSISE00()
@@ -491,7 +274,7 @@ def test_msis00_holds_every_site_at_local_noon():
 
 def test_msis00_local_noon_survives_a_coordinate_change():
     """``set_location_coord`` must re-derive, not keep the previous site's UT."""
-    from MCEq.environment.msis00_backend import cNRLMSISE00
+    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
     msis = cNRLMSISE00()
     for lon in (0.0, 139.0, -117.2, 180.0, -180.0):
@@ -517,9 +300,9 @@ def test_msis00_is_local_noon_and_msis21_is_ut_noon():
     is what says so.
     """
     pytest.importorskip("nrlmsis", reason="MSIS21 is opt-in")
-    from MCEq.environment.msis00_backend import cNRLMSISE00
-    from MCEq.environment.msis21 import MSIS21Atmosphere
-    from MCEq.environment.parameters import DAY_TIMES_SEC
+    from MCEq.geometry.atmosphere_parameters import DAY_TIMES_SEC
+    from MCEq.geometry.msis21 import MSIS21Atmosphere
+    from MCEq.geometry.nrlmsise00_mceq import cNRLMSISE00
 
     tokyo_lon = 139.0
 
@@ -528,10 +311,10 @@ def test_msis00_is_local_noon_and_msis21_is_ut_noon():
     assert msis00.inp.lst.value == pytest.approx(12.0)
 
     atm21 = MSIS21Atmosphere("Tokyo", "January")
-    assert atm21._sec == pytest.approx(DAY_TIMES_SEC["day"]), (
+    assert atm21._msis._sec == pytest.approx(DAY_TIMES_SEC["day"]), (
         "MSIS21 no longer uses a fixed UT second; re-derive this pin"
     )
-    msis21_lst = (atm21._sec / 3600.0 + tokyo_lon / 15.0) % 24.0
+    msis21_lst = (atm21._msis._sec / 3600.0 + tokyo_lon / 15.0) % 24.0
     assert msis21_lst == pytest.approx(21.266, abs=1e-3)
 
     assert abs(msis21_lst - msis00.inp.lst.value) == pytest.approx(9.266, abs=1e-3)
