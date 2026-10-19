@@ -20,6 +20,7 @@ def test_subset_preserves_selected_tables(tmp_path):
     source, target = tmp_path / "source.h5", tmp_path / "subset.h5"
     with h5py.File(source, "w") as original:
         original.attrs["version"] = 142
+        original.attrs["mceq_db_manifest"] = "mceq_db_manifest_v2.yaml"
         for name in ("common/grid", "decays/air/values", "continuous_losses/air/mu"):
             original.create_dataset(name, data=np.arange(6, dtype=np.float64))
         for group in ("cross_sections", "hadronic_interactions"):
@@ -29,7 +30,12 @@ def test_subset_preserves_selected_tables(tmp_path):
                 original.create_dataset(f"{group}/air/{model}_indptrs", data=[0, 3])
     gallery.subset_database(source, target, ["KEEP"])
     with h5py.File(source) as original, h5py.File(target) as subset:
-        assert dict(subset.attrs) == dict(original.attrs)
+        # Self-contained: the manifest pointer is dropped, the model list
+        # names only the kept models; every other attribute is copied.
+        expected = dict(original.attrs)
+        del expected["mceq_db_manifest"]
+        expected["mceq_db_models"] = json.dumps({"air": ["KEEP"]})
+        assert dict(subset.attrs) == expected
         names = []
         subset.visit(names.append)
         for name in names:

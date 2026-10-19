@@ -1,31 +1,32 @@
 .. _example-gallery:
 
-**********
-Examples 
-**********
+********
+Examples
+********
+
+The examples are `marimo <https://marimo.io>`_ notebooks in the
+`examples/ <https://github.com/mceq-project/MCEq/tree/main/examples>`_
+folder of the repository, grouped by topic. Each one is published as a static
+page with its solved figures, together with a plain Jupyter copy and the
+marimo source.
+
+.. only:: examples_site
+
+    `Open the example gallery <examples/index.html>`_
+
+.. only:: not examples_site
+
+    The rendered pages are built by ``python scripts/build_examples.py``
+    (see below); this documentation build did not include them.
 
 .. only:: browser_gallery
 
     .. card:: Atmospheric lepton fluxes · Run in your browser
         :link: browser/basic-flux/
 
-        Muons and neutrinos at ground level. Edit the configuration, run the
-        cascade, and download a clean Jupyter notebook.
+        Muons and neutrinos at ground level, computed in the browser with
+        Pyodide. Edit the configuration, run the cascade, and download a clean
+        Jupyter notebook.
 
-        SIBYLL 2.3e · QGSJET-II-04 · No Python installation needed.
-
-Download the :download:`marimo source <examples/Basic_flux.py>` or the
-:download:`Jupyter notebook <examples/Basic_flux.ipynb>`.
-See the :doc:`editing and browser-build notes <marimo-examples>`.
-
-.. toctree::
-    :hidden:
-
-    marimo-examples
-
-
-.. nbgallery::
-    :glob:
-    :reversed:
-
-    examples/*
+.. include:: ../examples/README.md
+    :parser: myst_parser.sphinx_

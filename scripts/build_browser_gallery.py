@@ -33,6 +33,9 @@ def subset_database(source, target, models):
     with h5py.File(source, "r") as original, h5py.File(target, "w") as subset:
         for key, value in original.attrs.items():
             subset.attrs[key] = value
+        # A self-contained file: no manifest lookups for missing models.
+        subset.attrs.pop("mceq_db_manifest", None)
+        subset.attrs["mceq_db_models"] = json.dumps({"air": list(models)})
         for name in ("common", "decays"):
             original.copy(name, subset)
         original.copy(
@@ -107,21 +110,21 @@ def configure_browser(index):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--database", type=Path, help="Public v142 database; downloaded if omitted"
+        "--database", type=Path,
+        help="v2 release package; the default 1D package if omitted",
     )
     parser.add_argument(
         "--output", type=Path, default=ROOT / "docs/_build/site/browser"
     )
-    parser.add_argument("--models", nargs="+", default=["SIBYLL23E", "QGSJETII04"])
+    parser.add_argument("--models", nargs="+", default=["SIBYLL23E"])
     args = parser.parse_args()
     if "SIBYLL23E" not in args.models:
         parser.error("--models must include SIBYLL23E, the notebook default")
     if args.database is None:
         from MCEq import config
-        from MCEq.data.download import ensure_db_available
+        from MCEq.data.download import ensure_package
 
-        ensure_db_available(config)
-        args.database = config.data_dir / config.mceq_db_fname
+        args.database = Path(ensure_package(config, config.mceq_db_fname))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     app_dir = output / "basic-flux"
@@ -134,7 +137,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         staging = Path(directory)
         wheel = browser_wheel(staging, project["dependencies"])
-        source = (ROOT / "docs/examples/Basic_flux.py").read_text()
+        source = (ROOT / "examples/getting_started/basic_flux.py").read_text()
         end = source.index("# ///", len("# /// script")) + len("# ///")
         dependencies = [
             "marimo==0.24.0",
@@ -149,7 +152,7 @@ def main():
             f"#     {json.dumps(dep)},\n" for dep in dict.fromkeys(dependencies)
         )
         header += "# ]\n# ///"
-        notebook = staging / "Basic_flux.py"
+        notebook = staging / "basic_flux.py"
         notebook.write_text(header + source[end:])
         subprocess.run(
             [

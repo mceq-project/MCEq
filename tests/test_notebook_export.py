@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("marimo")
-pytest.importorskip("nbformat")
+nbformat = pytest.importorskip("nbformat")
 
 from marimo._ast.app import InternalApp
 from marimo._ast.load import load_app
@@ -99,17 +99,25 @@ def test_export_rejects_unconverted_widget(tmp_path):
         jupyter_bytes(InternalApp(load_app(path)))
 
 
-def test_basic_flux_export_is_current():
-    source = Path(__file__).parents[1] / "docs/examples/Basic_flux.py"
+EXAMPLES = sorted((Path(__file__).parents[1] / "examples").glob("*/*.py"))
+
+
+@pytest.mark.parametrize("source", EXAMPLES, ids=lambda p: f"{p.parent.name}/{p.stem}")
+def test_every_example_exports_to_plain_jupyter(source):
+    """Each example converts without marimo left in the code cells."""
     exported = json.loads(jupyter_bytes(InternalApp(load_app(source))))
-    assert exported == json.loads(source.with_suffix(".ipynb").read_text())
+    nbformat.validate(nbformat.reads(json.dumps(exported), as_version=4))
+    code = "\n".join(
+        "".join(c["source"]) for c in exported["cells"] if c["cell_type"] == "code"
+    )
+    assert "import marimo" not in code
 
 
 def test_selected_controls_export_as_plain_configuration():
-    source = Path(__file__).parents[1] / "docs/examples/Basic_flux.py"
+    source = Path(__file__).parents[1] / "examples/getting_started/basic_flux.py"
     selected = {
         "interaction_model": "QGSJET-II-04",
-        "database": "mceq_db_lext_dpm193_v142.h5",
+        "database": "mceq_base_air_1d_v2.h5",
         "low_energy_model": None,
         "he_le_transition": 80.0,
         "he_le_trwidth": 0.3,

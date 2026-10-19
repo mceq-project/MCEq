@@ -120,7 +120,8 @@ def configuration_controls(defaults, mo):
     </div></div>
     """).batch(
         interaction_model=mo.ui.dropdown(
-            ["SIBYLL2.3e", "QGSJET-II-04"], value=defaults["interaction_model"],
+            ["SIBYLL2.3e"] if browser else ["SIBYLL2.3e", "QGSJET-II-04", "EPOS-LHC", "DPMJET-III-19.3"],
+            value=defaults["interaction_model"],
             label="Interaction model", full_width=True,
         ),
         low_energy_model=mo.ui.dropdown(
