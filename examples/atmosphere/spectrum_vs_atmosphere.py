@@ -17,10 +17,10 @@ def _(mo):
     mo.md(r"""
     # Atmosphere dependence of lepton fluxes
 
-    Flux ratios relative to the US Standard atmosphere for four alternative
-    profiles (CORSIKA South Pole Jan/Aug, MSIS00 South Pole Jan/Aug) at two
-    zenith angles. Reproduces Figure 5 of
-    [Fedynitch et al., IPRD 2015](http://inspirehep.net/record/1346929);
+    Muon and $\nu_\mu$ fluxes at the South Pole in January and August, relative
+    to the US Standard atmosphere: a warmer, less dense stratosphere lets more
+    pions and kaons decay before they interact. Reproduces Figure 5 of
+    [Fedynitch et al. 2015](http://inspirehep.net/record/1346929);
     values shifted slightly as MCEq evolved.
     """)
     return
@@ -30,25 +30,11 @@ def _(mo):
 def _():
     import marimo as mo
     import matplotlib.pyplot as plt
-    import numpy as np
-
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import (
-        apply_kernel_and_grid,
-        download_jupyter,
-        loop_progress,
-    )
+    from MCEq.notebook import apply_kernel_and_grid, solve_progress
 
-    return (
-        MCEqRun,
-        apply_kernel_and_grid,
-        config,
-        download_jupyter,
-        loop_progress,
-        mo,
-        plt,
-    )
+    return MCEqRun, apply_kernel_and_grid, config, mo, plt, solve_progress
 
 
 @app.cell(hide_code=True)
@@ -56,8 +42,14 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    The atmosphere set and the two zenith angles are the fixed subject of the
-    comparison; the controls tune the baseline run.
+    The atmospheres and the two zenith angles are the fixed subject of the
+    comparison: the South Pole in January (austral summer) and August
+    (winter), each as a CORSIKA five-layer parametrization
+    (`("CORSIKA", ("PL_SouthPole", month))`) and as NRLMSISE-00
+    (`("MSIS00", ("SouthPole", month))`), against the US Standard reference
+    `("CORSIKA", ("BK_USStd", None))`. The form tunes the baseline run:
+    hadronic interaction model, primary spectrum, cascade energy grid, and
+    solver backend.
     """)
     return
 
@@ -65,12 +57,11 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
-        "interaction_model": "SIBYLL21",
+        "database": "mceq_base_air_1d_v2.h5",
+        "interaction_model": "SIBYLL23E",
         "primary": "HillasGaisser2012:H3a",
-        "theta_deg": 0.0,
         "e_min": 1.0,
-        "e_max": 1.0e7,
+        "e_max": 1.0e9,
         "backend": "auto",
     }
     return (defaults,)
@@ -136,10 +127,13 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Compute fluxes for five atmospheres × two zeniths
+    ## 02 · Five atmospheres × two zenith angles in one batch
 
-    Inclined trajectories need more integration steps: the 90° rows are the
-    slow ones. Total (conventional + prompt) fluxes are stored per case.
+    `solve_batch(conditions=...)` takes one dict per member with
+    `density_model` and `zenith_deg`; it builds one integration path per
+    member and runs all ten on a single operator. The inclined (85°) paths
+    are the long ones; the original figure used 90°, which costs about three
+    times more steps for nearly the same ratios.
     """)
     return
 
@@ -160,43 +154,34 @@ def _(
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 
+    baseline = ("CORSIKA", ("BK_USStd", None))
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
         primary_model=primary_model,
         theta_deg=0.0,
+        density_model=baseline,
     )
+    return baseline, mceq_run
 
-    atmospheres = [
-        (("CORSIKA", ("PL_SouthPole", "January")), "red"),
-        (("CORSIKA", ("PL_SouthPole", "August")), "lightblue"),
-        (("MSIS00", ("SouthPole", "January")), "darkred"),
-        (("MSIS00", ("SouthPole", "August")), "blue"),
-        (("CORSIKA", ("BK_USStd", None)), "black"),
+
+@app.cell
+def _(baseline, mceq_run, solve_progress):
+    atmospheres = {
+        "CKA SP/Jan": ("CORSIKA", ("PL_SouthPole", "January")),
+        "CKA SP/Aug": ("CORSIKA", ("PL_SouthPole", "August")),
+        "MSIS00 SP/Jan": ("MSIS00", ("SouthPole", "January")),
+        "MSIS00 SP/Aug": ("MSIS00", ("SouthPole", "August")),
+        "US Std": baseline,
+    }
+    zeniths = (0.0, 85.0)
+    members = [(label, theta) for label in atmospheres for theta in zeniths]
+    conditions = [
+        {"density_model": atmospheres[label], "zenith_deg": theta}
+        for label, theta in members
     ]
-
-    mag = 3
-    mu_flux, numu_flux = {}, {}
-
-    def scan(advance):
-        for atmosphere, color in atmospheres:
-            mceq_run.set_density_model(atmosphere)
-            for theta in [0.0, 90.0]:
-                mceq_run.set_zenith_azimuth(theta)
-                mceq_run.solve()
-                advance(title=atmosphere[0])
-                mu_flux[(theta, atmosphere, color)] = (
-                    mceq_run.get_solution("total_mu+", mag)
-                    + mceq_run.get_solution("total_mu-", mag)
-                )
-                numu_flux[(theta, atmosphere, color)] = (
-                    mceq_run.get_solution("total_numu", mag)
-                    + mceq_run.get_solution("total_antinumu", mag)
-                )
-
-    with loop_progress(2 * len(atmospheres), "atmosphere x zenith scan") as advance:
-        scan(advance)
-    e_grid = mceq_run.e_grid
-    return e_grid, mu_flux, numu_flux
+    with solve_progress(f"{len(members)} atmosphere × zenith members") as progress:
+        batch = mceq_run.solve_batch(conditions=conditions, progress=progress)
+    return atmospheres, batch, members, zeniths
 
 
 @app.cell(hide_code=True)
@@ -204,55 +189,94 @@ def _(mo):
     mo.md(r"""
     ## 03 · Ratios to US Standard
 
-    Solid: vertical; dashed: 90°. The US Std curves are unity by construction.
+    Total (conventional + prompt) particle + antiparticle fluxes, divided by
+    the US Standard flux at the same zenith angle. Solid: vertical; dashed:
+    85°.
     """)
     return
 
 
 @app.cell
-def _(e_grid, mu_flux, numu_flux, plt):
-    titles = {
-        ("CORSIKA", ("PL_SouthPole", "January")): "CKA SP/Jan",
-        ("CORSIKA", ("PL_SouthPole", "August")): "CKA SP/Aug",
-        ("MSIS00", ("SouthPole", "January")): "MSIS00 SP/Jan",
-        ("MSIS00", ("SouthPole", "August")): "MSIS00 SP/Aug",
-        ("CORSIKA", ("BK_USStd", None)): "USStd",
+def _(batch, members, mceq_run):
+    energy = mceq_run.e_grid
+    species = {"mu": ("mu+", "mu-"), "numu": ("numu", "antinumu")}
+    fluxes = {
+        (lepton, label, theta): sum(
+            batch.get_solution(f"total_{particle}", k=k, mag=3)
+            for particle in particles
+        )
+        for lepton, particles in species.items()
+        for k, (label, theta) in enumerate(members)
     }
-    baseline = ("CORSIKA", ("BK_USStd", None))
-    fig, axes = plt.subplots(1, 2, figsize=(8.5, 3.5))
-    for axis, flux, name in zip(
-        axes, (mu_flux, numu_flux), ("Muons", "Muon neutrinos")
-    ):
-        for (p_theta, p_profile, p_color) in flux:
-            if p_profile == baseline:
-                continue
-            ls = "-" if p_theta < 90.0 else "--"
-            label = titles[p_profile] if p_theta < 90.0 else "_nolabel_"
-            axis.semilogx(
-                e_grid,
-                flux[(p_theta, p_profile, p_color)]
-                / flux[(p_theta, baseline, "black")],
-                ls=ls, lw=1.5, color=p_color, label=label,
-            )
-        axis.set_xlim(1, 1e9)
-        axis.set_ylim(0.75, 1.13)
-        axis.set_title(name, fontsize=10)
-        axis.legend(loc="lower left", ncol=2, frameon=False, fontsize=10)
-    axes[0].set_xlabel(r"$E_{\mu}$ [GeV]")
-    axes[0].set_ylabel(r"$\Phi_{\mu}$(atm)$/\Phi_{\mu}$(USStd)")
-    axes[1].set_xlabel(r"$E_{\nu_\mu}$ [GeV]")
-    axes[1].set_ylabel(r"$\Phi_{\nu_\mu}$(atm)$/\Phi_{\nu_\mu}$(USStd)")
-    fig.tight_layout()
+    return energy, fluxes
+
+
+@app.cell
+def _(atmospheres, energy, fluxes, interaction_model, plt, zeniths):
+    plot_range = (1.0, 1.0e8)  # GeV; inside the cascade grid
+    plot_mask = (energy >= plot_range[0]) & (energy <= plot_range[1])
+    colors = {
+        "CKA SP/Jan": "#C46B30",
+        "CKA SP/Aug": "#17857E",
+        "MSIS00 SP/Jan": "#8C3B1C",
+        "MSIS00 SP/Aug": "#263342",
+    }
+    panels = {"mu": r"Muons $\mu^+ + \mu^-$", "numu": r"Muon neutrinos $\nu_\mu + \bar\nu_\mu$"}
+
+    with plt.rc_context({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }):
+        fig, axes = plt.subplots(
+            1, 2, figsize=(10.5, 4.2), sharey=True, layout="constrained"
+        )
+        for ax, (lepton, panel_label) in zip(axes, panels.items()):
+            ax.axhline(1.0, color="#B3BAC2", linewidth=0.8)
+            for label in atmospheres:
+                if label not in colors:
+                    continue
+                for theta, linestyle in zip(zeniths, ("-", "--")):
+                    reference = fluxes[(lepton, "US Std", theta)]
+                    valid = plot_mask & (reference > 0)
+                    ratio = fluxes[(lepton, label, theta)][valid] / reference[valid]
+                    ax.semilogx(
+                        energy[valid], ratio, color=colors[label],
+                        linestyle=linestyle, linewidth=1.8,
+                        label=label if theta == zeniths[0] else "_nolegend_",
+                    )
+            ax.set_title(panel_label, loc="left", fontsize=13, pad=10)
+            ax.set_xlim(plot_range)
+            ax.set_ylim(0.75, 1.15)
+            ax.set_xlabel(r"Kinetic energy $E$ [GeV]")
+            ax.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+            ax.set_axisbelow(True)
+        axes[0].set_ylabel(r"$\Phi(\mathrm{atm})\,/\,\Phi(\mathrm{US\ Std})$")
+        fig.legend(
+            *axes[0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=4, fontsize=10,
+        )
+        fig.suptitle(
+            f"{interaction_model}  /  solid {zeniths[0]:g}° · dashed {zeniths[1]:g}°",
+            fontsize=11, color="#52606D",
+        )
     fig
-    return
+    return (fig,)
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(
-        filename="Dependence_of_spectrum_on_atmosphere.ipynb",
-        configuration=settings,
-    )
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="spectrum_vs_atmosphere.ipynb", configuration=settings)
     return
 
 
