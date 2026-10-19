@@ -361,7 +361,7 @@ def _(cr_model, energy, fluxes, interaction_model, np, plt, theta_deg):
 def export_notebook(settings):
     from MCEq.notebook import download_jupyter
 
-    download_jupyter(filename="Basic_flux.ipynb", configuration=settings)
+    download_jupyter(filename="basic_flux.ipynb", configuration=settings)
     return
 
 
