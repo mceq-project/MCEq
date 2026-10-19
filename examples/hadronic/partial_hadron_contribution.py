@@ -6,46 +6,51 @@
 import marimo
 
 __generated_with = "0.24.0"
-app = marimo.App(width="medium", app_title="Partial hadron contributions (vintage)")
+app = marimo.App(width="medium", app_title="Partial hadron contributions (classic)")
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Partial hadron contributions — vintage
+    # Partial hadron contributions — classic figure
 
-    Per-mother decomposition of the ground-level lepton fluxes, reproducing
-    Figure 9 of [Fedynitch et al., arXiv:1503.00544](https://arxiv.org/abs/1503.00544).
-    The original used `set_obs_particles`; the v2 replacement is
-    `ParticleManager.track_leptons_from`, so all mother groups coexist in one
-    matrix and the whole decomposition is a **single solve**. Thunman primary,
-    60° zenith, absolute $E^3$ fluxes. Needs the full public database (charm).
+    Pions and kaons supply the lepton fluxes up to ~100 TeV; above that the
+    prompt decays of charmed mesons take over, first for $\nu_e$, then
+    $\nu_\mu$, and last for muons.
+
+    This is the classic per-mother decomposition, Figure 9 of
+    [Fedynitch et al., arXiv:1503.00544](https://arxiv.org/abs/1503.00544):
+    a Thunman primary at 60° zenith, absolute $E^3$-weighted fluxes for
+    $\mu$, $\nu_\mu$, $\nu_e$ and $\nu_\tau$, one curve per mother group.
+    MCEq v1 computed it with `set_obs_particles`, one solve per group; that
+    method is gone in v2, and the same curves come from tracking particles
+    in a single solve. For the tracking API itself, with selectable groups
+    and fractions of the total, see the companion notebook
+    `partial_hadron_fractions.py`.
     """)
     return
 
 
 @app.cell
 def _():
-    import marimo as mo
     import matplotlib.pyplot as plt
+    import marimo as mo
     import numpy as np
 
-    from MCEq import config
     from MCEq.core import MCEqRun
     from MCEq.notebook import (
         apply_kernel_and_grid,
-        download_jupyter,
+        prepare_database,
         solve_progress,
     )
 
     return (
         MCEqRun,
         apply_kernel_and_grid,
-        config,
-        download_jupyter,
         mo,
         np,
         plt,
+        prepare_database,
         solve_progress,
     )
 
@@ -55,8 +60,11 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    Primary (Thunman) and zenith (60°) are fixed by the reproduction; controls
-    set the hadronic model, cascade grid, and solver.
+    Primary (Thunman et al., the reference flux of the original figure) and
+    zenith (60°) are fixed by the reproduction. The controls set the hadronic
+    model — it must produce charm, as all SIBYLL-2.3 variants and DPMJET do —
+    the cascade grid, and the solver backend. The figure extends to $10^9$ GeV,
+    so keep `e_max` at least that high.
     """)
     return
 
@@ -64,7 +72,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
+        "database": "mceq_base_air_1d_v2.h5",
         "interaction_model": "SIBYLL23E",
         "e_min": 1.0,
         "e_max": 1.0e9,
@@ -74,7 +82,7 @@ def configuration_defaults():
 
 
 @app.cell(hide_code=True)
-def configuration_controls(defaults, mo):
+def configuration_controls(defaults):
     from MCEq.notebook import configuration_controls as build_controls
 
     controls, _options = build_controls(
@@ -99,9 +107,7 @@ def selected_configuration(controls, defaults, mo):
         f"**Applied:** {interaction_model} · Thunman · 60° · "
         f"{e_min:g}–{e_max:g} GeV"
     )
-    return (
-        backend, database, e_max, e_min, interaction_model, settings,
-    )
+    return backend, database, e_max, e_min, interaction_model, settings
 
 
 @app.cell(hide_code=True)
@@ -126,23 +132,39 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Register mother groups and solve once
+    ## 02 · Mother groups
 
-    Groups are matched against whatever the interaction model actually tracks;
-    unlisted members are skipped, so the figure degrades gracefully to the
-    species present.
+    The conventional mothers need no setup: with `config.enable_default_tracking`
+    (on by default) MCEq already tracks leptons from $\pi^\pm$ (`pi_`),
+    $K^\pm$ (`k_`), $K^0_{S,L}$ (`K0_`) and muon decay (`mu_`), next to the
+    `conv_`/`pr_` split. The charm groups are added with
+    `pman.track_leptons_from(parents, prefix)` and the matrices rebuilt once.
+    Whatever no group covers is shown as a remainder: *other conv.*
+    (e.g. $\Lambda^0$ decays) and *other prompt* (leptons from the
+    interaction vertex — unflavoured resonances such as $\eta$, $\omega$,
+    $\phi$ — and charmed baryons, which the hadronic model decays itself).
     """)
     return
 
 
 @app.cell
-def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      interaction_model, np, proceed):
+async def _(
+    MCEqRun,
+    apply_kernel_and_grid,
+    backend,
+    database,
+    e_max,
+    e_min,
+    interaction_model,
+    prepare_database,
+    proceed):
     _ = proceed
     import crflux.models as pm
 
+    from MCEq import config
+
     apply_kernel_and_grid(backend, e_min, e_max, 0)
-    config.mceq_db_fname = database
+    config.mceq_db_fname = await prepare_database(database)
 
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
@@ -150,41 +172,30 @@ def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
         theta_deg=60.0,
     )
 
-    # positive-PDG mothers; antiparticles are pulled in automatically
-    mother_groups = [
-        ("$D^\\pm$", ["D+", "D-"], "grpD", "orange"),
-        ("$D^0$", ["D0", "Dbar0"], "grpD0", "mediumblue"),
-        ("$D_s$", ["D_s+", "D_s-"], "grpDs", "cyan"),
-    ]
-
-    requested = []
-    for _title, members, prefix, _color in mother_groups:
-        present = []
-        for name in members:
-            try:
-                present.append(mceq_run.pman[name].pdg_id)
-            except KeyError:
-                pass
-        if present:
-            mceq_run.pman.track_leptons_from(present, prefix + "_")
-            requested.append(prefix)
-
+    charm_groups = {
+        "Dpm_": ["D+", "D-", "D0", "Dbar0"],
+        "Ds_": ["D_s+", "D_s-"],
+    }
+    for _prefix, _members in charm_groups.items():
+        _parents = [
+            mceq_run.pman[name].pdg_id for name in _members if name in mceq_run.pman
+        ]
+        if _parents:
+            mceq_run.pman.track_leptons_from(_parents, _prefix)
     mceq_run.regenerate_matrices()
-    e_grid = mceq_run.e_grid
-    return (e_grid, mceq_run, mother_groups, requested)
+    return (mceq_run,)
 
 
 @app.cell
 def _(interaction_model, mceq_run, solve_progress):
-    with solve_progress(f"{interaction_model} · hadron decomposition") as progress:
+    with solve_progress(f"{interaction_model} · Thunman · 60°") as progress:
         mceq_run.solve(progress=progress)
     "solved"
     return
 
 
 @app.cell
-def _(mceq_run, np):
-    mag = 3
+def _(mceq_run):
     leptons = {
         "mu": ("mu+", "mu-"),
         "numu": ("numu", "antinumu"),
@@ -192,99 +203,128 @@ def _(mceq_run, np):
         "nutau": ("nutau", "antinutau"),
     }
 
-    def flux(name):
-        try:
-            return mceq_run.get_solution(name, mag)
-        except Exception:
-            return np.zeros_like(mceq_run.e_grid)
+    def summed(prefix, lepton):
+        """E^3-weighted flux of one category, particle + antiparticle.
 
-    def combined(prefix, base):
-        return sum(flux(f"{prefix}_{p}") for p in leptons[base])
+        Categories the model does not have (e.g. no charm) come back as zeros.
+        """
+        return sum(
+            mceq_run.get_solution(prefix + particle, mag=3)
+            for particle in leptons[lepton]
+        )
 
-    def total(base):
-        return combined("total", base)
-
-    def conv(base):
-        return combined("conv", base)
-
-    def prompt(base):
-        return combined("pr", base)
-
-    return combined, conv, flux, mag, prompt, total
+    conventional = ("pi_", "k_", "K0_", "mu_")
+    prompt = ("Dpm_", "Ds_")
+    components = {}
+    for _lepton in leptons:
+        _parts = {
+            prefix: summed(prefix, _lepton)
+            for prefix in ("total_", "conv_", "pr_") + conventional + prompt
+        }
+        _parts["other_conv"] = _parts["conv_"] - sum(_parts[p] for p in conventional)
+        _parts["other_pr"] = _parts["pr_"] - sum(_parts[p] for p in prompt)
+        components[_lepton] = _parts
+    e_grid = mceq_run.e_grid
+    return components, e_grid
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 03 · Four panels, mothers over total
+    ## 03 · Fluxes by mother
 
-    Black: total (solid), conventional (dotted), prompt (dashed); colours per
-    mother species from the tracking tables (D, Ds) and the built-in pion /
-    kaon / muon-decay categories.
+    Black: total (solid), conventional (dotted), prompt (dashed). Coloured:
+    mother groups; grey and light-blue dashed: the conventional and prompt
+    remainders.
     """)
     return
 
 
 @app.cell
-def _(combined, conv, e_grid, mother_groups, plt, prompt, requested, total):
-    def panel(ax, base, ylim, xlab, ylab, sources):
-        ax.loglog()
-        ax.plot(e_grid, total(base), ls="-", lw=2, color="black", label="total")
-        ax.plot(e_grid, conv(base), ls=":", lw=2, color="black", label="conv.")
-        ax.plot(e_grid, prompt(base), ls="--", lw=2, color="black",
-                label="prompt")
-        for color, name, prefix in sources:
-            values = combined(prefix, base)
-            if np.all(values <= 0):
-                continue
-            ax.plot(e_grid, values, ls="-", lw=1.5, color=color, label=name)
-        ax.set_xlim(10, 1e9)
-        ax.set_ylim(*ylim)
-        ax.set_xlabel(xlab)
-        ax.set_ylabel(ylab)
-        ax.legend(loc="upper right", frameon=False, numpoints=1, ncol=2,
-                  fontsize="small")
+def _(components, e_grid, interaction_model, np, plt):
+    sources = {
+        "pi_": (r"$\pi^\pm$", "#C0392B", "-"),
+        "k_": (r"$K^\pm$", "#17857E", "-"),
+        "K0_": (r"$K^0_{S,L}$", "#7FB77E", "-"),
+        "mu_": (r"$\mu$ decay", "#D98CB3", "-"),
+        "Dpm_": (r"$D^\pm, D^0$", "#E08E2B", "-"),
+        "Ds_": (r"$D_s$", "#3FA7D6", "-"),
+        "other_conv": ("other conv.", "#8C959F", "--"),
+        "other_pr": ("other prompt", "#9DC3E6", "--"),
+    }
+    totals = {
+        "total_": ("total", "-"),
+        "conv_": ("conv.", ":"),
+        "pr_": ("prompt", "--"),
+    }
+    panels = {
+        "mu": (r"$\mu^+ + \mu^-$", (1e-6, 1e0)),
+        "numu": (r"$\nu_\mu + \bar\nu_\mu$", (1e-7, 1e-1)),
+        "nue": (r"$\nu_e + \bar\nu_e$", (1e-7, 1e-1)),
+        "nutau": (r"$\nu_\tau + \bar\nu_\tau$", (1e-9, 1e-3)),
+    }
+    plot_range = (10.0, 1.0e9)
+    plot_mask = (e_grid >= plot_range[0]) & (e_grid <= plot_range[1])
 
-    charm_sources = [
-        (color, title, prefix)
-        for title, _members, prefix, color in mother_groups
-        if prefix in requested
-    ]
-    pion_kaon = [("red", r"$\pi$", "pi"), ("green", "$K$", "k")]
+    with plt.rc_context({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }):
+        fig, axes = plt.subplots(
+            2, 2, figsize=(11.5, 8.0), sharex=True, layout="constrained"
+        )
+        for ax, (lepton, (title, ylim)) in zip(axes.ravel(), panels.items()):
+            parts = components[lepton]
+            for key, (label, linestyle) in totals.items():
+                ax.loglog(
+                    e_grid[plot_mask], parts[key][plot_mask], color="#263342",
+                    linestyle=linestyle, linewidth=2.2, label=label,
+                )
+            for key, (label, color, linestyle) in sources.items():
+                values = np.where(parts[key] > 0, parts[key], np.nan)
+                ax.loglog(
+                    e_grid[plot_mask], values[plot_mask], color=color,
+                    linestyle=linestyle, linewidth=1.5, label=label,
+                )
+            ax.set_title(title, loc="left", fontsize=14, pad=10)
+            ax.set_xlim(plot_range)
+            ax.set_ylim(*ylim)
+            ax.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+            ax.set_axisbelow(True)
+        for ax in axes[1]:
+            ax.set_xlabel(r"Kinetic energy $E$ [GeV]")
+        for ax in axes[:, 0]:
+            ax.set_ylabel(
+                r"$E^3\,\mathrm{d}\Phi/\mathrm{d}E$ [GeV$^2$ cm$^{-2}$ s$^{-1}$ sr$^{-1}$]"
+            )
+        fig.legend(
+            *axes[0, 0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=6, fontsize=10,
+        )
+        fig.suptitle(
+            f"{interaction_model}  /  Thunman  /  60° zenith",
+            fontsize=11, color="#52606D",
+        )
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
-    panel(axes[0, 0], "mu", (1e-6, 1e3), r"$E_{\mu}$ [GeV]",
-          r"$\Phi_{\mu}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-          pion_kaon + charm_sources)
-    panel(axes[0, 1], "numu", (1e-7, 1e1), r"$E_{\nu_\mu}$ [GeV]",
-          r"$\Phi_{\nu_\mu}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-          pion_kaon + charm_sources)
-    panel(axes[1, 0], "nue", (1e-7, 1e1), r"$E_{\nu_e}$ [GeV]",
-          r"$\Phi_{\nu_e}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-          pion_kaon + charm_sources + [("pink", r"$\mu$ decay", "mu")])
-    panel(axes[1, 1], "nutau", (1e-9, 1e-2), r"$E_{\nu_\tau}$ [GeV]",
-          r"$\Phi_{\nu_\tau}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-          charm_sources)
-    fig.tight_layout(pad=0.4)
     fig
-    return
+    return (fig,)
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 03 · Four panels, mothers over total
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
 
-    Black: total (solid), conventional (dotted), prompt (dashed); colour per
-    mother group. The tau panel keeps $\tau$ and the open charm.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
     download_jupyter(
-        filename="Partial_hadron_contribution.ipynb", configuration=settings
+        filename="partial_hadron_contribution.ipynb", configuration=settings
     )
     return
 

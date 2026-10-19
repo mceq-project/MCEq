@@ -14,37 +14,50 @@ def _(mo):
     mo.md(r"""
     # Data-Driven Model (DDM)
 
-    The DDM replaces selected charm-production channels of a baseline hadronic
-    model while keeping the rest
-    ([paper](https://inspirehep.net/literature/2088973)). Compare baseline
-    vs DDM-injected fluxes and ratios.
+    Replacing a baseline model's pion, kaon and nucleon yields by fits to
+    fixed-target data changes the muon and neutrino fluxes by 10–20 % and
+    raises their charge ratios.
     """)
     return
 
 
 @app.cell
 def _():
-    import marimo as mo
-    import matplotlib as mpl
     import matplotlib.pyplot as plt
+    import marimo as mo
     import numpy as np
 
-    from MCEq import config
     from MCEq.core import MCEqRun
     from MCEq.notebook import (
         apply_kernel_and_grid,
-        download_jupyter,
-        solve_progress,
+        loop_progress,
+        prepare_database,
     )
 
-    mpl.rcParams["figure.dpi"] = 150
-    return MCEqRun, apply_kernel_and_grid, config, download_jupyter, mo, plt
+    return (
+        MCEqRun,
+        apply_kernel_and_grid,
+        loop_progress,
+        mo,
+        np,
+        plt,
+        prepare_database,
+    )
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 01 · Configuration
+
+    The DDM ([Fedynitch & Huber, PRD 106, 083018](https://inspirehep.net/literature/2088973))
+    describes $p$-C and $\pi^-$-C production of $\pi^\pm$, $K^\pm$, $p$,
+    $\bar p$ and $n$ by splines fitted to NA49/NA61 data at a few beam
+    energies; $n$ and $\pi^+$ projectiles follow by isospin symmetry and
+    $K^0_{S,L}$ from the $K^\pm$ average. Everything it does not cover — other projectiles, other
+    secondaries, charm — comes from the **baseline** interaction model chosen
+    here. The DDM paper used SIBYLL-2.3d (`SIBYLL23D`, fetched with the
+    extra-models package on first use).
     """)
     return
 
@@ -52,8 +65,8 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
-        "interaction_model": "SIBYLL21",
+        "database": "mceq_base_air_1d_v2.h5",
+        "interaction_model": "SIBYLL23D",
         "primary": "HillasGaisser2012:H3a",
         "theta_deg": 60.0,
         "e_min": 1.0,
@@ -88,7 +101,7 @@ def selected_configuration(controls, defaults, mo):
     e_min, e_max = settings["e_min"], settings["e_max"]
     backend = settings["backend"]
     mo.md(
-        f"**Applied:** {interaction_model} · {settings['primary']} · "
+        f"**Applied:** baseline {interaction_model} · {settings['primary']} · "
         f"{theta_deg:g}° · {e_min:g}–{e_max:g} GeV"
     )
     return (
@@ -125,204 +138,187 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Baseline vs DDM
+    ## 02 · Baseline and DDM runs
 
-    Two runs share the configuration; `inject_ddm` swaps the charm channels of
-    the second. The DDM needs a baseline because it only overrides selected
-    production channels.
+    `MCEq.ddm.DataDrivenModel()` loads the spline table `DDM_1.0.npy` shipped
+    in `config.data_dir`; its arguments restrict the energy range
+    (`e_min`/`e_max`), the channels (`enable_channels`) or projectiles
+    (`exclude_projectiles`). `MCEqRun.inject_ddm(ddm)` turns the splines into
+    yield matrices on the run's energy grid, installs them as channel
+    overrides of the baseline tables, and rebuilds the matrices. Two runs
+    with identical settings keep the comparison clean.
     """)
     return
 
 
 @app.cell
-def _(
+async def _(
     MCEqRun,
     apply_kernel_and_grid,
     backend,
-    config,
     database,
     e_max,
     e_min,
     interaction_model,
+    prepare_database,
     primary_model,
     theta_deg,
     proceed):
     _ = proceed
-    from MCEq.models.ddm.ddm import DataDrivenModel
+    from MCEq import config
+    from MCEq.ddm import DataDrivenModel
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
-    config.mceq_db_fname = database
+    config.mceq_db_fname = await prepare_database(database)
 
-    ddm = DataDrivenModel(str(config.data_dir / "DDM_1.0.npy"))
-    ddm_summary = str(ddm).strip().replace("\n", " · ")
+    ddm = DataDrivenModel()
+    ddm_channels = sorted(ddm.channels)
 
-    mceq_default = MCEqRun(
-        interaction_model=interaction_model,
-        primary_model=primary_model,
-        theta_deg=theta_deg,
-    )
-    mceq_ddm = MCEqRun(
-        interaction_model=interaction_model,
-        primary_model=primary_model,
-        theta_deg=theta_deg,
-    )
-    mceq_ddm.inject_ddm(ddm)
-
-    mceq_default.set_zenith_azimuth(theta_deg)
-    mceq_ddm.set_zenith_azimuth(theta_deg)
-    return ddm_summary, mceq_ddm, mceq_default
+    runs = {}
+    for _label in ("baseline", "DDM"):
+        runs[_label] = MCEqRun(
+            interaction_model=interaction_model,
+            primary_model=primary_model,
+            theta_deg=theta_deg,
+        )
+    runs["DDM"].inject_ddm(ddm)
+    return ddm_channels, runs
 
 
 @app.cell
-def _(interaction_model, mceq_ddm, mceq_default, solve_progress, theta_deg):
-    with solve_progress(
-        f"{interaction_model} · {theta_deg:g}° · default"
-    ) as progress:
-        mceq_default.solve(progress=progress)
-    with solve_progress(
-        f"{interaction_model} · {theta_deg:g}° · DDM 1.0"
-    ) as progress:
-        mceq_ddm.solve(progress=progress)
+def _(loop_progress, runs):
+    with loop_progress(len(runs), "Baseline and DDM") as advance:
+        for _run in runs.values():
+            _run.solve()
+            advance()
     "both solved"
-    return
-
-
-@app.cell(hide_code=True)
-def configuration_summary(ddm_summary, mo):
-    mo.md(f"""
-    **Injected DDM table:** {ddm_summary}
-    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 03 · Fluxes and ratios
+    ## 03 · Fluxes, ratios and charge ratios
 
-    Solid: total; dashed: conventional. Lower panels show baseline/DDM.
+    Top: $E^3$-weighted total fluxes (solid) and conventional component
+    (dashed). Middle: DDM / baseline. Bottom: particle / antiparticle ratio,
+    the quantity most directly constrained by the charge-resolved
+    fixed-target data.
     """)
     return
 
 
 @app.cell
-def _(mceq_ddm, mceq_default, plt):
-    mag = 3
-    e_grid = mceq_default.e_grid
-
-    def spectra(run):
-        sums = {
-            key: sum(
-                run.get_solution(f"{component}_{p}", mag) for p in particles
-            )
-            for key, component, particles in [
-                ("mu_conv", "conv", ("mu+", "mu-")),
-                ("mu_total", "total", ("mu+", "mu-")),
-                ("numu_conv", "conv", ("numu", "antinumu")),
-                ("numu_total", "total", ("numu", "antinumu")),
-                ("nue_conv", "conv", ("nue", "antinue")),
-                ("nue_total", "total", ("nue", "antinue")),
-            ]
+def _(ddm_channels, runs):
+    leptons = {
+        "mu": ("mu+", "mu-"),
+        "numu": ("numu", "antinumu"),
+        "nue": ("nue", "antinue"),
+    }
+    spectra = {
+        label: {
+            lepton: {
+                "total": sum(run.get_solution(f"total_{p}", mag=3) for p in pair),
+                "conv": sum(run.get_solution(f"conv_{p}", mag=3) for p in pair),
+                "charge": run.get_solution(f"total_{pair[0]}")
+                / run.get_solution(f"total_{pair[1]}"),
+            }
+            for lepton, pair in leptons.items()
         }
-        sums.update({
-            "mu_charge": run.get_solution("total_mu+", mag)
-            / run.get_solution("total_mu-", mag),
-            "numu_ratio": run.get_solution("total_numu", mag)
-            / run.get_solution("total_antinumu", mag),
-            "nue_ratio": run.get_solution("total_nue", mag)
-            / run.get_solution("total_antinue", mag),
-        })
-        return sums
-
-    flux_ddm, flux_base = spectra(mceq_ddm), spectra(mceq_default)
-
-    def compare(total_key, conv_key, xlabel, ylabel, ylim):
-        fig, axes = plt.subplots(
-            2, 1, figsize=(4.5, 4.5), sharex=True,
-            gridspec_kw={"height_ratios": (3, 1)},
-        )
-        color = axes[0].loglog(e_grid, flux_ddm[total_key], ls="-", lw=1.5,
-                               label="DDM")[0].get_color()
-        axes[0].loglog(e_grid, flux_ddm[conv_key], ls="--", lw=1.5, color=color)
-        color2 = axes[0].loglog(e_grid, flux_base[total_key], ls="-", lw=1.5,
-                                label="baseline", alpha=0.55)[0].get_color()
-        axes[0].loglog(e_grid, flux_base[conv_key], ls="--", lw=1.5,
-                       color=color2, alpha=0.55)
-        axes[1].semilogx(e_grid, flux_base[total_key] / flux_ddm[total_key],
-                         ls="-", lw=1.5, c="k")
-        axes[1].semilogx(e_grid, flux_base[conv_key] / flux_ddm[conv_key],
-                         ls="--", lw=1.5, c="k")
-        axes[0].set_xlim(10, 1e7)
-        if ylim:
-            axes[0].set_ylim(*ylim)
-        axes[0].set_ylabel(ylabel)
-        axes[0].legend(loc="upper right", frameon=False, numpoints=1)
-        axes[1].set_ylim(0.82, 1.38)
-        axes[1].set_ylabel("baseline/DDM")
-        axes[1].set_xlabel(xlabel)
-        fig.tight_layout(h_pad=-0.5)
-        return fig
-
-    fig_mu = compare(
-        "mu_total", "mu_conv", r"$E_{\mu}$ [GeV]",
-        r"$\Phi_{\mu}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$", (2e-5, 1),
-    )
-    fig_numu = compare(
-        "numu_total", "numu_conv", r"$E_{\nu_\mu}$ [GeV]",
-        r"$\Phi_{\nu_\mu}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-        (2e-5, 1e-1),
-    )
-    fig_nue = compare(
-        "nue_total", "nue_conv", r"$E_{\nu_e}$ [GeV]",
-        r"$\Phi_{\nu_e}$ (E/GeV)$^{3}$ (cm$^{2}$ s sr GeV)$^{-1}$",
-        (2e-5, 1e-1),
-    )
-
-    ratio_figs = []
-    for key, title, ylabel, ylim in [
-        ("mu_charge", r"$E_{\mu}$ [GeV]", "Muon charge ratio", (1.15, 1.6)),
-        ("numu_ratio", r"$E_{\nu_\mu}$ [GeV]",
-         r"${\nu_\mu}/\bar{\nu}_\mu$ ratio", (1.05, 1.95)),
-        ("nue_ratio", r"$E_{\nu_e}$ [GeV]", r"${\nu_e}/\bar{\nu}_e$ ratio",
-         (1.0, 1.45)),
-    ]:
-        fig, axes = plt.subplots(
-            2, 1, figsize=(4.5, 4.5), sharex=True,
-            gridspec_kw={"height_ratios": (3, 1)},
-        )
-        color = axes[0].semilogx(e_grid, flux_ddm[key], ls="-", lw=1.5,
-                                 label="DDM")[0].get_color()
-        axes[0].semilogx(e_grid, flux_base[key], ls="-", lw=1.5, color="k",
-                         alpha=0.55, label="baseline")
-        axes[1].semilogx(e_grid, flux_base[key] / flux_ddm[key], ls="-", lw=1.5,
-                         c="k")
-        axes[0].set_xlim(10, 1e7)
-        axes[0].set_ylim(*ylim)
-        axes[0].set_ylabel(ylabel)
-        axes[0].legend(loc="upper right", frameon=False, numpoints=1)
-        axes[1].set_ylim(0.82, 1.38)
-        axes[1].set_ylabel("baseline/DDM")
-        axes[1].set_xlabel(title)
-        fig.tight_layout(h_pad=-0.5)
-        ratio_figs.append(fig)
-    return fig_mu, fig_nue, fig_numu, ratio_figs
+        for label, run in runs.items()
+    }
+    e_grid = runs["baseline"].e_grid
+    channel_summary = ", ".join(f"{p}→{s}" for p, s in ddm_channels)
+    print(f"DDM channels ({len(ddm_channels)}): {channel_summary}")
+    return e_grid, spectra
 
 
 @app.cell
-def _(fig_mu, fig_nue, fig_numu):
-    [fig_mu, fig_numu, fig_nue]
-    return
+def _(e_grid, interaction_model, np, plt, spectra, theta_deg):
+    plot_range = (10.0, 1.0e6)  # GeV
+    plot_mask = (e_grid >= plot_range[0]) & (e_grid <= plot_range[1])
+    run_colors = {"baseline": "#263342", "DDM": "#C46B30"}
+    titles = {
+        "mu": (r"$\mu^+ + \mu^-$", r"$\mu^+/\mu^-$"),
+        "numu": (r"$\nu_\mu + \bar\nu_\mu$", r"$\nu_\mu/\bar\nu_\mu$"),
+        "nue": (r"$\nu_e + \bar\nu_e$", r"$\nu_e/\bar\nu_e$"),
+    }
 
+    with plt.rc_context({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }):
+        fig, axes = plt.subplots(
+            3, 3, figsize=(11.5, 8.0), sharex=True, layout="constrained",
+            gridspec_kw={"height_ratios": (3, 1.2, 1.6)},
+        )
+        for column, (lepton, (flux_title, charge_label)) in enumerate(titles.items()):
+            flux_ax, ratio_ax, charge_ax = axes[:, column]
+            for label, color in run_colors.items():
+                curves = spectra[label][lepton]
+                flux_ax.loglog(
+                    e_grid[plot_mask], curves["total"][plot_mask], color=color,
+                    linewidth=2, label=f"{label} total",
+                )
+                flux_ax.loglog(
+                    e_grid[plot_mask], curves["conv"][plot_mask], color=color,
+                    linewidth=1.5, linestyle="--", label=f"{label} conv.",
+                )
+                charge_ax.semilogx(
+                    e_grid[plot_mask], curves["charge"][plot_mask], color=color,
+                    linewidth=2,
+                )
+            for component, linestyle in (("total", "-"), ("conv", "--")):
+                baseline = spectra["baseline"][lepton][component]
+                ratio = np.divide(
+                    spectra["DDM"][lepton][component], baseline,
+                    out=np.ones_like(baseline), where=baseline > 0,
+                )
+                ratio_ax.semilogx(
+                    e_grid[plot_mask], ratio[plot_mask], color="#C46B30",
+                    linestyle=linestyle, linewidth=1.8,
+                )
+            ratio_ax.axhline(1.0, color="#B3BAC2", linewidth=0.8)
+            flux_ax.set_title(flux_title, loc="left", fontsize=14, pad=10)
+            flux_ax.set_xlim(plot_range)
+            flux_ax.set_ylim(1.0e-5, 1.0)
+            ratio_ax.set_ylim(0.7, 1.3)
+            charge_ax.set_ylabel(charge_label)
+            charge_ax.set_xlabel(r"Kinetic energy $E$ [GeV]")
+            for ax in (flux_ax, ratio_ax, charge_ax):
+                ax.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+                ax.set_axisbelow(True)
+        axes[0, 0].set_ylabel(
+            r"$E^3\,\mathrm{d}\Phi/\mathrm{d}E$ [GeV$^2$ cm$^{-2}$ s$^{-1}$ sr$^{-1}$]"
+        )
+        axes[1, 0].set_ylabel("DDM / baseline")
+        fig.legend(
+            *axes[0, 0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=4, fontsize=10,
+        )
+        fig.suptitle(
+            f"baseline {interaction_model}  /  {theta_deg:g}° zenith",
+            fontsize=11, color="#52606D",
+        )
 
-@app.cell
-def _(ratio_figs):
-    ratio_figs
-    return
+    fig
+    return (fig,)
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(filename="DDM_example.ipynb", configuration=settings)
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="ddm.ipynb", configuration=settings)
     return
 
 
