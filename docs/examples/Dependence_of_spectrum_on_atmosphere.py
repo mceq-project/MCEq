@@ -123,9 +123,10 @@ def run_gate(mo):
 
 @app.cell(hide_code=True)
 def run_stop(gate, mo):
-    interactive = mo.app_meta().mode in ("edit", "run")
+    from MCEq.notebook import gate_closed
+
     mo.stop(
-        interactive and not gate.value,
+        gate_closed(gate),
         mo.md("Adjust the settings above, then click **Build & solve**."),
     )
     proceed = True

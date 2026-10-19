@@ -177,36 +177,44 @@ def primary_expression(primary):
 
 
 def database_models(database=None, medium="air"):
-    """Hadronic model group names available in *database*, sorted.
+    """Hadronic models available for *database*, sorted.
 
-    *database* is a filename resolved against ``config.data_dir`` or an
-    absolute path; ``None`` uses the configured default. ``*_indptrs``
-    bookkeeping groups are filtered out.
+    *database* is a package name of the data release (``None``: the
+    configured ``config.mceq_db_fname``). The models are read from the
+    release manifest: every package on the same grid as *database*, so the
+    list includes models that MCEq fetches on first use.
     """
-    import h5py
-
     from MCEq import config as _config
+    from MCEq.data import download
 
-    path = _config.data_dir / (database or _config.mceq_db_fname)
-    with h5py.File(path, "r") as source:
-        return sorted(
-            name
-            for name in source[f"hadronic_interactions/{medium}"]
-            if not name.endswith("_indptrs")
-        )
+    name = database or _config.mceq_db_fname
+    manifest = download.local_manifest(_config) or download.ensure_manifest(_config)
+    grid = manifest["files"][name]["grid"]
+    return sorted(
+        {
+            model
+            for entry in manifest["files"].values()
+            if entry.get("grid") == grid
+            for model in entry.get("models", {}).get(medium, [])
+        }
+    )
 
 
 def backend_options():
     """Dropdown mapping of backend labels to ``kernel_config`` values."""
-    from MCEq.config.detect import available
+    import sys
+
+    from MCEq.config import detect
 
     options = {"Automatic": "auto", "NumPy": "numpy_etd2"}
+    if sys.platform == "emscripten":
+        return options
     for label, capability in (
         ("MKL", "mkl"),
         ("Accelerate", "accelerate"),
         ("CUDA", "cuda"),
     ):
-        if available("has_" + capability):
+        if getattr(detect, "has_" + capability)():
             options[label] = capability + "_etd2"
     return options
 
@@ -352,6 +360,26 @@ def apply_kernel_and_grid(backend, e_min, e_max, debug_level=0):
     config.kernel_config = resolve_kernel(backend)
     config.e_min, config.e_max = e_min, e_max
     config.debug_level = debug_level
+
+
+#: Environment variable that opens every Build & solve gate, for the static
+#: HTML build (``marimo export html`` runs in "run" mode).
+AUTORUN_ENV = "MCEQ_EXAMPLES_AUTORUN"
+
+
+def gate_closed(gate):
+    """True while an interactive session waits for the Build & solve button.
+
+    Scripts, tests and exports run straight through; so does any session
+    with :data:`AUTORUN_ENV` set to a non-empty value.
+    """
+    import os
+
+    import marimo as mo
+
+    if os.environ.get(AUTORUN_ENV):
+        return False
+    return mo.app_meta().mode in ("edit", "run") and not gate.value
 
 
 @contextmanager

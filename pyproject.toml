@@ -169,7 +169,7 @@ markers = [
 ai.enabled = false
 
 [tool.marimo.display]
-custom_css = ["marimo/minimal.css"]
+custom_css = ["docs/_static/marimo-minimal.css"]
 default_width = "full"
 reference_highlighting = false
 

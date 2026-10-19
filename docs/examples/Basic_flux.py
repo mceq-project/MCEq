@@ -28,13 +28,11 @@ def _():
 
     from MCEq import config
     from MCEq.config.detect import resolve_kernel
-    from MCEq.config.run import RunConfig
     from MCEq.core import MCEqRun
     from MCEq.notebook import prepare_database, solve_progress
 
     return (
         MCEqRun,
-        RunConfig,
         config,
         mo,
         np,
@@ -60,7 +58,7 @@ def _(mo):
 def configuration_defaults():
     defaults = {
         "interaction_model": "SIBYLL2.3e",
-        "database": "mceq_db_lext_dpm193_v142.h5",
+        "database": "mceq_base_air_1d_v2.h5",
         "low_energy_model": None,
         "he_le_transition": 80.0,
         "he_le_trwidth": 0.3,
@@ -78,14 +76,10 @@ def configuration_controls(defaults, mo):
     import math
     import sys
 
-    from MCEq.config.detect import available
+    from MCEq.notebook import backend_options as _backend_options
 
     browser = sys.platform == "emscripten"
-    backend_options = {"Automatic": "auto", "NumPy": "numpy_etd2"}
-    if not browser:
-        for label, capability in (("MKL", "mkl"), ("Accelerate", "accelerate"), ("CUDA", "cuda")):
-            if available("has_" + capability):
-                backend_options[label] = capability + "_etd2"
+    backend_options = _backend_options()
 
     controls = mo.md("""
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:1.5rem 2rem">
@@ -210,9 +204,10 @@ def run_gate(mo):
 
 @app.cell(hide_code=True)
 def run_stop(gate, mo):
-    interactive = mo.app_meta().mode in ("edit", "run")
+    from MCEq.notebook import gate_closed
+
     mo.stop(
-        interactive and not gate.value,
+        gate_closed(gate),
         mo.md("Adjust the settings above, then click **Build & solve**."),
     )
     proceed = True
@@ -230,7 +225,6 @@ def _(mo):
 @app.cell
 async def _(
     MCEqRun,
-    RunConfig,
     atmosphere,
     backend,
     config,
@@ -261,7 +255,6 @@ async def _(
         low_energy_model=low_energy_model,
         he_le_transition=he_le_transition,
         he_le_trwidth=he_le_trwidth,
-        config=RunConfig.snapshot(),
     )
     return (mceq_run,)
 
