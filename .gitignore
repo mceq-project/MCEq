@@ -31,3 +31,4 @@ src/MCEq/data/mceq_db_manifest_ci_v2.yaml
 tests/data/2d_baseline_solution.npz
 __pycache__
 __marimo__/
+docs/api/
