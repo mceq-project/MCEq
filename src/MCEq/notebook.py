@@ -45,8 +45,7 @@ def jupyter_bytes(app, configuration=None):
                     for node in tree.body
                     if isinstance(node, ast.Assign)
                     and any(
-                        isinstance(target, ast.Name)
-                        and target.id == "settings"
+                        isinstance(target, ast.Name) and target.id == "settings"
                         for target in node.targets
                     )
                 )
@@ -57,8 +56,7 @@ def jupyter_bytes(app, configuration=None):
             source = "\n".join(
                 line
                 for line in cell.source.splitlines()
-                if line != "import marimo as mo"
-                and line.strip() != "_ = proceed"
+                if line != "import marimo as mo" and line.strip() != "_ = proceed"
             )
             # The gate token is a marimo-only dependency; drop it from
             # signatures so the exported notebook stands alone.
@@ -255,55 +253,81 @@ def configuration_controls(defaults, database=None, medium="air", show=()):
         widgets["interaction_model"] = mo.ui.dropdown(
             {model: model for model in models},
             value=defaults.get("interaction_model", models[0]),
-            label="Interaction model", full_width=True,
+            label="Interaction model",
+            full_width=True,
         )
         slots["interaction_model"] = ["interaction_model"]
     if "models_multi" in show:
         default_models = defaults.get(
-            "models", [model for model in models if model in ("SIBYLL21", "QGSJETII04")][:2] or models[:1]
+            "models",
+            [model for model in models if model in ("SIBYLL21", "QGSJETII04")][:2]
+            or models[:1],
         )
         widgets["models"] = mo.ui.multiselect(
-            models, value=default_models, label="Interaction models",
+            models,
+            value=default_models,
+            label="Interaction models",
             full_width=True,
         )
         slots["models_multi"] = ["models"]
     if "primary" in show:
         widgets["primary"] = mo.ui.dropdown(
-            PRIMARY_OPTIONS, value=_primary_label(defaults.get("primary", "H3a")),
-            label="Primary cosmic rays", full_width=True,
+            PRIMARY_OPTIONS,
+            value=_primary_label(defaults.get("primary", "H3a")),
+            label="Primary cosmic rays",
+            full_width=True,
         )
         slots["primary"] = ["primary"]
     if "zenith" in show:
         widgets["theta_deg"] = mo.ui.slider(
-            0, 90, step=5, value=defaults.get("theta_deg", 0.0),
-            label="Zenith angle [°]", show_value=True, full_width=True,
+            0,
+            90,
+            step=5,
+            value=defaults.get("theta_deg", 0.0),
+            label="Zenith angle [°]",
+            show_value=True,
+            full_width=True,
         )
         slots["zenith"] = ["theta_deg"]
     if "energy" in show:
         widgets["log_e_min"] = mo.ui.slider(
-            -1, 3, step=0.5, value=_log10(defaults["e_min"]),
-            label="e_min · log₁₀(E/GeV)", show_value=True, full_width=True,
+            -1,
+            3,
+            step=0.5,
+            value=_log10(defaults["e_min"]),
+            label="e_min · log₁₀(E/GeV)",
+            show_value=True,
+            full_width=True,
         )
         widgets["log_e_max"] = mo.ui.slider(
-            4, 11, step=0.5, value=_log10(defaults["e_max"]),
-            label="e_max · log₁₀(E/GeV)", show_value=True, full_width=True,
+            4,
+            11,
+            step=0.5,
+            value=_log10(defaults["e_max"]),
+            label="e_max · log₁₀(E/GeV)",
+            show_value=True,
+            full_width=True,
         )
         slots["energy"] = ["log_e_min", "log_e_max"]
     if "backend" in show:
         widgets["backend"] = mo.ui.dropdown(
-            backends, value=_backend_label(backends, defaults.get("backend", "auto")),
-            label="Backend", full_width=True,
+            backends,
+            value=_backend_label(backends, defaults.get("backend", "auto")),
+            label="Backend",
+            full_width=True,
         )
         slots["backend"] = ["backend"]
 
-    body = "".join(
-        "".join(f"{{{key}}}\n\n" for key in slots[name]) for name in show
+    body = "".join("".join(f"{{{key}}}\n\n" for key in slots[name]) for name in show)
+    rendered = (
+        mo.md(
+            '<div style="display:grid;'
+            "grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));"
+            'gap:1rem 2rem">\n' + body + "</div>"
+        )
+        .batch(**widgets)
+        .form(submit_button_label="Apply configuration", bordered=False)
     )
-    rendered = mo.md(
-        "<div style=\"display:grid;"
-        "grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));"
-        "gap:1rem 2rem\">\n" + body + "</div>"
-    ).batch(**widgets).form(submit_button_label="Apply configuration", bordered=False)
     return rendered, {
         "interaction_models": models,
         "primaries": PRIMARY_OPTIONS,
@@ -410,7 +434,8 @@ def solve_progress(title="Solving cascade", completion_title="Done"):
             if "bar" not in state:
                 state["bar"] = stack.enter_context(
                     mo.status.progress_bar(
-                        total=total, title=title,
+                        total=total,
+                        title=title,
                         completion_title=completion_title,
                     )
                 )

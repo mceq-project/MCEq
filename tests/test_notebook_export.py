@@ -8,10 +8,10 @@ import pytest
 pytest.importorskip("marimo")
 nbformat = pytest.importorskip("nbformat")
 
-from marimo._ast.app import InternalApp
-from marimo._ast.load import load_app
+from marimo._ast.app import InternalApp  # noqa: E402
+from marimo._ast.load import load_app  # noqa: E402
 
-from MCEq.notebook import jupyter_bytes
+from MCEq.notebook import jupyter_bytes  # noqa: E402
 
 SOURCE = """import marimo
 app = marimo.App()

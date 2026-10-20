@@ -94,10 +94,20 @@ def build_one(path, output):
     start = time.time()
     result = subprocess.run(
         [
-            sys.executable, "-m", "marimo", "export", "html", str(path),
-            "-o", str(target / f"{path.stem}.html"), "-f",
+            sys.executable,
+            "-m",
+            "marimo",
+            "export",
+            "html",
+            str(path),
+            "-o",
+            str(target / f"{path.stem}.html"),
+            "-f",
         ],
-        cwd=path.parent, env=env, capture_output=True, text=True,
+        cwd=path.parent,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     elapsed = time.time() - start
     ok = result.returncode == 0
@@ -185,8 +195,11 @@ def main():
     )
     manifest_path.write_text(
         json.dumps(
-            {"source_commit": commit, "source_dirty": dirty,
-             "notebooks": sorted(merged.values(), key=lambda r: r["source"])},
+            {
+                "source_commit": commit,
+                "source_dirty": dirty,
+                "notebooks": sorted(merged.values(), key=lambda r: r["source"]),
+            },
             indent=2,
         )
         + "\n"
