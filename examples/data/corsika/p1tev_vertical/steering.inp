@@ -1,0 +1,35 @@
+RUNNR   610000                       shard=0
+EVTNR   1
+NSHOW   2000
+PRMPAR  14
+ERANGE  1.0000e+03  1.0000e+03        monoenergetic 1 TeV
+ESLOPE  -2.7
+THETAP  0.0  0.0
+PHIP    0.   360.
+SEED    50001001   0   0
+SEED    50001002   0   0
+SEED    50001003   0   0
+SEED    50001004   0   0
+OBSLEV  1.5000E6                     h = 15 km (X ~ 124 g/cm2 vertical)
+OBSLEV  5.0000E5                     h =  5 km (X ~ 551 g/cm2)
+OBSLEV  0.0000E0                     h =  0 km (X ~ 1036 g/cm2)
+FIXCHI  0.                               first interaction at top
+ATMOD   1
+MAGNET  0.00001  0.00001
+HADFLG  0  0  0  0  0  2
+HILOW   1500.0                       pure FLUKA below this
+ECUTS   0.1  0.1  0.3  0.3
+ELMFLG  F  F
+RADNKG  200.E2
+ARRANG  0.
+LONGI   T  5.  T  T
+STEPFC  1.0
+MUADDI  F
+MUMULT  T
+MAXPRT  1
+DIRECT  ./
+PAROUT  T  F
+THIN    1.E-20  1.E30  0.
+THINH   1.  1.
+USER    anatoli
+EXIT
