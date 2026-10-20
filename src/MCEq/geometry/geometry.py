@@ -87,13 +87,15 @@ class EarthGeometry:
     Args:
       r_E (float): radius Earth [m]
       h_atm (float): top of the atmosphere [m]
-      h_obs (float): observation level height [m]
+      h_obs (float): observation level height [m]; ``None`` (as
+        ``config.h_obs``) is sea level, raised by an atmosphere to its ground
 
     The arguments are in metres and default to :mod:`MCEq.config`; the
     attributes below and :func:`set_h_obs` are in cm.
 
     Attributes:
       h_obs (float): observation level height [cm]
+      h_obs_default (bool): no level was given; an atmosphere may move it
       h_atm (float): top of the atmosphere [cm]
       r_E (float): radius Earth [cm]
       r_top (float): radius at top of the atmosphere  [cm]
@@ -105,6 +107,8 @@ class EarthGeometry:
         r_E = config.r_E if r_E is None else r_E
         h_atm = config.h_atm if h_atm is None else h_atm
         h_obs = config.h_obs if h_obs is None else h_obs
+        self.h_obs_default = h_obs is None
+        h_obs = 0.0 if h_obs is None else h_obs
 
         self.h_atm = h_atm * 1e2  # cm
         self.r_E = r_E * 1e2  # cm

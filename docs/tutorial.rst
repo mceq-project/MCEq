@@ -148,6 +148,15 @@ are centred on IceCube at the South Pole, the ``_KM3NeT`` variants take
 ``'ORCA'`` or ``'ARCA'`` as location; both accept zenith angles up to 180°
 (upgoing).
 
+Columns end at the observation level ``config.h_obs`` (in m). The default
+``None`` puts it at the ground of the atmosphere model: sea level for most
+models, the ice surface at 2834 m for the CORSIKA South Pole sets
+(``'SouthPole'``, ``'PL_SouthPole'``, ``'SDR_SouthPole'``) and for AIRS,
+which are fits above it. A level below the ground raises ``ValueError``; a
+higher one, e.g. a mountain site, is set with ``config.h_obs`` before the
+model is built or with ``mceq.density_model.set_h_obs(h_cm)``. The
+detector-centred ``_IC`` and ``_KM3NeT`` models place the level themselves.
+
 Refer for more info to :ref:`densities`.
 
 After changing the models, the spectra can be recomputed with :meth:`MCEq.core.MCEqRun.solve`.

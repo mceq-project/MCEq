@@ -67,6 +67,7 @@ particles. Check convergence by repeating a solve with smaller values.
 | `generic_losses_all_charged` | `False` | `True`: all charged hadrons lose energy continuously |
 | `r_E` (Earth radius) | 6391 km | 6371.315 km (slant depths up to 0.15 % shorter near the horizon) |
 | `adv_set["disabled_particles"]` | `[11]` | `[]`; γ, e± and π⁰ are dropped unless `config.enable_em` |
+| `h_obs` | `0.0` (sea level) | `None`: the ground of the atmosphere, 2834 m for the CORSIKA and AIRS South Pole profiles; a level below it raises `ValueError` |
 
 `adv_set["disable_interactions_of_unstable"]` now keeps only nucleons and
 antinucleons as projectiles; in v1.4 it removed them instead.

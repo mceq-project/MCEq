@@ -251,6 +251,13 @@ LOCATIONS = {
     "FtSumner": (-104.2, 34.5, 31000.0 * 100.0),
 }
 
+#: Ground elevation in m of the CORSIKA parameter sets that are fits above a
+#: raised surface (the South Pole ice); the other sets reach sea level.
+CORSIKA_GROUND_M = {
+    loc: LOCATIONS["SouthPole"][2] / 1e2
+    for loc in ("SouthPole", "PL_SouthPole", "SDR_SouthPole")
+}
+
 #: Location names that were renamed; the old name still works with a warning.
 _RENAMED_LOCATIONS = {"SanGrasso": "GranSasso"}
 

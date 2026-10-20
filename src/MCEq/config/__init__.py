@@ -87,7 +87,11 @@ A_target = "auto"
 
 #: parameters for EarthGeometry
 r_E = 6371.315e3  # Earth radius in m, as in CORSIKA
-h_obs = 0.0  # observation level in m
+#: Observation level in m. None ends the columns at the ground of the
+#: atmosphere model: the ice surface (2834 m) for the CORSIKA and AIRS South
+#: Pole profiles, which are fits above it, sea level otherwise. A level below
+#: a model's ground raises ValueError.
+h_obs = None
 h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
 
