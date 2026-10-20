@@ -30,3 +30,5 @@ src/MCEq/data/mceq_db_manifest_ci_v2.yaml
 # the ci-assets release by tests/data/baseline_asset.py.
 tests/data/2d_baseline_solution.npz
 __pycache__
+__marimo__/
+docs/api/

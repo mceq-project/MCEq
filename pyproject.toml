@@ -56,7 +56,8 @@ lint = [
     "import-linter>=2.14",
 ]
 notebooks = [
-    # Executes docs/examples/ and examples/ as a pytest gate; see
+    "marimo==0.24.0",
+    # Executes exported examples/ notebooks (nbmake); see
     # .github/workflows/notebooks.yaml. nbmake already requires pytest and
     # ipykernel, but the gate forces `--nbmake-kernel=python3`, so the kernel
     # provider is a direct requirement of the invocation, not an accident of
@@ -159,6 +160,29 @@ markers = [
     "cuda: requires a usable CUDA device, not merely an importable cupy",
     "slow: a solve costing many minutes on production-size databases (needs --run-slow)",
 ]
+
+[tool.marimo]
+# Project-scoped marimo UI (marimo >= 0.24; see examples/README.md).
+# Merged over the user's ~/.config/marimo/marimo.toml, so anyone editing
+# these notebooks gets the same minimal frontend on any machine.
+ai.enabled = false
+
+[tool.marimo.display]
+custom_css = ["docs/_static/marimo-minimal.css"]
+default_width = "full"
+reference_highlighting = false
+
+[tool.marimo.experimental]
+debugger = false
+line_timing = false
+
+[tool.marimo.completion]
+copilot = false
+
+[tool.marimo.runtime]
+# Opening a notebook runs its cells immediately, so the configuration form
+# renders without a manual Run.
+auto_instantiate = true
 
 [tool.coverage.report]
 exclude_lines = [

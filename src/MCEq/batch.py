@@ -331,6 +331,7 @@ class BatchSolver:
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        progress=None,
     ):
         """Solve K independent cascade problems with one operator.
 
@@ -373,6 +374,9 @@ class BatchSolver:
           path_workers (int): fork-pool size for building the paths; not with
             ``density_model`` conditions.
           X_start, eps, dX_max, dX_min, fd_span: path parameters as in :meth:`solve`.
+          progress (callable | None): ``callback(done, total)`` polled on
+            completed steps of the whole batch; ``total`` is the shared
+            path's step count or the carousel length.
 
         Returns:
           :class:`MCEqBatchResult`
@@ -434,6 +438,7 @@ class BatchSolver:
                 grid_idcs,
                 dtype=dtype,
                 sec_ops=sec_ops,
+                progress=progress,
             )
         else:
             K_pipe = max(
@@ -451,7 +456,14 @@ class BatchSolver:
                 f"sum_nsteps={sum_ns} waste={waste * 100:.2f}%",
             )
             sol = self._run_etd2_carousel(
-                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype, sec_ops=sec_ops
+                dX_c,
+                ri_c,
+                phi_init,
+                sched,
+                phi0_mat,
+                dtype=dtype,
+                sec_ops=sec_ops,
+                progress=progress,
             )
             grid_sol = None
         info(2, f"solve_batch: total wall {time() - start:.2f}s")
@@ -483,6 +495,7 @@ class BatchSolver:
         path_workers=0,
         geomagnetic_cutoff=None,
         cutoff_kwargs=None,
+        progress=None,
     ):
         """Solve every (zenith, azimuth) pixel of a sky grid with :meth:`solve_batch`.
 
@@ -501,6 +514,7 @@ class BatchSolver:
               uses the run setting, which is off by default.
             cutoff_kwargs: keywords of
               :func:`MCEq.geometry.cutoff.get_cutoff_map`.
+            progress: ``callback(done, total)``, as in :meth:`solve_batch`.
 
         Returns:
             :class:`MCEqBatchResult`, or ``(result, pixel_index)``.
@@ -573,6 +587,7 @@ class BatchSolver:
             dX_max=dX_max,
             dX_min=dX_min,
             fd_span=fd_span,
+            progress=progress,
         )
         res.pixel_index = pixel_index
         res.zenith_grid = zenith_grid

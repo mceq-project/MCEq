@@ -1,0 +1,36 @@
+RUNNR   100000
+EVTNR   1
+NSHOW   2
+PRMPAR  14
+ERANGE  1.0000e+06  1.0000e+06
+ESLOPE  -2.7
+THETAP  60.0  60.0
+PHIP    0.  360.
+SEED    1001   0   0
+SEED    1002   0   0
+SEED    1003   0   0
+OBSLEV  2.0830E6                     slant 100  (vert 50)
+OBSLEV  1.4960E6                     slant 250  (vert 125)
+OBSLEV  1.1950E6                     slant 400  (vert 200)
+OBSLEV  8.8100E5                     slant 650  (vert 325)
+OBSLEV  7.3600E5                     slant 800  (vert 400)
+OBSLEV  5.7500E5                     slant 1000 (vert 500)
+OBSLEV  3.0000E4                     slant 2000 (vert 1000, ~300 m)
+FIXCHI  0.
+MAGNET  0.00001  0.00001
+HADFLG  0  0  0  0  0  2
+ECUTS   0.3  0.3  0.0316  0.0316
+MUADDI  T
+MUMULT  T
+ELMFLG  F   F
+STEPFC  1.0
+RADNKG  200.E2
+ARRANG  0.
+LONGI   T   5.  T  T
+MAXPRT  1
+DIRECT  ./
+PAROUT  T  F
+THIN    1.E-6   1.0000e+00   0.
+THINH   1.0     1.E2
+USER    anatoli
+EXIT

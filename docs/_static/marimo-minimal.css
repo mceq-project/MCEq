@@ -1,0 +1,62 @@
+/* Minimal scientific-notebook chrome for marimo, scoped to this project via
+ * [tool.marimo].display.custom_css in pyproject.toml. Keep: Files +
+ * Variables sidebar panels, the notebook body, top-right controls. Hide:
+ * the bottom developer/status bar and every other sidebar/bottom panel and
+ * its rail tab. The AI surface is turned off by [tool.marimo].ai.enabled
+ * rather than CSS, so only the leftover chrome is styled here.
+ *
+ * Selectors are grounded in the marimo 0.24.0 frontend bundle (data-panel-id
+ * values, data-testid chrome-*/footer-* tokens). A frontend update can rename
+ * these; re-check against the installed bundle after upgrading marimo.
+ */
+
+/* ---- bottom developer + status bar ---- */
+div[data-testid="chrome-footer"] {
+  display: none !important;
+}
+
+/* developer panels docked at the bottom, if opened before this CSS loads */
+div[data-panel-id="errors"],
+div[data-panel-id="scratchpad"],
+div[data-panel-id="tracing"],
+div[data-panel-id="secrets"],
+div[data-panel-id="logs"],
+div[data-panel-id="terminal"],
+div[data-panel-id="cache"] {
+  display: none !important;
+}
+
+/* ---- sidebar panels we do not use (content panes) ---- */
+div[data-panel-id="outline"],
+div[data-panel-id="documentation"],
+div[data-panel-id="dependencies"],
+div[data-panel-id="packages"],
+div[data-panel-id="ai"] {
+  display: none !important;
+}
+
+/* ---- rail buttons for the hidden panels (label or tooltip on the button) ---- */
+button[aria-label="Outline" i], button[title="Outline" i],
+button[aria-label="Docs" i], button[title="Docs" i],
+button[aria-label="Live docs" i], button[title="Live docs" i],
+button[aria-label="Dependencies" i], button[title="Dependencies" i],
+button[aria-label="Packages" i], button[title="Packages" i],
+button[aria-label="Packages & Data" i], button[title="Packages & Data" i],
+button[aria-label="AI" i], button[title="AI" i],
+button[aria-label="Errors" i], button[title="Errors" i],
+button[aria-label="Scratchpad" i], button[title="Scratchpad" i],
+button[aria-label="Tracing" i], button[title="Tracing" i],
+button[aria-label="Secrets" i], button[title="Secrets" i],
+button[aria-label="Logs" i], button[title="Logs" i],
+button[aria-label="Terminal" i], button[title="Terminal" i],
+button[aria-label="Cache" i], button[title="Cache" i],
+button[aria-label="Snippets" i], button[title="Snippets" i] {
+  display: none !important;
+}
+
+/* ---- footer leftovers that may render outside chrome-footer ---- */
+[data-testid="footer-panel"],
+[data-testid="footer-panel"] ~ *,
+[data-testid="install-packages-button"] {
+  display: none !important;
+}

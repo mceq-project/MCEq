@@ -1,29 +1,24 @@
 name: Notebooks
 
-# Executes the example notebooks under docs/examples/ and examples/ with
-# `pytest --nbmake`, so a notebook cannot silently rot against the library API.
+# Static gate for the marimo examples under examples/: `marimo check --strict`
+# and the Jupyter-export tests (every example converts to a plain notebook
+# without marimo). Executing the examples needs the full release databases
+# (about 2 GB with the 2D packages) and minutes per notebook; that is
+# scripts/build_examples.py, run where the data is, not on every PR.
 #
-# Eight of the twelve notebooks execute; four are `--ignore`d, one line each,
-# for the honest per-notebook reasons tabulated above the pytest step (M15
-# refreshed all twelve for v2 and re-measured each ignore; deleting an
-# `--ignore` line is the whole change when a notebook becomes executable).
-#
-# A separate workflow rather than a job in test.yaml: the trigger differs. A
-# notebook edit must not start the 40-job test matrix, and test.yaml's path
-# filter would have to grow docs/examples/** for a job here to fire at all.
-# One ubuntu job on one Python is enough -- the notebooks exercise no
-# platform-specific code, and the wheel matrix already covers the build.
+# A separate workflow rather than a job in test.yaml: a notebook edit must not
+# start the test matrix.
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
-      - docs/examples/**
       - examples/**
-      - src/**
-      - mceq_config/**
+      - src/MCEq/notebook.py
+      - scripts/build_examples.py
+      - scripts/export_marimo.py
+      - tests/test_notebook_export.py
       - pyproject.toml
-      - CMakeLists.txt
       - .github/workflows/notebooks.yaml
   push:
     branches:
@@ -36,14 +31,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  nbmake:
-    name: nbmake (ubuntu-latest, 3.12)
+  check:
+    name: marimo check + export (ubuntu-latest, 3.12)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       UV_SYSTEM_PYTHON: "true"
-      # The notebooks call pyplot without selecting a backend.
-      MPLBACKEND: "Agg"
     steps:
       - uses: actions/checkout@v7
       - uses: hendrikmuhs/ccache-action@v1.2
@@ -54,91 +47,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Editable so the notebooks import the checkout, and a real build because
-      # density_profiles pulls in the compiled corsikaatm and nrlmsise00
-      # extensions. No mkl: the executing notebooks solve with the default
-      # explicit (euler) route, which needs no sparse backend.
       - name: Install requirements
-        run: uv pip install -e . --group notebooks
+        run: uv pip install -e . --group notebooks --group test
 
-      # The v2 data cut to the 31-bin test window (891 GeV .. 891 TeV). Same
-      # paths and cache key as _run_tests.yml, so both jobs share one entry.
-      - name: Cache CI data packages
-        id: cache-db
-        uses: actions/cache@v6
-        with:
-          path: |
-            src/MCEq/data/mceq_db_manifest_ci_v2.yaml
-            src/MCEq/data/mceq_ci_base_air_1d_v2.h5
-            src/MCEq/data/mceq_ci_extra_models_air_1d_v2.h5
-          key: mceq-ci-data-v2-21865c8c-${{ runner.os }}
+      - name: marimo check
+        run: marimo check --strict examples/*/*.py
 
-      - name: Download CI data packages if not cached
-        if: steps.cache-db.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          base=https://github.com/mceq-project/MCEq/releases/download/ci-assets
-          for f in mceq_db_manifest_ci_v2_21865c8cff3c.yaml mceq_ci_base_air_1d_v2_f20f913a20e6.h5 \
-                   mceq_ci_extra_models_air_1d_v2_363d7c85edd9.h5; do
-            curl -fsSL "$base/$f" -o "src/MCEq/data/$(echo "$f" | sed -E 's/_[0-9a-f]{12}\././')"
-          done
-
-      - name: Report CI data cache state and verify digests
-        shell: bash
-        run: |
-          echo "cache-hit=${{ steps.cache-db.outputs.cache-hit }}"
-          python - <<'PY'
-          import hashlib, pathlib, sys, yaml
-          data = pathlib.Path("src/MCEq/data")
-          manifest = yaml.safe_load((data / "mceq_db_manifest_ci_v2.yaml").read_text())
-          for name, entry in manifest["files"].items():
-              digest = hashlib.sha256((data / name).read_bytes()).hexdigest()
-              print(name, "OK" if digest == entry["sha256"] else "MISMATCH")
-              if digest != entry["sha256"]:
-                  sys.exit(1)
-          PY
-
-      # `--ignore` prunes a path before collection, so nbmake never opens the
-      # ignored notebooks and a corrupted one would pass unnoticed. This step
-      # covers all twelve -- it is the only thing the four ignored ones get.
-      - name: Validate notebook JSON
-        shell: bash
-        run: |
-          python - <<'PY'
-          import pathlib, sys
-          import nbformat
-
-          paths = sorted(pathlib.Path("docs/examples").glob("*.ipynb"))
-          paths += sorted(pathlib.Path("examples").glob("*.ipynb"))
-          if not paths:
-              sys.exit("no notebooks found -- did a directory move?")
-          bad = 0
-          for path in paths:
-              try:
-                  nbformat.validate(nbformat.read(path, as_version=4))
-              except Exception as exc:
-                  bad += 1
-                  print(f"INVALID {path}: {type(exc).__name__}: {exc}")
-          print(f"{len(paths) - bad}/{len(paths)} notebooks valid")
-          sys.exit(bad != 0)
-          PY
-
-      # Notebooks that want the cached data set `config.mceq_db_fname`
-      # themselves; without it MCEq downloads the default database.
-      #
-      # The four ignored notebooks below need models or data CI does not
-      # carry:
-      #   Muon spectra                 6 of its 8 models are in no shipped DB
-      #   Partial_hadron_contribution  needs CRFluxModels and set_obs_particles,
-      #                                both removed in v2
-      #   Full_sky_carousel            SIBYLL23D, and gtracr 2.0.0 breaks the
-      #                                geomagnetic cutoff adapter
-      #   Angular_shower_development   needs the Legendre 2D CI database,
-      #                                not yet on the ci-assets release
-      - name: Execute notebooks
-        run: |
-          pytest --nbmake --nbmake-kernel=python3 docs/examples examples \
-            --ignore="docs/examples/Full_sky_carousel.ipynb" \
-            --ignore="docs/examples/Muon spectra.ipynb" \
-            --ignore="docs/examples/Partial_hadron_contribution.ipynb" \
-            --ignore="examples/Angular_shower_development.ipynb"
+      - name: Jupyter export
+        run: pytest -q tests/test_notebook_export.py
