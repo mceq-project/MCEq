@@ -59,17 +59,6 @@ release databases and takes about half an hour on a workstation; it is not
 part of the Read the Docs build or of pull-request CI, which runs
 `marimo check --strict` and the Jupyter-export tests only.
 
-### Browser gallery
-
-`scripts/build_browser_gallery.py` builds a WebAssembly (Pyodide) version of
-`basic_flux` that runs entirely in the browser, with a SIBYLL 2.3e subset of
-the 1D package (about 40 MB) and the NumPy solver:
-
-```sh
-python scripts/build_browser_gallery.py
-python -m http.server --directory docs/_build/site 8000   # open /browser/
-```
-
 ## Writing an example
 
 Use `getting_started/basic_flux.py` as the template:

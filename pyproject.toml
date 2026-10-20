@@ -69,7 +69,6 @@ notebooks = [
     "matplotlib>=3.10",
 ]
 docs = [
-    "marimo==0.24.0",  # static Pyodide gallery exporter
     # Core
     "sphinx>=8",
     # Third-party extensions

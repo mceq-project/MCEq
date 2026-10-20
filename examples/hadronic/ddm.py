@@ -31,7 +31,6 @@ def _():
     from MCEq.notebook import (
         apply_kernel_and_grid,
         loop_progress,
-        prepare_database,
     )
 
     return (
@@ -41,7 +40,6 @@ def _():
         mo,
         np,
         plt,
-        prepare_database,
     )
 
 
@@ -152,7 +150,7 @@ def _(mo):
 
 
 @app.cell
-async def _(
+def _(
     MCEqRun,
     apply_kernel_and_grid,
     backend,
@@ -160,7 +158,6 @@ async def _(
     e_max,
     e_min,
     interaction_model,
-    prepare_database,
     primary_model,
     theta_deg,
     proceed):
@@ -169,7 +166,7 @@ async def _(
     from MCEq.ddm import DataDrivenModel
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
-    config.mceq_db_fname = await prepare_database(database)
+    config.mceq_db_fname = database
 
     ddm = DataDrivenModel()
     ddm_channels = sorted(ddm.channels)

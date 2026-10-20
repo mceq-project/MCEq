@@ -1,4 +1,4 @@
-"""The gallery's browser download and CLI export share one conversion path."""
+"""The in-notebook download and the CLI export share one conversion path."""
 
 import json
 from pathlib import Path

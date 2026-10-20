@@ -202,13 +202,9 @@ def database_models(database=None, medium="air"):
 
 def backend_options():
     """Dropdown mapping of backend labels to ``kernel_config`` values."""
-    import sys
-
     from MCEq.config import detect
 
     options = {"Automatic": "auto", "NumPy": "numpy_etd2"}
-    if sys.platform == "emscripten":
-        return options
     for label, capability in (
         ("MKL", "mkl"),
         ("Accelerate", "accelerate"),
@@ -498,7 +494,15 @@ def primary_model_from(primary):
 
 
 def download_jupyter(filename="notebook.ipynb", configuration=None):
-    """Download the current saved source, read at click time (also in Pyodide's VFS)."""
+    """Download the current saved source as Jupyter, converted at click time.
+
+    In a static page build (:data:`AUTORUN_ENV` set) there is no kernel to
+    convert on click; the cell renders links to the Jupyter and marimo files
+    that ``scripts/build_examples.py`` writes next to the page instead.
+    """
+    import os
+    from pathlib import Path
+
     import marimo as mo
     from marimo._ast.app import InternalApp
     from marimo._ast.load import load_app
@@ -506,6 +510,12 @@ def download_jupyter(filename="notebook.ipynb", configuration=None):
 
     context = get_context()
     source = context.filename
+    if os.environ.get(AUTORUN_ENV):
+        stem = Path(filename).stem
+        return mo.md(
+            f"**Download:** [Jupyter notebook]({stem}.ipynb) · "
+            f"[marimo notebook]({stem}.py)"
+        )
     if source is None:
         raise ValueError("Save the notebook before downloading Jupyter source")
 
@@ -521,26 +531,3 @@ def download_jupyter(filename="notebook.ipynb", configuration=None):
         mimetype="application/x-ipynb+json",
         label="Download Jupyter notebook",
     )
-
-
-async def prepare_database(database):
-    """Select the native database or fetch the gallery subset in Pyodide."""
-    import sys
-
-    from MCEq import config
-
-    if sys.platform != "emscripten":
-        return database
-
-    from pyodide.http import pyfetch
-
-    name = "mceq_db_browser.h5"
-    destination = config.data_dir / name
-    if not destination.exists():
-        response = await pyfetch("../public/mceq_db_browser.h5")
-        if not response.ok:
-            raise RuntimeError(
-                f"Could not load gallery database: HTTP {response.status}"
-            )
-        destination.write_bytes(await response.bytes())
-    return name

@@ -19,14 +19,5 @@ marimo source.
     The rendered pages are built by ``python scripts/build_examples.py``
     (see below); this documentation build did not include them.
 
-.. only:: browser_gallery
-
-    .. card:: Atmospheric lepton fluxes · Run in your browser
-        :link: browser/basic-flux/
-
-        Muons and neutrinos at ground level, computed in the browser with
-        Pyodide. Edit the configuration, run the cascade, and download a clean
-        Jupyter notebook.
-
 .. include:: ../examples/README.md
     :parser: myst_parser.sphinx_

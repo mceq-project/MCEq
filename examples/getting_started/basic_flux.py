@@ -29,7 +29,7 @@ def _():
     from MCEq import config
     from MCEq.config.detect import resolve_kernel
     from MCEq.core import MCEqRun
-    from MCEq.notebook import prepare_database, solve_progress
+    from MCEq.notebook import solve_progress
 
     return (
         MCEqRun,
@@ -38,7 +38,6 @@ def _():
         np,
         plt,
         pm,
-        prepare_database,
         resolve_kernel,
         solve_progress,
     )
@@ -59,7 +58,7 @@ def configuration_defaults():
     defaults = {
         "interaction_model": "SIBYLL2.3e",
         "database": "mceq_base_air_1d_v2.h5",
-        "low_energy_model": None,
+        "low_energy_model": "FLUKA20251",
         "he_le_transition": 80.0,
         "he_le_trwidth": 0.3,
         "cr_model": "H3a",
@@ -74,11 +73,9 @@ def configuration_defaults():
 @app.cell(hide_code=True)
 def configuration_controls(defaults, mo):
     import math
-    import sys
 
     from MCEq.notebook import backend_options as _backend_options
 
-    browser = sys.platform == "emscripten"
     backend_options = _backend_options()
 
     controls = mo.md("""
@@ -120,14 +117,14 @@ def configuration_controls(defaults, mo):
     </div></div>
     """).batch(
         interaction_model=mo.ui.dropdown(
-            ["SIBYLL2.3e"] if browser else ["SIBYLL2.3e", "QGSJET-II-04", "EPOS-LHC", "DPMJET-III-19.3"],
+            ["SIBYLL2.3e", "QGSJET-II-04", "EPOS-LHC", "DPMJET-III-19.3"],
             value=defaults["interaction_model"],
             label="Interaction model", full_width=True,
         ),
         low_energy_model=mo.ui.dropdown(
-            {"None": "none"} if browser else {"None": "none", "DPMJET-III-19.3": "DPMJETIII193"},
-            value="None", disabled=browser, full_width=True,
-            label="Low-energy model · not bundled" if browser else "Low-energy model",
+            {"FLUKA 2025.1": "FLUKA20251", "None": "none"},
+            value="FLUKA 2025.1", full_width=True,
+            label="Low-energy model (below the transition)",
         ),
         cr_model=mo.ui.dropdown(
             ["H3a", "H4a", "Gaisser–Honda"], value=defaults["cr_model"],
@@ -149,11 +146,11 @@ def configuration_controls(defaults, mo):
             label="Zenith angle [°]", show_value=True, full_width=True,
         ),
         he_le_transition=mo.ui.slider(
-            10, 200, step=10, value=defaults["he_le_transition"], disabled=browser,
+            10, 200, step=10, value=defaults["he_le_transition"],
             label="Low-energy transition [GeV]", show_value=True, full_width=True,
         ),
         he_le_trwidth=mo.ui.slider(
-            0, 1, step=0.1, value=defaults["he_le_trwidth"], disabled=browser,
+            0, 1, step=0.1, value=defaults["he_le_trwidth"],
             label="Transition width [decades]", show_value=True, full_width=True,
         ),
     ).form(submit_button_label="Apply configuration", bordered=False)
@@ -224,7 +221,7 @@ def _(mo):
 
 
 @app.cell
-async def _(
+def _(
     MCEqRun,
     atmosphere,
     backend,
@@ -237,12 +234,11 @@ async def _(
     he_le_trwidth,
     interaction_model,
     low_energy_model,
-    prepare_database,
     resolve_kernel,
     theta_deg,
     proceed):
     _ = proceed
-    config.mceq_db_fname = await prepare_database(database)
+    config.mceq_db_fname = database
     config.e_min, config.e_max = e_min, e_max
     config.kernel_config = resolve_kernel(backend)
     config.debug_level = 0

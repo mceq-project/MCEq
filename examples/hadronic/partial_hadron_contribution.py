@@ -40,7 +40,6 @@ def _():
     from MCEq.core import MCEqRun
     from MCEq.notebook import (
         apply_kernel_and_grid,
-        prepare_database,
         solve_progress,
     )
 
@@ -50,7 +49,6 @@ def _():
         mo,
         np,
         plt,
-        prepare_database,
         solve_progress,
     )
 
@@ -148,7 +146,7 @@ def _(mo):
 
 
 @app.cell
-async def _(
+def _(
     MCEqRun,
     apply_kernel_and_grid,
     backend,
@@ -156,7 +154,6 @@ async def _(
     e_max,
     e_min,
     interaction_model,
-    prepare_database,
     proceed):
     _ = proceed
     import crflux.models as pm
@@ -164,7 +161,7 @@ async def _(
     from MCEq import config
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
-    config.mceq_db_fname = await prepare_database(database)
+    config.mceq_db_fname = database
 
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
