@@ -18,7 +18,8 @@ can be selected::
         # High-energy hadronic interaction model
         interaction_model='SIBYLL23E',
 
-        # Low-energy hadronic interaction model, below about 80 GeV
+        # Low-energy hadronic interaction model below 80 GeV (the default;
+        # None switches the blending off)
         low_energy_model='FLUKA20251',
 
         # cosmic ray flux at the top of the atmosphere

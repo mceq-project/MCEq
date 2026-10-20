@@ -320,12 +320,16 @@ secant_theta_e_max = 31.6
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True
 
-#: Optional run-time low-energy model blending in the HDF5 backend.  When
-#: ``model`` is None (default), the selected interaction model is loaded
-#: unchanged.  ``he_le_trwidth`` is the 10--90% sigmoid width in log10(E/GeV)
-#: decades; zero selects a hard switch at ``he_le_transition``.
+#: Run-time low-energy model blending in the HDF5 backend. ``model`` supplies
+#: the yields and cross sections below ``he_le_transition``; the high-energy
+#: models (SIBYLL, QGSJET, EPOS, ...) are tabulated from 80 GeV projectile
+#: energy, so without it nothing below that energy produces secondaries.
+#: ``None`` loads the selected interaction model unchanged. If the medium has
+#: no tables of the default model, MCEqRun runs without blending.
+#: ``he_le_trwidth`` is the 10--90% sigmoid width in log10(E/GeV) decades;
+#: zero selects a hard switch at ``he_le_transition``.
 low_energy_extension = {
-    "model": None,
+    "model": "FLUKA20251",
     "he_le_transition": 80,  # GeV
     "he_le_trwidth": 0.3,  # decades (10--90% width)
     "use_unknown_cs": True,
