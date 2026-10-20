@@ -222,9 +222,9 @@ transmitted primary flux is averaged over azimuth. Passing a 2-D ``phi0``
 puts the caller in charge of the per-pixel primary — the cutoff is then
 *not* applied on top, with a warning.
 
-The ``Full_sky_carousel`` example notebook walks through the sky-grid
-API: serial scan baseline, one-shot carousel, per-pixel ``phi0``, and
-the cutoff at a mid-latitude detector.
+The ``examples/fluxes/full_sky_carousel.py`` example walks through the
+sky-grid API: serial scan baseline, one-shot carousel, and the cutoff at a
+mid-latitude detector.
 
 Changing hadronic interaction models
 ....................................

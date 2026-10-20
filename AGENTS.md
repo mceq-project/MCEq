@@ -32,12 +32,14 @@ flux = mceq.get_solution("total_numu", mag=3)  # E^3-weighted flux
 `pr_` (prompt), `pi_`/`k_` (parent meson). The required HDF5 database
 (`config.mceq_db_fname`) downloads automatically on first import.
 
-Working examples to point users at (Jupyter notebooks in `docs/examples/`):
-`Basic_flux.ipynb` (start here), `Compare_primary_fluxes.ipynb`,
-`Muon spectra.ipynb`, `Zenith_distribution_IceCube.ipynb`,
-`Dependence_of_spectrum_on_atmosphere.ipynb`, `KPi_demonstration.ipynb`,
-`Partial_hadron_contribution.ipynb`. Rendered docs: quickstart and tutorial
-under `docs/` (Sphinx).
+Working examples to point users at: marimo notebooks in `examples/`, by
+topic (`examples/README.md` lists them): `getting_started/basic_flux.py`
+(start here), `getting_started/compare_primary_fluxes.py`, `atmosphere/`,
+`fluxes/` (zenith distributions, muon spectra, full sky), `hadronic/` (K/π and
+yield modifications, DDM, lepton parents), `showers_2d/` (2D cascades and the
+CORSIKA 7 comparisons, with steering cards and reference data in
+`examples/data/corsika/`). They run as scripts (`python <file>.py`); rendered
+docs: quickstart and tutorial under `docs/` (Sphinx).
 
 ## Common user questions → where to look
 

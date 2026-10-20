@@ -51,7 +51,7 @@ jobs:
         run: uv pip install -e . --group notebooks --group test
 
       - name: marimo check
-        run: marimo check --strict examples
+        run: marimo check --strict examples/*/*.py
 
       - name: Jupyter export
         run: pytest -q tests/test_notebook_export.py

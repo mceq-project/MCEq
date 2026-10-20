@@ -9,13 +9,16 @@ updated/archived):
 This repository is **archived**. Its notebooks were folded into the MCEq
 repository and are executed by CI there:
 
-- gallery and sources: <https://github.com/mceq-project/MCEq/tree/main/docs/examples>
-  (rendered at <https://mceq.readthedocs.io/en/latest/example-gallery.html>)
-- every notebook imports via the v2 layout (`MCEq.models.ddm`, not `MCEq.ddm`)
-  and runs on MCEq 2.x
-- `DDM_example.ipynb` was the only notebook unique to this repo and is now in
-  the gallery; the two `work_in_progress/` notebooks were dropped (see
-  `MCEq/docs/examples` history and the M15 catalog for the recorded reasons)
+- sources: <https://github.com/mceq-project/MCEq/tree/main/examples>, as
+  marimo notebooks that also export to Jupyter; rendered pages are linked
+  from <https://mceq.readthedocs.io/en/latest/example-gallery.html>
+- every notebook runs on MCEq 2.x with the v2 release databases
+- `DDM_example.ipynb` and `Modify_particle_yields.ipynb` were unique to this
+  repository and are now `examples/hadronic/ddm.py` and
+  `examples/hadronic/modify_particle_yields.py`;
+  `work_in_progress/contribution_from_individual_hadrons.ipynb` is covered by
+  `examples/hadronic/partial_hadron_*.py`; `work_in_progress/DDM_vs_daemonflux.ipynb`
+  depended on a private fit file and was dropped
 
 Open an issue in the MCEq repository if a tutorial you relied on is missing.
 

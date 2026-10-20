@@ -1,98 +1,104 @@
-# Basic-flux notebook template
+# MCEq examples
 
-`docs/examples/Basic_flux.py` is the source; `Basic_flux.ipynb` is its clean Jupyter
-export. Both show the same configuration and three-panel flux figure.
+Each example is a [marimo](https://marimo.io) notebook: a plain Python file
+that runs as a script, opens as an interactive notebook, and exports to a
+clean Jupyter notebook or a static HTML page.
 
-## Run and download
+| Folder | Examples |
+|---|---|
+| `getting_started/` | `basic_flux` (start here): muon and neutrino fluxes at ground; `compare_primary_fluxes`: effect of the cosmic-ray model |
+| `atmosphere/` | `density_profiles`: every density model as density vs depth; `spectrum_vs_atmosphere`: seasonal and site dependence of lepton fluxes |
+| `fluxes/` | `zenith_distribution_icecube`, `zenith_averaged_neutrinos`, `muon_spectra` (Auger, IceCube), `full_sky_carousel` (`solve_fullsky`, geomagnetic cutoff) |
+| `hadronic/` | `kpi_demonstration` and `modify_particle_yields` (`set_mod_pprod`), `ddm` (Data-Driven Model), `partial_hadron_contribution` and `partial_hadron_fractions` (lepton parents) |
+| `showers_2d/` | `angular_shower_development` (Legendre 2D cascade); `corsika_p1tev_vertical` and `corsika_p1pev_60deg`: the validation against CORSIKA 7 |
+| `data/corsika/` | CORSIKA steering cards, reduced reference histograms (`c7_reference.npz`) and their reduction scripts for the two comparisons |
 
-Open **Atmospheric lepton fluxes** in the browser gallery. The first launch
-installs Python packages and loads the model tables; the calculation runs on
-your device. Use the dropdowns and sliders in section 01, then press **Apply configuration**
-to recalculate. Changes are grouped so dragging a slider does not repeatedly solve
-the cascade. Energy sliders use log₁₀(E/GeV).
-The browser bundle includes **SIBYLL2.3e** and **QGSJET-II-04**, CORSIKA atmospheres,
-and the NumPy solver (`auto` or `numpy_etd2`). Low-energy controls are disabled in this two-model browser bundle. Local Python
-also offers DPMJET-III-19.3 for the low-energy model and installed native backends.
-
-**Download Jupyter notebook**, below the figure, converts the current saved
-source in memory. It writes the last **applied** control values as a plain Python
-configuration cell and removes the widgets, download cell, marimo imports, and
-marimo metadata. Pending form edits are not exported until applied. It requires no subprocess or server.
-Marimo's standard Export menu remains available, but does not apply this cleanup.
-The downloaded notebook runs locally with this MCEq version, NumPy, Matplotlib,
-and crflux; marimo is not required. It uses the full public database, downloaded
-on first calculation. Browser packages and data require internet on first load.
-
-For local editing and the same cleaned export:
+## Run an example
 
 ```sh
 pip install -e . --group notebooks
-marimo edit docs/examples/Basic_flux.py
-marimo check --strict docs/examples/Basic_flux.py
-python scripts/export_marimo.py docs/examples/Basic_flux.py
+marimo edit examples/getting_started/basic_flux.py   # interactive
+python examples/getting_started/basic_flux.py        # as a script
 ```
 
-## Build the browser gallery
+Opening a notebook only renders the configuration form. Nothing is built or
+solved until you click **Build & solve**; after that, applying a new
+configuration recomputes only the cells that depend on it.
+
+The examples download the release databases they need on first use: the 1D
+package is 76 MB; the 2D examples need the 456 MB Legendre package, and the
+1 PeV CORSIKA comparison also the 968 MB SIBYLL 2.3e 2D package.
+
+## Jupyter
+
+In a marimo session, **Download Jupyter notebook** exports the notebook with
+the applied configuration; the example pages link the same file. Locally,
+
+```sh
+python scripts/export_marimo.py examples/getting_started/basic_flux.py
+```
+
+writes the same file next to the source. The export replaces the
+configuration form with plain assignments of the applied values and removes
+every marimo construct, so it runs with MCEq, NumPy, Matplotlib and crflux
+only. Exported `.ipynb` files are build products and are not committed.
+
+## The example pages
+
+```sh
+python scripts/build_examples.py -j 4          # all examples
+python scripts/build_examples.py -k corsika    # a subset
+```
+
+runs every notebook with all gates open (`MCEQ_EXAMPLES_AUTORUN=1`) and writes,
+under `docs/_build/site/examples/`, one HTML page per example with its solved
+figures, the Jupyter export, the marimo source, an `index.html` and a
+`manifest.json` (source commit, per-notebook status and run time). The Sphinx
+build links the gallery when that directory exists. The full build needs the
+release databases and takes about half an hour on a workstation; it is not
+part of the Read the Docs build or of pull-request CI, which runs
+`marimo check --strict` and the Jupyter-export tests only.
+
+### Browser gallery
+
+`scripts/build_browser_gallery.py` builds a WebAssembly (Pyodide) version of
+`basic_flux` that runs entirely in the browser, with a SIBYLL 2.3e subset of
+the 1D package (about 40 MB) and the NumPy solver:
 
 ```sh
 python scripts/build_browser_gallery.py
-python -m http.server --directory docs/_build/site 8000
+python -m http.server --directory docs/_build/site 8000   # open /browser/
 ```
 
-Open `http://localhost:8000/browser/`. To use an existing public database or
-choose another output directory:
+## Writing an example
 
-```sh
-python scripts/build_browser_gallery.py \
-  --database /path/to/mceq_db_lext_dpm193_v142.h5 \
-  --output /tmp/mceq-gallery
-```
+Use `getting_started/basic_flux.py` as the template:
 
-The build copies the selected air-interaction tables losslessly, retaining the
-full energy grid and decay tables. The default two-model database is about
-41 MB, versus 289 MB for the full source. `--models` accepts database group names
-and must include the default `SIBYLL23E`. No reduced-precision or truncated-grid
-approximation is introduced.
+- A title and one sentence naming the observable.
+- `## 01 · Configuration`: one compact form (cells `configuration_defaults`,
+  `configuration_controls`, `selected_configuration`). Explain each option:
+  what it does, its default, when to change it. Submit changes together.
+- The cells `run_gate` and `run_stop` (via `MCEq.notebook.gate_closed`); the
+  first compute cell consumes the `proceed` token.
+- Build the `MCEqRun` in one cell and solve in the next, inside
+  `solve_progress` (or `loop_progress` for repeated solves); `solve`,
+  `solve_batch` and `solve_fullsky` take a `progress` callback.
+- Readout, then a focused figure with a local `plt.rc_context`.
+- A final `export_notebook` cell with `download_jupyter("<stem>.ipynb", ...)`.
+- Only static Markdown in `mo.md`; cells other than the reserved ones must
+  not use `mo`, or the Jupyter export fails.
 
-A gallery-only Python wheel supplies MCEq to Pyodide. CORSIKA uses the same scalar
-formulas as the compiled atmosphere; the solver uses the existing NumPy fallback.
-Native MKL/CUDA backends and MSIS atmospheres require local Python. The generated
-wheel is a deployment artifact, not a replacement for the normal MCEq package.
+Keep the cascade grid wider than the plotted interval, and keep the run time
+of a default configuration to a few minutes. Shared helpers are in
+`src/MCEq/notebook.py`. The Jupyter conversion uses marimo's private
+converter, so marimo is pinned (0.24.0) and `tests/test_notebook_export.py`
+exports every example.
 
-`manifest.json` records source commit, dirty status, models, sizes and SHA-256
-hashes. Generated wheels, databases, and HTML stay outside version control.
-Read the Docs builds this gallery before Sphinx; Sphinx copies it under
-`browser/`. Notebook CI also saves a downloadable static-gallery artifact.
-This template now applies to all example notebooks under `docs/examples/` and
-`examples/`; the notebook CI checks every marimo source with
-`marimo check --strict`, executes the clean exports with nbmake (two DB-gated
-exceptions), and fails if a committed `.ipynb` differs from a fresh export.
+## Comparisons with CORSIKA
 
-## Style for subsequent examples
-
-- A title and one sentence describing the observable.
-- One compact configuration form, grouped by interactions, primary/solver,
-  energy grid, and geometry/transition; units beside each control. Submit changes
-  together. The Jupyter export materializes the applied values as assignments.
-- A `run_gate` + `run_stop` pair after the configuration: opening the
-  notebook renders settings only, and nothing heavy builds or solves until
-  **Build & solve** is clicked; the first compute cell consumes the `proceed`
-  token so marimo cancels the whole downstream chain while the gate is closed.
-  In script/CI/Jupyter contexts the gate is bypassed or stripped, so exports
-  and the notebook gate still execute everything top to bottom.
-- Build the `MCEqRun` in one cell and solve in the next, wrapping each solve
-  in `solve_progress` (or a `loop_progress` bar for repeated solves), so
-  configuration edits rebuild the run while the bar shows live progress.
-  The driver calls a `progress(done, total)` callback on completed ETD2
-  steps; `MCEq.notebook` renders it as marimo's native widget inside a
-  marimo kernel and as a tqdm bar in Jupyter exports and plain Python.
-- Readout followed by a focused figure, with local `plt.rc_context` styling.
-- Static Markdown and ordinary Python for the calculation. Reserve
-  `configuration_defaults`, `configuration_controls`, `selected_configuration`,
-  and `export_notebook` for the shared form/export pattern. The converter reads
-  literal defaults for CLI export and applied settings for browser downloads.
-
-Keep the cascade grid wider than the plotted interval. Low-energy transition
-settings require valid overlap in the chosen model tables. The conversion uses
-marimo's private converter, so the gallery pins marimo 0.24.0 and tests the
-cleanup before upgrading it.
+`data/corsika/<case>/` holds what is needed to reproduce a comparison
+without the raw air-shower output: the steering card (`steering.inp`), a
+README with the CORSIKA build, statistics, histogram definitions and the table
+of MCEq settings that match the CORSIKA run, the reduced histograms
+(`c7_reference.npz`, a few tens of kB) and the script that produced them from
+the aggregated CORSIKA output.
