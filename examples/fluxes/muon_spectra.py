@@ -12,13 +12,11 @@ app = marimo.App(width="medium", app_title="Muon spectra at Auger and IceCube")
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Muon spectra at Auger and IceCube
+    # Muons from single proton and iron primaries at Auger and IceCube
 
-    Prompt and conventional muon (and IceCube neutrino) spectra for single
-    proton and iron primaries, solved on the atmospheric depth grid
-    (original by H. Dembinski). Interaction models offered are the ones in the
-    selected database; this demo needs the full public database because single
-    primaries at $10^{8}$–$10^{10}$ GeV need the full energy grid.
+    Muon number along the shower axis, muon spectra at the observation
+    level, and the iron/proton ratio for single primaries, per interaction
+    model (original by H. Dembinski).
     """)
     return
 
@@ -31,22 +29,9 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import (
-        apply_kernel_and_grid,
-        download_jupyter,
-        loop_progress,
-    )
+    from MCEq.notebook import apply_kernel_and_grid, loop_progress
 
-    return (
-        MCEqRun,
-        apply_kernel_and_grid,
-        config,
-        download_jupyter,
-        loop_progress,
-        mo,
-        np,
-        plt,
-    )
+    return MCEqRun, apply_kernel_and_grid, config, loop_progress, mo, np, plt
 
 
 @app.cell(hide_code=True)
@@ -54,9 +39,17 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    Observatories and compositions are fixed (Auger: 1425 m, 67°, $10^{10}$
-    GeV; IceCube: 2835 m, 13°, $10^{8}$ GeV). Pick the interaction models to
-    compare — each adds four solves.
+    The two sites are fixed: Auger at 1425 m, 67° zenith, $E_0 = 10^{10}$
+    GeV in the CORSIKA US-standard atmosphere; IceCube at 2835 m, 13°,
+    $E_0 = 10^{8}$ GeV in the South-Pole January MSIS00 atmosphere.
+
+    - **Interaction models**: each selected model is one `MCEqRun` (one
+      matrix build) and four solves. Models outside the base package are
+      fetched on first use.
+    - **Energy grid**: the primary must sit on the grid, so `e_max` has to
+      exceed $10^{10}$ GeV for Auger. A proton at $E_0$ and an iron nucleus
+      at $E_0/56$ per nucleon are both deposited on it with
+      `set_single_primary_particle`.
     """)
     return
 
@@ -64,7 +57,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
+        "database": "mceq_base_air_1d_v2.h5",
         "models": ["EPOSLHC", "SIBYLL23E"],
         "e_min": 1.0,
         "e_max": 1.0e11,
@@ -77,13 +70,13 @@ def configuration_defaults():
 def configuration_controls(defaults, mo):
     from MCEq.notebook import configuration_controls as build_controls
 
-    controls, options = build_controls(
+    controls, _options = build_controls(
         defaults,
         database=defaults["database"],
         show=("models_multi", "energy", "backend"),
     )
     controls
-    return (controls, options)
+    return (controls,)
 
 
 @app.cell(hide_code=True)
@@ -97,9 +90,9 @@ def selected_configuration(controls, defaults, mo):
     backend = settings["backend"]
     mo.md(
         f"**Applied:** {', '.join(models)} · {e_min:g}–{e_max:g} GeV · "
-        f"{len(models) * 4} solves expected"
+        f"{len(models) * 4} solves"
     )
-    return (backend, database, e_max, e_min, models, settings)
+    return backend, database, e_max, e_min, models, settings
 
 
 @app.cell(hide_code=True)
@@ -124,262 +117,249 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Solve per experiment, model, and composition
+    ## 02 · Solve per model, site and primary
+
+    `solve(int_grid=X)` stores the state at each slant depth in `X`
+    (every 20 g/cm² down to the ground); `get_solution(..., grid_idx=i)`
+    reads snapshot `i`. `config.h_obs` sets the observation level of the
+    CORSIKA atmosphere when it is created; the IceCube-centred MSIS00
+    atmosphere carries its own surface elevation.
     """)
     return
 
 
 @app.cell
-def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      models, np, proceed):
+def _(MCEqRun, apply_kernel_and_grid, config, backend, database, e_max, e_min,
+      loop_progress, models, np, proceed):
     _ = proceed
-    from scipy.integrate import trapezoid
-
     import crflux.models as pm
+    from scipy.integrate import trapezoid
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 
-    experiments = {
-        "auger": {"h_obs": 1425, "theta_deg": 67, "E0": 1e10,
+    sites = {
+        "Auger": {"h_obs": 1425.0, "theta_deg": 67.0, "E0": 1e10,
                   "atmosphere": ("CORSIKA", ("BK_USStd", None))},
-        "icecube": {"h_obs": 2835, "theta_deg": 13, "E0": 1e8,
+        "IceCube": {"h_obs": 2835.0, "theta_deg": 13.0, "E0": 1e8,
                     "atmosphere": ("MSIS00_IC", ("SouthPole", "January"))},
     }
-    primaries = {"proton": {"pdg_id": 2212}, "iron": {"corsika_id": 5626}}
+    primaries = {"p": {"pdg_id": 2212}, "Fe": {"corsika_id": 5626}}
 
-    spectra, height_grid = {}, {}
-
-    def scan(advance):
-        for experiment, site in experiments.items():
-            config.h_obs = site["h_obs"]
-            spectra[experiment] = {}
-            for interaction_model in models:
-                per_primary = spectra[experiment][interaction_model] = {}
-                for prim, ids in primaries.items():
-                    advance(title=f"{experiment} · {interaction_model} · {prim}")
-                    run = MCEqRun(
-                        interaction_model,
-                        primary_model=(pm.HillasGaisser2012, "H3a"),
-                        theta_deg=site["theta_deg"],
-                    )
-                    run.set_density_model(site["atmosphere"])
-                    run.set_single_primary_particle(site["E0"], **ids)
-                    Xvec = np.arange(1, run.density_model.max_X, 20)
-                    run.solve(int_grid=Xvec, grid_var="X")
-                    if experiment not in height_grid:
-                        height_grid[experiment] = (
-                            Xvec,
-                            run.density_model.s_lX2h(np.log(Xvec)) / 1e2,
+    # results[site][model][primary] -> dict of arrays; columns[site] -> (X, h)
+    results = {_site: {_model: {} for _model in models} for _site in sites}
+    columns = {}
+    with loop_progress(
+        len(models) * len(sites) * len(primaries), "model × site × primary"
+    ) as advance:
+        for _model in models:
+            run = MCEqRun(
+                interaction_model=_model,
+                primary_model=(pm.HillasGaisser2012, "H3a"),
+                theta_deg=0.0,
+            )
+            for _site, _spec in sites.items():
+                config.h_obs = _spec["h_obs"]
+                run.set_density_model(_spec["atmosphere"])
+                run.set_zenith_azimuth(_spec["theta_deg"])
+                _depths = np.arange(1.0, run.density_model.max_X, 20.0)
+                columns[_site] = (
+                    _depths, run.density_model.s_lX2h(np.log(_depths)) / 1e5
+                )
+                for _primary, _ids in primaries.items():
+                    run.set_single_primary_particle(_spec["E0"], **_ids)
+                    run.solve(int_grid=_depths)
+                    advance(title=f"{_model} · {_site} · {_primary}")
+                    _store = {"e_grid": run.e_grid}
+                    for _component in ("total", "pr"):
+                        _store[f"mu_{_component}"] = (
+                            run.get_solution(f"{_component}_mu+")
+                            + run.get_solution(f"{_component}_mu-")
                         )
-
-                    store = per_primary[prim] = {"egrid": run.e_grid}
-                    for component in ("total", "conv", "pr"):
-                        store["mu_" + component] = (
-                            run.get_solution(f"{component}_mu+", 0)
-                            + run.get_solution(f"{component}_mu-", 0)
+                        _store[f"numu_{_component}"] = (
+                            run.get_solution(f"{_component}_numu")
+                            + run.get_solution(f"{_component}_antinumu")
                         )
-                    store["mu_long"] = np.array([
+                    _store["n_mu"] = np.array([
                         trapezoid(
-                            run.get_solution("total_mu+", 0, grid_idx=snap)
-                            + run.get_solution("total_mu-", 0, grid_idx=snap),
+                            run.get_solution("total_mu+", grid_idx=i)
+                            + run.get_solution("total_mu-", grid_idx=i),
                             run.e_grid,
                         )
-                        for snap in range(len(run.grid_sol))
+                        for i in range(len(_depths))
                     ])
-                    if experiment == "icecube":
-                        for neutrino in ("numu", "nue", "nutau"):
-                            for component in ("total", "conv", "pr"):
-                                if neutrino == "nutau" and component != "total":
-                                    continue
-                                store[f"{neutrino}_{component}"] = (
-                                    run.get_solution(f"{component}_{neutrino}", 0)
-                                    + run.get_solution(
-                                        f"{component}_anti{neutrino}", 0
-                                    )
-                                )
-
-    with loop_progress(
-        len(experiments) * len(models) * len(primaries),
-        "detector x model x primary scans",
-    ) as advance:
-        scan(advance)
-    return (height_grid, spectra)
+                    results[_site][_model][_primary] = _store
+            run.close()
+    config.h_obs = 0.0
+    return columns, primaries, results, sites
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 03 · Atmosphere columns and muon yield with depth
+    ## 03 · Muon number along the shower axis
 
-    The shaded band marks the observatory altitude.
+    $N_\mu(E_\mu > 1\,\mathrm{GeV})$, the integral of the muon spectrum at
+    each snapshot, versus the altitude of that depth on the inclined axis.
+    The grey band is below the observation level.
     """)
     return
 
 
 @app.cell
-def _(height_grid, plt, spectra):
-    def plot_columns():
-        titles = {
-            "auger": r"Auger: 1425 m, $\theta = 67^\circ$",
-            "icecube": r"IceCube: 2835 m, $\theta = 13^\circ$",
-        }
-        h_obs = {"auger": 1425, "icecube": 2835}
-        figures = []
-        for experiment, (depth, height) in height_grid.items():
-            fig, ax = plt.subplots()
-            ax.set_title(titles[experiment])
-            ax.plot(height / 1e3, depth, "k-")
-            ax.axvspan(0, h_obs[experiment] / 1e3, color="k", alpha=0.2)
-            ax.set_xlim(0, 50)
-            ax.set_xlabel("$h$/km")
-            ax.set_ylabel("$X_\\mathrm{atm}/\\mathrm{g\\,cm^{-2}}$")
-            figures.append(fig)
-        return figures
+def _(columns, models, np, plt, primaries, results, sites):
+    model_colors = dict(zip(
+        models, ["#17857E", "#C46B30", "#263342", "#7A5BA6", "#B8A030", "#52606D"]
+    ))
+    primary_styles = {"p": "-", "Fe": "--"}
+    plot_style = {
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }
 
-    plot_columns()
-    return
-
-
-@app.cell
-def _(height_grid, plt, spectra):
-    def plot_longitudinal():
-        titles = {
-            "auger": r"Auger: 1425 m, $E_0 = 10^{10}\,$GeV $\theta = 67^\circ$",
-            "icecube": r"IceCube: 2835 m, $E_0 = 10^{8}\,$GeV $\theta = 13^\circ$",
-        }
-        h_obs = {"auger": 1425, "icecube": 2835}
-        figures = []
-        for experiment, (depth, height) in height_grid.items():
-            for interaction_model, per_primary in spectra[experiment].items():
-                fig, ax = plt.subplots()
-                ax.set_title(titles[experiment])
-                for prim, store in per_primary.items():
-                    ax.plot(
-                        height / 1e3, store["mu_long"], "-",
-                        color={"proton": "r", "iron": "b"}[prim], label=prim,
+    with plt.rc_context(plot_style):
+        fig_long, axes_long = plt.subplots(
+            1, 2, figsize=(11.5, 4.2), layout="constrained"
+        )
+        for _ax, (_site, _spec) in zip(axes_long, sites.items()):
+            _depths, height_km = columns[_site]
+            for _model in models:
+                for _primary in primaries:
+                    _ax.plot(
+                        height_km, results[_site][_model][_primary]["n_mu"],
+                        color=model_colors[_model],
+                        linestyle=primary_styles[_primary], linewidth=1.8,
+                        label=f"{_model}, {_primary}",
                     )
-                ax.axvspan(0, h_obs[experiment] / 1e3, color="k", alpha=0.2,
-                           zorder=1)
-                ax.set_xlim(0, 20)
-                ax.legend(title=interaction_model)
-                ax.set_xlabel("$h$/km")
-                ax.set_ylabel("$N_\\mu(E_\\mu > 1\\,\\mathrm{GeV})$")
-                figures.append(fig)
-        return figures
+            _ax.axvspan(0, _spec["h_obs"] / 1e3, color="#B3BAC2", alpha=0.3)
+            _ax.set_xlim(0, 20)
+            _ax.set_xlabel("Altitude on the shower axis [km]")
+            _ax.set_title(
+                f"{_site}: {_spec['h_obs']:g} m, {_spec['theta_deg']:g}°, "
+                f"$E_0 = 10^{{{np.log10(_spec['E0']):.0f}}}$ GeV",
+                loc="left", fontsize=12, pad=10,
+            )
+            _ax.grid(axis="y", color="#E6E9ED", linewidth=0.7)
+            _ax.set_axisbelow(True)
+        axes_long[0].set_ylabel(r"$N_\mu(E_\mu > 1\,\mathrm{GeV})$")
+        fig_long.legend(
+            *axes_long[0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=4, fontsize=10,
+        )
+    fig_long
+    return model_colors, plot_style, primary_styles
 
-    plot_longitudinal()
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 04 · Ground spectra and composition ratio
+
+    Top: muon spectra at the observation level (solid: total, dotted:
+    prompt from charm decays). Bottom: iron over proton for the total
+    spectrum; iron yields more low-energy muons because its energy per
+    nucleon is 56 times lower, and fewer at the highest energies.
+    """)
+    return
+
+
+@app.cell
+def _(model_colors, models, plot_style, plt, results, sites):
+    with plt.rc_context(plot_style):
+        fig_spec, axes_spec = plt.subplots(
+            2, 2, figsize=(11.5, 7.2), sharex="col", layout="constrained",
+            gridspec_kw={"height_ratios": [2, 1]},
+        )
+        for _col, _site in enumerate(sites):
+            _ax, _ax_ratio = axes_spec[0, _col], axes_spec[1, _col]
+            for _model in models:
+                _color = model_colors[_model]
+                for _primary, _linewidth in (("p", 1.2), ("Fe", 2.2)):
+                    _store = results[_site][_model][_primary]
+                    _ax.loglog(
+                        _store["e_grid"], _store["mu_total"], color=_color,
+                        linewidth=_linewidth, label=f"{_model}, {_primary}",
+                    )
+                    _ax.loglog(
+                        _store["e_grid"], _store["mu_pr"], color=_color,
+                        linewidth=_linewidth, linestyle=":",
+                    )
+                _proton = results[_site][_model]["p"]
+                _ratio = results[_site][_model]["Fe"]["mu_total"] / _proton["mu_total"]
+                _ax_ratio.semilogx(_proton["e_grid"], _ratio, color=_color, linewidth=1.8)
+            _ax.set_xlim(1.0, 1.0e8 if _site == "Auger" else 1.0e6)
+            _ax.set_ylim(1e-14, 1e7)
+            _ax.set_title(_site, loc="left", fontsize=12, pad=10)
+            _ax_ratio.set_ylim(0.5, 3.2)
+            _ax_ratio.axhline(1.0, color="#B3BAC2", linewidth=0.8)
+            _ax_ratio.set_xlabel(r"Muon energy $E_\mu$ [GeV]")
+            for _axis in (_ax, _ax_ratio):
+                _axis.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+                _axis.set_axisbelow(True)
+        axes_spec[0, 0].set_ylabel(r"$\mathrm{d}N_\mu/\mathrm{d}E$ [GeV$^{-1}$]")
+        axes_spec[1, 0].set_ylabel("Fe / p")
+        fig_spec.legend(
+            *axes_spec[0, 0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=4, fontsize=10,
+        )
+    fig_spec
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 04 · Spectra, composition ratio, and neutrinos
+    ## 05 · Muon neutrinos at IceCube
 
-    Total and prompt muon spectra per primary, then the iron/proton ratio and
-    its model spread, then the IceCube muon-neutrino spectra.
+    $\nu_\mu + \bar\nu_\mu$ from the same IceCube showers, total and prompt.
     """)
     return
 
 
 @app.cell
-def _(plt, spectra):
-    def plot_muon_spectra():
-        titles = {
-            "auger": r"Auger: 1425 m, $E_0 = 10^{10}\,$GeV $\theta = 67^\circ$",
-            "icecube": r"IceCube: 2835 m, $E_0 = 10^{8}\,$GeV $\theta = 13^\circ$",
-        }
-        figures = []
-        for experiment in spectra:
-            for interaction_model, per_primary in spectra[experiment].items():
-                fig, ax = plt.subplots()
-                ax.set_title(titles[experiment])
-                for prim, store in per_primary.items():
-                    color = {"proton": "r", "iron": "b"}[prim]
-                    label = {"proton": "p", "iron": "Fe"}[prim]
-                    ax.loglog(store["egrid"], store["mu_total"], "-",
-                              color=color, lw=2, label=label + " total")
-                    ax.loglog(store["egrid"], store["mu_pr"], ":",
-                              color=color, label=label + " prompt")
-                ax.set_xlim(0.1, 1e8)
-                ax.set_ylim(1e-14, 1e7)
-                ax.set_xlabel(r"$E_\mu$/GeV")
-                ax.legend(title=interaction_model)
-                figures.append(fig)
-        return figures
-
-    plot_muon_spectra()
-    return
-
-
-@app.cell
-def _(plt, spectra):
-    def plot_composition_ratio():
-        titles = {
-            "auger": r"Auger: 1425 m, $E_0 = 10^{10}\,$GeV $\theta = 67^\circ$",
-            "icecube": r"IceCube: 2835 m, $E_0 = 10^{8}\,$GeV $\theta = 13^\circ$",
-        }
-        families = {"EPOSLHC": "k", "SIBYLL": "b", "DPMJET": "g", "QGSJET": "r"}
-        figures = []
-        for experiment in spectra:
-            fig, ax = plt.subplots()
-            ax.set_title(titles[experiment], x=0.55)
-            for interaction_model, per_primary in spectra[experiment].items():
-                ratio = (
-                    per_primary["iron"]["mu_total"]
-                    / per_primary["proton"]["mu_total"]
+def _(model_colors, models, plot_style, plt, results):
+    with plt.rc_context(plot_style):
+        fig, ax_nu = plt.subplots(figsize=(6.5, 4.4), layout="constrained")
+        for _model in models:
+            for _primary, _linewidth in (("p", 1.2), ("Fe", 2.2)):
+                _store = results["IceCube"][_model][_primary]
+                ax_nu.loglog(
+                    _store["e_grid"], _store["numu_total"],
+                    color=model_colors[_model], linewidth=_linewidth,
+                    label=f"{_model}, {_primary}",
                 )
-                family = next(
-                    (name for name in families if name in interaction_model),
-                    None,
+                ax_nu.loglog(
+                    _store["e_grid"], _store["numu_pr"],
+                    color=model_colors[_model], linewidth=_linewidth, linestyle=":",
                 )
-                ax.semilogx(
-                    per_primary["proton"]["egrid"], ratio, "-",
-                    color=families.get(family, "0.5"), label=interaction_model,
-                )
-            ax.set_xlim(1, {"auger": 1e8, "icecube": 1e6}[experiment])
-            ax.set_ylim(1, 3.2)
-            ax.set_xlabel(r"$E_\mu$/GeV")
-            ax.set_ylabel(r"iron / proton")
-            ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5))
-            figures.append(fig)
-        return figures
-
-    plot_composition_ratio()
-    return
-
-
-@app.cell
-def _(plt, spectra):
-    def plot_icnu():
-        figures = []
-        for interaction_model, per_primary in spectra["icecube"].items():
-            fig, ax = plt.subplots()
-            ax.set_title(
-                r"IceCube: 2835 m, $E_0 = 10^{8}\,$GeV $\theta = 13^\circ$"
-            )
-            for prim, store in per_primary.items():
-                color = {"proton": "r", "iron": "b"}[prim]
-                label = {"proton": "p", "iron": "Fe"}[prim]
-                ax.loglog(store["egrid"], store["numu_total"], "-",
-                          color=color, lw=2, label=f"{label} total")
-                ax.loglog(store["egrid"], store["numu_pr"], ":",
-                          color=color, label=f"{label} prompt")
-            ax.set_xlim(1, 1e8)
-            ax.set_ylim(1e-14, 1e7)
-            ax.set_xlabel(r"$E_{\nu_\mu}$/GeV")
-            ax.legend(title=interaction_model)
-            figures.append(fig)
-        return figures
-
-    plot_icnu()
-    return
+        ax_nu.set_xlim(1.0, 1.0e8)
+        ax_nu.set_ylim(1e-14, 1e7)
+        ax_nu.set_xlabel(r"Neutrino energy $E_{\nu_\mu}$ [GeV]")
+        ax_nu.set_ylabel(r"$\mathrm{d}N_{\nu_\mu}/\mathrm{d}E$ [GeV$^{-1}$]")
+        ax_nu.set_title(
+            r"IceCube, $E_0 = 10^8$ GeV, 13° (dotted: prompt)",
+            loc="left", fontsize=12, pad=10,
+        )
+        ax_nu.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+        ax_nu.legend(frameon=False, fontsize=9)
+    fig
+    return (fig,)
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(filename="Muon_spectra.ipynb", configuration=settings)
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="muon_spectra.ipynb", configuration=settings)
     return
 
 

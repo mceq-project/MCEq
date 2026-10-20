@@ -12,12 +12,10 @@ app = marimo.App(width="medium", app_title="Zenith distribution at IceCube")
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Zenith distribution of neutrino fluxes
+    # Zenith distribution of neutrino fluxes at IceCube
 
-    Neutrino and muon fluxes at fixed energy versus $\cos\theta$ for the two
-    MSIS00 seasons at the South Pole. Zenith runs 0° (downward) to 180°
-    (upward through Earth); the atmosphere is centered on IceCube, and here
-    geomagnetic cutoffs are off, so azimuth averaging is exact.
+    Muon-neutrino and muon fluxes at fixed energy versus $\cos\theta$, split
+    by parent (pion, kaon, prompt), for South-Pole summer and winter.
     """)
     return
 
@@ -30,22 +28,9 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import (
-        apply_kernel_and_grid,
-        download_jupyter,
-        loop_progress,
-    )
+    from MCEq.notebook import apply_kernel_and_grid, solve_progress
 
-    return (
-        MCEqRun,
-        apply_kernel_and_grid,
-        config,
-        download_jupyter,
-        loop_progress,
-        mo,
-        np,
-        plt,
-    )
+    return MCEqRun, apply_kernel_and_grid, config, mo, np, plt, solve_progress
 
 
 @app.cell(hide_code=True)
@@ -53,8 +38,13 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    The season pair and the 37-bin $\cos\theta$ grid are the fixed subject of
-    the comparison.
+    The atmosphere is fixed to `MSIS00_IC`: NRLMSISE-00 profiles centred on
+    IceCube, so a zenith angle covers the full sky from 0° (down-going) to
+    180° (up-going, the cascade develops above the far side of the Earth).
+    January and July are the austral summer and winter. The controls set
+    the hadronic model, the primary spectrum, the cascade grid and the
+    backend; keep `e_max` at least one decade above the highest plotted
+    energy ($10^6$ GeV).
     """)
     return
 
@@ -62,11 +52,11 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
-        "interaction_model": "SIBYLL21",
+        "database": "mceq_base_air_1d_v2.h5",
+        "interaction_model": "SIBYLL23E",
         "primary": "HillasGaisser2012:H3a",
         "e_min": 1.0,
-        "e_max": 1.0e9,
+        "e_max": 1.0e8,
         "backend": "auto",
     }
     return (defaults,)
@@ -127,175 +117,189 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Spectra per zenith and season
+    ## 02 · Batch over zenith and season
 
-    One solve per (zenith, season); the full spectrum is stored and single
-    energy bins are extracted at plot time.
+    Twenty $\cos\theta$ bin centres times two seasons are 40 independent
+    cascades sharing one operator. `solve_batch(conditions=...)` takes one
+    dict per member (`zenith_deg`, `density_model`), builds one integration
+    path each, and packs them onto a carousel of `carousel_K` columns that
+    advance together. A narrow carousel keeps the columns busy, because the
+    near-horizontal paths need several times more steps than the vertical
+    ones.
     """)
     return
 
 
 @app.cell
 def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      interaction_model, np, primary_model, proceed):
+      interaction_model, primary_model, proceed):
     _ = proceed
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 
-    cos_theta = np.linspace(-1, 1, 37)
-    angles = np.arccos(cos_theta) / np.pi * 180.0
-    mag = 3
-
-    tracks = {
-        "mu_conv": ("conv", ("mu+", "mu-")),
-        "mu_pr": ("pr", ("mu+", "mu-")),
-        "mu_total": ("total", ("mu+", "mu-")),
-        "mu_pi": ("pi", ("mu+", "mu-")),
-        "mu_k": ("k", ("mu+", "mu-")),
-        "numu_conv": ("conv", ("numu", "antinumu")),
-        "numu_pr": ("pr", ("numu", "antinumu")),
-        "numu_total": ("total", ("numu", "antinumu")),
-        "numu_pi": ("pi", ("numu", "antinumu")),
-        "numu_k": ("k", ("numu", "antinumu")),
-        "nue_conv": ("conv", ("nue", "antinue")),
-        "nue_pr": ("pr", ("nue", "antinue")),
-        "nue_total": ("total", ("nue", "antinue")),
-        "nue_pi": ("pi", ("nue", "antinue")),
-        "nue_k": ("k", ("nue", "antinue")),
-        "nutau_pr": ("total", ("nutau", "antinutau")),
+    seasons = {
+        "summer": ("MSIS00_IC", ("SouthPole", "January")),
+        "winter": ("MSIS00_IC", ("SouthPole", "July")),
     }
-
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
         primary_model=primary_model,
         theta_deg=0.0,
-        density_model=("MSIS00_IC", ("SouthPole", "January")),
+        density_model=seasons["summer"],
     )
-    e_grid = mceq_run.e_grid
+    return mceq_run, seasons
 
-    all_flux = {}
 
-    def scan(advance):
-        for season, atmosphere in [
-            ("summer", ("MSIS00_IC", ("SouthPole", "January"))),
-            ("winter", ("MSIS00_IC", ("SouthPole", "July"))),
-        ]:
-            mceq_run.set_density_model(atmosphere)
-            season_flux = {frac: [] for frac in tracks}
-            for theta in angles:
-                mceq_run.set_zenith_azimuth(theta)
-                mceq_run.solve()
-                advance(title=f"{season} · {theta:.0f} deg")
-                for frac, (track, particles) in tracks.items():
-                    season_flux[frac].append(
-                        sum(
-                            mceq_run.get_solution(f"{track}_{p}", mag)
-                            for p in particles
-                        )
-                    )
-            all_flux[season] = season_flux
-
-    with loop_progress(
-        2 * len(angles), "zenith distribution, both seasons"
-    ) as advance:
-        scan(advance)
-    return (all_flux, cos_theta, e_grid, mag)
+@app.cell
+def _(interaction_model, mceq_run, np, seasons, solve_progress):
+    cos_theta = np.linspace(-0.95, 0.95, 20)
+    angles = np.degrees(np.arccos(cos_theta))
+    conditions = [
+        {"zenith_deg": float(zenith), "density_model": atmosphere}
+        for atmosphere in seasons.values()
+        for zenith in angles
+    ]
+    with solve_progress(
+        f"{interaction_model} · {len(conditions)} cascades"
+    ) as progress:
+        result = mceq_run.solve_batch(
+            conditions=conditions, carousel_K=8, progress=progress
+        )
+    result
+    return cos_theta, result
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 03 · Muon neutrinos, three energies
+    ## 03 · Fluxes by parent
 
-    Solid: summer (January); dashed: winter (July). Blue/green/red: pion, kaon,
-    prompt contributions. The energy index is clamped to the grid, which is
-    shallower in the reduced database.
+    The lepton prefixes `pi_`, `k_` and `pr_` of `get_solution` select the
+    decays of pions, kaons and charmed hadrons. Column `k` of the batch is
+    season-major: `k = i_season * n_zenith + i_zenith`.
     """)
     return
 
 
 @app.cell
-def _(all_flux, cos_theta, e_grid, mag, np, plt):
-    def draw_numu():
-        fig_numu, axes = plt.subplots(1, 3, sharex=True, figsize=(9.8, 3.0))
-        for i, (e_target, ylim) in enumerate(
-            zip([10.0, 10e3, 1e6], [2e-5, 4e-14, 6e-22])
-        ):
-            ax = axes[i]
-            idx = min(
-                int(np.argmin(np.abs(e_target - e_grid))) + 1, e_grid.size - 1
-            )
-            ax.text(0.01, 0.9, rf" $E(\nu_\mu)$={e_grid[idx]:2.1e} GeV",
-                    transform=ax.transAxes)
-            for sid, season in enumerate(["summer", "winter"]):
-                for frac, color, label in [
-                    ("pi", "b", r"from $\pi$ decay"),
-                    ("k", "g", "from $K$ decay"),
-                    ("pr", "r", "from prompt decays"),
-                ]:
-                    ax.plot(
-                        cos_theta,
-                        [f[idx] / e_grid[idx] ** mag
-                         for f in all_flux[season][f"numu_{frac}"]],
-                        label=(label if (i == 0 and sid == 0) else "_nolabel_"),
-                        ls="-" if sid == 0 else "--", lw=1.5, color=color,
-                    )
-            ax.set_ylim(0, ylim)
-            ax.set_xlabel(r"$\cos(\theta)$ (IceCube)")
-        axes[0].set_ylabel(r"$\Phi_{\nu_\mu}$ [cm$^{2}$ s sr GeV]$^{-1}$")
-        fig_numu.legend(*axes[0].get_legend_handles_labels(), loc=(0.45, 0.9),
-                        ncol=3, frameon=False)
-        fig_numu.tight_layout(rect=[0.0, 0.0, 1.0, 0.92], pad=0.05)
-        return fig_numu
+def _(cos_theta, mceq_run, np, result, seasons):
+    e_grid = mceq_run.e_grid
+    targets = [10.0, 1.0e4, 1.0e6]  # GeV
+    e_idx = [int(np.argmin(np.abs(e_grid - energy))) for energy in targets]
+    lepton_pairs = {"numu": ("numu", "antinumu"), "mu": ("mu+", "mu-")}
+    # zenith_flux[lepton][parent][season] has shape (n_energies, n_zenith)
+    zenith_flux = {
+        lepton: {
+            parent: {
+                season: np.array([
+                    [
+                        sum(
+                            result.get_solution(
+                                f"{parent}_{particle}",
+                                k=i_season * cos_theta.size + i_zen,
+                            )[idx]
+                            for particle in particles
+                        )
+                        for i_zen in range(cos_theta.size)
+                    ]
+                    for idx in e_idx
+                ])
+                for i_season, season in enumerate(seasons)
+            }
+            for parent in ("pi", "k", "pr")
+        }
+        for lepton, particles in lepton_pairs.items()
+    }
+    e_plot = e_grid[e_idx]
+    return e_plot, zenith_flux
 
-    draw_numu()
+
+@app.cell
+def _(cos_theta, e_plot, interaction_model, plt, zenith_flux):
+    def zenith_figure(lepton, symbol, cos_range):
+        parent_styles = {
+            "pi": (r"$\pi$ decays", "#17857E"),
+            "k": (r"$K$ decays", "#263342"),
+            "pr": ("prompt", "#C46B30"),
+        }
+        season_styles = {"summer": "-", "winter": "--"}
+        with plt.rc_context({
+            "font.family": "sans-serif",
+            "font.size": 11,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.labelcolor": "#263342",
+            "axes.edgecolor": "#B3BAC2",
+            "xtick.color": "#52606D",
+            "ytick.color": "#52606D",
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+        }):
+            figure, axes = plt.subplots(
+                1, 3, figsize=(11.5, 3.9), sharex=True, layout="constrained"
+            )
+            for i_e, ax in enumerate(axes):
+                for parent, (parent_label, color) in parent_styles.items():
+                    for season, linestyle in season_styles.items():
+                        ax.plot(
+                            cos_theta,
+                            zenith_flux[lepton][parent][season][i_e],
+                            color=color, linestyle=linestyle, linewidth=1.8,
+                            label=f"{parent_label}, {season}",
+                        )
+                ax.set_title(
+                    rf"$E_{{{symbol}}}$ = {e_plot[i_e]:.2g} GeV",
+                    loc="left", fontsize=12, pad=10,
+                )
+                ax.set_xlim(cos_range)
+                ax.set_ylim(bottom=0)
+                ax.set_xlabel(r"$\cos\theta$ (IceCube)")
+                ax.grid(axis="y", color="#E6E9ED", linewidth=0.7)
+                ax.set_axisbelow(True)
+            axes[0].set_ylabel(
+                rf"$\Phi_{{{symbol}}}$ [GeV$^{{-1}}$ cm$^{{-2}}$ s$^{{-1}}$ sr$^{{-1}}$]"
+            )
+            figure.legend(
+                *axes[0].get_legend_handles_labels(), frameon=False,
+                loc="outside lower center", ncol=3, fontsize=10,
+            )
+            figure.suptitle(
+                f"{interaction_model}  /  solid: summer (January), "
+                "dashed: winter (July)",
+                fontsize=11, color="#52606D",
+            )
+        return figure
+
+    fig_numu = zenith_figure("numu", r"\nu_\mu + \bar\nu_\mu", (-1.0, 1.0))
+    fig_numu
+    return (zenith_figure,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Conventional neutrinos peak at the horizon, where pions and kaons decay
+    before they interact; the prompt flux is nearly isotropic. The seasonal
+    difference comes from the temperature of the production layer and is
+    largest for the pion component at high energy. Muons are shown for the
+    down-going hemisphere only (the Earth absorbs the up-going ones).
+    """)
     return
 
 
 @app.cell
-def _(all_flux, cos_theta, e_grid, mag, np, plt):
-    def draw_muons():
-        fig_mu, axes = plt.subplots(1, 3, sharex=True, figsize=(9.8, 3.0))
-        for i, (e_target, ylim) in enumerate(
-            zip([10.0, 10e3, 1e6], [7e-5, 12e-14, 15e-22])
-        ):
-            ax = axes[i]
-            idx = min(
-                int(np.argmin(np.abs(e_target - e_grid))) + 1, e_grid.size - 1
-            )
-            ax.text(0.01, 0.9, rf" $E(\mu)$={e_grid[idx]:2.1e} GeV",
-                    transform=ax.transAxes)
-            for sid, season in enumerate(["summer", "winter"]):
-                for frac, color, label in [
-                    ("pi", "b", r"from $\pi$ decay"),
-                    ("k", "g", "from $K$ decay"),
-                    ("pr", "r", "from prompt decays"),
-                ]:
-                    ax.plot(
-                        cos_theta,
-                        [f[idx] / e_grid[idx] ** mag
-                         for f in all_flux[season][f"mu_{frac}"]],
-                        label=(label if (i == 0 and sid == 0) else "_nolabel_"),
-                        ls="-" if sid == 0 else "--", lw=1.5, color=color,
-                    )
-            ax.set_ylim(0, ylim)
-            ax.set_xlabel(r"$\cos(\theta)$ (IceCube)")
-        axes[0].set_ylabel(r"$\Phi_{\mu}$ [cm$^{2}$ s sr GeV]$^{-1}$")
-        axes[0].set_xlim(0, 1)
-        fig_mu.legend(*axes[0].get_legend_handles_labels(), loc=(0.45, 0.9),
-                      ncol=3, frameon=False)
-        fig_mu.tight_layout(rect=[0.0, 0.0, 1.0, 0.92], pad=0.05)
-        return fig_mu
-
-    draw_muons()
-    return
+def _(zenith_figure):
+    fig = zenith_figure("mu", r"\mu^+ + \mu^-", (0.0, 1.0))
+    fig
+    return (fig,)
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(
-        filename="Zenith_distribution_IceCube.ipynb", configuration=settings
-    )
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="zenith_distribution_icecube.ipynb", configuration=settings)
     return
 
 

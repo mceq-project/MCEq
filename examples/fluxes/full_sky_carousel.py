@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["marimo==0.24.0", "nbformat", "MCEq>=2.0.0", "matplotlib>=3.10", "numpy", "tqdm", "crflux>1.0.5"]
+# dependencies = ["marimo==0.24.0", "nbformat", "MCEq>=2.0.0", "matplotlib>=3.10", "numpy", "scipy", "tqdm", "crflux>1.0.5"]
 # ///
 
 import marimo
@@ -12,19 +12,10 @@ app = marimo.App(width="medium", app_title="Full-sky fluxes with solve_fullsky")
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Full-sky neutrino fluxes with `solve_fullsky`
+    # Full-sky neutrino fluxes and the geomagnetic cutoff
 
-    `MCEqRun.solve_fullsky` propagates one primary spectrum through every
-    (zenith, azimuth) pixel of a sky grid in a **single multi-RHS solve**:
-    the stage-5 LPT carousel packs pixels into a `K_pipe`-column pipeline, so
-    total kernel work is $\sum_{\text{pixels}} \text{nsteps} \times
-    \text{ms/RHS}$, not $\max(\text{nsteps}) \times K_{\text{total}}$. Works
-    on all four backends.
-
-    Sections below: serial baseline vs one-shot carousel, per-pixel flux
-    extraction, a 2-D `phi0` hook, and the geomagnetic rigidity cutoff
-    (requires `pymsis` for the MSIS21 atmospheres and `gtracr` for the cutoff
-    map; sections skip themselves cleanly when a package is missing).
+    Muon-neutrino flux on a (zenith, azimuth) sky grid above Tokyo, solved in
+    one batched call, with and without the geomagnetic rigidity cutoff.
     """)
     return
 
@@ -39,16 +30,18 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import (
-        apply_kernel_and_grid,
-        download_jupyter,
-        loop_progress,
-        solve_progress,
-    )
+    from MCEq.notebook import apply_kernel_and_grid, loop_progress, solve_progress
 
     return (
-        MCEqRun, apply_kernel_and_grid, config, download_jupyter, loop_progress,
-        mo, np, plt, solve_progress, time,
+        MCEqRun,
+        apply_kernel_and_grid,
+        config,
+        loop_progress,
+        mo,
+        np,
+        plt,
+        solve_progress,
+        time,
     )
 
 
@@ -57,9 +50,19 @@ def _(mo):
     mo.md(r"""
     ## 01 · Configuration
 
-    The full-sky machinery is the subject, so the demo pins SIBYLL2.3d / H3a
-    and a South-Pole atmosphere; the controls set the sky-grid step and the
-    cascade grid.
+    The physics is pinned so that the batch machinery is the subject:
+    SIBYLL-2.3e above 80 GeV blended with FLUKA below
+    (`low_energy_model="FLUKA20251"`), the H3a primary flux, and the
+    NRLMSISE-00 January atmosphere at Tokyo, a site with cutoffs of 7–30 GV.
+    The FLUKA blend matters here: the cutoff removes primaries below a few
+    tens of GeV, and their secondaries come from the low-energy model.
+
+    - **Sky-grid step**: spacing of the zenith (0° up to below the horizon)
+      and azimuth grids; the number of pixels grows with the inverse
+      square.
+    - **Energy grid**: the cutoff acts on GeV-scale leptons; `e_min` must
+      stay below the plotted 1 GeV and `e_max` need not be large.
+    - **Backend**: `config.kernel_config` for the solver.
     """)
     return
 
@@ -67,10 +70,10 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
-        "step_deg": 30.0,
-        "e_min": 1.0,
-        "e_max": 1.0e7,
+        "database": "mceq_base_air_1d_v2.h5",
+        "step_deg": 20.0,
+        "e_min": 0.1,
+        "e_max": 1.0e6,
         "backend": "auto",
     }
     return (defaults,)
@@ -99,11 +102,11 @@ def configuration_controls(defaults, mo):
             label="Sky grid step [°]", show_value=True, full_width=True,
         ),
         log_e_min=mo.ui.slider(
-            -1, 3, step=0.5, value=math.log10(defaults["e_min"]),
+            -1, 0, step=0.5, value=math.log10(defaults["e_min"]),
             label="e_min · log₁₀(E/GeV)", show_value=True, full_width=True,
         ),
         log_e_max=mo.ui.slider(
-            4, 11, step=0.5, value=math.log10(defaults["e_max"]),
+            4, 9, step=0.5, value=math.log10(defaults["e_max"]),
             label="e_max · log₁₀(E/GeV)", show_value=True, full_width=True,
         ),
         backend=mo.ui.dropdown(
@@ -120,18 +123,13 @@ def selected_configuration(controls, defaults, mo):
 
     settings = apply_configuration(controls, defaults)
     database = settings["database"]
+    step_deg = settings["step_deg"]
     e_min, e_max = settings["e_min"], settings["e_max"]
     backend = settings["backend"]
-    step_deg = settings["step_deg"]
-    n_zen = int(round(180.0 / step_deg)) + 1
-    n_az = int(round(360.0 / step_deg))
     mo.md(
-        f"**Applied:** {e_min:g}–{e_max:g} GeV · sky grid {n_zen}×{n_az} = "
-        f"{n_zen * n_az} pixels"
+        f"**Applied:** {step_deg:g}° sky grid · {e_min:g}–{e_max:g} GeV"
     )
-    return (
-        backend, database, e_max, e_min, n_az, n_zen, settings, step_deg,
-    )
+    return backend, database, e_max, e_min, settings, step_deg
 
 
 @app.cell(hide_code=True)
@@ -156,226 +154,215 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Run and environment
+    ## 02 · Run and sky grid
 
-    At the South Pole the column is azimuth-symmetric but the full-sky
-    machinery still exercises $K = n_{zen} \times n_{az}$ distinct paths.
-    Geometry defaults to NRLMSIS 2.1 when `pymsis` is installed, otherwise to
-    CORSIKA US Standard with cutoffs off.
+    The geomagnetic cutoff is a property of the run
+    (`MCEqRun(..., geomagnetic_cutoff=True)`, default off) or of a single
+    `solve_fullsky(..., geomagnetic_cutoff=...)` call. It needs an
+    atmosphere with a geographic location and a primary model with mass
+    groups.
     """)
     return
 
 
 @app.cell
-def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min, proceed):
+def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
+      np, step_deg, proceed):
     _ = proceed
-    import importlib.util
-
-    has_msis21 = importlib.util.find_spec("pymsis") is not None
-    has_gtracr = importlib.util.find_spec("gtracr") is not None
-    use_geomagnetic = has_msis21 and has_gtracr
+    import crflux.models as pm
 
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
 
-    atmosphere = (
-        ("MSIS21_IC", ("SouthPole", "January"))
-        if has_msis21
-        else ("CORSIKA", ("BK_USStd", None))
-    )
-    import crflux.models as pm
-
     mceq = MCEqRun(
-        interaction_model="SIBYLL23D",
+        interaction_model="SIBYLL23E",
+        low_energy_model="FLUKA20251",
         primary_model=(pm.HillasGaisser2012, "H3a"),
         theta_deg=0.0,
-        density_model=atmosphere,
+        density_model=("MSIS00", ("Tokyo", "January")),
     )
-    f"MSIS21: {has_msis21} · gtracr: {has_gtracr} · atmosphere: "
-    f"{atmosphere[0]} · dim_states={mceq.dim_states}, "
-    f"n_E={mceq.e_grid.size}"
-    return atmosphere, has_gtracr, has_msis21, mceq, use_geomagnetic
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 03 · Sky grid
-    """)
-    return
-
-
-@app.cell
-def _(mceq, n_az, n_zen, np, step_deg):
-    zen_centres = np.linspace(0.0, 180.0, n_zen)
-    az_centres = np.arange(n_az) * step_deg
-    K = n_zen * n_az
-    E_target_GeV = np.array([1.0, 10.0, 100.0])
-    f"grid: {n_zen} zen × {n_az} az = K = {K} pixels"
-    return E_target_GeV, K, az_centres, zen_centres
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 04 · Baseline: serial pixel scan
-
-    A sub-sampled grid keeps the baseline quick; the same call is what
-    `solve_fullsky` replaces.
-    """)
-    return
-
-
-@app.cell
-def _(E_target_GeV, K, az_centres, loop_progress, mceq, np, zen_centres):
-    zen_sub = zen_centres[::3]
-    az_sub = az_centres[::9] if az_centres.size >= 9 else az_centres
-    K_sub = zen_sub.size * az_sub.size
-
-    log_grid = np.log(mceq.e_grid)
-    log_targets = np.log(E_target_GeV)
-    numu_sub = np.zeros((E_target_GeV.size, zen_sub.size, az_sub.size))
-
-    t0s = time.time()
-    with loop_progress(K_sub, "serial pixel scan") as advance:
-        for i_z, zen in enumerate(zen_sub):
-            for i_a, az in enumerate(az_sub):
-                mceq.set_zenith_azimuth(float(zen), float(az))
-                mceq.solve()
-                advance()
-                flux = mceq.get_solution("total_numu", 0) + mceq.get_solution(
-                    "total_antinumu", 0
-                )
-                numu_sub[:, i_z, i_a] = np.exp(
-                    np.interp(log_targets, log_grid, np.log(np.maximum(flux, 1e-300)))
-                )
-    t_serial = time.time() - t0s
-    f"serial wall: {t_serial:.1f}s ({t_serial / K_sub * 1e3:.1f} ms / pixel)"
-    return (K_sub, numu_sub, t_serial)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 05 · One-shot carousel
-
-    `carousel_K=None` resolves to `min(K, 128)`. The cutoff is disabled here
-    when active so the serial baseline and the carousel solve the same
-    physics; toggle it in the cell to see the skymap effect.
-    """)
-    return
-
-
-@app.cell
-def _(K, az_centres, mceq, solve_progress, t_serial, zen_centres):
-    t0c = time.time()
-    with solve_progress(f"carousel full sky (K = {K})") as progress:
-        res = mceq.solve_fullsky(
-            zen_centres, az_centres, geomagnetic_cutoff=False,
-            progress=progress,
-        )
-    t_carousel = time.time() - t0c
+    zenith_grid = np.arange(0.0, 90.0, step_deg)
+    azimuth_grid = np.arange(0.0, 360.0, step_deg)
     (
-        f"solve_fullsky (carousel): {t_carousel:.2f}s for K = {K} · "
-        f"nsteps/pixel min {res.nsteps_per_col.min()} mean "
-        f"{res.nsteps_per_col.mean():.0f} max {res.nsteps_per_col.max()} · "
-        f"sol shape {res.sol.shape}"
+        f"dim_states = {mceq.dim_states}, {mceq.e_grid.size} energy bins · "
+        f"sky grid {zenith_grid.size} × {azimuth_grid.size} = "
+        f"{zenith_grid.size * azimuth_grid.size} pixels"
     )
-    return res, t_carousel
+    return azimuth_grid, mceq, zenith_grid
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 06 · Zenith dependence, carousel vs serial
+    ## 03 · Serial scan versus one batched call
 
-    Azimuth-averaged; red crosses are the serial baseline (agreement verifies
-    the multi-RHS path). `res.skymap('total_numu', E)` is the one-line
-    shortcut; the manual slicing is kept to show the state-vector layout.
+    Without a cutoff the MSIS00 atmosphere does not depend on azimuth, so the
+    zenith grid alone is the full answer. The serial loop solves one zenith
+    after the other; `solve_fullsky(zenith_grid)` builds one integration
+    path per zenith and advances all columns together on the carousel
+    (`carousel_K`, default `min(K, 128)` columns). Both must agree.
     """)
     return
 
 
 @app.cell
-def _(E_target_GeV, K, az_centres, numu_sub, n_zen, np, plt, res, zen_centres):
-    pname2pref = res._mceq.pman.pname2pref
-    e_grid = np.asarray(res._mceq.e_grid)
-    numu_pixel_grid = np.zeros((e_grid.size, K), dtype=np.float64)
-    for base in ("numu", "antinumu"):
-        for variant in (base, base + "_l", base + "_r"):
-            if variant in pname2pref:
-                p = pname2pref[variant]
-                numu_pixel_grid += res.sol[p.lidx : p.uidx, :]
-
-    log_E = np.log(e_grid)
-    log_flux = np.log(np.maximum(numu_pixel_grid, 1e-300))
-    numu_at_E = np.empty((E_target_GeV.size, K), dtype=np.float64)
-    for i, lt in enumerate(np.log(E_target_GeV)):
-        ji = int(np.clip(np.searchsorted(log_E, lt, side="right"), 1,
-                          log_E.size - 1))
-        w = (lt - log_E[ji - 1]) / (log_E[ji] - log_E[ji - 1])
-        numu_at_E[i] = np.exp((1.0 - w) * log_flux[ji - 1] + w * log_flux[ji])
-    numu_at_E = numu_at_E.reshape(E_target_GeV.size, n_zen, az_centres.size)
-
-    cos_theta = np.cos(np.deg2rad(zen_centres))
-    cos_theta_sub = np.cos(np.deg2rad(np.asarray(zen_centres)[::3]))
-    fig, axes = plt.subplots(1, 3, figsize=(11, 3.2))
-    for i, energy in enumerate(E_target_GeV):
-        ax = axes[i]
-        ax.semilogy(cos_theta, numu_at_E[i].mean(axis=1), "k-", lw=1.5,
-                    label="solve_fullsky (az avg)")
-        ax.plot(cos_theta_sub, numu_sub[i].mean(axis=1), "r+", ms=8,
-                label="serial scan" if i == 0 else None)
-        ax.set_xlabel(r"$\cos\theta$")
-        ax.set_title(rf"$E_{{\nu_\mu}} = {energy:g}$ GeV")
-    axes[0].set_ylabel(r"$\Phi_{\nu_\mu + \bar\nu_\mu}$ [(cm$^2$ s sr GeV)$^{-1}$]")
-    axes[0].legend(loc="best", fontsize="small", frameon=False)
-    fig.tight_layout()
-    fig
-    return (numu_at_E,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 07 · Geomagnetic cutoff and per-pixel primaries
-
-    With `pymsis` + `gtracr`, `geomagnetic_cutoff=None` (default for
-    MSIS-based atmospheres) builds and caches the rigidity map on first call.
-    A 2-D `phi0` of shape `(dim_states, K)` lets the caller modify primaries
-    per pixel — the demo below zeroes the up-going hemisphere purely to
-    exercise the hook.
-    """)
-    return
-
-
-@app.cell
-def _(az_centres, mceq, np, solve_progress, use_geomagnetic, zen_centres):
-    if use_geomagnetic:
-        phi0_1d = mceq._phi0.copy()
-        phi0_2d = np.broadcast_to(phi0_1d[:, None], (mceq.dim_states, K)).copy()
-        upgoing = np.repeat(zen_centres[:, None] > 90.0, az_centres.size, axis=1)
-        phi0_2d[:, upgoing.ravel()] = 0.0
-        with solve_progress("masked carousel (up-going vetoed)") as _progress:
-            sol_masked = mceq.solve_fullsky(
-                zen_centres, az_centres, phi0=phi0_2d, progress=_progress
+def _(loop_progress, mceq, np, time, zenith_grid):
+    # A grid energy near 1 GeV, so that no interpolation enters the comparison
+    e_index = int(np.argmin(np.abs(mceq.e_grid - 1.0)))
+    energy = float(mceq.e_grid[e_index])
+    serial_numu = np.empty(zenith_grid.size)
+    _start = time.perf_counter()
+    with loop_progress(zenith_grid.size, "serial zenith scan") as advance:
+        for _i, _zenith in enumerate(zenith_grid):
+            mceq.set_zenith_azimuth(float(_zenith))
+            mceq.solve()
+            advance()
+            _flux = mceq.get_solution("total_numu") + mceq.get_solution(
+                "total_antinumu"
             )
-        masked_note = (
-            f"masked solve sol shape = {sol_masked.sol.shape} (up-going "
-            "hemisphere zeroed)"
+            serial_numu[_i] = _flux[e_index]
+    serial_seconds = time.perf_counter() - _start
+    f"serial: {serial_seconds:.1f} s for {zenith_grid.size} zenith angles"
+    return energy, serial_numu, serial_seconds
+
+
+@app.cell
+def _(mceq, serial_seconds, solve_progress, time, zenith_grid):
+    _start = time.perf_counter()
+    with solve_progress(f"solve_fullsky, {zenith_grid.size} zeniths") as progress:
+        no_cutoff = mceq.solve_fullsky(
+            zenith_grid, geomagnetic_cutoff=False, progress=progress
         )
-    else:
-        masked_note = (
-            "skipped: this section needs `pymsis` and `gtracr` "
-            "(`pip install pymsis gtracr`)"
-        )
-    masked_note
-    return (masked_note,)
+    batch_seconds = time.perf_counter() - _start
+    (
+        f"solve_fullsky: {batch_seconds:.1f} s (serial {serial_seconds:.1f} s) · "
+        f"steps per column {no_cutoff.nsteps_per_col.tolist()}"
+    )
+    return (no_cutoff,)
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(filename="Full_sky_carousel.ipynb", configuration=settings)
+def _(mo):
+    mo.md(r"""
+    ## 04 · Full sky with the rigidity cutoff
+
+    With `geomagnetic_cutoff=True`, `solve_fullsky` looks up the cutoff
+    $R_c$ of every pixel with `MCEq.geometry.cutoff.get_cutoff_map`
+    (tabulated for named sites such as Tokyo; traced with `gtracr` and
+    cached for other locations) and removes, per pixel, the primary nuclei
+    with rigidity below $R_c$ from the initial state
+    (`MCEq.batch.build_phi0_with_cutoff`). Every pixel is now a separate
+    column.
+    """)
+    return
+
+
+@app.cell
+def _(azimuth_grid, mceq, solve_progress, zenith_grid):
+    from MCEq.geometry.cutoff import get_cutoff_map
+
+    cutoff_GV = get_cutoff_map(mceq.density_model, zenith_grid, azimuth_grid)
+    with solve_progress(
+        f"solve_fullsky with cutoff, {zenith_grid.size * azimuth_grid.size} pixels"
+    ) as progress_cut:
+        with_cutoff = mceq.solve_fullsky(
+            zenith_grid, azimuth_grid, geomagnetic_cutoff=True,
+            progress=progress_cut,
+        )
+    with_cutoff
+    return cutoff_GV, with_cutoff
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 05 · Skymaps
+
+    `result.skymap(name, E)` returns the `(n_zenith, n_azimuth)` flux at
+    energy `E`, interpolated between grid points (here `E` is a grid
+    point). Left: the cutoff map (azimuth
+    measured as in the atmosphere model). Middle: the fraction of the ~1 GeV
+    $\nu_\mu + \bar\nu_\mu$ flux that survives the cutoff, which follows the
+    cutoff map. Right: the azimuth-averaged zenith dependence; the serial
+    scan (crosses) and the batched solve (line) coincide.
+    """)
+    return
+
+
+@app.cell
+def _(azimuth_grid, cutoff_GV, energy, no_cutoff, np, plt, serial_numu,
+      with_cutoff, zenith_grid):
+    def numu_map(result):
+        return result.skymap("total_numu", energy) + result.skymap(
+            "total_antinumu", energy
+        )
+
+    reference = numu_map(no_cutoff)  # (n_zenith, 1)
+    suppression = numu_map(with_cutoff) / reference
+
+    def edges(centres, step):
+        return np.append(centres - step / 2, centres[-1] + step / 2)
+
+    step = azimuth_grid[1] - azimuth_grid[0]
+    az_edges, zen_edges = edges(azimuth_grid, step), edges(zenith_grid, step)
+
+    with plt.rc_context({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }):
+        fig, axes = plt.subplots(1, 3, figsize=(13.0, 4.2), layout="constrained")
+        for ax, values, label, cmap in (
+            (axes[0], cutoff_GV, "Rigidity cutoff $R_c$ [GV]", "cividis"),
+            (axes[1], suppression, "Flux with / without cutoff", "viridis"),
+        ):
+            mesh = ax.pcolormesh(az_edges, zen_edges, values, cmap=cmap)
+            fig.colorbar(mesh, ax=ax, label=label, pad=0.02)
+            ax.set_xlabel("Azimuth [°]")
+            ax.set_ylabel("Zenith [°]")
+            ax.set_ylim(zen_edges[-1], 0.0)
+        axes[0].set_title("Cutoff map, Tokyo", loc="left", fontsize=12, pad=10)
+        axes[1].set_title(
+            rf"$\nu_\mu + \bar\nu_\mu$ at {energy:.2g} GeV", loc="left",
+            fontsize=12, pad=10,
+        )
+
+        cos_theta = np.cos(np.radians(zenith_grid))
+        ax = axes[2]
+        ax.plot(
+            cos_theta, reference[:, 0], color="#263342", linewidth=2,
+            label="solve_fullsky, no cutoff",
+        )
+        ax.plot(
+            cos_theta, serial_numu, linestyle="none", marker="+", markersize=10,
+            color="#C46B30", label="serial scan, no cutoff",
+        )
+        ax.plot(
+            cos_theta, numu_map(with_cutoff).mean(axis=1), color="#17857E",
+            linewidth=2, linestyle="--", label="with cutoff, azimuth average",
+        )
+        ax.set_xlabel(r"$\cos\theta$")
+        ax.set_ylabel(r"$\Phi$ [GeV$^{-1}$ cm$^{-2}$ s$^{-1}$ sr$^{-1}$]")
+        ax.set_title("Zenith dependence", loc="left", fontsize=12, pad=10)
+        ax.grid(axis="y", color="#E6E9ED", linewidth=0.7)
+        ax.legend(frameon=False, fontsize=9)
+    fig
+    return (fig,)
+
+
+@app.cell(hide_code=True)
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="full_sky_carousel.ipynb", configuration=settings)
     return
 
 

@@ -14,9 +14,9 @@ def _(mo):
     mo.md(r"""
     # Zenith-averaged neutrino flux
 
-    Down-going muon and electron neutrinos averaged over 11 bins in
-    $\cos\theta$, split into conventional and prompt components. The plainest
-    full example: one solve loop, two plots, one ASCII file.
+    Down-going muon and electron neutrino fluxes averaged over the upper
+    hemisphere ($\cos\theta \in [0, 1]$), split into conventional and prompt
+    components, and written to an ASCII table.
     """)
     return
 
@@ -29,28 +29,26 @@ def _():
 
     from MCEq import config
     from MCEq.core import MCEqRun
-    from MCEq.notebook import (
-        apply_kernel_and_grid,
-        download_jupyter,
-        loop_progress,
-    )
+    from MCEq.notebook import apply_kernel_and_grid, loop_progress
 
-    return (
-        MCEqRun,
-        apply_kernel_and_grid,
-        config,
-        download_jupyter,
-        loop_progress,
-        mo,
-        np,
-        plt,
-    )
+    return MCEqRun, apply_kernel_and_grid, config, loop_progress, mo, np, plt
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## 01 · Configuration
+
+    - **Interaction model**: hadronic yields from the release database.
+      `SIBYLL23E` (default) and `FLUKA20251` ship in the base package; the
+      other models are fetched on first use.
+    - **Primary cosmic rays**: crflux spectrum injected at the top of the
+      atmosphere; H3a is the common reference.
+    - **Energy grid**: `config.e_min`/`config.e_max` cut the cascade grid.
+      The upper edge must sit well above the highest energy you plot,
+      because the parent flux above it is missing.
+    - **Backend**: `config.kernel_config`; `auto` picks MKL or Accelerate when
+      available, otherwise NumPy.
     """)
     return
 
@@ -58,10 +56,9 @@ def _(mo):
 @app.cell(hide_code=True)
 def configuration_defaults():
     defaults = {
-        "database": "mceq_db_lext_dpm193_v142.h5",
-        "interaction_model": "SIBYLL21",
+        "database": "mceq_base_air_1d_v2.h5",
+        "interaction_model": "SIBYLL23E",
         "primary": "HillasGaisser2012:H3a",
-        "theta_deg": 0.0,
         "e_min": 1.0,
         "e_max": 1.0e9,
         "backend": "auto",
@@ -124,102 +121,158 @@ def run_stop(gate, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 02 · Average over $\cos\theta$
+    ## 02 · Solve each zenith angle
 
-    Equidistant in $\cos\theta$ from vertical to horizontal, 11 points.
+    Eleven zenith angles equidistant in $\cos\theta$, from vertical to
+    horizontal. `set_zenith_azimuth` changes the slant path without
+    rebuilding the operators, so each `solve()` reuses the same run. The
+    near-horizontal paths are the longest (most integration steps).
     """)
     return
 
 
 @app.cell
 def _(MCEqRun, apply_kernel_and_grid, backend, config, database, e_max, e_min,
-      interaction_model, np, primary_model, proceed):
+      interaction_model, primary_model, proceed):
     _ = proceed
     apply_kernel_and_grid(backend, e_min, e_max, 0)
     config.mceq_db_fname = database
-
-    angles = np.arccos(np.linspace(1, 0, 11)) * 180.0 / np.pi
-    mag = 3
 
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
         primary_model=primary_model,
         theta_deg=0.0,
+        density_model=("CORSIKA", ("BK_USStd", None)),
     )
-    e_grid = mceq_run.e_grid
+    return (mceq_run,)
 
+
+@app.cell
+def _(loop_progress, mceq_run, np):
+    cos_theta = np.linspace(1.0, 0.0, 11)
+    angles = np.degrees(np.arccos(cos_theta))
+    mag = 3
     pairs = {
-        "mu": ("mu+", "mu-"), "numu": ("numu", "antinumu"),
-        "nue": ("nue", "antinue"), "nutau": ("nutau", "antinutau"),
+        "mu": ("mu+", "mu-"),
+        "numu": ("numu", "antinumu"),
+        "nue": ("nue", "antinue"),
+        "nutau": ("nutau", "antinutau"),
     }
-    prefix = {
+    components = {
         "mu_conv": ("conv", "mu"), "mu_pr": ("pr", "mu"), "mu_total": ("total", "mu"),
         "numu_conv": ("conv", "numu"), "numu_pr": ("pr", "numu"),
         "numu_total": ("total", "numu"),
         "nue_conv": ("conv", "nue"), "nue_pr": ("pr", "nue"),
         "nue_total": ("total", "nue"), "nutau_pr": ("total", "nutau"),
     }
-    flux = {frac: np.zeros_like(e_grid) for frac in prefix}
-
-    def scan(advance):
+    per_angle = {name: [] for name in components}
+    with loop_progress(angles.size, "zenith scan") as advance:
         for theta in angles:
             mceq_run.set_zenith_azimuth(theta)
             mceq_run.solve()
-            advance(title=f"{theta:.0f} deg")
-            for frac, (track, group) in prefix.items():
-                flux[frac] += sum(
-                    mceq_run.get_solution(f"{track}_{p}", mag)
-                    for p in pairs[group]
+            advance(title=f"{theta:.0f}° zenith")
+            for name, (track, group) in components.items():
+                per_angle[name].append(
+                    sum(
+                        mceq_run.get_solution(f"{track}_{particle}", mag=mag)
+                        for particle in pairs[group]
+                    )
                 )
-
-    with loop_progress(len(angles), "zenith average") as advance:
-        scan(advance)
-    flux = {frac: total / len(angles) for frac, total in flux.items()}
-    return (e_grid, flux, mag)
+    return mag, per_angle
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 03 · Spectra
+    ## 03 · Average over $\cos\theta$
 
-    Solid black: total; dash-dot blue: conventional; dashed red: prompt.
+    Particle and antiparticle are summed per angle; the plain mean over the
+    equidistant $\cos\theta$ points approximates the hemisphere average.
     """)
     return
 
 
 @app.cell
-def _(e_grid, flux, mag, np, plt):
-    figures = []
-    for pref, lab in [("numu_", r"\nu_\mu"), ("nue_", r"\nu_e")]:
-        fig, ax = plt.subplots(figsize=(4.2, 3))
-        ax.loglog(e_grid, flux[pref + "total"], color="k", ls="-", lw=1.5)
-        ax.loglog(
-            e_grid, flux[pref + "conv"], color="b", ls="-.", lw=1.5,
-            label=rf"conventional ${lab}$",
-        )
-        ax.loglog(
-            e_grid, flux[pref + "pr"], color="r", ls="--", lw=1.5,
-            label=f"prompt ${lab}$",
-        )
-        ax.set_xlim(10, 1e7)
-        ax.set_ylim(1e-5, 10)
-        ax.set_xlabel(rf"$E_{{{lab}}}$ [GeV]")
-        ax.set_ylabel(
-            r"$\Phi_{" + lab + "}$ (E/GeV)$^{" + str(mag) + " }$"
-            + "(cm$^{2}$ s sr GeV)$^{-1}$"
-        )
-        ax.legend(loc="upper right", frameon=False, numpoints=1)
-        fig.tight_layout()
-        figures.append(fig)
-    figures
-    return
+def _(mceq_run, np, per_angle):
+    e_grid = mceq_run.e_grid
+    flux = {name: np.mean(values, axis=0) for name, values in per_angle.items()}
+    return e_grid, flux
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 04 · ASCII export
+    ## 04 · Spectra
+    """)
+    return
+
+
+@app.cell
+def _(e_grid, flux, interaction_model, mag, np, plt):
+    plot_range = (10.0, 1.0e7)  # GeV; inside the cascade grid
+    plot_mask = (e_grid >= plot_range[0]) & (e_grid <= plot_range[1])
+    curve_styles = {
+        "total": ("Total", "#263342", "-"),
+        "conv": ("Conventional", "#17857E", "--"),
+        "pr": ("Prompt", "#C46B30", ":"),
+    }
+
+    with plt.rc_context({
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.labelcolor": "#263342",
+        "axes.edgecolor": "#B3BAC2",
+        "xtick.color": "#52606D",
+        "ytick.color": "#52606D",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+    }):
+        fig, axes = plt.subplots(
+            1, 2, figsize=(9.5, 4.2), sharex=True, sharey=True, layout="constrained"
+        )
+        for ax, (prefix, label) in zip(
+            axes, [("numu", r"\nu_\mu + \bar\nu_\mu"), ("nue", r"\nu_e + \bar\nu_e")]
+        ):
+            for component, (curve_label, color, linestyle) in curve_styles.items():
+                values = flux[f"{prefix}_{component}"]
+                visible = plot_mask & (values > 0) & np.isfinite(values)
+                ax.loglog(
+                    e_grid[visible], values[visible], label=curve_label,
+                    color=color, linestyle=linestyle, linewidth=2,
+                )
+            ax.set_title(f"${label}$", loc="left", fontsize=14, pad=12)
+            ax.set_xlim(plot_range)
+            ax.set_ylim(1.0e-6, 1.0)
+            ax.set_xlabel(r"Kinetic energy $E$ [GeV]")
+            ax.grid(axis="y", which="major", color="#E6E9ED", linewidth=0.7)
+            ax.set_axisbelow(True)
+        axes[0].set_ylabel(
+            rf"$E^{mag}\,\langle\Phi\rangle_{{\cos\theta}}$ "
+            r"[GeV$^2$ cm$^{-2}$ s$^{-1}$ sr$^{-1}$]"
+        )
+        fig.legend(
+            *axes[0].get_legend_handles_labels(), frameon=False,
+            loc="outside lower center", ncol=3, fontsize=10,
+        )
+        fig.suptitle(
+            f"{interaction_model}  /  zenith average 0°–90°",
+            fontsize=11, color="#52606D",
+        )
+
+    fig
+    return (fig,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 05 · ASCII export
+
+    Columns: energy, then the averaged $E^3$-weighted fluxes. The file goes
+    to a temporary directory; change `destination` to keep it.
     """)
     return
 
@@ -229,32 +282,29 @@ def _(e_grid, flux, np):
     import os
     import tempfile
 
-    components = [
+    columns = [
         "mu_conv", "mu_pr", "mu_total",
         "numu_conv", "numu_pr", "numu_total",
         "nue_conv", "nue_pr", "nue_total", "nutau_pr",
     ]
-    desktop = tempfile.mkdtemp(prefix="mceq_example_")
-    destination = os.path.join(desktop, "H3a_zenith_av.txt")
+    destination = os.path.join(
+        tempfile.mkdtemp(prefix="mceq_example_"), "zenith_averaged_fluxes.txt"
+    )
     np.savetxt(
         destination,
-        np.column_stack([e_grid, *[flux[frac] for frac in components]]),
+        np.column_stack([e_grid, *[flux[name] for name in columns]]),
         fmt="%6.5E",
-        header=(
-            "lepton flux scaled with E**3. Order (E, mu_conv, mu_pr, mu_total, "
-            "numu_conv, numu_pr, numu_total, nue_conv, nue_pr, nue_total, "
-            "nutau_pr)"
-        ),
+        header="lepton flux scaled with E**3. Columns: E [GeV], " + ", ".join(columns),
     )
-    f"Zenith-averaged spectra saved to `{destination}`."
-    return (destination,)
+    f"Zenith-averaged spectra saved to {destination}"
+    return
 
 
 @app.cell(hide_code=True)
-def export_notebook(download_jupyter, settings):
-    download_jupyter(
-        filename="Simple_zenith_averaged_neutrinos.ipynb", configuration=settings
-    )
+def export_notebook(settings):
+    from MCEq.notebook import download_jupyter
+
+    download_jupyter(filename="zenith_averaged_neutrinos.ipynb", configuration=settings)
     return
 
 
