@@ -202,6 +202,7 @@ def _(
 
     mceq_2d = MCEqRun(
         interaction_model=interaction_model,
+        low_energy_model="FLUKA20251",  # below 80 GeV
         primary_model=None,
         theta_deg=theta_deg,
         density_model=("CORSIKA", ("USStd", None)),

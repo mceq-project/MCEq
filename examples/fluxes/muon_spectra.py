@@ -155,6 +155,7 @@ def _(MCEqRun, apply_kernel_and_grid, config, backend, database, e_max, e_min,
         for _model in models:
             run = MCEqRun(
                 interaction_model=_model,
+                low_energy_model="FLUKA20251",  # below 80 GeV
                 primary_model=(pm.HillasGaisser2012, "H3a"),
                 theta_deg=0.0,
             )

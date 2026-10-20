@@ -157,6 +157,7 @@ def _(
     baseline = ("CORSIKA", ("BK_USStd", None))
     mceq_run = MCEqRun(
         interaction_model=interaction_model,
+        low_energy_model="FLUKA20251",  # below 80 GeV
         primary_model=primary_model,
         theta_deg=0.0,
         density_model=baseline,
