@@ -157,13 +157,31 @@ def _mceq_qgs_instance():
     return _build_shared_run("QGSJETII04")
 
 
+def _restoring_initial_state(run):
+    """Yield ``run`` and put its initial state back afterwards.
+
+    Tests that set a single primary or a spectrum leave ``_phi0`` changed on
+    the shared run; a later test on the same xdist worker would then solve
+    that state instead of the primary flux the run was built with.
+    """
+    pmodel, phi0 = run.pmodel, run._phi0.copy()
+    yield run
+    if (
+        run.pmodel is not pmodel
+        or run._phi0.shape != phi0.shape
+        or not np.array_equal(run._phi0, phi0)
+    ):
+        run.set_primary_model(pmodel)
+
+
 @pytest.fixture
 def mceq_sib21(_mceq_sib21_instance):
     """The shared SIBYLL21 run, with the config it was built under applied for
-    the duration of this test only (``_restore_global_config_state`` undoes it).
+    the duration of this test only (``_restore_global_config_state`` undoes it)
+    and its initial state restored afterwards.
     """
     _apply_session_config()
-    return _mceq_sib21_instance
+    yield from _restoring_initial_state(_mceq_sib21_instance)
 
 
 @pytest.fixture
@@ -173,7 +191,7 @@ def mceq_qgs(_mceq_qgs_instance):
     undoes it).
     """
     _apply_session_config()
-    return _mceq_qgs_instance
+    yield from _restoring_initial_state(_mceq_qgs_instance)
 
 
 @pytest.fixture(scope="function")
