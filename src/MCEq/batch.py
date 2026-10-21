@@ -246,7 +246,8 @@ class MCEqBatchResult:
 
     def skymap(self, particle_name, kin_energy, mag=0.0):
         """``(n_zen, n_az)`` flux map of a full-sky solve at ``kin_energy``,
-        interpolated linearly in log E between the grid points."""
+        interpolated linearly in log flux vs log E between the grid points
+        (linearly in flux where a neighbour is not positive)."""
         if self.zenith_grid is None:
             raise ValueError("skymap() is only available on solve_fullsky results")
         e_grid = self._mceq.e_grid
@@ -266,7 +267,11 @@ class MCEqBatchResult:
                 particle_name, k=k, mag=mag, return_as="kinetic energy"
             )
             i_zen, i_az = divmod(k, self.n_azimuth)
-            flux[i_zen, i_az] = (1.0 - w) * f[i_lo] + w * f[i_hi]
+            lo, hi = f[i_lo], f[i_hi]
+            if lo > 0.0 and hi > 0.0:
+                flux[i_zen, i_az] = lo ** (1.0 - w) * hi**w
+            else:
+                flux[i_zen, i_az] = (1.0 - w) * lo + w * hi
         return flux
 
     def __repr__(self):

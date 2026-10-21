@@ -280,6 +280,14 @@ class HDF5Backend:
             return self._packages.get(mname, medium, tree)
         return None
 
+    def has_interaction_model(self, mname):
+        """True if yields of ``mname`` exist for this medium, in the primary
+        file or a release package; the air fallback does not count."""
+        mname = normalize_hadronic_model_name(mname)
+        return (
+            self._model_store(mname, self.medium, "hadronic_interactions") is not None
+        )
+
     def _resolve_interaction_store(self, mname):
         """``(store, medium)`` of the yield pack of ``mname`` in package mode,
         with the air fallback."""

@@ -33,6 +33,10 @@ def _run():
         interaction_model=MODEL,
         primary_model=(pm.HillasGaisser2012, "H3a"),
         theta_deg=ZENITHS[0],
+        # The CI window starts at 891 GeV, where the FLUKA blend of the
+        # default weighs ~1e-10 and only adds rounding-level operator
+        # entries; the stored values pin the high-energy model alone.
+        low_energy_model=None,
     )
 
 

@@ -31,9 +31,11 @@ the same name; FLUKA20251, PYTHIA8CASCADE and PYTHIA8ANGANTYR are new.
 `mceq_db_lext_dpm193_v142.h5` can still be selected with
 `config.mceq_db_fname`.
 
-A low-energy model is blended in with
-`MCEqRun(..., low_energy_model="FLUKA20251")` or
-`config.low_energy_extension`.
+FLUKA20251 is blended in below 80 GeV by default
+(`config.low_energy_extension`): the high-energy models are tabulated from
+80 GeV projectile energy and produce no secondaries below it. Choose another
+model with `MCEqRun(..., low_energy_model=...)`, or switch the blending off
+with `low_energy_model=None`. In v1.4 no model was blended in by default.
 
 ## Solver configuration
 

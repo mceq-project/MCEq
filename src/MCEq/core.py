@@ -67,6 +67,12 @@ class MCEqRun(BatchSolver):
         tuple of strings, such as ('CORSIKA', ('BK_USStd', None))
       particle_list (list, optional): Construct a system for only these partices
         including their decay products.
+      low_energy_model (string or None, optional): model blended in below
+        ``he_le_transition``; default ``config.low_energy_extension["model"]``
+        (FLUKA20251), ``None`` switches the blending off
+      he_le_transition (float, optional): transition energy in GeV (80)
+      he_le_trwidth (float, optional): 10--90% width of the transition in
+        log10(E/GeV) decades (0.3); 0 is a hard switch
     """
 
     def __init__(self, interaction_model, primary_model, theta_deg, **kwargs):
@@ -79,6 +85,7 @@ class MCEqRun(BatchSolver):
 
         if config.enable_em and config.muon_helicity_dependence:
             info(1, "enable_em: helicity-dependent muon decays are switched off.")
+        le_default = "low_energy_model" not in kwargs
         self._mceq_db = MCEq.data.HDF5Backend(
             medium=self.medium,
             low_energy_model=kwargs.pop("low_energy_model", le_config.get("model")),
@@ -90,6 +97,19 @@ class MCEqRun(BatchSolver):
             ),
         )
         with self._mceq_db._read_session():
+            le_model = self._mceq_db.low_energy_model
+            if (
+                le_default
+                and le_model is not None
+                and not self._mceq_db.has_interaction_model(le_model)
+            ):
+                # The default must not borrow air tables for another medium.
+                info(
+                    1,
+                    f"No {le_model} tables for medium {self.medium!r}: "
+                    "running without a low-energy model.",
+                )
+                self._mceq_db.low_energy_model = None
             self._interactions = MCEq.data.Interactions(self._mceq_db)
             self._int_cs = MCEq.data.InteractionCrossSections(
                 self._mceq_db, interaction_model

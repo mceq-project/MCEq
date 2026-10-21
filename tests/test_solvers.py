@@ -2375,6 +2375,22 @@ def test_batch_result_skymap(mceq_sib21):
                 )[e_idx]
                 np.testing.assert_allclose(smap[i_zen, i_az], ref, rtol=1e-12, atol=0)
 
+        # Between grid points: a power law through the two neighbours
+        i = mceq_sib21.e_grid.size // 2
+        e_mid = np.sqrt(mceq_sib21.e_grid[i] * mceq_sib21.e_grid[i + 1])
+        smap_mid = res.skymap("total_numu", e_mid)
+        for i_zen in range(2):
+            for i_az in range(2):
+                f = res.get_solution(
+                    "total_numu", pixel=(i_zen, i_az), return_as="kinetic energy"
+                )
+                np.testing.assert_allclose(
+                    smap_mid[i_zen, i_az],
+                    np.sqrt(f[i] * f[i + 1]),
+                    rtol=1e-12,
+                    atol=0,
+                )
+
         # skymap on a non-fullsky result raises
         res_batch = mceq_sib21.solve_batch(
             conditions=[{"zenith_deg": 0.0}, {"zenith_deg": 45.0}]
