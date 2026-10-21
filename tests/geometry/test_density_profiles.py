@@ -11,7 +11,7 @@ import MCEq.geometry.msis21 as m21
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
     ("BK_USStd", None, (1033.8094962133184, 0.00015782685585891685)),
-    ("Karlsruhe", None, (1055.861981113731, 0.00016209949387937668)),
+    ("Karlsruhe", None, (1041.9014950083822, 0.00016209949318826743)),
     ("ANTARES/KM3NeT-ORCA", "Summer", (986.9593811082788, 0.00015529574727367941)),
     ("ANTARES/KM3NeT-ORCA", "Winter", (988.4293864278521, 0.0001589317236294479)),
     ("KM3NeT-ARCA", "Summer", (1032.7184058861765, 0.00016954131888323744)),
@@ -73,20 +73,22 @@ def test_corsika_atm(loc, season, expected):
 #: solar time for every site, so only longitude 0 was right. ``SouthPole`` in
 #: either season is therefore unchanged -- it is at longitude 0 -- and every
 #: other row moved, max_X by -4.08e-03 (LynnLake) to +5.49e-04 (KSC) relative.
+#: Columns end at the site's ground (``ground_elevation_m``), sea level for the
+#: balloon sites PeaceRiver and FtSumner.
 msis00_expected = [
-    ("SouthPole", "January", (1022.6914983678925, 0.00014380042112573175)),
-    ("Karlsruhe", "January", (1041.218045767515, 0.0001604612960837351)),
-    ("Geneva", "January", (1044.6608866689137, 0.0001606322163926265)),
-    ("Tokyo", "January", (1046.4276670574097, 0.00016041531237161774)),
-    ("GranSasso", "January", (1048.6505422868527, 0.0001610765035203313)),
-    ("TelAviv", "January", (1050.6431803289418, 0.000163420847335507)),
-    ("KSC", "January", (1050.214504996504, 0.00016375664596106348)),
-    ("SoudanMine", "January", (1033.3640288662154, 0.00015614485380534737)),
-    ("Tsukuba", "January", (1045.785577930897, 0.00015970449212910075)),
-    ("LynnLake", "January", (1019.9475657778287, 0.00015321290810376884)),
+    ("SouthPole", "January", (699.6748836529264, 0.00014380046145656618)),
+    ("Karlsruhe", "January", (1027.3352559457992, 0.0001604612973602438)),
+    ("Geneva", "January", (998.8984986051729, 0.000160632223012505)),
+    ("Tokyo", "January", (1045.8029648877778, 0.0001604153123643406)),
+    ("GranSasso", "January", (1048.0228672067965, 0.00016107650358694524)),
+    ("TelAviv", "January", (1050.0291087593914, 0.00016342084732944533)),
+    ("KSC", "January", (1049.6020286951975, 0.00016375664627271892)),
+    ("SoudanMine", "January", (1032.7329367046095, 0.00015614485390002132)),
+    ("Tsukuba", "January", (1042.028700292003, 0.0001597044923490332)),
+    ("LynnLake", "January", (974.147597509934, 0.00015321291429732905)),
     ("PeaceRiver", "January", (1020.3640353111425, 0.00015221038597642512)),
     ("FtSumner", "January", (1047.9643775296188, 0.00016218804581352803)),
-    ("SouthPole", "July", (1022.1737895082902, 0.00017812023753792844)),
+    ("SouthPole", "July", (694.0444945944427, 0.00017812030184313285)),
 ]
 
 ids = [f"{loc}-{season or 'None'}" for loc, season, _ in msis00_expected]
@@ -118,7 +120,7 @@ def test_common_atmosphere_interface(cls, args):
     atm.set_theta(0.0)
 
     X_test = np.linspace(1, atm.max_X * 0.99, 10)
-    h_test = np.linspace(0, atm.geom.h_atm, 10)
+    h_test = np.linspace(atm.geom.h_obs, atm.geom.h_atm, 10)
 
     # r_X2rho should give positive finite values
     inv_rho = atm.r_X2rho(X_test)

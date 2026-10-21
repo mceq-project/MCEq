@@ -1,5 +1,6 @@
 """Atmosphere models: CORSIKA, isothermal, NRLMSISE-00 and AIRS, and the material target."""
 
+import warnings
 from abc import ABCMeta, abstractmethod
 from os.path import join
 from time import time
@@ -10,11 +11,10 @@ from scipy.interpolate import UnivariateSpline
 
 from MCEq import config
 from MCEq.geometry.atmosphere_parameters import (
-    CORSIKA_GROUND_M,
     KM3NET_DETECTORS,
-    LOCATIONS,
     MONTH_TO_DAY_OF_YEAR,
     get_atmosphere_parameters,
+    ground_elevation_m,
     list_available_corsika_atmospheres,
 )
 from MCEq.geometry.geometry import EarthGeometry
@@ -35,6 +35,7 @@ _V14_STAR_EXPORTS = [
 
 __all__ = _V14_STAR_EXPORTS + [
     "AIRSAtmosphere",
+    "BelowGroundWarning",
     "CorsikaAtmosphere",
     "EarthsAtmosphere",
     "GeneralizedTarget",
@@ -46,6 +47,10 @@ __all__ = _V14_STAR_EXPORTS + [
     "MSISAtmosphere",
     "MSISLocationCentered",
 ]
+
+
+class BelowGroundWarning(UserWarning):
+    """The observation level is below the ground of the atmosphere model."""
 
 
 class EarthsAtmosphere(metaclass=ABCMeta):
@@ -178,33 +183,36 @@ class EarthsAtmosphere(metaclass=ABCMeta):
     def set_h_obs(self, h_obs):
         """Set the elevation of the observation (detector) level in cm.
 
-        Raises:
-            ValueError: if ``h_obs`` is below the ground (:attr:`h_ground`).
+        A level below the ground (:attr:`h_ground`) warns: the model is then
+        extrapolated below the surface it describes.
         """
-        self._check_above_ground(h_obs)
+        self._warn_below_ground(h_obs)
         self._h_obs_default = False
         self._move_h_obs(h_obs)
 
     def set_ground(self, h_ground):
-        """Set the ground level in cm, below which the model has no air.
+        """Set the ground level in cm, the elevation of the site.
 
         An observation level left at its default (``config.h_obs = None``)
-        moves to the ground; an explicit one below it raises ValueError.
+        moves to the ground; an explicit one below it warns.
         """
         self.h_ground = h_ground
         if self._h_obs_default:
             if self.geom.h_obs != h_ground:
                 self._move_h_obs(h_ground)
         else:
-            self._check_above_ground(self.geom.h_obs)
+            self._warn_below_ground(self.geom.h_obs)
 
-    def _check_above_ground(self, h_obs):
+    def _warn_below_ground(self, h_obs):
         if h_obs < self.h_ground:
-            raise ValueError(
+            warnings.warn(
                 f"Observation level {h_obs / 1e2:.0f} m is below the ground of "
                 f"{type(self).__name__}({self.location!r}, {self.season!r}) at "
-                f"{self.h_ground / 1e2:.0f} m, where the model has no air. "
-                "Leave config.h_obs = None to end the column at the ground."
+                f"{self.h_ground / 1e2:.0f} m: the atmosphere is extrapolated "
+                "below the ground. Leave config.h_obs = None to end the column "
+                "at the ground.",
+                BelowGroundWarning,
+                stacklevel=3,
             )
 
     def _move_h_obs(self, h_obs):
@@ -269,8 +277,9 @@ class CorsikaAtmosphere(EarthsAtmosphere):
       location (str), season (str, optional): a parameter set of
         :func:`MCEq.geometry.atmosphere_parameters.list_available_corsika_atmospheres`
 
-    The South Pole sets are fits above the ice surface; their ground is at
-    2834 m (:data:`~MCEq.geometry.atmosphere_parameters.CORSIKA_GROUND_M`).
+    The ground is the elevation of the site the set describes
+    (:func:`~MCEq.geometry.atmosphere_parameters.ground_elevation_m`): the
+    South Pole sets are fits above the ice at 2834 m.
     """
 
     def __init__(self, location, season=None):
@@ -292,7 +301,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         self._atm_param = np.array(get_atmosphere_parameters(location, season))
         self.location, self.season = location, season
         self.theta_deg = None
-        self.set_ground(CORSIKA_GROUND_M.get(location, 0.0) * 1e2)
+        self.set_ground(ground_elevation_m(location) * 1e2)
 
     def depth2height(self, x_v):
         """Height in cm at the vertical depth ``x_v`` in g/cm**2."""
@@ -373,7 +382,7 @@ class MSISAtmosphere(EarthsAtmosphere):
         self._set_date(season, doy)
         if use_loc_altitudes:
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
-            self.geom.set_h_obs(self._msis.alt_surface)
+            self.set_h_obs(self._msis.alt_surface)
 
     def _clear_cache(self):
         """Rebuild the splines on the next ``set_theta``."""
@@ -412,11 +421,13 @@ class MSISAtmosphere(EarthsAtmosphere):
         self._msis.set_location(location)
         self.location = self._msis.current_location
         self._clear_cache()
+        self.set_ground(ground_elevation_m(self.location) * 1e2)
 
     def set_location_coord(self, longitude, latitude):
         """Move the model to ``(longitude, latitude)`` in degrees."""
         self._msis.set_location_coord(longitude, latitude)
         self._clear_cache()
+        self.set_ground(0.0)  # no named site: sea level
 
     def set_season(self, month):
         """Set the date to the month ``month``."""
@@ -809,7 +820,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
         else:
             self.set_season(self.season)
         self.theta_deg = None
-        self.set_ground(LOCATIONS["SouthPole"][2])  # the tables start above the ice
+        self.set_ground(ground_elevation_m("SouthPole") * 1e2)
 
     def set_date(self, year, doy):
         self.h, self.dens = self.interp_tab_d[(year, doy)]

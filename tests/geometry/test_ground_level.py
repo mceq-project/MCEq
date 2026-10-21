@@ -1,4 +1,5 @@
-"""Columns end at the ground of the atmosphere model, never below it."""
+"""Columns end at the ground of the site by default; below it the atmosphere
+is extrapolated, with a warning."""
 
 import pytest
 
@@ -26,24 +27,43 @@ def test_south_pole_sets_end_at_the_ice(location, season):
     assert 680.0 < atm.max_X < 710.0
 
 
-def test_sea_level_sets_keep_sea_level():
-    atm = dp.CorsikaAtmosphere("USStd", None)
+def test_corsika_sets_take_the_altitude_of_their_site():
+    assert dp.CorsikaAtmosphere("Karlsruhe", None).geom.h_obs == 110.0e2
+    assert dp.CorsikaAtmosphere("USStd", None).geom.h_obs == 0.0
+
+
+def test_msis_sites_end_at_their_altitude():
+    atm = dp.MSIS00Atmosphere("SouthPole", "January")
+    assert atm.h_ground == atm.geom.h_obs == SOUTH_POLE_CM
+    atm.set_location("Karlsruhe")
+    assert atm.geom.h_obs == 110.0e2
+    atm.set_location_coord(10.0, 10.0)  # no named site
+    assert atm.geom.h_obs == 0.0
+
+
+def test_balloon_sites_are_grounded_at_sea_level():
+    """The heights of PeaceRiver and FtSumner are balloon float altitudes."""
+    atm = dp.MSIS00Atmosphere("PeaceRiver", "January")
     assert atm.h_ground == atm.geom.h_obs == 0.0
+    afloat = dp.MSIS00Atmosphere("PeaceRiver", "January", use_loc_altitudes=True)
+    assert afloat.geom.h_obs == 36000.0e2
 
 
-def test_observation_level_below_the_ground_raises():
+def test_observation_level_below_the_ground_warns():
     atm = dp.CorsikaAtmosphere("SDR_SouthPole", "October")
-    with pytest.raises(ValueError, match="below the ground"):
+    with pytest.warns(dp.BelowGroundWarning, match="extrapolated below the ground"):
         atm.set_h_obs(1000.0e2)
-    atm.set_h_obs(3000.0e2)  # above the ice is allowed
-    assert atm.geom.h_obs == 3000.0e2
+    assert atm.geom.h_obs == 1000.0e2
+    atm.set_theta(0.0)
+    assert atm.max_X > 900.0
 
 
-def test_explicit_config_level_below_the_ground_raises(h_obs_config):
+def test_explicit_config_level_below_the_ground_warns(h_obs_config):
     config.h_obs = 0.0
     assert dp.CorsikaAtmosphere("USStd", None).geom.h_obs == 0.0
-    with pytest.raises(ValueError, match="below the ground"):
-        dp.CorsikaAtmosphere("PL_SouthPole", "January")
+    with pytest.warns(dp.BelowGroundWarning):
+        atm = dp.CorsikaAtmosphere("PL_SouthPole", "January")
+    assert atm.geom.h_obs == 0.0
 
 
 def test_default_level_follows_the_ground_on_a_switch():
@@ -82,5 +102,5 @@ def test_set_h_obs_at_vertical_rebuilds_the_splines():
 def test_icecube_ground_is_the_glacier_surface():
     atm = dp.MSIS00IceCubeCentered("SouthPole", "January")
     assert atm.h_ground == dp.ICECUBE["surface_elevation_m"] * 1e2
-    with pytest.raises(ValueError, match="below the ground"):
+    with pytest.warns(dp.BelowGroundWarning):
         atm.set_h_obs(0.0)
