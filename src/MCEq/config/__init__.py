@@ -37,6 +37,11 @@ em_db_fname = "mceq_db_EM_Tsai-Max_Z7.31.h5"
 #: model files are registered here.
 mceq_db_manifest = "mceq_db_manifest_v2.yaml"
 
+#: Refuse a data package on disk whose size or source digest differs from its
+#: manifest entry (MCEq.data.download.check_package): a stale copy from an
+#: earlier release. Set False to run on a local build under a release name.
+verify_data_packages = True
+
 # =================================================================
 # Atmosphere and geometry settings
 # =================================================================

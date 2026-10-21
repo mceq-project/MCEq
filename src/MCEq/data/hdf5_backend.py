@@ -107,6 +107,14 @@ class HDF5Backend:
             if "mceq_db_manifest" in self._had.attrs()
             else None
         )
+        if self._packages is not None and config.verify_data_packages:
+            # The primary against the manifest it names (the CI files name
+            # theirs): a stale copy is refused before any table is read.
+            entry = self._packages.manifest["files"].get(config.mceq_db_fname)
+            if entry is not None and not entry.get("path"):
+                download.check_package(
+                    self.had_fname, entry, self._packages.manifest_name
+                )
 
         self.em_fname = join(config.data_dir, config.em_db_fname)
         if config.enable_em and not isfile(self.em_fname):

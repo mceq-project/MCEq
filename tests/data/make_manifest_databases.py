@@ -120,8 +120,8 @@ def build_fixture(directory):
     """Write the monolith, ``BASE_FILE``, ``MODEL_FILE`` and ``MANIFEST`` into ``directory``."""
     if not REFERENCE_DB.is_file():
         raise FileNotFoundError(
-            f"{REFERENCE_DB} not found; the CI workflow caches it from the "
-            "ci-assets release (see .github/workflows/_run_tests.yml)."
+            f"{REFERENCE_DB} not found; `python tests/data/ci_assets.py` "
+            "fetches the pinned CI databases."
         )
     directory = pathlib.Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
