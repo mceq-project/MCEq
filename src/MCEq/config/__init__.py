@@ -92,7 +92,12 @@ A_target = "auto"
 
 #: parameters for EarthGeometry
 r_E = 6371.315e3  # Earth radius in m, as in CORSIKA
-h_obs = 0.0  # observation level in m
+#: Observation level in m. None ends the columns at the ground of the
+#: atmosphere's site (its altitude in geometry.atmosphere_parameters.LOCATIONS,
+#: e.g. the ice at 2834 m for the South Pole profiles), sea level for models
+#: without a site. A level below the ground warns (BelowGroundWarning): the
+#: atmosphere is then extrapolated below the surface it describes.
+h_obs = None
 h_atm = 112.8e3  # top of the atmosphere in m
 X_start = 0.0  # starting slant depth in g/cm^-2
 

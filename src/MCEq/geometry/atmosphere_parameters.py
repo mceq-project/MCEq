@@ -251,6 +251,24 @@ LOCATIONS = {
     "FtSumner": (-104.2, 34.5, 31000.0 * 100.0),
 }
 
+#: Sites whose height in :data:`LOCATIONS` is a balloon float altitude, not
+#: the ground elevation; their ground is sea level.
+FLOAT_ALTITUDE_SITES = ("PeaceRiver", "FtSumner")
+
+#: Atmosphere names that describe a site of :data:`LOCATIONS` under another name.
+_SITE_ALIASES = {"PL_SouthPole": "SouthPole", "SDR_SouthPole": "SouthPole"}
+
+
+def ground_elevation_m(location):
+    """Ground elevation in m of the site an atmosphere ``location`` describes:
+    the height in :data:`LOCATIONS`, sea level for other names and for
+    :data:`FLOAT_ALTITUDE_SITES`."""
+    site = _SITE_ALIASES.get(location, location)
+    if site not in LOCATIONS or site in FLOAT_ALTITUDE_SITES:
+        return 0.0
+    return LOCATIONS[site][2] / 1e2
+
+
 #: Location names that were renamed; the old name still works with a warning.
 _RENAMED_LOCATIONS = {"SanGrasso": "GranSasso"}
 

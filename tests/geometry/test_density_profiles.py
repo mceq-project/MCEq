@@ -6,31 +6,33 @@ import pytest
 import MCEq.geometry.density_profiles as dp
 import MCEq.geometry.msis21 as m21
 
+#: ``(location, season, (max_X, rho(X=100)))``; the South Pole sets end at
+#: their ground, the ice surface at 2834 m.
 corsika_expected = [
     ("USStd", None, (1036.099233683902, 0.00015623258808300557)),
     ("BK_USStd", None, (1033.8094962133184, 0.00015782685585891685)),
-    ("Karlsruhe", None, (1055.861981113731, 0.00016209949387937668)),
+    ("Karlsruhe", None, (1041.9014950083822, 0.00016209949318826743)),
     ("ANTARES/KM3NeT-ORCA", "Summer", (986.9593811082788, 0.00015529574727367941)),
     ("ANTARES/KM3NeT-ORCA", "Winter", (988.4293864278521, 0.0001589317236294479)),
     ("KM3NeT-ARCA", "Summer", (1032.7184058861765, 0.00016954131888323744)),
     ("KM3NeT-ARCA", "Winter", (1039.3697214845179, 0.00016202068935405075)),
     ("KM3NeT", None, (1018.1547240905948, 0.0001609490344992944)),
-    ("SouthPole", "December", (1011.4568036341923, 0.00014626903051217024)),
-    ("SouthPole", "June", (1020.3505579524912, 0.00018246219074986874)),
-    ("PL_SouthPole", "January", (1019.974568696789, 0.0001464549375212421)),
-    ("PL_SouthPole", "August", (1019.9764946890782, 0.0001685608228906579)),
-    ("SDR_SouthPole", "January", (1034.0143423913353, 0.00014632473385006882)),
-    ("SDR_SouthPole", "February", (1035.9936617195242, 0.00014918253835319762)),
-    ("SDR_SouthPole", "March", (1038.9308255875999, 0.00015298022770783904)),
-    ("SDR_SouthPole", "April", (1041.9777521676683, 0.0001601901839449753)),
-    ("SDR_SouthPole", "May", (1039.907580402069, 0.00016807635328451188)),
-    ("SDR_SouthPole", "June", (1037.2666634880595, 0.00017542702214644906)),
-    ("SDR_SouthPole", "July", (1035.7659887947702, 0.00018145735342421507)),
-    ("SDR_SouthPole", "August", (1034.5825095745786, 0.0001865567510599077)),
-    ("SDR_SouthPole", "September", (1033.8370290916944, 0.00018184168516617518)),
-    ("SDR_SouthPole", "October", (1300.9045332765688, 0.0001729949911605945)),
-    ("SDR_SouthPole", "November", (1021.2313399252452, 0.00016452181236376558)),
-    ("SDR_SouthPole", "December", (1028.3233680860317, 0.00015434578972428948)),
+    ("SouthPole", "December", (691.9622844214161, 0.00014627031508536182)),
+    ("SouthPole", "June", (692.9035490193863, 0.0001824622027968579)),
+    ("PL_SouthPole", "January", (702.4086934826443, 0.00014645497930703473)),
+    ("PL_SouthPole", "August", (685.641048134738, 0.00016855852788506538)),
+    ("SDR_SouthPole", "January", (705.6110550875919, 0.0001463247833495245)),
+    ("SDR_SouthPole", "February", (700.6235670609235, 0.0001491825835244687)),
+    ("SDR_SouthPole", "March", (697.5035101573512, 0.0001529802905170967)),
+    ("SDR_SouthPole", "April", (698.2221023776968, 0.00016019026222168463)),
+    ("SDR_SouthPole", "May", (697.953571504962, 0.00016807633601357674)),
+    ("SDR_SouthPole", "June", (697.0960180563231, 0.00017542702839383413)),
+    ("SDR_SouthPole", "July", (694.4686411650027, 0.0001814575063896238)),
+    ("SDR_SouthPole", "August", (692.4444393425543, 0.00018655678482346432)),
+    ("SDR_SouthPole", "September", (693.1282666664463, 0.0001818417677717869)),
+    ("SDR_SouthPole", "October", (693.0194396313624, 0.0001729950759038763)),
+    ("SDR_SouthPole", "November", (701.5363970941434, 0.0001645218328403789)),
+    ("SDR_SouthPole", "December", (701.6203176552651, 0.00015434581301552227)),
 ]
 
 
@@ -71,20 +73,22 @@ def test_corsika_atm(loc, season, expected):
 #: solar time for every site, so only longitude 0 was right. ``SouthPole`` in
 #: either season is therefore unchanged -- it is at longitude 0 -- and every
 #: other row moved, max_X by -4.08e-03 (LynnLake) to +5.49e-04 (KSC) relative.
+#: Columns end at the site's ground (``ground_elevation_m``), sea level for the
+#: balloon sites PeaceRiver and FtSumner.
 msis00_expected = [
-    ("SouthPole", "January", (1022.6914983678925, 0.00014380042112573175)),
-    ("Karlsruhe", "January", (1041.218045767515, 0.0001604612960837351)),
-    ("Geneva", "January", (1044.6608866689137, 0.0001606322163926265)),
-    ("Tokyo", "January", (1046.4276670574097, 0.00016041531237161774)),
-    ("GranSasso", "January", (1048.6505422868527, 0.0001610765035203313)),
-    ("TelAviv", "January", (1050.6431803289418, 0.000163420847335507)),
-    ("KSC", "January", (1050.214504996504, 0.00016375664596106348)),
-    ("SoudanMine", "January", (1033.3640288662154, 0.00015614485380534737)),
-    ("Tsukuba", "January", (1045.785577930897, 0.00015970449212910075)),
-    ("LynnLake", "January", (1019.9475657778287, 0.00015321290810376884)),
+    ("SouthPole", "January", (699.6748836529264, 0.00014380046145656618)),
+    ("Karlsruhe", "January", (1027.3352559457992, 0.0001604612973602438)),
+    ("Geneva", "January", (998.8984986051729, 0.000160632223012505)),
+    ("Tokyo", "January", (1045.8029648877778, 0.0001604153123643406)),
+    ("GranSasso", "January", (1048.0228672067965, 0.00016107650358694524)),
+    ("TelAviv", "January", (1050.0291087593914, 0.00016342084732944533)),
+    ("KSC", "January", (1049.6020286951975, 0.00016375664627271892)),
+    ("SoudanMine", "January", (1032.7329367046095, 0.00015614485390002132)),
+    ("Tsukuba", "January", (1042.028700292003, 0.0001597044923490332)),
+    ("LynnLake", "January", (974.147597509934, 0.00015321291429732905)),
     ("PeaceRiver", "January", (1020.3640353111425, 0.00015221038597642512)),
     ("FtSumner", "January", (1047.9643775296188, 0.00016218804581352803)),
-    ("SouthPole", "July", (1022.1737895082902, 0.00017812023753792844)),
+    ("SouthPole", "July", (694.0444945944427, 0.00017812030184313285)),
 ]
 
 ids = [f"{loc}-{season or 'None'}" for loc, season, _ in msis00_expected]
@@ -116,7 +120,7 @@ def test_common_atmosphere_interface(cls, args):
     atm.set_theta(0.0)
 
     X_test = np.linspace(1, atm.max_X * 0.99, 10)
-    h_test = np.linspace(0, atm.geom.h_atm, 10)
+    h_test = np.linspace(atm.geom.h_obs, atm.geom.h_atm, 10)
 
     # r_X2rho should give positive finite values
     inv_rho = atm.r_X2rho(X_test)

@@ -1,5 +1,6 @@
 """Atmosphere models: CORSIKA, isothermal, NRLMSISE-00 and AIRS, and the material target."""
 
+import warnings
 from abc import ABCMeta, abstractmethod
 from os.path import join
 from time import time
@@ -13,6 +14,7 @@ from MCEq.geometry.atmosphere_parameters import (
     KM3NET_DETECTORS,
     MONTH_TO_DAY_OF_YEAR,
     get_atmosphere_parameters,
+    ground_elevation_m,
     list_available_corsika_atmospheres,
 )
 from MCEq.geometry.geometry import EarthGeometry
@@ -33,6 +35,7 @@ _V14_STAR_EXPORTS = [
 
 __all__ = _V14_STAR_EXPORTS + [
     "AIRSAtmosphere",
+    "BelowGroundWarning",
     "CorsikaAtmosphere",
     "EarthsAtmosphere",
     "GeneralizedTarget",
@@ -46,6 +49,10 @@ __all__ = _V14_STAR_EXPORTS + [
 ]
 
 
+class BelowGroundWarning(UserWarning):
+    """The observation level is below the ground of the atmosphere model."""
+
+
 class EarthsAtmosphere(metaclass=ABCMeta):
     """Base class of the atmospheres: the slant depth along the shower axis and
     the splines of the density and height versus depth. A subclass implements
@@ -55,7 +62,12 @@ class EarthsAtmosphere(metaclass=ABCMeta):
       thrad (float): current zenith angle :math:`\\theta` in radians
       theta_deg (float): current zenith angle :math:`\\theta` in degrees
       geom (EarthGeometry): the geometry; ``geometry=`` replaces the default
+      h_ground (float): ground level in cm, the lowest observation level the
+        model describes (:meth:`set_ground`)
     """
+
+    #: Ground level in cm; the subclasses with a raised ground set it.
+    h_ground: float = 0.0
 
     #: Detector-centred models that allow upgoing angles keep their
     #: :attr:`max_theta` when the observation level changes.
@@ -72,6 +84,8 @@ class EarthsAtmosphere(metaclass=ABCMeta):
                 r_E=config.r_E, h_atm=config.h_atm, h_obs=config.h_obs
             )
         self.geom = geometry
+        # A default observation level follows the ground; see set_ground.
+        self._h_obs_default = getattr(geometry, "h_obs_default", False)
         self.thrad = None
         self.theta_deg = None
         # Replaced by the density at the atmosphere top on ``set_theta``.
@@ -167,11 +181,47 @@ class EarthsAtmosphere(metaclass=ABCMeta):
         self.calculate_density_spline()
 
     def set_h_obs(self, h_obs):
-        """Set the elevation of the observation (detector) level in cm."""
+        """Set the elevation of the observation (detector) level in cm.
+
+        A level below the ground (:attr:`h_ground`) warns: the model is then
+        extrapolated below the surface it describes.
+        """
+        self._warn_below_ground(h_obs)
+        self._h_obs_default = False
+        self._move_h_obs(h_obs)
+
+    def set_ground(self, h_ground):
+        """Set the ground level in cm, the elevation of the site.
+
+        An observation level left at its default (``config.h_obs = None``)
+        moves to the ground; an explicit one below it warns.
+        """
+        self.h_ground = h_ground
+        if self._h_obs_default:
+            if self.geom.h_obs != h_ground:
+                self._move_h_obs(h_ground)
+        else:
+            self._warn_below_ground(self.geom.h_obs)
+
+    def _warn_below_ground(self, h_obs):
+        if h_obs < self.h_ground:
+            warnings.warn(
+                f"Observation level {h_obs / 1e2:.0f} m is below the ground of "
+                f"{type(self).__name__}({self.location!r}, {self.season!r}) at "
+                f"{self.h_ground / 1e2:.0f} m: the atmosphere is extrapolated "
+                "below the ground. Leave config.h_obs = None to end the column "
+                "at the ground.",
+                BelowGroundWarning,
+                stacklevel=3,
+            )
+
+    def _move_h_obs(self, h_obs):
         self.geom.set_h_obs(h_obs)
+        # Columns of these models descend monotonically (_fit_splines), so
+        # the dip below the horizon of a raised level is out of reach.
         if not self._preserve_max_theta:
-            self.max_theta = self.geom.theta_max_deg
-        if self.theta_deg:
+            self.max_theta = 90.0
+        if self.theta_deg is not None:
             self.calculate_density_spline()
 
     def r_X2rho(self, X):
@@ -226,6 +276,10 @@ class CorsikaAtmosphere(EarthsAtmosphere):
     Args:
       location (str), season (str, optional): a parameter set of
         :func:`MCEq.geometry.atmosphere_parameters.list_available_corsika_atmospheres`
+
+    The ground is the elevation of the site the set describes
+    (:func:`~MCEq.geometry.atmosphere_parameters.ground_elevation_m`): the
+    South Pole sets are fits above the ice at 2834 m.
     """
 
     def __init__(self, location, season=None):
@@ -247,6 +301,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         self._atm_param = np.array(get_atmosphere_parameters(location, season))
         self.location, self.season = location, season
         self.theta_deg = None
+        self.set_ground(ground_elevation_m(location) * 1e2)
 
     def depth2height(self, x_v):
         """Height in cm at the vertical depth ``x_v`` in g/cm**2."""
@@ -327,7 +382,7 @@ class MSISAtmosphere(EarthsAtmosphere):
         self._set_date(season, doy)
         if use_loc_altitudes:
             info(0, "Using loc altitude", self._msis.alt_surface, "cm")
-            self.geom.set_h_obs(self._msis.alt_surface)
+            self.set_h_obs(self._msis.alt_surface)
 
     def _clear_cache(self):
         """Rebuild the splines on the next ``set_theta``."""
@@ -366,11 +421,13 @@ class MSISAtmosphere(EarthsAtmosphere):
         self._msis.set_location(location)
         self.location = self._msis.current_location
         self._clear_cache()
+        self.set_ground(ground_elevation_m(self.location) * 1e2)
 
     def set_location_coord(self, longitude, latitude):
         """Move the model to ``(longitude, latitude)`` in degrees."""
         self._msis.set_location_coord(longitude, latitude)
         self._clear_cache()
+        self.set_ground(0.0)  # no named site: sea level
 
     def set_season(self, month):
         """Set the date to the month ``month``."""
@@ -402,8 +459,9 @@ class MSISLocationCentered(MSISAtmosphere):
         n_azimuth (int): azimuth samples of the averaging.
         max_theta (float): maximum zenith angle in degrees.
         surface_elevation_m (float): elevation of the local surface in m (an ice
-            sheet, for example). The observation level is there for downgoing
-            showers and at sea level for upgoing ones.
+            sheet, for example), the model's :attr:`h_ground`. The observation
+            level is there for downgoing showers and at sea level for upgoing
+            ones; ``config.h_obs`` is not used.
     """
 
     _preserve_max_theta: bool = True
@@ -437,8 +495,11 @@ class MSISLocationCentered(MSISAtmosphere):
         self._azimuth_avg_coords = []
         self._current_impact_latitude = None
         self._current_impact_longitude = None
+        # set_theta places the observation level: the ground for downgoing
+        # showers, sea level on the far side for upgoing ones.
+        self.h_ground = surface_elevation_m * 1e2
         if surface_elevation_m != 0.0:
-            self.geom.set_h_obs(surface_elevation_m * 1e2)
+            self.geom.set_h_obs(self.h_ground)
         self.max_theta = max_theta
         self.location = f"({longitude:.3f}°E, {latitude:.3f}°N)"
 
@@ -759,6 +820,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
         else:
             self.set_season(self.season)
         self.theta_deg = None
+        self.set_ground(ground_elevation_m("SouthPole") * 1e2)
 
     def set_date(self, year, doy):
         self.h, self.dens = self.interp_tab_d[(year, doy)]
