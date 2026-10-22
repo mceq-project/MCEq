@@ -42,8 +42,9 @@ jobs:
     - name: Check MKL version
       if: runner.os != 'macOS' && runner.arch != 'ARM64'
       run: pip show mkl
-    # The v2 data cut to the 31-bin test window (891 GeV .. 891 TeV).
-    # Cache key carries the manifest digest, so a new set misses.
+    # The v2 data cut to the 31-bin test window (891 GeV .. 891 TeV) and the
+    # stored 2D solution, pinned in tests/data/ci_assets.py and
+    # baseline_asset.py; the cache key is their hash, so a new pin misses.
     - name: Cache CI data packages
       id: cache-db
       uses: actions/cache@v6
@@ -54,42 +55,15 @@ jobs:
           src/MCEq/data/mceq_ci_base_air_1d_v2.h5
           src/MCEq/data/mceq_ci_extra_models_air_1d_v2.h5
           src/MCEq/data/mceq_ci_base_air_2d_legendre_v2.h5
-        key: mceq-ci-data-v2-21865c8c-22a66142-ace549d0-${{ runner.os }}
+        key: mceq-ci-data-${{ hashFiles('tests/data/ci_assets.py', 'tests/data/baseline_asset.py') }}-${{ runner.os }}
 
-    - name: Download CI data packages if not cached
-      if: steps.cache-db.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        # Published under digest-stamped names, so an older commit keeps its
-        # files; each lands under the name the code and manifest use.
-        base=https://github.com/mceq-project/MCEq/releases/download/ci-assets
-        for f in mceq_db_manifest_ci_v2_21865c8cff3c.yaml mceq_ci_base_air_1d_v2_f20f913a20e6.h5 \
-                 mceq_ci_extra_models_air_1d_v2_363d7c85edd9.h5 mceq_ci_base_air_2d_legendre_v2_22a661427080.h5; do
-          curl -fsSL "$base/$f" -o "src/MCEq/data/$(echo "$f" | sed -E 's/_[0-9a-f]{12}\././')"
-        done
-        # The stored 2D solution, too big for the repository.
-        curl -fsSL "$base/2d_baseline_solution_ace549d08062.npz" -o tests/data/2d_baseline_solution.npz
-
-    - name: Report CI data cache state and verify digests
+    # Verifies a cache hit against the pins and fetches what is missing.
+    - name: Fetch and verify CI data
       shell: bash
       run: |
         echo "cache-hit=${{ steps.cache-db.outputs.cache-hit }}"
-        python - <<'PY'
-        import hashlib, pathlib, sys, yaml
-        data = pathlib.Path("src/MCEq/data")
-        manifest = yaml.safe_load((data / "mceq_db_manifest_ci_v2.yaml").read_text())
-        for name, entry in manifest["files"].items():
-            digest = hashlib.sha256((data / name).read_bytes()).hexdigest()
-            print(name, "OK" if digest == entry["sha256"] else "MISMATCH")
-            if digest != entry["sha256"]:
-                sys.exit(1)
-        # The 2D Legendre CI database (16 modes, 31 bins) is not in the CI manifest.
-        name, pin = "mceq_ci_base_air_2d_legendre_v2.h5", "22a6614270807eaa33b2d6d448030d2eb55e87efe2c7bf0bc7f08b63125a3838"
-        digest = hashlib.sha256((data / name).read_bytes()).hexdigest()
-        print(name, "OK" if digest == pin else "MISMATCH")
-        if digest != pin:
-            sys.exit(1)
-        PY
+        python tests/data/ci_assets.py
+        python tests/data/baseline_asset.py
     - name: Run tests
       run: pytest --cov=MCEq --cov-branch --cov-report=xml -n 3 --dist loadgroup
     - name: Upload coverage reports to Codecov

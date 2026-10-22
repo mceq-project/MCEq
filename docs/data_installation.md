@@ -54,6 +54,19 @@ A download is checked against the sha256 in the manifest before it is put in
 place. When several jobs start at once, one downloads and the others stop with a
 message to pre-fetch the data (below).
 
+A file already on disk is checked against its manifest entry whenever a run
+uses it: its size, and the digest of the database it was cut from (the root
+attribute `split_from_sha256` against the entry's `source.sha256`). A copy left
+over from an earlier release under the same name is refused with
+`StaleDataError`; delete it and the run downloads the listed file. A local build
+under a release name passes with `config.verify_data_packages = False`. A
+manifest in a separate `config.data_dir` that is older than the installed copy
+gives `StaleManifestWarning`. For a full check of every file on disk:
+
+```bash
+python -m MCEq.data.download --verify             # exit 1 if a file is stale
+```
+
 For 2D runs point `config.mceq_db_fname` at a Legendre 2D base file; a model
 it does not hold is resolved through the manifest in the same way, from the
 packages on its grid.
@@ -97,7 +110,10 @@ and `cross_sections/air/MYMODEL`, in the same layout as the release files.
 
 The test suite and the example notebooks use `mceq_ci_*` databases with
 31 energy bins from 891 GeV to 891 TeV, listed in `mceq_db_manifest_ci_v2.yaml`.
-They are for tests only, not for physics.
+They are for tests only, not for physics. `tests/data/ci_assets.py` pins them
+by sha256: every `pytest` session first replaces files that differ from the
+pins (`python tests/data/ci_assets.py` does the same by hand, `--check` only
+reports), and the CI workflows fetch through it.
 
 ## Older databases
 

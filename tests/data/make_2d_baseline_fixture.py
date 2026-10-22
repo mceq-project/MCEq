@@ -21,8 +21,8 @@ regenerating, publish it and update the digest that file pins::
     gh release upload ci-assets 2d_baseline_solution_<sha[:12]>.npz \
         --repo mceq-project/MCEq
 
-The cache key in .github/workflows/_run_tests.yml carries the digest too, so
-bump it and the download name in the same change.
+The cache key in .github/workflows/_run_tests.yml is the hash of that file,
+so the new pin also refreshes the CI cache.
 """
 
 import pathlib

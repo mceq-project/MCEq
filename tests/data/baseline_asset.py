@@ -52,3 +52,7 @@ def ensure(timeout=120):
         return None
     tmp.replace(PATH)
     return PATH
+
+
+if __name__ == "__main__":
+    raise SystemExit(0 if ensure() else 1)

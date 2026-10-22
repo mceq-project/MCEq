@@ -12,11 +12,18 @@ its BLAS (OpenBLAS reads ``OPENBLAS_NUM_THREADS`` once, at load): the available
 CPUs divided among the xdist workers, capped at 16 (``-n 3`` on a 4-vCPU runner
 gives 1 thread each). A value set outside pytest is kept. The marker variable
 tells a worker to recompute values it inherited from the controller.
+
+Before the session it makes sure the CI databases in ``src/MCEq/data`` are the
+ones pinned in ``tests/data/ci_assets.py``, replacing stale copies.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import pathlib
+
+import pytest
 
 _THREAD_VARS = ("MKL_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS")
 _THREADS_FROM_CONFTEST = "MCEQ_TEST_THREADS_FROM_CONFTEST"
@@ -81,3 +88,35 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if marker in item.keywords:
                 item.add_marker(skip)
+
+
+def _ci_assets():
+    spec = importlib.util.spec_from_file_location(
+        "ci_assets", pathlib.Path(__file__).parent / "tests" / "data" / "ci_assets.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def pytest_sessionstart(session):
+    """Run on the pinned CI data, never on a stale copy: replace what differs
+    from ``tests/data/ci_assets.py``, or stop if it cannot be fetched.
+
+    Runs in the controller, before xdist starts its workers. Set
+    ``MCEQ_SKIP_CI_DATA_CHECK=1`` to test a re-cut of the data before pinning it.
+    """
+    if hasattr(session.config, "workerinput"):
+        return
+    if os.environ.get("MCEQ_SKIP_CI_DATA_CHECK"):
+        print("MCEQ_SKIP_CI_DATA_CHECK: CI data not checked against its pins.")
+        return
+    failed = _ci_assets().ensure()
+    if failed:
+        pytest.exit(
+            "CI data in src/MCEq/data is stale or missing and could not be "
+            "fetched:\n"
+            + "\n".join(f"  {name}: {why}" for name, why in failed.items())
+            + "\nRun `python tests/data/ci_assets.py` with network access.",
+            returncode=1,
+        )

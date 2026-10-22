@@ -11,6 +11,12 @@ energy grid, checksum and models per medium::
 Concurrent jobs are safe: one process downloads under a lock file, the others
 are told to pre-fetch with ``python -m MCEq.data.download``, and only a
 complete, verified file is put in place.
+
+A file already on disk is checked against its manifest entry each time it is
+resolved (:func:`check_package`: its size and the digest of the database it
+was split from), so a copy left over from an earlier release is refused
+instead of silently used. ``python -m MCEq.data.download --verify`` compares
+full sha256 digests.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -205,12 +212,11 @@ def ensure_db_available(cfg):
 
     _url = base_url + release_tag + mceq_db_fname
     filepath = data_dir / mceq_db_fname
-    if not filepath.exists():
-        manifest = local_manifest(cfg)
-        if manifest is not None and mceq_db_fname in manifest["files"]:
-            ensure_package(cfg, mceq_db_fname, manifest)
-            _remove_old_dbs(data_dir)
-            return
+    manifest = local_manifest(cfg)
+    if manifest is not None and mceq_db_fname in manifest["files"]:
+        ensure_package(cfg, mceq_db_fname, manifest)
+        _remove_old_dbs(data_dir)
+        return
     if filepath.exists():
         is_complete = (
             FileIntegrityCheck(filepath, file_checksum).succeeded()
@@ -253,6 +259,55 @@ class PackageFetchError(Exception):
     """
 
 
+class StaleDataError(Exception):
+    """A data file on disk is not the file its manifest lists: a copy from an
+    earlier release or a local build under a release name."""
+
+
+class StaleManifestWarning(UserWarning):
+    """The manifest in ``data_dir`` is older than the one shipped with MCEq."""
+
+
+def check_package(path, entry, manifest_name="the manifest"):
+    """Raise :class:`StaleDataError` unless ``path`` matches its manifest
+    ``entry``.
+
+    A cheap identity check, run whenever a package is resolved: the file size
+    and, for HDF5 packages, the root attribute ``split_from_sha256`` against
+    the entry's ``source.sha256`` (the database the package was cut from).
+    :func:`verify_package` compares the full sha256.
+    """
+    path = Path(path)
+    problems = []
+    size = entry.get("size")
+    if size is not None and path.stat().st_size != size:
+        problems.append(f"{path.stat().st_size} bytes, listed {size}")
+    source = (entry.get("source") or {}).get("sha256")
+    if source and path.suffix == ".h5":
+        import h5py
+
+        with h5py.File(path, "r") as handle:
+            split_from = handle.attrs.get("split_from_sha256")
+        if split_from is not None and str(split_from) != source:
+            problems.append(
+                f"cut from a database with sha256 {str(split_from)[:12]}..., "
+                f"listed {source[:12]}..."
+            )
+    if problems:
+        raise StaleDataError(
+            f"{path} is not the file {manifest_name} lists "
+            f"({'; '.join(problems)}): a copy from an earlier release or a local "
+            f"build. Delete it to download the listed file (python -m "
+            f"MCEq.data.download --file {path.name}), or set "
+            "config.verify_data_packages = False to use it anyway."
+        )
+
+
+def verify_package(path, entry):
+    """True if the sha256 of ``path`` is the entry's ``sha256``."""
+    return FileIntegrityCheck(path, entry.get("sha256", "")).succeeded()
+
+
 def manifest_path(cfg):
     """``data_dir/<mceq_db_manifest>``: the manifest a run reads and edits."""
     return Path(cfg.data_dir) / cfg.mceq_db_manifest
@@ -277,8 +332,28 @@ def local_manifest(cfg, preferred=None):
     candidates += [manifest_path(cfg), packaged_manifest(cfg.mceq_db_manifest)]
     for path in candidates:
         if path is not None and path.is_file():
-            return load_manifest(path)
+            manifest = load_manifest(path)
+            _warn_if_older_than_packaged(path, manifest)
+            return manifest
     return None
+
+
+def _warn_if_older_than_packaged(path, manifest):
+    """Warn when a copy in a separate ``data_dir`` predates the manifest of the
+    same name shipped with this MCEq: the files it lists may be stale."""
+    shipped = packaged_manifest(Path(path).name)
+    if shipped is None or shipped.resolve() == Path(path).resolve():
+        return
+    shipped_created = str(load_manifest(shipped).get("created", ""))
+    if str(manifest.get("created", "")) < shipped_created:
+        warnings.warn(
+            f"{path} (created {manifest.get('created')}) is older than the "
+            f"manifest shipped with MCEq (created {shipped_created}); the files "
+            "it lists may be stale. Replace it with the shipped copy "
+            f"{shipped}, keeping any entries you registered.",
+            StaleManifestWarning,
+            stacklevel=3,
+        )
 
 
 def ensure_manifest(cfg, preferred=None):
@@ -348,6 +423,11 @@ def ensure_package(cfg, name, manifest=None):
     """
     dest = Path(cfg.data_dir) / name
     if dest.exists():
+        if getattr(cfg, "verify_data_packages", True):
+            manifest = manifest if manifest is not None else local_manifest(cfg)
+            entry = (manifest or {}).get("files", {}).get(name)
+            if entry is not None and not entry.get("path"):
+                check_package(dest, entry, getattr(cfg, "mceq_db_manifest", None))
         return dest
     manifest = manifest if manifest is not None else ensure_manifest(cfg)
     entry = manifest["files"].get(name)
@@ -427,6 +507,12 @@ def cli_main(argv=None):
         help="only make sure the manifest itself is present",
     )
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="compare the sha256 of every listed file on disk with the "
+        "manifest; exit 1 if one differs",
+    )
+    parser.add_argument(
         "--dir",
         default=None,
         help="data directory (default: the package data directory, "
@@ -450,6 +536,16 @@ def cli_main(argv=None):
     print(
         f"Manifest: {manifest_path(cfg) if manifest_path(cfg).is_file() else packaged_manifest(cfg.mceq_db_manifest)}"
     )
+    if args.verify:
+        stale = []
+        for name, entry in manifest["files"].items():
+            path = Path(entry["path"]) if entry.get("path") else cfg.data_dir / name
+            if not path.is_file():
+                continue
+            ok = verify_package(path, entry) if entry.get("sha256") else True
+            print(f"{'OK   ' if ok else 'STALE'} {path}")
+            stale += [] if ok else [name]
+        return 1 if stale else 0
     wanted = list(args.file)
     if args.fetch_all:
         wanted += list(manifest["files"])
@@ -469,7 +565,7 @@ def cli_main(argv=None):
                 )
             wanted += names
     if not wanted and not args.manifest:
-        parser.error("give --model, --file, --defaults, --all or --manifest")
+        parser.error("give --model, --file, --defaults, --all, --manifest or --verify")
     for name in dict.fromkeys(wanted):
         print(f"Ready: {ensure_package(cfg, name, manifest)}")
     return 0
