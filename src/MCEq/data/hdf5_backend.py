@@ -17,10 +17,39 @@ from MCEq.data.hadronic_models import (
 )
 from MCEq.misc import (
     _eval_energy_cuts,
+    average_A_target,
     energy_grid,
     info,
     normalize_hadronic_model_name,
 )
+
+
+def check_em_target_mass(attrs, table, medium, fname):
+    """Refuse an EM cross-section table built for another target mass.
+
+    The EM database stores ``cs`` scaled to the mean target mass that the
+    builder assumed for MCEq (attribute ``mceq_target_mass``), and MCEq divides
+    it by :func:`MCEq.misc.average_A_target`. If the two differ, every EM
+    interaction length is off by their ratio (0.78 % for air tables built for
+    the molecule-weighted 14.6568). A table without the attribute predates it.
+    """
+    a_mceq = average_A_target(medium)
+    stamp = attrs.get("mceq_target_mass")
+    where = f"EM database {fname}, table {table}"
+    if stamp is None:
+        raise ValueError(
+            f"{where} has no 'mceq_target_mass' attribute, so the target mass "
+            f"its cross sections were scaled for is unknown (MCEq uses "
+            f"<A> = {a_mceq:.6g} for {medium}). Rebuild the EM database, or "
+            "rescale cs by <A>_MCEq / <A>_built and set the attribute."
+        )
+    if not np.isclose(float(stamp), a_mceq, rtol=1e-6, atol=0.0):
+        raise ValueError(
+            f"{where} was built for <A> = {float(stamp):.6g}, MCEq uses "
+            f"<A> = {a_mceq:.6g} for {medium}: the EM interaction lengths would "
+            f"be off by a factor {a_mceq / float(stamp):.6f}. Rebuild the EM "
+            "database or rescale cs by that factor."
+        )
 
 
 class HDF5Backend:
@@ -595,9 +624,10 @@ class HDF5Backend:
             info(2, "Injecting EM cross sections into cs_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", medium)
-            em_cs, em_cs_attrs = self._em_store.read_table(
-                f"electromagnetic/{medium}/cs"
-            )
+            table = f"electromagnetic/{medium}/cs"
+            em_cs, em_cs_attrs = self._em_store.read_table(table)
+            # EM species use the target mass of the configured medium.
+            check_em_target_mass(em_cs_attrs, table, self.medium, self.em_fname)
             em_parents = list(em_cs_attrs["projectiles"])
 
             for ip, p in enumerate(em_parents):

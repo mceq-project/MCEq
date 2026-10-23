@@ -247,7 +247,7 @@ def em_cs_table(scale=1.0):
     )
 
 
-def build_em_database(path, variants):
+def build_em_database(path, variants, target_mass="mceq"):
     """Write a synthetic EM database and return its path.
 
     ``variants`` maps a medium to a ``(channels, cs_scale)`` pair. Each
@@ -255,6 +255,10 @@ def build_em_database(path, variants):
     ``emca_mats`` pack (2-column ``tuple_idcs``, no ``description``
     attribute -- as the real EM databases store them) and a ``cs`` table
     with a ``projectiles`` attribute carrying :data:`EM_CS_PARENTS`.
+
+    ``target_mass`` sets the ``mceq_target_mass`` attribute of each ``cs``
+    table: ``"mceq"`` stamps MCEq's own mean target mass of the medium, a
+    number stamps that value, and None writes no attribute.
     """
     path = pathlib.Path(path)
     with h5py.File(path, "w") as db:
@@ -263,6 +267,12 @@ def build_em_database(path, variants):
             _write_pack(group, "emca_mats", channels, 1, 2, None)
             cs_dset = group.create_dataset("cs", data=em_cs_table(cs_scale))
             cs_dset.attrs["projectiles"] = np.array(EM_CS_PARENTS, dtype=np.int64)
+            if target_mass == "mceq":
+                from MCEq.misc import average_A_target
+
+                cs_dset.attrs["mceq_target_mass"] = average_A_target(medium)
+            elif target_mass is not None:
+                cs_dset.attrs["mceq_target_mass"] = float(target_mass)
     return path
 
 
