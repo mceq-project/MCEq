@@ -56,14 +56,23 @@ class TangentOperator:
     Legendre databases). Each is split like ``int_m``: its off-diagonal enters
     with ``int_off x`` (before the backward-removal mixing), its diagonal after
     it, both in the operator's layout.
+
+    ``extra`` passive columns follow the derivative columns: states carried
+    along with the same operator and path but without sources, e.g. the
+    transported derivatives of the initial state with respect to primary-flux
+    parameters (the cascade is linear in the initial state).
     """
 
-    def __init__(self, mats, curvature=False):
+    def __init__(self, mats, curvature=False, extra=0):
         import scipy.sparse as sp
 
+        if extra < 0:
+            raise ValueError("TangentOperator: extra must be >= 0")
         self.n = len(mats)
         self.curvature = bool(curvature)
-        self.columns = 1 + self.n * (2 if self.curvature else 1)
+        self.extra = int(extra)
+        self.derivative_columns = self.n * (2 if self.curvature else 1)
+        self.columns = 1 + self.derivative_columns + self.extra
         self._mats = [sp.csr_matrix(m) for m in mats]
         self._bound = None
 
@@ -104,11 +113,11 @@ class TangentOperator:
                 F[:, 1 : 1 + n] += (stacked @ phi).reshape(n, dim).T
                 if curvature:
                     psi = x[:, 1 : 1 + n].T.reshape(n * dim)
-                    F[:, 1 + n :] += 2 * (block @ psi).reshape(n, dim).T
+                    F[:, 1 + n : 1 + 2 * n] += 2 * (block @ psi).reshape(n, dim).T
             else:
                 F[:, 1 : 1 + n] += D * phi[:, None]
                 if curvature:
-                    F[:, 1 + n :] += 2 * D * x[:, 1 : 1 + n]
+                    F[:, 1 + n : 1 + 2 * n] += 2 * D * x[:, 1 : 1 + n]
 
         self._bound = sources
         return sources
@@ -154,7 +163,8 @@ def etd2_driver(
         ``psi_k = d phi / d p_k`` of an operator linear in ``p``,
         ``d psi_k / dX = (A + ri B) S psi_k + G_k S phi``, and with
         ``tangent.curvature`` columns ``n+1..2n`` the second derivatives,
-        ``d chi_k / dX = (A + ri B) S chi_k + 2 G_k S psi_k``. They share
+        ``d chi_k / dX = (A + ri B) S chi_k + 2 G_k S psi_k``; the last
+        ``tangent.extra`` columns are passive (no sources). They share
         the cascade's operator and path, so they cost extra columns, not
         extra solves.
 

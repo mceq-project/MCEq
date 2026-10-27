@@ -381,10 +381,11 @@ class BatchSolver:
           X_start, eps, dX_max, dX_min, fd_span: path parameters as in :meth:`solve`.
           tangent (:class:`MCEq.solvers.etd2.TangentOperator` | None):
             derivative columns of one cascade along one shared path. ``phi0``
-            is then one column (or ``None``); the result has
+            is then one column (or ``None``), or ``1 + tangent.extra`` columns
+            (the cascade, then passive states); the result has
             ``tangent.columns`` columns: the cascade, its first derivatives
-            with respect to the operator parameters and, with curvature,
-            their second derivatives.
+            with respect to the operator parameters, with curvature their
+            second derivatives, and the passive columns last.
 
         Returns:
           :class:`MCEqBatchResult`
@@ -396,20 +397,33 @@ class BatchSolver:
         if conditions is not None and len(conditions) < 1:
             raise ValueError("solve_batch: conditions must not be empty")
         phi0_arr = self._phi0_columns(
-            phi0, None if conditions is None else len(conditions), "solve_batch"
+            phi0,
+            None if conditions is None or tangent is not None else len(conditions),
+            "solve_batch",
         )
         if conditions is not None:
             K = len(conditions)
         else:
             K = phi0_arr.shape[1] if phi0_arr.ndim == 2 else 1
         if tangent is not None:
-            if K != 1 or (conditions is not None and len(conditions) != 1):
+            # phi0: the cascade, then tangent.extra passive columns
+            n_in = 1 + tangent.extra
+            if conditions is not None and len(conditions) != 1:
                 raise ValueError("solve_batch: tangent columns need one cascade")
+            if conditions is not None:
+                K = n_in if phi0_arr.ndim == 2 else 1
+            if K != n_in:
+                raise ValueError(
+                    f"solve_batch: tangent needs phi0 with {n_in} columns "
+                    "(the cascade and the passive columns)"
+                )
+            phi0_in = phi0_arr.reshape(self.dim_states, n_in)
             K = tangent.columns
             phi0_arr = np.concatenate(
                 (
-                    phi0_arr.reshape(self.dim_states, 1),
-                    np.zeros((self.dim_states, K - 1)),
+                    phi0_in[:, :1],
+                    np.zeros((self.dim_states, tangent.derivative_columns)),
+                    phi0_in[:, 1:],
                 ),
                 axis=1,
             )
