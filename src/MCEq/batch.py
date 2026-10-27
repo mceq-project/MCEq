@@ -336,6 +336,7 @@ class BatchSolver:
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        tangent=None,
     ):
         """Solve K independent cascade problems with one operator.
 
@@ -378,6 +379,12 @@ class BatchSolver:
           path_workers (int): fork-pool size for building the paths; not with
             ``density_model`` conditions.
           X_start, eps, dX_max, dX_min, fd_span: path parameters as in :meth:`solve`.
+          tangent (:class:`MCEq.solvers.etd2.TangentOperator` | None):
+            derivative columns of one cascade along one shared path. ``phi0``
+            is then one column (or ``None``); the result has
+            ``tangent.columns`` columns: the cascade, its first derivatives
+            with respect to the operator parameters and, with curvature,
+            their second derivatives.
 
         Returns:
           :class:`MCEqBatchResult`
@@ -395,6 +402,19 @@ class BatchSolver:
             K = len(conditions)
         else:
             K = phi0_arr.shape[1] if phi0_arr.ndim == 2 else 1
+        if tangent is not None:
+            if K != 1 or (conditions is not None and len(conditions) != 1):
+                raise ValueError("solve_batch: tangent columns need one cascade")
+            K = tangent.columns
+            phi0_arr = np.concatenate(
+                (
+                    phi0_arr.reshape(self.dim_states, 1),
+                    np.zeros((self.dim_states, K - 1)),
+                ),
+                axis=1,
+            )
+            if conditions is not None:
+                conditions = conditions * K  # one path, shared below
         phi0_mat = np.ascontiguousarray(
             np.broadcast_to(phi0_arr.reshape(self.dim_states, -1), (self.dim_states, K))
         )
@@ -439,8 +459,11 @@ class BatchSolver:
                 grid_idcs,
                 dtype=dtype,
                 sec_ops=sec_ops,
+                tangent=tangent,
             )
         else:
+            if tangent is not None:
+                raise ValueError("solve_batch: tangent columns need one shared path")
             K_pipe = max(
                 1, min(int(min(K, 128) if carousel_K is None else carousel_K), K)
             )

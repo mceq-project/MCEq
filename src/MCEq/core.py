@@ -1124,12 +1124,23 @@ class MCEqRun(BatchSolver):
         return be
 
     def _run_etd2(
-        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
+        self,
+        nsteps,
+        dX,
+        rho_inv,
+        phi0,
+        grid_idcs,
+        dtype=np.float64,
+        sec_ops=None,
+        tangent=None,
     ):
-        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
+        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path
+        (``tangent``: derivative columns, :class:`MCEq.solvers.etd2.TangentOperator`)."""
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
-        sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
+        sol, grid_sol = solvers.etd2_driver(
+            nsteps, dX, rho_inv, be, phi0, grid_idcs, tangent=tangent
+        )
         if dtype != np.float64:
             sol = sol.astype(dtype)
             grid_sol = grid_sol.astype(dtype)

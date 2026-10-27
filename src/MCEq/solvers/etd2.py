@@ -47,8 +47,83 @@ def _serial_dense_blas(be):
     return blas.limit(limits=1)
 
 
+class TangentOperator:
+    """Derivatives ``G_k = d A / d p_k`` of the interaction operator for
+    tangent columns (:func:`etd2_driver`).
+
+    ``mats``: sparse matrices in the state's own order, the derivative of the
+    matrix ``compile_operator`` receives as ``int_m`` (the hadronic part on
+    Legendre databases). Each is split like ``int_m``: its off-diagonal enters
+    with ``int_off x`` (before the backward-removal mixing), its diagonal after
+    it, both in the operator's layout.
+    """
+
+    def __init__(self, mats, curvature=False):
+        import scipy.sparse as sp
+
+        self.n = len(mats)
+        self.curvature = bool(curvature)
+        self.columns = 1 + self.n * (2 if self.curvature else 1)
+        self._mats = [sp.csr_matrix(m) for m in mats]
+        self._bound = None
+
+    def bind(self, be, dtype):
+        """Compiled sources for a backend: ``sources(x, F, part)`` adds
+        ``G S x`` of ``part`` ("off" or "diag") into the tangent columns of F."""
+        import scipy.sparse as sp
+
+        xp = be.xp
+        lay = be.op.layout
+        perm = lay.perm
+        diags, offs = [], []
+        for m in self._mats:
+            d = m.diagonal()
+            off = (m - sp.diags(d)).tocsr()
+            off.eliminate_zeros()
+            if perm is not None:
+                d = d[perm]
+                off = off[perm][:, perm].tocsr()
+            diags.append(d)
+            offs.append(off)
+        n, dim = self.n, be.op.dim
+        D = np.stack(diags, axis=1).astype(dtype)  # (dim, n)
+        stacked = sp.vstack(offs).tocsr().astype(dtype)  # (n dim, dim)
+        block = sp.block_diag(offs, format="csr").astype(dtype)  # (n dim, n dim)
+        if xp is np:
+            to_sparse = lambda a: a  # noqa: E731
+        else:
+            import cupyx.scipy.sparse as csp
+
+            to_sparse = csp.csr_matrix
+        D, stacked, block = xp.asarray(D), to_sparse(stacked), to_sparse(block)
+        curvature = self.curvature
+
+        def sources(x, F, part):
+            phi = x[:, 0]
+            if part == "off":
+                F[:, 1 : 1 + n] += (stacked @ phi).reshape(n, dim).T
+                if curvature:
+                    psi = x[:, 1 : 1 + n].T.reshape(n * dim)
+                    F[:, 1 + n :] += 2 * (block @ psi).reshape(n, dim).T
+            else:
+                F[:, 1 : 1 + n] += D * phi[:, None]
+                if curvature:
+                    F[:, 1 + n :] += 2 * D * x[:, 1 : 1 + n]
+
+        self._bound = sources
+        return sources
+
+
 def etd2_driver(
-    nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
+    nsteps,
+    dX,
+    rho_inv,
+    be,
+    phi,
+    grid_idcs,
+    schedule=None,
+    phi0_per_pixel=None,
+    tangent=None,
 ):
     """ETD2RK step loop for every route and backend.
 
@@ -74,6 +149,14 @@ def etd2_driver(
         :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
         initial states ``(dim, K_total)``; requires per-lane paths and no
         snapshots.
+      tangent: a :class:`TangentOperator` (shared path only). Column 0 of
+        ``phi`` is the cascade; columns ``1..n`` integrate the derivatives
+        ``psi_k = d phi / d p_k`` of an operator linear in ``p``,
+        ``d psi_k / dX = (A + ri B) S psi_k + G_k S phi``, and with
+        ``tangent.curvature`` columns ``n+1..2n`` the second derivatives,
+        ``d chi_k / dX = (A + ri B) S chi_k + 2 G_k S psi_k``. They share
+        the cascade's operator and path, so they cost extra columns, not
+        extra solves.
 
     Returns:
       ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
@@ -110,6 +193,15 @@ def etd2_driver(
                 f"= ({dim}, {schedule.K_total}); got {phi0_per_pixel.shape}"
             )
 
+    if tangent is not None:
+        if per_lane or schedule is not None:
+            raise ValueError("etd2_driver: tangent columns need one shared path")
+        if K != tangent.columns:
+            raise ValueError(
+                f"etd2_driver: tangent needs {tangent.columns} columns, got {K}"
+            )
+        sources = tangent.bind(be, dtype)
+
     be.bind(dim, K, per_lane, nsteps)
     phc, F_phi, F_a, a = be.state_buffers(dim, K)
 
@@ -139,10 +231,20 @@ def etd2_driver(
 
         def apply_off(x, F, ri):
             be.apply_off(x, F, ri)
+            if tangent is not None:
+                sources(x, F, "off")  # produced particles: mixed like int_off x
             lead = F[: mix.n_D * mix.N].reshape(mix.n_D, mix.N * K)
             lmm(M_mix, lead, out=mix_out)
             xp.copyto(lead, mix_out)
             be.apply_band(x, F)
+            if tangent is not None:
+                sources(x, F, "diag")
+    elif tangent is not None:
+
+        def apply_off(x, F, ri):
+            be.apply_off(x, F, ri)
+            sources(x, F, "off")
+            sources(x, F, "diag")
     else:
         apply_off = be.apply_off
 
