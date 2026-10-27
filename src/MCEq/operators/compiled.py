@@ -145,6 +145,9 @@ class CompiledOperator:
         self.layout = layout
         self.coupling = coupling
         self.sec_ops = sec_ops
+        #: :func:`column_bases` of the corner columns integrated in their
+        #: own basis (e+- with multiple scattering), or ``None``.
+        self.column_basis = None
 
     @property
     def coupled(self):
@@ -181,10 +184,67 @@ class CompiledOperator:
         delta = coupled_corner(lay, self.d_int) - d_int0
         # diagonal of Vi diag(delta_i) V for every column i
         damping = (c.Vi * c.V.T) @ delta * lam
-        return (lam * d_int0 + damping, lam * d_dec0)
+        L_int, L_dec = lam * d_int0 + damping, lam * d_dec0
+        cb = self.column_basis
+        if cb is not None:
+            L_int[:, cb.idx] = cb.lam
+            L_dec[:, cb.idx] = 0.0
+        return L_int, L_dec
 
 
-def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
+def column_bases(op, columns, tol=1e-8):
+    """Per-column exact bases of the coupled corner for the state columns
+    ``columns`` (indices within one mode block).
+
+    The corner block of column ``i`` is ``A_i = diag(d_i) S_P`` with ``d_i``
+    the l-dependent diagonal of ``A`` (for e+- it carries the screened Coulomb
+    damping, up to ~1e4 cm^2/g at low energy and high l). In the shared basis
+    of ``S_P`` only the diagonal of ``Vi diag(d_i) V`` is integrated exactly and
+    the rest is explicit, which is unstable for such rates. ``A_i`` is
+    ``-|D| N G`` with ``N G`` the Legendre form of a positive multiplication
+    operator, so it has a real, negative spectrum: each column gets its own
+    eigenbasis, in which ``A_i`` is integrated exactly. A decay diagonal
+    (``ri d_dec``, mode independent and small: low-energy muons) stays in the
+    explicit remainder of these columns (``L_dec = 0``).
+
+    Returns a namespace ``idx`` (corner column numbers), ``V, Vi, SPV``
+    (``(m, n_P, n_P)``, ``SPV = S_P V``) and ``lam`` (``(n_P, m)``), or None
+    when no column of ``columns`` is in the corner.
+    """
+    lay = op.layout
+    g = np.asarray(op.sec_ops["low_e_idx"])
+    idx = np.flatnonzero(np.isin(g, np.asarray(columns)))
+    if idx.size == 0:
+        return None
+    d_int = coupled_corner(lay, op.d_int)[:, idx]
+    T_P = np.asarray(op.sec_ops["T_P"], dtype=np.float64)
+    n_P = lay.n_P
+    S_P = np.eye(n_P) + T_P[:, :n_P]
+    m = idx.size
+    V, Vi = np.empty((m, n_P, n_P)), np.empty((m, n_P, n_P))
+    lam = np.empty((n_P, m))
+    for j in range(m):
+        A = d_int[:, j, None] * S_P
+        w, v = np.linalg.eig(A)
+        if np.abs(w.imag).max() > tol * np.abs(w).max() or w.real.max() > 0:
+            raise RuntimeError(
+                f"column_bases: corner column {idx[j]} has a non-real or growing "
+                f"spectrum (max imag {np.abs(w.imag).max():.3g}, max real {w.real.max():.3g})"
+            )
+        order = np.argsort(w.real)
+        v = v[:, order].real
+        v /= np.linalg.norm(v, axis=0)
+        vi = np.linalg.inv(v)
+        rec = np.abs(v @ (w.real[order, None] * vi) - A).max()
+        if rec > 1e-6 * np.abs(A).max():
+            raise RuntimeError(f"column_bases: column {idx[j]} basis error {rec:.3g}")
+        V[j], Vi[j], lam[:, j] = v, vi, w.real[order]
+    return SimpleNamespace(idx=idx, V=V, Vi=Vi, lam=lam, SPV=S_P @ V)
+
+
+def compile_operator(
+    int_m, dec_m, sec_ops=None, band=None, mode_mix=None, exact_columns=None
+):
     """Assemble the ETD2RK operator from the matrices of ``MatrixBuilder``.
 
     Args:
@@ -197,6 +257,8 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
         continuous-loss band; the band's diagonal joins ``d_int`` and its
         off-diagonal bypasses ``mode_mix``, since energy loss does not
         change the direction.
+      exact_columns: state columns (within one mode block) whose coupled
+        corner is integrated in its own basis (:func:`column_bases`).
     """
     d_int, d_dec, int_off, dec_off = split_diagonal(int_m, dec_m)
     band_off = None
@@ -228,4 +290,6 @@ def compile_operator(int_m, dec_m, sec_ops=None, band=None, mode_mix=None):
         op.coupling = secant_coupling(sec_ops, schur=True)
         if op.exact_slot_diagonals[0].max() >= eig_max:
             op.coupling = coupling
+    if op.coupled and exact_columns is not None and len(exact_columns):
+        op.column_basis = column_bases(op, exact_columns)
     return op

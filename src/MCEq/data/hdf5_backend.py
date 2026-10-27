@@ -179,6 +179,9 @@ class HDF5Backend:
         return self._energy_grid
 
     def _gen_db_dictionary(self, pack, eqv=None):
+        """Decode a channel pack. In a 2D run a 1D pack (one energy block per
+        channel, as the EM databases) is decoded as (dim, dim) matrices, which
+        the matrix builder copies into every mode: collinear production."""
         index_d = {}
         relations = defaultdict(list)
         particle_list = []
@@ -187,6 +190,9 @@ class HDF5Backend:
         indptr_data = np.asarray(pack.indptrs)
         len_data = pack.len_data
         tuple_idcs = pack.tuple_idcs
+        is_2d, n_k, dim_full = self.is_2d, self.n_k, self.dim_full
+        if is_2d and indptr_data.shape[1] == dim_full // n_k + 1:
+            is_2d, n_k, dim_full = False, 1, dim_full // n_k
         if tuple_idcs.shape[1] == 4:
             model_particles = sorted(
                 list(set(tuple_idcs[:, (0, 2)].flatten().tolist()))
@@ -205,10 +211,7 @@ class HDF5Backend:
         for tupidx, tup in enumerate(tuple_idcs):
             # In 2D each channel stores n_k mode blocks back-to-back,
             # so the flat read length per channel scales with n_k.
-            if self.is_2d:
-                expand_len = self.n_k
-            else:
-                expand_len = 1
+            expand_len = n_k if is_2d else 1
             # Helicity information handling
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
@@ -230,9 +233,9 @@ class HDF5Backend:
                 indptr_data[tupidx, :],
                 read_idx,
                 expand_len * len_data[tupidx],
-                dim_full=self.dim_full,
-                is_2d=self.is_2d,
-                n_k=self.n_k,
+                dim_full=dim_full,
+                is_2d=is_2d,
+                n_k=n_k,
                 min_idx=self.min_idx,
                 max_idx=self.max_idx,
                 cuts=self._cuts,

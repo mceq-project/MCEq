@@ -1090,11 +1090,39 @@ class MCEqRun(BatchSolver):
                     sec_ops,
                     band=self.matrix_builder.dEdx_band,
                     mode_mix=mix,
+                    exact_columns=self._em_exact_columns(),
                 )
             else:
-                op = compile_operator(self.int_m, self.dec_m, sec_ops)
+                op = compile_operator(
+                    self.int_m,
+                    self.dec_m,
+                    sec_ops,
+                    exact_columns=self._em_exact_columns(),
+                )
             cache[coupled] = entry = (self.int_m, self.dec_m, sec_ops, op)
         return entry[3]
+
+    def _em_exact_columns(self):
+        """State columns (one mode block) whose sec(theta)-coupled corner is
+        integrated in its own basis (:func:`MCEq.operators.compiled.column_bases`)
+        in a 2D EM run: e+- with ``config.em_multiple_scattering``. EM runs
+        track them down to ~1 MeV, where the screened Coulomb rate reaches
+        1e3-1e4 cm^2/g at high l and the shared basis of the coupling diverges.
+        Muons stay in the shared basis, which integrates their decays exactly;
+        their damping stops at ``config.muon_scattering_e_min``."""
+        if not (
+            self._mceq_db.is_2d and config.enable_em and config.em_multiple_scattering
+        ):
+            return None
+        keys = [(11, 0), (-11, 0)]
+        cols = [
+            np.arange(p.lidx, p.uidx)
+            for key in keys
+            if key in self.pman.pdg2pref
+            for p in (self.pman.pdg2pref[key],)
+            if getattr(p, "mceqidx", -1) >= 0
+        ]
+        return np.concatenate(cols) if cols else None
 
     def _etd2_backend(self, sec_ops=None, dtype=np.float64):
         """Solver backend of ``kernel_config`` for the compiled operator, cached

@@ -320,3 +320,66 @@ def test_skewed_cluster_basis_falls_back_to_schur():
         phi0, sec_ops=ops,
     )  # fmt: skip
     np.testing.assert_allclose(sol, ref, rtol=1e-4)
+
+
+
+@pytest.mark.parametrize("backend", ["numpy", CUDA])
+def test_stiff_mode_damping_needs_own_column_bases(backend):
+    """A damping far above 1/h on the coupled columns of one species (e+-
+    multiple scattering, up to ~4e3 cm^2/g at 1 MeV) is integrated exactly in
+    per-column bases of ``diag(d_i) S_P``; in the shared basis of ``S_P`` the
+    stiff remainder is explicit and the step diverges. Species 0 also decays
+    (low-energy muons): the decay diagonal stays explicit. Dense l grid, as
+    the coupled block of the production grid (whose spectra are real)."""
+    from MCEq.operators.compiled import column_bases, compile_operator
+
+    l_grid, n_sp, n_e = np.arange(8), 2, 5
+    n, n_k = n_sp * n_e, 8
+    rng = np.random.default_rng(7)
+    ops = build_secant_kernel_ops(l_grid, np.logspace(-2, 1, n_e), n_sp, 75.0, e_max=0.5)
+    blocks, decs = [], []
+    for ell in l_grid:
+        m = sp.random(n, n, density=0.3, random_state=rng).toarray() * 0.2
+        np.fill_diagonal(m, -(1 + rng.random(n)))
+        m[np.arange(n_e), np.arange(n_e)] -= 40.0 * ell * (ell + 1)  # species 0
+        blocks.append(m)
+        d = sp.random(n, n, density=0.2, random_state=rng).toarray() * 0.1
+        np.fill_diagonal(d, -0.5 * (1 + rng.random(n)))
+        decs.append(d)
+    hadr, dec = sl.block_diag(*blocks), sl.block_diag(*decs)
+    T = np.zeros((n_k, n_k))
+    T[ops["P"][:, None], np.arange(n_k)[None, :]] = ops["T_P"]
+    low = np.zeros(n)
+    low[ops["low_e_idx"]] = 1.0
+    S = np.eye(n_k * n) + np.kron(T, np.diag(low))
+    phi0 = rng.random(n_k * n)
+    ri = 0.4
+    ref = sl.expm((hadr + ri * dec) @ S) @ phi0
+    cols = np.arange(n_e)
+
+    op = compile_operator(sp.csr_matrix(hadr), sp.csr_matrix(dec), ops, exact_columns=cols)
+    cb = op.column_basis
+    assert len(cb.idx) == np.isin(ops["low_e_idx"], cols).sum() > 0
+    assert np.all(cb.lam < 0)
+    assert np.array_equal(op.exact_slot_diagonals[0][:, cb.idx], cb.lam)
+    assert column_bases(op, [n - 1 + n]) is None  # not a state column of one block
+
+    def solve(nsteps, exact):
+        dX = np.full((nsteps, 1), 1.0 / nsteps)
+        sol, _ = solve_etd2(
+            nsteps, dX, np.full_like(dX, ri), sp.csr_matrix(hadr), sp.csr_matrix(dec),
+            phi0[:, None], backend=backend, sec_ops=ops,
+            exact_columns=cols if exact else None,
+        )
+        return sol[:, 0]
+
+    scale = np.abs(ref).max()
+    err = [np.abs(solve(k, True) - ref).max() / scale for k in (200, 400, 800, 1600)]
+    with np.errstate(all="ignore"):
+        shared = [np.abs(solve(k, False) - ref).max() / scale for k in (200, 1600)]
+    # stiff order reduction: ~2.3-2.6 per halving (6.7e-4 ... 4.6e-5); the
+    # shared basis is 2.4 at 200 steps and 3.3e-2 at 1600
+    assert err[-1] < 1e-4
+    assert all(a / b > 2.0 for a, b in zip(err, err[1:]))
+    assert not np.isfinite(shared[0]) or shared[0] > 100 * err[0]
+    assert not np.isfinite(shared[1]) or shared[1] > 100 * err[-1]

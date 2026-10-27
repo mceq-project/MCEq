@@ -343,17 +343,39 @@ class MatrixBuilder:
             mu_mass,
             config.muon_scattering_finite_nuclei,
         )
+        # Below muon_scattering_e_min (reached only with a lowered e_min, e.g.
+        # EM runs) the damping is stiff and decays are fast: the shared basis
+        # of the sec(theta) coupling cannot integrate both.
+        damping[:, np.asarray(self._energy_grid.c) < config.muon_scattering_e_min] = 0.0
         return muon_lidcs, damping
+
+    def _em_scattering_damping(self):
+        """Return e+- offsets and negative rates, shape (n_k, n_energy), or
+        None outside 2D EM runs (:func:`scattering.electron_mode_rates`)."""
+        if not (self.is_2d and config.enable_em and config.em_multiple_scattering):
+            return None
+        lidcs = scattering.electron_state_offsets(self._pman.pdg2pref)
+        if not lidcs:
+            return None
+        damping = -scattering.electron_mode_rates(
+            self._energy_grid.c, self.k_grid, getattr(self, "_layout", None)
+        )
+        return lidcs, damping
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
         """Assemble the per-channel blocks into the global CSR operator.
 
         2D blocks ``(n_k, dim, dim)`` give one CSR per mode, joined block-diagonally.
-        ``apply_muon_scattering`` adds :meth:`_muon_scattering_damping` to the muon diagonals.
+        ``apply_muon_scattering`` adds :meth:`_muon_scattering_damping` to the muon
+        diagonals and :meth:`_em_scattering_damping` to the e+- diagonals.
         """
-        mu_damp = None
+        dampings = []
         if self.is_2d and apply_muon_scattering:
-            mu_damp = self._muon_scattering_damping()
+            dampings = [
+                d
+                for d in (self._muon_scattering_damping(), self._em_scattering_damping())
+                if d is not None
+            ]
         n_e = self.dim
         shape = (self.dim_states, self.dim_states)
         per_mode_csr = []
@@ -373,10 +395,9 @@ class MatrixBuilder:
                 rows.append(r + rc.lidx)
                 cols.append(cc + rp.lidx)
                 vals.append(slab[r, cc])
-            if mu_damp is not None and self.k_grid[k] != 0:
-                muon_lidcs, all_damping = mu_damp
+            for lidcs, all_damping in dampings if self.k_grid[k] != 0 else ():
                 damping = all_damping[k]
-                for lidx in muon_lidcs:
+                for lidx in lidcs:
                     diag = np.arange(lidx, lidx + n_e)
                     rows.append(diag)
                     cols.append(diag)

@@ -303,6 +303,21 @@ muon_scattering_model = "screened-coulomb"
 #: angles above ~1 GeV.
 muon_scattering_finite_nuclei = True
 
+#: Kinetic energy (GeV, bin centre) below which muons get no scattering
+#: damping; 0.05 lies below every bin of the default ``e_min = 0.1``. Only runs
+#: with a lowered ``e_min`` (EM cascades, 1 MeV) reach it: there the damping
+#: (1e3 cm^2/g at high l) and the decay rate (1e5 per g/cm^2 at altitude) of
+#: MeV muons are both stiff, and the sec(theta) coupling can integrate only one
+#: of them exactly.
+muon_scattering_e_min = 0.05
+
+#: Coulomb scattering of e+- in the 2D transport with ``enable_em``: the
+#: screened Coulomb (Wentzel) rate of :mod:`MCEq.operators.scattering` with
+#: the electron mass and point nuclei, atomic electrons as ``Z(Z + 1)``. The
+#: EM production kernels enter 2D collinear (production angles ~ m_e/E), so
+#: without it the EM cascade keeps the angles of its parents.
+em_multiple_scattering = True
+
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
 #: over-predicting the wide-angle density of species in local

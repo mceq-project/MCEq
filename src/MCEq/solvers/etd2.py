@@ -155,9 +155,25 @@ def etd2_driver(
         def low_e(x):
             return x.reshape((lay.n_k, lay.N) + x.shape[1:])[:, : lay.n_g]
 
+        cb = be.op.column_basis
+        if cb is not None:
+            # e+- columns carry their own basis (operators.compiled.column_bases)
+            cidx = xp.asarray(cb.idx)
+            cV, cVi, cSPV = (be.asarray(m, dtype) for m in (cb.V, cb.Vi, cb.SPV))
+            T_Pc = W[:, lay.n_P :]
+
+            def col_mm(M, plane):
+                """``M_j plane[:, j]`` for the own-basis columns, ``(n_P, m, K)``."""
+                return xp.matmul(M, plane.transpose(1, 0, 2)).transpose(1, 0, 2)
+
         def rotate(x, M):
-            """``C(x) <- M C(x)`` for a state-shaped ``x``."""
-            xp.copyto(corner(x), lmm(M, corner(x)))
+            """``C(x) <- M C(x)`` for a state-shaped ``x``; ``M`` is V or Vi."""
+            xc = corner(x)
+            if cb is not None:
+                own = xc[:, cidx]
+            xp.copyto(xc, lmm(M, xc))
+            if cb is not None:
+                xc[:, cidx] = col_mm(cV if M is V else cVi, own)
 
         # constant parts of the corner diagonals Df = d_int_c + ri d_dec_c
         # and lam_j D0_i = L_int + ri L_dec
@@ -180,12 +196,19 @@ def etd2_driver(
             xp.copyto(psi, xc)
             # the corner of the operand S x, in place of Psi around the SpMM
             lmm(W, low_e(x), out=work)
+            if cb is not None:
+                own = col_mm(cSPV, psi[:, cidx])
+                if lay.n_k > lay.n_P:
+                    own += lmm(T_Pc, low_e(x)[lay.n_P :][:, cidx])
+                work[:, cidx] = own
             xp.copyto(xc, work)
             apply_off(x, F, ri)
             # Vi (F_c + Df C(S x)) - lam_j D0_i Psi
             xp.multiply(Df, xc, out=work)
             xp.add(Fc, work, out=work)
             lmm(Vi, work, out=rot)
+            if cb is not None:
+                rot[:, cidx] = col_mm(cVi, work[:, cidx])
             xp.multiply(D0lam, psi, out=work)
             xp.subtract(rot, work, out=Fc)
             xp.copyto(xc, psi)
@@ -295,6 +318,7 @@ def solve_etd2(
     dtype=np.float64,
     band=None,
     mode_mix=None,
+    exact_columns=None,
 ):
     """Integrate ``dPhi/dX`` with :func:`etd2_driver` on one backend.
 
@@ -325,11 +349,15 @@ def solve_etd2(
         :func:`MCEq.operators.compiled.compile_operator`.
       dtype: float64 or float32, the state precision (the precision rule of
         :mod:`MCEq.solvers.backends.host`).
+      exact_columns: state columns whose coupled corner is integrated in its
+        own basis (:func:`MCEq.operators.compiled.column_bases`).
 
     Returns:
       ``(solution, grid_snapshots)``, or the pixel matrix with a schedule.
     """
-    op = compile_operator(int_m, dec_m, sec_ops, band=band, mode_mix=mode_mix)
+    op = compile_operator(
+        int_m, dec_m, sec_ops, band=band, mode_mix=mode_mix, exact_columns=exact_columns
+    )
     be = make_backend(op, backend, dtype, device_id)
     try:
         return etd2_driver(

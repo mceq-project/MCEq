@@ -61,8 +61,11 @@ cut to the run's energy window, when the muon mass, the ``finite_nuclei``
 switch and the grids it records match the run; otherwise it computes the
 rate, memoised for the process.
 
-Only muons are treated. Hadrons interact before scattering matters, and the
-e+- angular distribution is set by the EM cascade kinematics.
+Muons and, with ``config.enable_em``, e+- are treated. Hadrons interact
+before scattering matters. For e+- (:func:`electron_mode_rates`,
+``config.em_multiple_scattering``) the screened Coulomb rate is taken with the
+electron mass and point nuclei; the muon-specific electron kinematic limit
+does not apply to e+-e- scattering, no Mott factor.
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ __all__ = [
     "MUON_MASS",
     "mode_rates",
     "muon_state_offsets",
+    "electron_mode_rates",
+    "electron_state_offsets",
     "screened_coulomb_rate_legendre",
     "theta_s_squared",
     "transport_cross_sections",
@@ -105,6 +110,9 @@ MUON_MASS = 0.10566
 #: Helicity 0 is the unpolarised species; +-1 appear with
 #: ``config.muon_helicity_dependence``.
 MUON_KEYS = tuple((pdg, hel) for pdg in (13, -13) for hel in (0, 1, -1))
+
+#: PDG ids and helicity of the e+- species of the EM cascade.
+ELECTRON_KEYS = ((11, 0), (-11, 0))
 
 _HBARC = constants.hbar * constants.c / constants.electron_volt * 1e-7  # GeV cm
 _BOHR = constants.physical_constants["Bohr radius"][0] * 100  # cm
@@ -205,6 +213,35 @@ def _screened_coulomb_cached(e_bytes, l_bytes, comp_bytes, comp_shape, mass, fin
     )
 
 
+def electron_mode_rates(e_kin, l_grid, layout):
+    """Screened Coulomb rate of e+- [cm^2/g], shape ``(n_l, n_energy)``: the
+    Wentzel kernel with the electron mass and point nuclei (``Z(Z + 1)``),
+    memoised like :func:`mode_rates`."""
+    comp = np.asarray(layout.scattering_composition(), dtype=float)
+    e_kin = np.asarray(e_kin, dtype=float)
+    ell = np.asarray(l_grid, dtype=float)
+    return _screened_coulomb_cached(
+        e_kin.tobytes(), ell.tobytes(), comp.tobytes(), comp.shape,
+        float(ELECTRON_MASS), False,
+    ).copy()
+
+
+def electron_state_offsets(pdg2pref):
+    """State-vector row offsets of the e+- species in ``pdg2pref``, as
+    :func:`muon_state_offsets`."""
+    return _state_offsets(pdg2pref, ELECTRON_KEYS)
+
+
+def _state_offsets(pdg2pref, keys):
+    offsets = []
+    for key in keys:
+        if key in pdg2pref:
+            particle = pdg2pref[key]
+            if hasattr(particle, "lidx") and getattr(particle, "mceqidx", -1) >= 0:
+                offsets.append(particle.lidx)
+    return offsets
+
+
 def muon_state_offsets(pdg2pref):
     """State-vector row offsets of the physical muon species in ``pdg2pref``.
 
@@ -214,13 +251,7 @@ def muon_state_offsets(pdg2pref):
     state vector, which is what ``lidx`` and a non-negative ``mceqidx`` say;
     disabled species have neither.
     """
-    offsets = []
-    for key in MUON_KEYS:
-        if key in pdg2pref:
-            particle = pdg2pref[key]
-            if hasattr(particle, "lidx") and getattr(particle, "mceqidx", -1) >= 0:
-                offsets.append(particle.lidx)
-    return offsets
+    return _state_offsets(pdg2pref, MUON_KEYS)
 
 
 def _elements(e_kin, composition, muon_mass):
