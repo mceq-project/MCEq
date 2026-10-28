@@ -17,6 +17,7 @@ from MCEq.geometry import density_profiles as dp
 from MCEq.geometry import msis21
 from MCEq.initial_state import deposit_single_primary, fill_nucleons
 from MCEq.misc import info, normalize_hadronic_model_name
+from MCEq.operators import secant_table
 from MCEq.operators.compiled import compile_operator
 from MCEq.operators.legendre import backward_removal, dense_count, theta_density
 from MCEq.operators.matrix_builder import MatrixBuilder
@@ -610,15 +611,21 @@ class MCEqRun(BatchSolver):
         dtype = resolve_dtype(dtype)
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
-        sol, grid_sol = self._run_etd2(
-            nsteps,
-            dX,
-            rho_inv,
-            self._stack_modes(self._phi0),
-            grid_idcs,
-            dtype=dtype,
-            sec_ops=sec_ops,
-        )
+        if secant_table.table_for(self) is not None:
+            X_start = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
+            sol, grid_sol = secant_table.solve_segments(
+                self, nsteps, dX, rho_inv, grid_idcs, X_start, dtype
+            )
+        else:
+            sol, grid_sol = self._run_etd2(
+                nsteps,
+                dX,
+                rho_inv,
+                self._stack_modes(self._phi0),
+                grid_idcs,
+                dtype=dtype,
+                sec_ops=sec_ops,
+            )
         self._solution = np.asarray(sol, dtype=np.float64)
         self.grid_sol = np.asarray(grid_sol, dtype=np.float64)
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
