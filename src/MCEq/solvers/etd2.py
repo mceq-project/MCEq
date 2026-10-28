@@ -82,10 +82,10 @@ def etd2_driver(
         :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
         initial states ``(dim, K_total)``; requires per-lane paths and no
         snapshots.
-      col_scale: ``(S, starts)``, the column scaling ``s`` of the whole
-        operator, ``dPhi/dX = (A + ri B) diag(s) Phi``: row ``S[j]``
-        (``(dim,)``) applies from step ``starts[j]`` on (``starts[0] == 0``).
-        The diagonal takes ``s`` exactly, the remainder acts on ``s Phi``
+      col_scale: :class:`MCEq.operators.secant_table.ColumnScale`, the column scaling ``s`` of the
+        whole operator, ``dPhi/dX = (A + ri B) diag(s) Phi``, one ``s`` per
+        lane with per-lane paths (the carousel), else one for all. The
+        diagonal takes ``s`` exactly, the remainder acts on ``s Phi``
         (:mod:`MCEq.operators.secant_table`); uncoupled operators only.
 
     Returns:
@@ -212,16 +212,19 @@ def etd2_driver(
     if col_scale is not None:
         if coupled:
             raise ValueError("etd2_driver: col_scale needs an uncoupled operator")
-        S, starts = col_scale
-        s_col = xp.ones((dim, 1), dtype=dtype)
+        scl = col_scale
+        perm = slice(None) if lay.perm is None else np.asarray(lay.perm)
+        cs_rows = be.asarray(np.asarray(scl.rows)[:, perm], np.float64)
+        cs_idx, cs_w = be.asarray(scl.idx, np.int64), be.asarray(scl.weight, np.float64)
+        cs_lane = be.asarray(scl.lane, np.int64)
+        s_64 = xp.ones((dim, K if per_lane else 1), dtype=np.float64)
+        s_col = xp.ones_like(s_64, dtype=dtype)
         x_s = xp.empty((dim, K), dtype=dtype)
         eval_paraxial = eval_F
 
         def eval_F(x, F, ri):
             xp.multiply(s_col, x, out=x_s)
             eval_paraxial(x_s, F, ri)
-
-        next_row = 0
 
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
@@ -241,15 +244,12 @@ def etd2_driver(
     with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
-            if (
-                col_scale is not None
-                and next_row < len(starts)
-                and starts[next_row] == k
-            ):
-                s_row = to_layout(np.asarray(S[next_row], dtype=np.float64))
-                be.scale_diagonals(s_row)
-                xp.copyto(s_col, be.asarray(s_row[:, None]))
-                next_row += 1
+            if col_scale is not None and scl.step_starts[k + 1] > scl.step_starts[k]:
+                ev = slice(int(scl.step_starts[k]), int(scl.step_starts[k + 1]))
+                mixed = (cs_rows[cs_idx[ev]] * cs_w[ev, :, None]).sum(axis=1)
+                s_64[:, cs_lane[ev]] = mixed.T
+                xp.copyto(s_col, s_64)
+                be.scale_diagonals(s_64 if per_lane else s_64[:, 0])
             h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64
             ri = ri_b[k]  # the same in the state dtype
             eD, hphi1, hphi2 = be.diag_factors(h64, ri64)

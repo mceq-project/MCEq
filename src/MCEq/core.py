@@ -611,7 +611,7 @@ class MCEqRun(BatchSolver):
         dtype = resolve_dtype(dtype)
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
-        X_start = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
+        X0 = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
         sol, grid_sol = self._run_etd2(
             nsteps,
             dX,
@@ -620,7 +620,7 @@ class MCEqRun(BatchSolver):
             grid_idcs,
             dtype=dtype,
             sec_ops=sec_ops,
-            col_scale=secant_table.column_scale(self, dX, X_start),
+            col_scale=secant_table.column_scale(self, dX, X0),
         )
         self._solution = np.asarray(sol, dtype=np.float64)
         self.grid_sol = np.asarray(grid_sol, dtype=np.float64)
@@ -1137,8 +1137,7 @@ class MCEqRun(BatchSolver):
         sec_ops=None,
         col_scale=None,
     ):
-        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path;
-        ``col_scale`` of :func:`MCEq.operators.secant_table.column_scale`."""
+        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(
@@ -1158,6 +1157,7 @@ class MCEqRun(BatchSolver):
         phi0_per_pixel,
         dtype=np.float64,
         sec_ops=None,
+        col_scale=None,
     ):
         """Integrate K states along per-column paths with the LPT carousel;
         returns the ``(dim, K)`` final states in column order."""
@@ -1171,6 +1171,7 @@ class MCEqRun(BatchSolver):
             [],
             schedule=schedule,
             phi0_per_pixel=phi0_per_pixel,
+            col_scale=col_scale,
         )
         return np.asarray(sol, dtype=np.dtype(dtype))
 

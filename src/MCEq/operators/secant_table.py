@@ -32,6 +32,7 @@ removal below ~0.3 GeV.
 """
 
 import warnings
+from typing import NamedTuple
 
 import h5py
 import numpy as np
@@ -42,12 +43,13 @@ from MCEq.operators.secant import legendre_coupling
 
 __all__ = [
     "MODES",
+    "ColumnScale",
     "SecantTable",
+    "carousel_column_scale",
     "column_scale",
     "generate_secant_table",
     "run_mode",
     "table_for",
-    "warn_per_direction",
 ]
 
 #: Table groups: the inclusive flux of a primary spectrum, the shower of a
@@ -64,6 +66,31 @@ HANDOVER_MIN = 50.0
 
 #: Depth segments per decade of slant depth; ``s`` is constant within one.
 SEGMENTS_PER_DECADE = 20
+
+
+class ColumnScale(NamedTuple):
+    """Column scaling ``s`` of :func:`MCEq.solvers.etd2.etd2_driver` as events: at step ``k``
+    the events ``step_starts[k]:step_starts[k + 1]`` set the ``s`` of their
+    ``lane`` to ``sum_q weight[e, q] rows[idx[e, q]]``. A lane keeps its
+    ``s`` until its next event; before the first it is 1."""
+
+    rows: np.ndarray  #: ``(n_rows, dim)``, in the state's own order
+    step_starts: np.ndarray  #: ``(nsteps + 1,)`` event offsets per step
+    lane: np.ndarray  #: ``(n_events,)``; 0 for a shared path
+    idx: np.ndarray  #: ``(n_events, q)`` rows mixed by each event
+    weight: np.ndarray  #: ``(n_events, q)`` their weights
+
+    @classmethod
+    def piecewise(cls, S, starts, nsteps):
+        """Row ``S[j]`` from step ``starts[j]`` on, one path for all lanes."""
+        n = len(starts)
+        return cls(
+            np.asarray(S),
+            np.searchsorted(np.asarray(starts), np.arange(nsteps + 1)),
+            np.zeros(n, dtype=int),
+            np.arange(n)[:, None],
+            np.ones((n, 1)),
+        )
 
 
 def run_mode(mceq):
@@ -161,41 +188,57 @@ class SecantTable:
                         [g[f"X_{i}"][:] for i in range(n)],
                         [g[f"s_{i}"][:].astype(float) for i in range(n)],
                     )
-        self._index = None
+        self._rows = None
+
+    def weights(self, mode, theta_deg, X):
+        """Rows of :meth:`rows` and their weights that give ``s`` of group
+        ``mode`` at zenith ``theta_deg`` and slant depths ``X``: linear in
+        cos(theta) between the bracketing zeniths and in log X between table
+        depths, clamped at the ends. Two ``(len(X), 4)`` arrays."""
+        zeniths, Xs, _ = self.modes[mode]
+        offsets = np.cumsum([0] + [len(x) for x in Xs])
+        c, cz = np.cos(np.radians(theta_deg)), np.cos(np.radians(zeniths))
+        hi = int(np.clip(np.searchsorted(-cz, -c), 1, len(cz) - 1))
+        lo = hi - 1
+        w = float(np.clip((c - cz[hi]) / (cz[lo] - cz[hi]), 0.0, 1.0))
+        idx, wts = [], []
+        for i, wz in ((lo, w), (hi, 1 - w)):
+            ix = np.interp(np.log(X), np.log(Xs[i]), np.arange(len(Xs[i])))
+            k = np.minimum(ix.astype(int), len(Xs[i]) - 2)
+            f = ix - k
+            idx += [offsets[i] + k, offsets[i] + k + 1]
+            wts += [wz * (1 - f), wz * f]
+        return np.stack(idx, axis=1), np.stack(wts, axis=1)
+
+    def rows(self, mode, pman, dim, e_grid):
+        """The table rows of group ``mode`` (all zeniths and depths, stacked)
+        on the 1D state vector of ``pman``, ``(n_rows, dim)``; 1 for species
+        the table lacks."""
+        if not np.allclose(e_grid, self.e_grid):
+            raise ValueError("secant table energy grid differs from the database")
+        key = (mode, id(pman), dim)
+        if self._rows is None or self._rows[0] != key:
+            ne = len(e_grid)
+            stacked = np.concatenate(self.modes[mode][2])  # (n_rows, species, E)
+            pairs = [
+                (j, pman.pname2pref[n].mceqidx)
+                for j, n in enumerate(self.species)
+                if n in pman.pname2pref and pman.pname2pref[n].mceqidx >= 0
+            ]
+            src = np.array([j for j, _ in pairs])
+            dst = np.array([m * ne + np.arange(ne) for _, m in pairs])
+            out = np.ones((len(stacked), dim))
+            out[:, dst] = stacked[:, src]
+            self._rows = (key, out)
+        return self._rows[1]
 
     def factors(self, mode, pman, dim, e_grid, theta_deg, X):
         """``s`` of group ``mode`` at zenith ``theta_deg`` and slant depths
         ``X`` on the 1D state vector of ``pman`` (length ``dim``), shape
         ``(len(X), dim)``."""
-        if not np.allclose(e_grid, self.e_grid):
-            raise ValueError("secant table energy grid differs from the database")
-        zeniths, Xs, ss = self.modes[mode]
-        c, cz = np.cos(np.radians(theta_deg)), np.cos(np.radians(zeniths))
-        hi = int(np.clip(np.searchsorted(-cz, -c), 1, len(cz) - 1))
-        lo = hi - 1
-        w = float(np.clip((c - cz[hi]) / (cz[lo] - cz[hi]), 0.0, 1.0))
-
-        def at(i):
-            ix = np.interp(np.log(X), np.log(Xs[i]), np.arange(len(Xs[i])))
-            k = np.minimum(ix.astype(int), len(Xs[i]) - 2)
-            f = (ix - k)[:, None, None]
-            return (1 - f) * ss[i][k] + f * ss[i][k + 1]
-
-        s_sp = w * at(lo) + (1 - w) * at(hi)  # (len(X), species, E)
-        if self._index is None or self._index[0] is not pman:
-            ne = len(e_grid)
-            rows = [
-                (j, pman.pname2pref[n].mceqidx)
-                for j, n in enumerate(self.species)
-                if n in pman.pname2pref and pman.pname2pref[n].mceqidx >= 0
-            ]
-            src = np.array([j for j, _ in rows])
-            dst = np.array([m * ne + np.arange(ne) for _, m in rows])
-            self._index = (pman, src, dst)
-        _, src, dst = self._index
-        s = np.ones((len(X), dim))
-        s[:, dst] = s_sp[:, src]
-        return s
+        rows = self.rows(mode, pman, dim, e_grid)
+        idx, w = self.weights(mode, theta_deg, X)
+        return np.einsum("nq,nqd->nd", w, rows[idx])
 
 
 def _warn_once(mceq, key, message):
@@ -288,45 +331,65 @@ def table_for(mceq):
     return table, mode
 
 
-def warn_per_direction(mceq):
-    """Per-direction batch and full-sky solves run without the table (one
-    ``s`` per lane is not implemented); warn once if one would apply."""
-    if table_for(mceq) is not None:
-        _warn_once(
-            mceq,
-            "per-direction",
-            "Per-direction batch and full-sky solves ignore the 1D sec(theta) "
-            "table; use MCEqRun.solve or a shared-path batch for sub-GeV fluxes.",
-        )
-
-
-def column_scale(mceq, dX, X_start):
-    """``(S, starts)`` of :func:`MCEq.solvers.etd2.etd2_driver` for the path
-    ``dX`` from ``X_start``: ``s`` at the geometric midpoint of each
-    log-spaced depth segment (:data:`SEGMENTS_PER_DECADE`); None without a
-    table."""
-    found = table_for(mceq)
-    if found is None:
-        return None
-    table, mode = found
+def _segments(dX, X_start):
+    """First step and geometric-mid slant depth of each log-spaced depth
+    segment (:data:`SEGMENTS_PER_DECADE`) of the path ``dX`` from ``X_start``."""
     X_end = X_start + np.cumsum(dX)
     n_seg = int(np.ceil(SEGMENTS_PER_DECADE * np.log10(X_end[-1] / X_end[0])))
     bounds = np.geomspace(X_end[0], X_end[-1], max(n_seg, 1) + 1)[1:-1]
     starts = np.unique([0, *np.searchsorted(X_end, bounds, side="right")])
     starts = starts[starts < len(dX)]
     ends = np.append(starts[1:], len(dX))
-    X_mid = np.sqrt(X_end[np.maximum(starts - 1, 0)] * X_end[ends - 1])
-    key = (id(table), mode, mceq.theta_deg, X_mid.tobytes())
-    cached = mceq.__dict__.get("_secant_column_scale")
-    if cached is None or cached[0] != key:
-        S = table.factors(
-            mode, mceq.pman, mceq.dim_states, mceq.e_grid, mceq.theta_deg, X_mid
-        )
-        cached = mceq.__dict__["_secant_column_scale"] = (key, S)
-    S = cached[1]
+    return starts, np.sqrt(X_end[np.maximum(starts - 1, 0)] * X_end[ends - 1])
+
+
+def _column_scale(mceq, runs, X_start, nsteps):
+    """:class:`ColumnScale` of ``runs``, a list of
+    ``(first step, lane, dX, zenith)`` of each path a lane integrates; None
+    without a table."""
+    found = table_for(mceq)
+    if found is None:
+        return None
+    table, mode = found
+    events, memo = [], {}
+    for t0, lane, dX, theta in runs:
+        key = (id(dX), theta)
+        if key not in memo:
+            starts, X_mid = _segments(dX, X_start)
+            memo[key] = (starts, *table.weights(mode, theta, X_mid))
+        starts, idx, w = memo[key]
+        events.append((t0 + starts, np.full(len(starts), lane), idx, w))
+    t, lane, idx, w = (np.concatenate(a) for a in zip(*events))
+    order = np.argsort(t, kind="stable")
     info(
         2,
-        f"1D sec(theta) table [{mode}], {len(starts)} depth segments, "
-        f"low-energy model {table.attrs.get('low_energy_model')}",
+        f"1D sec(theta) table [{mode}], {len(t)} depth segments on {len(runs)} "
+        f"paths, low-energy model {table.attrs.get('low_energy_model')}",
     )
-    return S, starts
+    return ColumnScale(
+        table.rows(mode, mceq.pman, mceq.dim_states, mceq.e_grid),
+        np.searchsorted(t[order], np.arange(nsteps + 1)),
+        lane[order],
+        idx[order],
+        w[order],
+    )
+
+
+def column_scale(mceq, dX, X_start):
+    """Column scaling of the path ``dX`` from ``X_start`` at the run's
+    zenith, shared by every lane; None without a table."""
+    return _column_scale(mceq, [(0, 0, dX, mceq.theta_deg)], X_start, len(dX))
+
+
+def carousel_column_scale(mceq, paths, zeniths, slots, X_start, T):
+    """Column scaling of an LPT carousel
+    (:func:`MCEq.solvers.schedule.compile_carousel_schedule`): each lane
+    takes the ``s`` of the pixel it integrates, at that pixel's zenith; None
+    without a table."""
+    runs = []
+    for lane, pixels in enumerate(slots):
+        t0 = 0
+        for pid in pixels:
+            runs.append((t0, lane, paths[pid][1], zeniths[pid]))
+            t0 += int(paths[pid][0])
+    return _column_scale(mceq, runs, X_start, T) if runs else None

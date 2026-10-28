@@ -500,13 +500,16 @@ class CudaBackend:
         return self._factors
 
     def scale_diagonals(self, s):
-        """Diagonals ``s d_int``, ``s d_dec`` of the column-scaled operator;
-        ``None`` restores the operator's own."""
+        """Diagonals ``s d_int``, ``s d_dec`` of the column-scaled operator,
+        ``s`` of shape ``(dim,)`` or ``(dim, K)`` (per lane); ``None``
+        restores the operator's own."""
         if s is None:
             self._diag = (self.d_int[:, None], self.d_dec[:, None])
             return
         s = self.cp.asarray(s, dtype=self.cp.float64)
-        self._diag = ((self.d_int * s)[:, None], (self.d_dec * s)[:, None])
+        if s.ndim == 1:
+            s = s[:, None]
+        self._diag = (self.d_int[:, None] * s, self.d_dec[:, None] * s)
 
     def predictor(self, eD, x, hphi1, F, out):
         self._kernels.predictor(eD, x, hphi1, F, out)

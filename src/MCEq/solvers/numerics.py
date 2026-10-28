@@ -123,11 +123,13 @@ def step_buffers(shape):
 def diagonal_factors(h, ri, d_int, d_dec, bufs):
     """``eD``, ``h phi1(hD)`` and ``h phi2(hD)`` of one step, in place, for
     ``D = d_int + ri d_dec``. ``h`` and ``ri`` are scalars against ``(dim,)``
-    buffers or ``(K,)`` lane rows against ``(dim, K)``. A lane with
+    buffers or ``(K,)`` lane rows against ``(dim, K)``, where the diagonals
+    are ``(dim,)`` or per lane ``(dim, K)``. A lane with
     ``h == 0`` gets ``eD = 1`` and ``hphi1 = hphi2 = 0``."""
     hD, eD, phi1, phi2 = (bufs[k] for k in ("hD", "eD", "phi1", "phi2"))
     if hD.ndim == 2:
-        d_int, d_dec = d_int[:, None], d_dec[:, None]
+        if d_int.ndim == 1:  # else per-lane (dim, K) diagonals
+            d_int, d_dec = d_int[:, None], d_dec[:, None]
         h, ri = h[None, :], ri[None, :]
 
     # D = d_int + ri d_dec, then hD = h D, in place
