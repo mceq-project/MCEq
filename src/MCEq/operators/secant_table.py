@@ -1,4 +1,4 @@
-r"""sec(theta) path elongation for 1D solves, from a table of 2D solutions.
+r"""sec(theta) path elongation for 1D solves, from tables of 2D solutions.
 
 The l = 0 row of the Legendre transport (:mod:`MCEq.operators.legendre`) is
 the 1D equation with every column of species ``j`` -- interaction, decay and
@@ -9,24 +9,29 @@ continuous loss -- multiplied by
 the mean path elongation of the current angular distribution of ``j``
 (:func:`MCEq.operators.secant.legendre_coupling`, row 0). Charging the parent
 column keeps the daughter production of a parent in equilibrium unchanged, so
-neutrinos are unaffected. The 1D image of the 2D solve is therefore
+neutrinos are unaffected. The 1D image of the 2D solve is
 
     dN/dX = (A_int + rho_inv A_dec) diag(s) N,
 
-exact up to the backward removal of produced particles (relevant below
-~0.3 GeV) and the variation of ``s`` within a depth segment.
+which :func:`MCEq.solvers.etd2.etd2_driver` integrates with ``s`` exact on the
+diagonal and the remainder applied to ``s N`` (``col_scale``). It is exact up
+to the backward removal of produced particles (relevant below ~0.3 GeV) and
+the variation of ``s`` within a depth segment.
 
-``s`` of hadrons is close to universal in slant depth; muon ``s`` depends on
-depth and zenith (wide-angle fresh muons vs collimated survivors), so the
-table holds ``s(species, E, X)`` at a few zenith angles, interpolated
-linearly in log X and in cos(theta). It is generated from 2D solves of the
-inclusive flux (:func:`generate_secant_table`) and transfers across
-atmospheres, observation levels and primary spectra at the 1-2 % level for
-sub-GeV muons, better above. Muons of single-primary showers have a different
-angular history: an inclusive table leaves them 2-9 % high at 0.1-0.3 GeV.
-Not covered: EM species (``s = 1``), media other than air, and the backward
+``s`` depends on depth, zenith and the kind of cascade: muons and sub-GeV
+nucleons differ between the inclusive flux of a primary spectrum and the
+shower of a single primary. A table holds both, ``s(species, E, X)`` at a few
+zenith angles, from 2D solves (:func:`generate_secant_table`), interpolated
+linearly in log X and in cos(theta); the run's initial condition selects the
+group (:func:`run_mode`). The angles come from the low-energy model's tables,
+so a table belongs to one low-energy model and one 2D database. It transfers
+across atmospheres, observation levels, primary spectra and handover energies
+from 50 GeV up at the 1-2 % level for sub-GeV muons, better above. Not
+covered: EM species (``s = 1``), media other than air, and the backward
 removal below ~0.3 GeV.
 """
+
+import warnings
 
 import h5py
 import numpy as np
@@ -35,7 +40,37 @@ from MCEq import config
 from MCEq.misc import info
 from MCEq.operators.secant import legendre_coupling
 
-__all__ = ["SecantTable", "generate_secant_table", "solve_segments", "table_for"]
+__all__ = [
+    "MODES",
+    "SecantTable",
+    "column_scale",
+    "generate_secant_table",
+    "run_mode",
+    "table_for",
+    "warn_per_direction",
+]
+
+#: Table groups: the inclusive flux of a primary spectrum, the shower of a
+#: single primary.
+MODES = ("inclusive", "shower")
+
+#: ``config.secant_1d_table = "auto"`` applies a table only for ``e_min`` below
+#: this energy (GeV); above it ``s - 1`` stays below ~1 %.
+E_MIN_AUTO = 5.0
+
+#: Handover energy (GeV) below which the high-energy model's angles, absent
+#: from the tables, start to matter (tested down to 50 GeV).
+HANDOVER_MIN = 50.0
+
+#: Depth segments per decade of slant depth; ``s`` is constant within one.
+SEGMENTS_PER_DECADE = 20
+
+
+def run_mode(mceq):
+    """``"shower"`` if the initial condition holds a single primary, else
+    ``"inclusive"`` (primary flux model or user spectrum)."""
+    kinds = {entry[0] for entry in getattr(mceq, "_initial_condition", ())}
+    return "shower" if "single" in kinds else "inclusive"
 
 
 def elongation_factors(mceq_2d):
@@ -54,131 +89,244 @@ def elongation_factors(mceq_2d):
     return np.clip(np.nan_to_num(s, nan=1.0), 1.0, s_cap)
 
 
-def generate_secant_table(mceq_2d, fname, zeniths=(0, 60, 75, 85, 90), n_X=48):
-    """Solve ``mceq_2d`` (a 2D :class:`MCEq.core.MCEqRun` with its primary
-    flux set) at each zenith on ``n_X`` log-spaced depths and write the
-    elongation table to ``fname``."""
-    if not mceq_2d._mceq_db.is_2d:
+def generate_secant_table(
+    mceq_2d, fname, zeniths=(0, 60, 75, 85, 90), n_X=48, source_sha256=None
+):
+    """Solve ``mceq_2d`` (a 2D :class:`MCEq.core.MCEqRun` with its initial
+    condition set) at each zenith on ``n_X`` log-spaced depths and write the
+    group of its :func:`run_mode` to ``fname``, replacing that group if
+    present. ``source_sha256`` (the 2D database's digest) is stored as
+    ``split_from_sha256`` for the data manifest's freshness check."""
+    db = mceq_2d._mceq_db
+    if not db.is_2d:
         raise ValueError("generate_secant_table needs a 2D database")
+    mode = run_mode(mceq_2d)
     names = [p.name for p in mceq_2d.pman.all_particles if p.mceqidx >= 0]
     idx = [mceq_2d.pman.pname2pref[n].mceqidx for n in names]
     ne = len(mceq_2d.e_grid)
-    with h5py.File(fname, "w") as f:
-        f["e_grid"] = mceq_2d.e_grid
-        f["zeniths"] = np.asarray(zeniths, float)
-        f["species"] = np.array(names, dtype="S")
-        f.attrs["theta_cap_deg"] = config.secant_theta_cap()
+    provenance = {
+        "low_energy_model": str(db.low_energy_model),
+        "he_le_transition": float(db.he_le_transition),
+        "he_le_trwidth": float(db.he_le_trwidth),
+        "theta_cap_deg": config.secant_theta_cap(),
+        "secant_e_max": float(config.secant_theta_e_max or np.inf),
+        "database": str(config.mceq_db_fname),
+    }
+    if source_sha256 is not None:
+        provenance["split_from_sha256"] = source_sha256
+    with h5py.File(fname, "a") as f:
+        if "e_grid" in f:
+            same = np.allclose(f["e_grid"][:], mceq_2d.e_grid) and all(
+                f.attrs.get(k) == v
+                for k, v in provenance.items()
+                if k in ("low_energy_model", "database")
+            )
+            if not same:
+                raise ValueError(f"{fname} holds a table of another database")
+        else:
+            f["e_grid"] = mceq_2d.e_grid
+            f["species"] = np.array(names, dtype="S")
+        f.attrs.update(provenance)
+        if mode in f:
+            del f[mode]
+        g = f.create_group(mode)
+        g.attrs["initial_condition"] = repr(mceq_2d._initial_condition)[:200]
+        g["zeniths"] = np.asarray(zeniths, float)
         for i, zen in enumerate(zeniths):
             mceq_2d.set_zenith_azimuth(zen)
-            max_X = mceq_2d.density_model.max_X
-            X = np.geomspace(1.0, max_X * (1 - 1e-9), n_X)
+            X = np.geomspace(1.0, mceq_2d.density_model.max_X * (1 - 1e-9), n_X)
             mceq_2d.solve(int_grid=X)
             s = elongation_factors(mceq_2d).reshape(n_X, -1, ne)[:, idx]
-            f[f"X_{i}"] = X
-            f[f"s_{i}"] = s.astype(np.float32)
-            info(1, f"secant table: zenith {zen:g} deg done")
+            g[f"X_{i}"] = X
+            g[f"s_{i}"] = s.astype(np.float32)
+            info(1, f"secant table [{mode}]: zenith {zen:g} deg done")
 
 
 class SecantTable:
-    """Elongation table of :func:`generate_secant_table`; :meth:`factors`
-    returns ``s`` on the state vector of a 1D run."""
+    """A table of :func:`generate_secant_table`: provenance in :attr:`attrs`,
+    the groups of :data:`MODES` it holds in :attr:`modes`."""
 
-    def __init__(self, fname):
-        path = config.data_dir / fname
-        with h5py.File(path if path.exists() else fname, "r") as f:
+    def __init__(self, path):
+        with h5py.File(path, "r") as f:
+            self.attrs = dict(f.attrs)
             self.e_grid = f["e_grid"][:]
-            self.zeniths = f["zeniths"][:]
             self.species = [n.decode() for n in f["species"][:]]
-            self.X = [f[f"X_{i}"][:] for i in range(len(self.zeniths))]
-            self.s = [f[f"s_{i}"][:].astype(float) for i in range(len(self.zeniths))]
+            self.modes = {}
+            for mode in MODES:
+                if mode in f:
+                    g = f[mode]
+                    n = len(g["zeniths"])
+                    self.modes[mode] = (
+                        g["zeniths"][:],
+                        [g[f"X_{i}"][:] for i in range(n)],
+                        [g[f"s_{i}"][:].astype(float) for i in range(n)],
+                    )
+        self._index = None
 
-    def _bracket(self, theta_deg):
-        """Two zenith tables around ``theta_deg`` and the cos(theta) weight of the first."""
-        c, cz = np.cos(np.radians(theta_deg)), np.cos(np.radians(self.zeniths))
+    def factors(self, mode, pman, dim, e_grid, theta_deg, X):
+        """``s`` of group ``mode`` at zenith ``theta_deg`` and slant depths
+        ``X`` on the 1D state vector of ``pman`` (length ``dim``), shape
+        ``(len(X), dim)``."""
+        if not np.allclose(e_grid, self.e_grid):
+            raise ValueError("secant table energy grid differs from the database")
+        zeniths, Xs, ss = self.modes[mode]
+        c, cz = np.cos(np.radians(theta_deg)), np.cos(np.radians(zeniths))
         hi = int(np.clip(np.searchsorted(-cz, -c), 1, len(cz) - 1))
         lo = hi - 1
         w = float(np.clip((c - cz[hi]) / (cz[lo] - cz[hi]), 0.0, 1.0))
-        return lo, hi, w
-
-    def depth_grid(self, theta_deg):
-        """Depths of the two zenith tables around ``theta_deg``, merged."""
-        lo, hi, _ = self._bracket(theta_deg)
-        return np.unique(np.concatenate([self.X[lo], self.X[hi]]))
-
-    def factors(self, pman, dim, e_grid, theta_deg, X):
-        """``s`` at slant depth ``X`` on the 1D state vector (length ``dim``) of ``pman``."""
-        if not np.allclose(e_grid, self.e_grid):
-            raise ValueError("secant table energy grid differs from the database")
-        lo, hi, w = self._bracket(theta_deg)
-        lx = np.log(X)
 
         def at(i):
-            ix = np.interp(lx, np.log(self.X[i]), np.arange(len(self.X[i])))
-            k = int(ix)
-            f = ix - k
-            k1 = min(k + 1, len(self.X[i]) - 1)
-            return (1 - f) * self.s[i][k] + f * self.s[i][k1]
+            ix = np.interp(np.log(X), np.log(Xs[i]), np.arange(len(Xs[i])))
+            k = np.minimum(ix.astype(int), len(Xs[i]) - 2)
+            f = (ix - k)[:, None, None]
+            return (1 - f) * ss[i][k] + f * ss[i][k + 1]
 
-        s_sp = w * at(lo) + (1 - w) * at(hi)
-        ne = len(e_grid)
-        s = np.ones(dim)
-        for j, name in enumerate(self.species):
-            p = pman.pname2pref.get(name)
-            if p is not None and p.mceqidx >= 0:
-                s[p.mceqidx * ne : (p.mceqidx + 1) * ne] = s_sp[j]
+        s_sp = w * at(lo) + (1 - w) * at(hi)  # (len(X), species, E)
+        if self._index is None or self._index[0] is not pman:
+            ne = len(e_grid)
+            rows = [
+                (j, pman.pname2pref[n].mceqidx)
+                for j, n in enumerate(self.species)
+                if n in pman.pname2pref and pman.pname2pref[n].mceqidx >= 0
+            ]
+            src = np.array([j for j, _ in rows])
+            dst = np.array([m * ne + np.arange(ne) for _, m in rows])
+            self._index = (pman, src, dst)
+        _, src, dst = self._index
+        s = np.ones((len(X), dim))
+        s[:, dst] = s_sp[:, src]
         return s
 
 
+def _warn_once(mceq, key, message):
+    seen = mceq.__dict__.setdefault("_secant_table_warned", set())
+    if key not in seen:
+        seen.add(key)
+        warnings.warn(message, stacklevel=4)
+
+
+def _manifest_table(mceq, le_model):
+    """Name of the manifest's ``kind: secant_1d`` package for ``le_model``, or None."""
+    from MCEq.data.download import ensure_manifest
+
+    files = ensure_manifest(config)["files"]
+    names = [
+        name
+        for name, entry in files.items()
+        if entry.get("kind") == "secant_1d"
+        and le_model in entry.get("models", {}).get("air", [])
+    ]
+    return names[0] if names else None
+
+
 def table_for(mceq):
-    """The :class:`SecantTable` of ``config.secant_1d_table`` for a 1D run, cached
-    per file name; ``None`` if unset or on a 2D database."""
-    fname = config.secant_1d_table
-    if fname is None or mceq._mceq_db.is_2d:
+    """``(table, mode)`` that applies to the 1D run ``mceq``, or None.
+
+    ``config.secant_1d_table`` is ``"auto"`` (the data manifest's table of the
+    run's low-energy model, applied with the sec(theta) transport switched on
+    and ``config.e_min < E_MIN_AUTO``), a file in ``data_dir`` or a path
+    (always applied), or None. A table of another low-energy model is
+    refused; a handover below :data:`HANDOVER_MIN` warns.
+    """
+    choice = config.secant_1d_table
+    db = mceq._mceq_db
+    if choice is None or db.is_2d:
         return None
-    cached = mceq.__dict__.get("_secant_table")
-    if cached is None or cached[0] != fname:
-        cached = mceq.__dict__["_secant_table"] = (fname, SecantTable(fname))
-    return cached[1]
+    flag = config.secant_theta_transport
+    if choice == "auto":
+        if not (flag is True or str(flag).lower() == "auto"):
+            return None
+        if config.e_min >= E_MIN_AUTO:
+            return None
+        le_model = db.low_energy_model
+        # the manifest lookup parses YAML; resolve once per manifest and model
+        key = (str(config.data_dir), config.mceq_db_manifest, le_model)
+        resolved = mceq.__dict__.get("_secant_table_auto")
+        if resolved is None or resolved[0] != key:
+            name = _manifest_table(mceq, le_model) if le_model else None
+            if name is not None:
+                from MCEq.data.download import ensure_package
 
-
-#: Depth segments per decade of slant depth; ``s`` is constant within a segment.
-SEGMENTS_PER_DECADE = 10
-
-
-def _scale_columns(M, s):
-    """``M @ diag(s)`` for a CSR matrix, on its sparsity pattern."""
-    out = M.tocsr(copy=True)
-    out.data *= s[out.indices]
-    return out
-
-
-def solve_segments(mceq, nsteps, dX, rho_inv, grid_idcs, X_start, dtype):
-    """Integrate the 1D path with ``int_m`` and ``dec_m`` right-multiplied by
-    ``diag(s)``, ``s`` constant within log-spaced depth segments
-    (:data:`SEGMENTS_PER_DECADE`) and evaluated at their geometric midpoints.
-    Returns ``(final_state, grid_states)`` like the plain solve."""
-    table = table_for(mceq)
-    X_end = X_start + np.cumsum(dX)
-    n_seg = max(1, int(np.ceil(SEGMENTS_PER_DECADE * np.log10(X_end[-1] / X_end[0]))))
-    bounds = np.geomspace(X_end[0], X_end[-1], n_seg + 1)[1:-1]
-    cut = np.unique(np.searchsorted(X_end, bounds, side="right"))
-    edges = [0, *cut[(cut > 0) & (cut < nsteps)], nsteps]
-
-    int_m, dec_m = mceq.int_m, mceq.dec_m
-    phi, grid = mceq._stack_modes(mceq._phi0), []
-    grid_idcs = np.asarray(grid_idcs, dtype=int)
-    try:
-        for a, b in zip(edges[:-1], edges[1:]):
-            X_mid = np.sqrt(X_end[max(a - 1, 0)] * X_end[b - 1])
-            s = table.factors(
-                mceq.pman, mceq.dim_states, mceq.e_grid, mceq.theta_deg, X_mid
+                name = ensure_package(config, name)
+            resolved = mceq.__dict__["_secant_table_auto"] = (key, name)
+        path = resolved[1]
+        if path is None:
+            _warn_once(
+                mceq,
+                ("missing", le_model),
+                f"No 1D sec(theta) table for the low-energy model {le_model}: "
+                "sub-GeV hadrons and muons are solved without the path elongation.",
             )
-            mceq.int_m, mceq.dec_m = _scale_columns(int_m, s), _scale_columns(dec_m, s)
-            local = list(grid_idcs[(grid_idcs >= a) & (grid_idcs < b)] - a)
-            phi, g = mceq._run_etd2(b - a, dX[a:b], rho_inv[a:b], phi, local, dtype)
-            if local:
-                grid.extend(np.asarray(g).reshape(len(local), -1))
-    finally:
-        mceq.int_m, mceq.dec_m = int_m, dec_m
-    info(3, f"secant table: {len(edges) - 1} depth segments")
-    return phi, np.asarray(grid)
+            return None
+    else:
+        path = config.data_dir / choice
+        path = path if path.exists() else choice
+
+    cached = mceq.__dict__.get("_secant_table")
+    if cached is None or cached[0] != str(path):
+        table = SecantTable(path)
+        if str(table.attrs.get("low_energy_model")) != str(db.low_energy_model):
+            raise ValueError(
+                f"1D sec(theta) table {path} is built with the low-energy model "
+                f"{table.attrs.get('low_energy_model')}, the run uses "
+                f"{db.low_energy_model}: regenerate it "
+                "(MCEq.operators.secant_table.generate_secant_table)."
+            )
+        cached = mceq.__dict__["_secant_table"] = (str(path), table)
+    table = cached[1]
+    if db.he_le_transition < HANDOVER_MIN:
+        _warn_once(
+            mceq,
+            ("handover", db.he_le_transition),
+            f"he_le_transition = {db.he_le_transition:g} GeV: below "
+            f"{HANDOVER_MIN:g} GeV the high-energy model's production angles, "
+            "absent from the 1D sec(theta) table, are untested.",
+        )
+    mode = run_mode(mceq)
+    if mode not in table.modes:
+        raise ValueError(f"1D sec(theta) table {path} has no '{mode}' group")
+    return table, mode
+
+
+def warn_per_direction(mceq):
+    """Per-direction batch and full-sky solves run without the table (one
+    ``s`` per lane is not implemented); warn once if one would apply."""
+    if table_for(mceq) is not None:
+        _warn_once(
+            mceq,
+            "per-direction",
+            "Per-direction batch and full-sky solves ignore the 1D sec(theta) "
+            "table; use MCEqRun.solve or a shared-path batch for sub-GeV fluxes.",
+        )
+
+
+def column_scale(mceq, dX, X_start):
+    """``(S, starts)`` of :func:`MCEq.solvers.etd2.etd2_driver` for the path
+    ``dX`` from ``X_start``: ``s`` at the geometric midpoint of each
+    log-spaced depth segment (:data:`SEGMENTS_PER_DECADE`); None without a
+    table."""
+    found = table_for(mceq)
+    if found is None:
+        return None
+    table, mode = found
+    X_end = X_start + np.cumsum(dX)
+    n_seg = int(np.ceil(SEGMENTS_PER_DECADE * np.log10(X_end[-1] / X_end[0])))
+    bounds = np.geomspace(X_end[0], X_end[-1], max(n_seg, 1) + 1)[1:-1]
+    starts = np.unique([0, *np.searchsorted(X_end, bounds, side="right")])
+    starts = starts[starts < len(dX)]
+    ends = np.append(starts[1:], len(dX))
+    X_mid = np.sqrt(X_end[np.maximum(starts - 1, 0)] * X_end[ends - 1])
+    key = (id(table), mode, mceq.theta_deg, X_mid.tobytes())
+    cached = mceq.__dict__.get("_secant_column_scale")
+    if cached is None or cached[0] != key:
+        S = table.factors(
+            mode, mceq.pman, mceq.dim_states, mceq.e_grid, mceq.theta_deg, X_mid
+        )
+        cached = mceq.__dict__["_secant_column_scale"] = (key, S)
+    S = cached[1]
+    info(
+        2,
+        f"1D sec(theta) table [{mode}], {len(starts)} depth segments, "
+        f"low-energy model {table.attrs.get('low_energy_model')}",
+    )
+    return S, starts

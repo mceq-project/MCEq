@@ -111,11 +111,12 @@ env_name = "air"
 # Parameters of numerical integration
 # =================================================================
 
-#: Minimal energy for grid
-#: The minimal energy (technically) is 1e-2 GeV. Currently you can run into
-#: stability problems with the integrator with such low thresholds. Use with
-#: care and check results for oscillations and feasibility.
-e_min = 0.1
+#: Minimal kinetic energy of the grid (GeV). Above 5 GeV the 1D (collinear)
+#: transport is exact to ~1 %; below it the sub-GeV hadrons and muons need the
+#: angular path elongation, which a lower ``e_min`` switches on through
+#: :data:`secant_1d_table` (1D) or the 2D database. The technical floor is
+#: 1e-2 GeV.
+e_min = 5.0
 
 #: The maximal energy is 1e12 GeV, but not all interaction models run at such
 #: high energies. If you are interested in lower energies, reduce this value
@@ -310,8 +311,8 @@ muon_scattering_finite_nuclei = True
 #: sec(theta). Physics, operator construction and solver integration:
 #: :mod:`MCEq.operators.secant`. All angles are relative to the shower axis (like
 #: the angular modes), independent of the axis' zenith angle.
-#: "auto" (default) and True apply it on every solve with a 2D database;
-#: False: off. Ignored on 1D databases.
+#: "auto" (default) and True apply it on every solve with a 2D database, and
+#: on 1D databases through :data:`secant_1d_table`; False: off.
 secant_theta_transport = "auto"
 #: angle (deg) at which the sec(theta) elongation is clamped:
 #: g(theta) = min(sec theta, sec cap). Raise toward 90 for more
@@ -326,12 +327,13 @@ legendre_backward_removal = True
 #: threshold, above which the correction is negligible. None applies it to
 #: all energies.
 secant_theta_e_max = 31.6
-#: 1D databases only: elongation table (file in ``data_dir`` or a path) of
-#: :mod:`MCEq.operators.secant_table`. ``MCEqRun.solve`` then scales every
-#: column of the operator by the species' mean sec(theta) at the current depth
-#: and zenith, which reproduces the angle-integrated 2D solution (sub-GeV
-#: hadrons and muons). None: plain 1D.
-secant_1d_table = None
+#: 1D databases only: the sec(theta) path elongation from a table of 2D
+#: solutions (:mod:`MCEq.operators.secant_table`), which reproduces the
+#: angle-integrated 2D spectra of sub-GeV hadrons and muons. "auto" (default):
+#: the data manifest's table of the low-energy model, applied when
+#: :data:`secant_theta_transport` is on and ``e_min`` < 5 GeV; a file name in
+#: ``data_dir`` or a path: always applied; None: plain 1D.
+secant_1d_table = "auto"
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True

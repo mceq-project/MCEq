@@ -611,21 +611,17 @@ class MCEqRun(BatchSolver):
         dtype = resolve_dtype(dtype)
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
-        if secant_table.table_for(self) is not None:
-            X_start = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
-            sol, grid_sol = secant_table.solve_segments(
-                self, nsteps, dX, rho_inv, grid_idcs, X_start, dtype
-            )
-        else:
-            sol, grid_sol = self._run_etd2(
-                nsteps,
-                dX,
-                rho_inv,
-                self._stack_modes(self._phi0),
-                grid_idcs,
-                dtype=dtype,
-                sec_ops=sec_ops,
-            )
+        X_start = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
+        sol, grid_sol = self._run_etd2(
+            nsteps,
+            dX,
+            rho_inv,
+            self._stack_modes(self._phi0),
+            grid_idcs,
+            dtype=dtype,
+            sec_ops=sec_ops,
+            col_scale=secant_table.column_scale(self, dX, X_start),
+        )
         self._solution = np.asarray(sol, dtype=np.float64)
         self.grid_sol = np.asarray(grid_sol, dtype=np.float64)
         info(2, f"time elapsed during integration: {time() - start:5.2f}sec")
@@ -1131,12 +1127,23 @@ class MCEqRun(BatchSolver):
         return be
 
     def _run_etd2(
-        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None
+        self,
+        nsteps,
+        dX,
+        rho_inv,
+        phi0,
+        grid_idcs,
+        dtype=np.float64,
+        sec_ops=None,
+        col_scale=None,
     ):
-        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path."""
+        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path;
+        ``col_scale`` of :func:`MCEq.operators.secant_table.column_scale`."""
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
-        sol, grid_sol = solvers.etd2_driver(nsteps, dX, rho_inv, be, phi0, grid_idcs)
+        sol, grid_sol = solvers.etd2_driver(
+            nsteps, dX, rho_inv, be, phi0, grid_idcs, col_scale=col_scale
+        )
         if dtype != np.float64:
             sol = sol.astype(dtype)
             grid_sol = grid_sol.astype(dtype)

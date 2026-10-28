@@ -48,7 +48,15 @@ def _serial_dense_blas(be):
 
 
 def etd2_driver(
-    nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
+    nsteps,
+    dX,
+    rho_inv,
+    be,
+    phi,
+    grid_idcs,
+    schedule=None,
+    phi0_per_pixel=None,
+    col_scale=None,
 ):
     """ETD2RK step loop for every route and backend.
 
@@ -74,6 +82,11 @@ def etd2_driver(
         :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
         initial states ``(dim, K_total)``; requires per-lane paths and no
         snapshots.
+      col_scale: ``(S, starts)``, the column scaling ``s`` of the whole
+        operator, ``dPhi/dX = (A + ri B) diag(s) Phi``: row ``S[j]``
+        (``(dim,)``) applies from step ``starts[j]`` on (``starts[0] == 0``).
+        The diagonal takes ``s`` exactly, the remainder acts on ``s Phi``
+        (:mod:`MCEq.operators.secant_table`); uncoupled operators only.
 
     Returns:
       ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
@@ -196,6 +209,20 @@ def etd2_driver(
         def eval_F(x, F, ri):
             apply_off(x, F, ri)
 
+    if col_scale is not None:
+        if coupled:
+            raise ValueError("etd2_driver: col_scale needs an uncoupled operator")
+        S, starts = col_scale
+        s_col = xp.ones((dim, 1), dtype=dtype)
+        x_s = xp.empty((dim, K), dtype=dtype)
+        eval_paraxial = eval_F
+
+        def eval_F(x, F, ri):
+            xp.multiply(s_col, x, out=x_s)
+            eval_paraxial(x_s, F, ri)
+
+        next_row = 0
+
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
         phi0_pp = to_layout(be.asarray(scale * phi0_per_pixel))
@@ -214,6 +241,15 @@ def etd2_driver(
     with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
+            if (
+                col_scale is not None
+                and next_row < len(starts)
+                and starts[next_row] == k
+            ):
+                s_row = to_layout(np.asarray(S[next_row], dtype=np.float64))
+                be.scale_diagonals(s_row)
+                xp.copyto(s_col, be.asarray(s_row[:, None]))
+                next_row += 1
             h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64
             ri = ri_b[k]  # the same in the state dtype
             eD, hphi1, hphi2 = be.diag_factors(h64, ri64)
@@ -241,6 +277,8 @@ def etd2_driver(
                 grid_sol.append(phc.copy())
                 grid_step += 1
 
+    if col_scale is not None:
+        be.scale_diagonals(None)
     be.synchronize()
     elapsed = time() - start
     info(

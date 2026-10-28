@@ -499,6 +499,15 @@ class CudaBackend:
             self._kernels.diag_factors(*self._corner_diag, h, ri, *corners)
         return self._factors
 
+    def scale_diagonals(self, s):
+        """Diagonals ``s d_int``, ``s d_dec`` of the column-scaled operator;
+        ``None`` restores the operator's own."""
+        if s is None:
+            self._diag = (self.d_int[:, None], self.d_dec[:, None])
+            return
+        s = self.cp.asarray(s, dtype=self.cp.float64)
+        self._diag = ((self.d_int * s)[:, None], (self.d_dec * s)[:, None])
+
     def predictor(self, eD, x, hphi1, F, out):
         self._kernels.predictor(eD, x, hphi1, F, out)
 
