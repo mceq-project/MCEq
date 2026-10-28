@@ -10,6 +10,7 @@ from MCEq import config
 from MCEq.geometry.cutoff import AZIMUTH_SAMPLES_DEG, get_cutoff_map
 from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
+from MCEq.operators import secant_table
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
 __all__ = [
@@ -439,6 +440,9 @@ class BatchSolver:
                 grid_idcs,
                 dtype=dtype,
                 sec_ops=sec_ops,
+                col_scale=secant_table.column_scale(
+                    self, dX, self._cached_etd2_path_params[0]
+                ),
             )
         else:
             K_pipe = max(
@@ -455,8 +459,24 @@ class BatchSolver:
                 f"solve_batch: carousel K={K} K_pipe={K_pipe} T={T} "
                 f"sum_nsteps={sum_ns} waste={waste * 100:.2f}%",
             )
+            zeniths = [
+                self.theta_deg
+                if c is None or c.get("zenith_deg") is None
+                else float(c["zenith_deg"])
+                for c in conditions
+            ]
+            col_scale = secant_table.carousel_column_scale(
+                self, paths, zeniths, slots, self._cached_etd2_path_params[0], T
+            )
             sol = self._run_etd2_carousel(
-                dX_c, ri_c, phi_init, sched, phi0_mat, dtype=dtype, sec_ops=sec_ops
+                dX_c,
+                ri_c,
+                phi_init,
+                sched,
+                phi0_mat,
+                dtype=dtype,
+                sec_ops=sec_ops,
+                col_scale=col_scale,
             )
             grid_sol = None
         info(2, f"solve_batch: total wall {time() - start:.2f}s")

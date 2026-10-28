@@ -224,6 +224,16 @@ class HostBackend:
             self._band = self.op.band_off.astype(self.dtype)
         out += self._band @ x
 
+    def scale_diagonals(self, s):
+        """Diagonals ``s d_int``, ``s d_dec`` of the column-scaled operator,
+        ``s`` of shape ``(dim,)`` or ``(dim, K)`` (per lane); ``None``
+        restores the operator's own."""
+        if s is None:
+            self.d_int, self.d_dec = self.op.d_int, self.op.d_dec
+            return
+        lanes = (slice(None), None) if np.ndim(s) == 2 else slice(None)
+        self.d_int, self.d_dec = self.op.d_int[lanes] * s, self.op.d_dec[lanes] * s
+
     def _cast_factors(self, *factors):
         """Cast the fp64 factors to the state dtype; identity at fp64."""
         if self._factors is None:
