@@ -10,7 +10,12 @@ import scipy.sparse as sp
 from MCEq import config
 from MCEq.config import detect
 from MCEq.operators import secant_table
-from MCEq.operators.secant_table import SecantTable, elongation_factors, run_mode
+from MCEq.operators.secant_table import (
+    ColumnScale,
+    SecantTable,
+    elongation_factors,
+    run_mode,
+)
 
 KERNELS = ["numpy_etd2"] + [
     k
@@ -66,7 +71,8 @@ def test_column_scale_is_scaled_operator(mceq_sib21, kernel):
     half = nsteps // 2
     S, starts = np.stack([s, s[::-1]]), np.array([0, half])
     phi0 = mceq_sib21._phi0.copy()
-    scaled, _ = mceq_sib21._run_etd2(nsteps, dX, ri, phi0, [], col_scale=(S, starts))
+    col_scale = ColumnScale.piecewise(S, starts, nsteps)
+    scaled, _ = mceq_sib21._run_etd2(nsteps, dX, ri, phi0, [], col_scale=col_scale)
 
     int_m, dec_m = mceq_sib21.int_m, mceq_sib21.dec_m
     phi = phi0
@@ -148,6 +154,33 @@ def test_shared_batch_applies_table(mceq_sib21, tmp_path):
     np.testing.assert_allclose(
         np.asarray(res.sol)[:, 0], mceq_sib21._solution, rtol=1e-10
     )
+
+
+@pytest.mark.parametrize("kernel", KERNELS)
+def test_per_direction_batch_is_per_zenith_solve(mceq_sib21, tmp_path, kernel):
+    """Each carousel lane takes the s of its own pixel's zenith: per-direction
+    batches and full-sky solves equal one solve per zenith."""
+    config.kernel_config = kernel
+    config.secant_1d_table = _write_table(
+        tmp_path / "zen.h5",
+        mceq_sib21,
+        [0, 60, 90],
+        [lambda n, v=v: v if n in ("pi+", "pi-", "K+") else 1.0 for v in (1.2, 2, 3)],
+    )
+    zeniths = [0.0, 30.0, 45.0, 70.0]
+    ref = []
+    for zen in zeniths:
+        mceq_sib21.set_zenith_azimuth(zen)
+        mceq_sib21.solve()
+        ref.append(mceq_sib21._solution.copy())
+    ref = np.stack(ref, axis=1)
+    res = mceq_sib21.solve_batch(
+        conditions=[{"zenith_deg": z} for z in zeniths], carousel_K=2
+    )
+    peak = np.abs(ref).max()
+    np.testing.assert_allclose(np.asarray(res.sol), ref, rtol=1e-8, atol=1e-12 * peak)
+    sky = mceq_sib21.solve_fullsky(zeniths, carousel_K=3)
+    np.testing.assert_allclose(np.asarray(sky.sol), ref, rtol=1e-8, atol=1e-12 * peak)
 
 
 def test_collimated_state_is_not_elongated():
