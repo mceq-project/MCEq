@@ -89,13 +89,14 @@ def test_spacc_matrix_store_full():
 
     import MCEq.solvers._kernels.spacc as spacc
 
-    # Clear any leftover matrices from previous tests
-    spacc.spacc.free_mstore()
-
+    # Fill the free slots only: the store is process-wide, and wiping it
+    # (free_mstore) would free the handles of backends cached on the shared
+    # MCEqRun fixtures, which later tests on this worker reuse.
     matrices = []
-    # SIZE_MSTORE is 10; fill all slots
-    for _ in range(10):
-        matrices.append(spacc.SpaccMatrix(eye(3, format="coo")))
+    with pytest.raises(Exception, match="creation failed"):
+        for _ in range(11):  # SIZE_MSTORE is 10
+            matrices.append(spacc.SpaccMatrix(eye(3, format="coo")))
+    assert matrices, "no free slot: earlier handles leaked"
 
     # Free explicitly; after this all slots must be available again
     for m in matrices:
