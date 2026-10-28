@@ -10,6 +10,7 @@ from MCEq import config
 from MCEq.geometry.cutoff import AZIMUTH_SAMPLES_DEG, get_cutoff_map
 from MCEq.initial_state import fill_nucleons
 from MCEq.misc import info
+from MCEq.operators import secant_table
 from MCEq.solvers import compile_carousel_schedule, schedule_lpt
 
 __all__ = [
@@ -321,6 +322,13 @@ class BatchSolver:
             )
         return arr
 
+    def _refuse_secant_table(self):
+        if secant_table.table_for(self) is not None:
+            raise NotImplementedError(
+                "config.secant_1d_table applies to MCEqRun.solve only; batch and "
+                "full-sky solves would ignore it"
+            )
+
     def solve_batch(
         self,
         phi0=None,
@@ -382,6 +390,7 @@ class BatchSolver:
         Returns:
           :class:`MCEqBatchResult`
         """
+        self._refuse_secant_table()
         dtype = resolve_dtype(dtype, "solve_batch")
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
@@ -510,6 +519,7 @@ class BatchSolver:
         Returns:
             :class:`MCEqBatchResult`, or ``(result, pixel_index)``.
         """
+        self._refuse_secant_table()
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
         start = time()
 

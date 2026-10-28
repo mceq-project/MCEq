@@ -326,6 +326,12 @@ legendre_backward_removal = True
 #: threshold, above which the correction is negligible. None applies it to
 #: all energies.
 secant_theta_e_max = 31.6
+#: 1D databases only: elongation table (file in ``data_dir`` or a path) of
+#: :mod:`MCEq.operators.secant_table`. ``MCEqRun.solve`` then scales every
+#: column of the operator by the species' mean sec(theta) at the current depth
+#: and zenith, which reproduces the angle-integrated 2D solution (sub-GeV
+#: hadrons and muons). None: plain 1D.
+secant_1d_table = None
 #: Assume nucleon, pion and kaon cross sections for interactions of
 #: rare or exotic particles (mostly relevant for non-compact mode)
 assume_nucleon_interactions_for_exotics = True

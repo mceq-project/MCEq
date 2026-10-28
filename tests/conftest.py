@@ -22,6 +22,7 @@ _SNAPSHOT_KEYS = (
     "debug_level",
     "cuda_gpu_id",
     "mkl_threads",
+    "secant_1d_table",
 )
 
 
