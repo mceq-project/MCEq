@@ -322,13 +322,6 @@ class BatchSolver:
             )
         return arr
 
-    def _refuse_secant_table(self):
-        if secant_table.table_for(self) is not None:
-            raise NotImplementedError(
-                "config.secant_1d_table applies to MCEqRun.solve only; batch and "
-                "full-sky solves would ignore it"
-            )
-
     def solve_batch(
         self,
         phi0=None,
@@ -398,7 +391,6 @@ class BatchSolver:
         Returns:
           :class:`MCEqBatchResult`
         """
-        self._refuse_secant_table()
         dtype = resolve_dtype(dtype, "solve_batch")
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
@@ -480,10 +472,14 @@ class BatchSolver:
                 dtype=dtype,
                 sec_ops=sec_ops,
                 tangent=tangent,
+                col_scale=secant_table.column_scale(
+                    self, dX, self._cached_etd2_path_params[0]
+                ),
             )
         else:
             if tangent is not None:
                 raise ValueError("solve_batch: tangent columns need one shared path")
+            secant_table.warn_per_direction(self)
             K_pipe = max(
                 1, min(int(min(K, 128) if carousel_K is None else carousel_K), K)
             )
@@ -553,7 +549,6 @@ class BatchSolver:
         Returns:
             :class:`MCEqBatchResult`, or ``(result, pixel_index)``.
         """
-        self._refuse_secant_table()
         info(2, f"solve_fullsky: kernel={config.kernel_config}")
         start = time()
 

@@ -382,7 +382,9 @@ def test_packaged_manifest_lists_only_legendre_2d_packages():
         download.packaged_manifest(download.DEFAULT_MANIFEST)
     )
     two_d = {
-        n for n, e in manifest["files"].items() if manifest["grids"][e["grid"]]["k_dim"]
+        n
+        for n, e in manifest["files"].items()
+        if manifest["grids"].get(e.get("grid"), {}).get("k_dim")
     }
     assert two_d == {
         "mceq_base_air_2d_legendre_v2.h5",
@@ -390,3 +392,20 @@ def test_packaged_manifest_lists_only_legendre_2d_packages():
     }
     assert manifest["defaults"]["2d"] == "mceq_base_air_2d_legendre_v2.h5"
     assert all(manifest["files"][n]["values_dtype"] == "float32" for n in two_d)
+
+
+def test_packaged_secant_tables_follow_the_2d_package():
+    """A 1D sec(theta) table (``kind: secant_1d``) is built from the current
+    default 2D package; a rebuilt 2D package without new tables fails here."""
+    manifest = download.load_manifest(
+        download.packaged_manifest(download.DEFAULT_MANIFEST)
+    )
+    tables = {
+        n: e for n, e in manifest["files"].items() if e.get("kind") == "secant_1d"
+    }
+    assert tables
+    two_d = manifest["files"][manifest["defaults"]["2d"]]
+    for entry in tables.values():
+        assert entry["source"]["file"] == manifest["defaults"]["2d"]
+        assert entry["source"]["sha256"] == two_d["sha256"]
+        assert set(entry["models"]["air"]) <= set(two_d["models"]["air"])
