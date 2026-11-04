@@ -156,6 +156,31 @@ def test_shared_batch_applies_table(mceq_sib21, tmp_path):
     )
 
 
+def test_tangent_columns_see_the_scaled_operator(mceq_sib21, tmp_path):
+    """Tangent sources act on the column-scaled state: the derivative of the
+    scaled cascade equals finite differences."""
+    from MCEq.solvers import TangentOperator
+
+    run = mceq_sib21
+    config.secant_1d_table = _pi_only(tmp_path / "pi.h5", run)
+    M0 = run.int_m
+    p, pi = run.pman[2212], run.pman[211]
+    G = sp.lil_matrix(M0.shape)
+    G[pi.lidx : pi.uidx, p.lidx : p.uidx] = M0[pi.lidx : pi.uidx, p.lidx : p.uidx]
+    G = G.tocsr()
+    tan = run.solve_batch(tangent=TangentOperator([G])).sol
+    h = 1e-3
+    try:
+        run.int_m = M0 + h * G
+        plus = run.solve_batch().sol[:, 0]
+        run.int_m = M0 - h * G
+        minus = run.solve_batch().sol[:, 0]
+    finally:
+        run.int_m = M0
+    fd = (plus - minus) / (2 * h)
+    np.testing.assert_allclose(tan[:, 1], fd, rtol=1e-7, atol=1e-9 * np.abs(fd).max())
+
+
 @pytest.mark.parametrize("kernel", KERNELS)
 def test_per_direction_batch_is_per_zenith_solve(mceq_sib21, tmp_path, kernel):
     """Each carousel lane takes the s of its own pixel's zenith: per-direction
