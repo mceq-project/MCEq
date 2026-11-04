@@ -7,12 +7,13 @@ from MCEq.solvers.backends import (
     mkl_backend,
     numpy_backend,
 )
-from MCEq.solvers.etd2 import etd2_driver, solve_etd2
+from MCEq.solvers.etd2 import TangentOperator, etd2_driver, solve_etd2
 from MCEq.solvers.path import etd2_nonuniform_path
 from MCEq.solvers.schedule import compile_carousel_schedule, schedule_lpt
 
 __all__ = [
     "CudaBackend",
+    "TangentOperator",
     "accelerate_backend",
     "compile_carousel_schedule",
     "etd2_driver",
