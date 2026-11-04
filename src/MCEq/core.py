@@ -17,6 +17,7 @@ from MCEq.geometry import density_profiles as dp
 from MCEq.geometry import msis21
 from MCEq.initial_state import deposit_single_primary, fill_nucleons
 from MCEq.misc import info, normalize_hadronic_model_name
+from MCEq.operators import secant_table
 from MCEq.operators.compiled import compile_operator
 from MCEq.operators.legendre import backward_removal, dense_count, theta_density
 from MCEq.operators.matrix_builder import MatrixBuilder
@@ -610,6 +611,7 @@ class MCEqRun(BatchSolver):
         dtype = resolve_dtype(dtype)
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
+        X0 = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
         sol, grid_sol = self._run_etd2(
             nsteps,
             dX,
@@ -618,6 +620,7 @@ class MCEqRun(BatchSolver):
             grid_idcs,
             dtype=dtype,
             sec_ops=sec_ops,
+            col_scale=secant_table.column_scale(self, dX, X0),
         )
         self._solution = np.asarray(sol, dtype=np.float64)
         self.grid_sol = np.asarray(grid_sol, dtype=np.float64)
@@ -1124,22 +1127,14 @@ class MCEqRun(BatchSolver):
         return be
 
     def _run_etd2(
-        self,
-        nsteps,
-        dX,
-        rho_inv,
-        phi0,
-        grid_idcs,
-        dtype=np.float64,
-        sec_ops=None,
-        tangent=None,
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, dtype=np.float64, sec_ops=None, **kw
     ):
-        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path
-        (``tangent``: derivative columns, :class:`MCEq.solvers.etd2.TangentOperator`)."""
+        """Integrate a ``(dim,)`` or ``(dim, K)`` state along one path; ``kw``:
+        ``tangent`` and ``col_scale`` of :func:`MCEq.solvers.etd2_driver`."""
         dtype = np.dtype(dtype)
         be = self._etd2_backend(sec_ops, dtype)
         sol, grid_sol = solvers.etd2_driver(
-            nsteps, dX, rho_inv, be, phi0, grid_idcs, tangent=tangent
+            nsteps, dX, rho_inv, be, phi0, grid_idcs, **kw
         )
         if dtype != np.float64:
             sol = sol.astype(dtype)
@@ -1155,6 +1150,7 @@ class MCEqRun(BatchSolver):
         phi0_per_pixel,
         dtype=np.float64,
         sec_ops=None,
+        col_scale=None,
     ):
         """Integrate K states along per-column paths with the LPT carousel;
         returns the ``(dim, K)`` final states in column order."""
@@ -1168,6 +1164,7 @@ class MCEqRun(BatchSolver):
             [],
             schedule=schedule,
             phi0_per_pixel=phi0_per_pixel,
+            col_scale=col_scale,
         )
         return np.asarray(sol, dtype=np.dtype(dtype))
 
