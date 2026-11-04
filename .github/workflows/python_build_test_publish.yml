@@ -7,12 +7,16 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+  # Only changes that can break a wheel build: the build configuration and the
+  # compiled sources. Pure-Python changes are covered by test.yaml.
   pull_request:
     paths:
       - '.github/workflows/python_build_test_publish.yml'
       - 'CMakeLists.txt'
       - 'pyproject.toml'
-      - 'src/**'
+      - 'src/**/*.c'
+      - 'src/**/*.h'
+      - 'src/**/*.cpp'
 
 concurrency:
   # head_ref is empty for push and tag events, so without the run_id fallback
@@ -22,6 +26,7 @@ concurrency:
 
 jobs:
   release_check:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
@@ -40,23 +45,18 @@ jobs:
             echo "should_release=false" >> $GITHUB_OUTPUT
           fi
 
-  # One Python per platform, ~2 min a job. Anything that breaks the toolchain on
-  # a platform -- a compiler that is not found, a wheel the repair step refuses,
-  # a deployment target that no longer matches the runner image -- fails here
-  # instead of somewhere inside the 29-job release matrix. Runs on PRs that
-  # touch the build, and gates `wheels` on push so a bad platform costs one
-  # round of six jobs rather than the whole matrix.
+  # Pull requests that touch the build: one Linux wheel on the newest Python,
+  # ~2 min. It catches a broken CMake/scikit-build-core configuration; the
+  # per-platform toolchains are exercised by the test matrix (which compiles
+  # the extensions on every image) and by `wheels` on main.
   smoke:
-    name: Wheel smoke test (Python 3.14)
-    runs-on: ${{ matrix.os }}
+    name: Wheel smoke test (ubuntu-latest, cp314)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest, windows-11-arm]
     steps:
       - uses: actions/checkout@v7
-      - name: Build and test wheels
+      - name: Build and test wheel
         uses: pypa/cibuildwheel@v4.3
         env:
           CIBW_BUILD: "cp314-*"
@@ -66,31 +66,30 @@ jobs:
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
 
+  # One job per platform builds every CPython in turn, as cibuildwheel is meant
+  # to be used: six jobs instead of a 29-job (platform x Python) matrix.
   wheels:
-    name: Building Wheels
-    needs: [release_check, smoke]
+    name: Wheels (${{ matrix.os }})
+    needs: release_check
     if: needs.release_check.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
-    # No wheel job in this matrix has ever needed more than ~2.5 min. Without a
-    # bound, a runner that loses contact with the server (as macos-26-intel /
-    # cp314 did in run 31360781445) sits on the 6 h default before failing.
-    timeout-minutes: 20
+    # One Python has never needed more than ~2.5 min; five in sequence fit
+    # well inside this. Without a bound, a runner that loses contact with the
+    # server (as macos-26-intel did in run 31360781445) sits on the 6 h
+    # default before failing.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-26, macos-26-intel, windows-latest, windows-11-arm]
-        py: [cp310, cp311, cp312, cp313, cp314]
-        exclude:
-          - os: windows-11-arm
-            py: cp310
     steps:
       - uses: actions/checkout@v7
 
       - uses: pypa/cibuildwheel@v4.3
         env:
-          CIBW_BUILD: ${{ matrix.py }}-*
-          CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686"
-          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
+          # Windows on ARM has no CPython 3.10.
+          CIBW_SKIP: "*-musllinux* pp* *-win32 *-manylinux_i686 cp310-win_arm64"
           # Windows-compatible test command using double quotes
           CIBW_TEST_COMMAND: "python -c \"import MCEq; print('MCEq imported successfully')\""
           CIBW_TEST_SKIP: "*-macosx_universal2:arm64"
@@ -98,9 +97,10 @@ jobs:
           CIBW_DEPENDENCY_VERSIONS: "pinned"
           CIBW_BUILD_VERBOSITY: 1
 
+      # One artifact per platform; `upload` merges every artifact into dist/.
       - uses: actions/upload-artifact@v7
         with:
-          name: wheel-${{ matrix.py }}-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
   sdist:
