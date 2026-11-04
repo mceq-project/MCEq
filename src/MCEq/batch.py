@@ -407,17 +407,14 @@ class BatchSolver:
             K = phi0_arr.shape[1] if phi0_arr.ndim == 2 else 1
         if tangent is not None:
             # phi0: the cascade, then tangent.extra passive columns
-            n_in = 1 + tangent.extra
             if conditions is not None and len(conditions) != 1:
                 raise ValueError("solve_batch: tangent columns need one cascade")
-            if conditions is not None:
-                K = n_in if phi0_arr.ndim == 2 else 1
-            if K != n_in:
+            phi0_in = phi0_arr.reshape(self.dim_states, -1)
+            if phi0_in.shape[1] != 1 + tangent.extra:
                 raise ValueError(
-                    f"solve_batch: tangent needs phi0 with {n_in} columns "
-                    "(the cascade and the passive columns)"
+                    f"solve_batch: tangent needs phi0 with {1 + tangent.extra} "
+                    "columns (the cascade and the passive columns)"
                 )
-            phi0_in = phi0_arr.reshape(self.dim_states, n_in)
             K = tangent.columns
             phi0_arr = np.concatenate(
                 (

@@ -57,10 +57,18 @@ class TangentOperator:
     with ``int_off x`` (before the backward-removal mixing), its diagonal after
     it, both in the operator's layout.
 
-    ``extra`` passive columns follow the derivative columns: states carried
-    along with the same operator and path but without sources, e.g. the
-    transported derivatives of the initial state with respect to primary-flux
-    parameters (the cascade is linear in the initial state).
+    The tangent columns are the ETD2 solution of the tangent equations, with
+    ``G_k`` in the explicit source. Where ``G_k`` has no diagonal they equal
+    the derivative of the ETD2 solution; a diagonal (e.g. a change of the
+    interaction length) also changes the exponential factors of the cascade,
+    and the two then differ by the step error of the scheme.
+
+    ``curvature`` adds the second derivatives ``d^2 phi / d p_k^2`` (the
+    diagonal of the Hessian). ``extra`` passive columns follow the derivative
+    columns: states carried with the same operator and path but without
+    sources, e.g. the transported derivatives of the initial state with
+    respect to primary-flux parameters (the cascade is linear in the initial
+    state).
     """
 
     def __init__(self, mats, curvature=False, extra=0):
@@ -73,17 +81,24 @@ class TangentOperator:
         self.extra = int(extra)
         self.derivative_columns = self.n * (2 if self.curvature else 1)
         self.columns = 1 + self.derivative_columns + self.extra
-        self._mats = [sp.csr_matrix(m) for m in mats]
+        self._mats = [sp.csr_matrix(m, copy=True) for m in mats]
         self._bound = None
+        self._bound_to = None
 
     def bind(self, be, dtype):
         """Compiled sources for a backend: ``sources(x, F, part)`` adds
-        ``G S x`` of ``part`` ("off" or "diag") into the tangent columns of F."""
+        ``G S x`` of ``part`` ("off" or "diag") into the tangent columns of F.
+
+        Kept for the next solve with the same operator, dtype and device.
+        """
         import scipy.sparse as sp
 
+        key = (np.dtype(dtype), be.xp, getattr(be, "device_id", None))
+        bound = self._bound_to
+        if bound is not None and bound[0] is be.op and bound[1:] == key:
+            return self._bound
         xp = be.xp
-        lay = be.op.layout
-        perm = lay.perm
+        perm = be.op.layout.perm
         diags, offs = [], []
         for m in self._mats:
             d = m.diagonal()
@@ -93,19 +108,19 @@ class TangentOperator:
                 d = d[perm]
                 off = off[perm][:, perm].tocsr()
             diags.append(d)
-            offs.append(off)
-        n, dim = self.n, be.op.dim
-        D = np.stack(diags, axis=1).astype(dtype)  # (dim, n)
-        stacked = sp.vstack(offs).tocsr().astype(dtype)  # (n dim, dim)
-        block = sp.block_diag(offs, format="csr").astype(dtype)  # (n dim, n dim)
+            offs.append(off.astype(dtype))
+        n, dim, curvature = self.n, be.op.dim, self.curvature
         if xp is np:
-            to_sparse = lambda a: a  # noqa: E731
+            to_sparse, device = sp.csr_matrix, nullcontext()
         else:
             import cupyx.scipy.sparse as csp
 
-            to_sparse = csp.csr_matrix
-        D, stacked, block = xp.asarray(D), to_sparse(stacked), to_sparse(block)
-        curvature = self.curvature
+            to_sparse, device = csp.csr_matrix, xp.cuda.Device(be.device_id)
+        with device:  # the backend's device, before be.bind selects it
+            D = xp.asarray(np.stack(diags, axis=1).astype(dtype))  # (dim, n)
+            stacked = to_sparse(sp.vstack(offs, format="csr"))  # (n dim, dim)
+            if curvature:
+                block = to_sparse(sp.block_diag(offs, format="csr"))  # (n dim, n dim)
 
         def sources(x, F, part):
             phi = x[:, 0]
@@ -119,7 +134,7 @@ class TangentOperator:
                 if curvature:
                     F[:, 1 + n : 1 + 2 * n] += 2 * D * x[:, 1 : 1 + n]
 
-        self._bound = sources
+        self._bound, self._bound_to = sources, (be.op, *key)
         return sources
 
 
