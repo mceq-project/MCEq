@@ -253,10 +253,16 @@ it is off by default, so ``solve_fullsky`` agrees with
 :meth:`~MCEq.core.MCEqRun.solve`. It needs an
 atmosphere with a location: ``USStd``, ``BK_USStd`` and the averaged
 ``KM3NeT`` set have none. Atmospheres of a named site use cutoff maps
-shipped with MCEq (downgoing directions on a 5° grid, IGRF at
-:data:`MCEq.geometry.cutoff.CUTOFF_DATE`); detector-centred MSIS atmospheres
+shipped with MCEq (penumbra-resolved effective cutoffs of downgoing
+directions on a 5° grid, traced from where each line of sight enters the
+atmosphere, IGRF at :data:`MCEq.geometry.cutoff.CUTOFF_DATE`; azimuth from
+North, clockwise); detector-centred MSIS atmospheres
 trace the full sky with gtracr on first use and cache the map under
-``<config.data_dir>/gtracr_cutoffs/``. Without an ``azimuth_grid`` the
+``<config.data_dir>/gtracr_cutoffs/``. The cutoff is applied in the collinear
+1D picture (the primary arrives along the line of sight). Below a few GeV
+the secondaries' angular spread and muon bending mix primaries of different
+directions and cutoffs, so 1D angular distributions (East–West, horizon)
+are approximate there; sky-averaged suppression is reproduced better. Without an ``azimuth_grid`` the
 transmitted primary flux is averaged over azimuth. Passing a 2-D ``phi0``
 puts the caller in charge of the per-pixel primary — the cutoff is then
 *not* applied on top, with a warning.

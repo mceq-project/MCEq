@@ -33,7 +33,7 @@ dependencies = [
     "pyyaml",
     "jacobi",
     "threadpoolctl",
-    "gtracr>=2.0",
+    "gtracr>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -23,8 +23,9 @@ CUTOFF_DATE = "2025-01-01"
 AZIMUTH_SAMPLES_DEG = np.arange(0.0, 360.0, 5.0)
 
 # Bump to invalidate every existing cache file (e.g. when the IGRF model
-# or the gtracr API changes in a backward-incompatible way).
-CACHE_VERSION = 2
+# or the gtracr API changes in a backward-incompatible way). The key also
+# holds the gtracr version. v3: gtracr 3 (north-based azimuth, IGRF-14).
+CACHE_VERSION = 3
 
 # Native gtracr sampling grid: 1° × 1° (180 zen × 360 az). All downstream
 # pixel grids are linearly interpolated from this.
@@ -50,8 +51,10 @@ def _cache_key(
     delta_rigidity: float,
 ) -> tuple[str, str]:
     """Return (key_string, short_hash). Key string is human-readable."""
+    import gtracr
+
     key_str = (
-        f"v{CACHE_VERSION}|"
+        f"v{CACHE_VERSION}|gtracr{gtracr.__version__}|"
         f"{location}|{bfield_type}|{date}|"
         f"palt{particle_altitude}km|iter{iter_num}|"
         f"R[{min_rigidity}-{max_rigidity}|d{delta_rigidity}]"
