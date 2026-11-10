@@ -43,6 +43,7 @@ DENSITY_MODELS = {
     "MSIS21_KM3NeT": msis21.MSIS21KM3NeTCentered,
     "CORSIKA": dp.CorsikaAtmosphere,
     "AIRS": dp.AIRSAtmosphere,
+    "Shibata": dp.ShibataAtmosphere,
     "Isothermal": dp.IsothermalAtmosphere,
     "GeneralizedTarget": dp.GeneralizedTarget,
 }

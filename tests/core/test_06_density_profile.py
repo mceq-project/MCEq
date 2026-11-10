@@ -69,6 +69,7 @@ for density_config in corsika_atmospheres:
     )
 
 test_densities_cases.append(pytest.param("Isothermal", (None, None), id="Isothermal"))
+test_densities_cases.append(pytest.param("Shibata", ("USStd", None), id="Shibata"))
 test_densities_cases.append(
     pytest.param("GeneralizedTarget", (), id="GeneralizedTarget")
 )
@@ -86,6 +87,7 @@ profiles = {
     "MSIS00_IC": dprof.MSIS00IceCubeCentered,
     "CORSIKA": dprof.CorsikaAtmosphere,
     "AIRS": dprof.AIRSAtmosphere,
+    "Shibata": dprof.ShibataAtmosphere,
     "Isothermal": dprof.IsothermalAtmosphere,
     "GeneralizedTarget": dprof.GeneralizedTarget,
 }

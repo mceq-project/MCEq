@@ -1,4 +1,4 @@
-"""Atmosphere models: CORSIKA, isothermal, NRLMSISE-00 and AIRS, and the material target."""
+"""Atmosphere models: CORSIKA, Shibata, isothermal, NRLMSISE-00 and AIRS, and the material target."""
 
 import warnings
 from abc import ABCMeta, abstractmethod
@@ -46,6 +46,7 @@ __all__ = _V14_STAR_EXPORTS + [
     "MSIS00LocationCentered",
     "MSISAtmosphere",
     "MSISLocationCentered",
+    "ShibataAtmosphere",
 ]
 
 
@@ -355,6 +356,79 @@ class IsothermalAtmosphere(EarthsAtmosphere):
     def get_mass_overburden(self, h_cm):
         """Vertical mass overburden in g/cm**2 at the height ``h_cm`` in cm."""
         return self.X0 * np.exp(-h_cm / self.hiso_cm)
+
+
+class ShibataAtmosphere(EarthsAtmosphere):
+    """Shibata's three-layer fit of the US Standard Atmosphere (T. Stanev,
+    1982; T. K. Gaisser, *Cosmic Rays and Particle Physics*, 1990, p. 122).
+
+    The vertical depth :math:`X` in g/cm**2 at the height :math:`h` in km is
+
+    - :math:`X = ((44.34 - h) / 11.86)^{1/0.19}` below 11.0171 km,
+    - :math:`X = \\exp((45.5 - h) / 6.34)` up to 25.0916 km,
+    - :math:`\\ln X = (8.275 - \\sqrt{68.476 - 1.196\\,(48.63 - h)}) / 0.598`
+      above (the inverse of :math:`h = 47.05 - 6.9 \\ln X + 0.299 (\\ln X - \\ln 10)^2`),
+
+    as in the Fortran function ``GMS_HE``. The density is
+    :math:`-\\mathrm{d}X/\\mathrm{d}h` of these layers, continuous to 2e-4 at
+    the boundaries; :math:`X(h)` jumps by 0.2 % at 11 km. ``location`` and
+    ``season`` have no effect.
+    """
+
+    #: Upper bounds of the lower two layers in cm.
+    _h_layers = (1.10171e6, 2.50916e6)
+
+    def __init__(self, location="USStd", season=None):
+        EarthsAtmosphere.__init__(self)
+        self.location = location
+        self.season = season
+
+    @staticmethod
+    def _layers(h_cm):
+        """Vertical depth in g/cm**2 and its height derivative scale in cm
+        (:math:`X / \\rho`) at the heights ``h_cm``."""
+        h = np.asarray(h_cm, dtype=float) / 1e5  # km
+        x_lo = np.maximum(44.34 - h, 0.0) / 11.86
+        s = np.sqrt(np.maximum(68.476 - 1.196 * (48.63 - h), 0.0))
+        h1, h2 = ShibataAtmosphere._h_layers
+        lo, mid = h <= h1 / 1e5, h <= h2 / 1e5
+        with np.errstate(divide="ignore", over="ignore"):
+            X = np.where(
+                lo,
+                x_lo ** (1 / 0.19),
+                np.where(mid, np.exp((45.5 - h) / 6.34), np.exp((8.275 - s) / 0.598)),
+            )
+        scale_km = np.where(lo, 0.19 * (44.34 - h), np.where(mid, 6.34, s))
+        return X, scale_km * 1e5
+
+    def get_density(self, h_cm):
+        """Density in g/cm**3 at the height ``h_cm`` in cm."""
+        X, scale = self._layers(h_cm)
+        return X / scale
+
+    def _density_profile(self, h_vec):
+        """Density in g/cm**3 at the heights ``h_vec``."""
+        return self.get_density(h_vec)
+
+    def get_mass_overburden(self, h_cm):
+        """Vertical mass overburden in g/cm**2 at the height ``h_cm`` in cm."""
+        return self._layers(h_cm)[0]
+
+    def depth2height(self, x_v):
+        """Height in cm at the vertical depth ``x_v`` in g/cm**2 (inverse of
+        :meth:`get_mass_overburden`)."""
+        x = np.asarray(x_v, dtype=float)
+        lx = np.log(x)
+        h = np.where(
+            x >= self.get_mass_overburden(self._h_layers[0]),
+            44.34 - 11.86 * x**0.19,
+            np.where(
+                x >= self.get_mass_overburden(self._h_layers[1]),
+                45.5 - 6.34 * lx,
+                48.63 - (68.476 - (8.275 - 0.598 * lx) ** 2) / 1.196,
+            ),
+        )
+        return h * 1e5
 
 
 class MSISAtmosphere(EarthsAtmosphere):
