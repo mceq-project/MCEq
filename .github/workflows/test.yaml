@@ -24,35 +24,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Stage 1: one platform, one Python. A plain Python error, a broken import or
-  # a failing test shows up here after one job instead of after 39, most of them
-  # on the billing-multiplied macOS and Windows runners.
+  # Two tiers, chosen by event:
   #
+  #   pull_request (without the `full-ci` label)  5 jobs: Linux x86 at both ends
+  #     of the supported Python range, macOS arm64, Windows x86 (the mkl path)
+  #     and Linux arm64.
+  #   push to main, the weekly schedule, workflow_dispatch and PRs labelled
+  #   `full-ci`  every image at the oldest and newest Python (16 jobs).
+  #
+  # The label is read from the event payload, so adding `full-ci` takes effect
+  # on the next push to the PR (or run the workflow by hand on the branch).
+  # Reacting to `labeled` events is deliberately avoided: an unrelated label
+  # would start a skipped run that hides the real run's results on the PR.
+
+  # Stage 1: one platform, one Python. A plain Python error, a broken import or
+  # a failing test shows up here after one job instead of after the whole
+  # matrix, most of it on the billing-multiplied macOS and Windows runners.
   quick:
-    name: quick (ubuntu-latest, 3.12)
+    name: quick (ubuntu-latest, 3.10)
     uses: ./.github/workflows/_run_tests.yml
     secrets: inherit
     with:
       os: ubuntu-latest
-      python-version: "3.12"
+      python-version: "3.10"
 
-  # Stage 2: everything else, only once the quick gate is green.
+  # Stage 2: the rest of the tier, only once the quick gate is green.
+  # windows-11-arm has no CPython 3.10, so it runs 3.11 as its oldest.
   test:
     needs: quick
     name: ${{ matrix.os }} ${{ matrix.python-version }}
     strategy:
-      matrix:
-        # macos-latest is macOS 26 arm64, so listing macos-26 as well only
-        # duplicated it; macos-15 covers the previous arm64 image instead.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15, macos-15-intel, macos-26-intel, windows-latest, windows-11-arm]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        exclude:
-          - os: windows-11-arm
-            python-version: "3.10"
-          # Already covered by the quick gate.
-          - os: ubuntu-latest
-            python-version: "3.12"
       fail-fast: false
+      matrix:
+        # Full tier first, then the PR tier. Folded scalar: the lines join with
+        # spaces into one expression.
+        include: >-
+          ${{ fromJSON(
+          (github.event_name != 'pull_request'
+          || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          &&
+          '[
+          {"os": "ubuntu-latest", "python-version": "3.14"},
+          {"os": "ubuntu-24.04-arm", "python-version": "3.10"},
+          {"os": "ubuntu-24.04-arm", "python-version": "3.14"},
+          {"os": "macos-latest", "python-version": "3.10"},
+          {"os": "macos-latest", "python-version": "3.14"},
+          {"os": "macos-15", "python-version": "3.10"},
+          {"os": "macos-15", "python-version": "3.14"},
+          {"os": "macos-15-intel", "python-version": "3.10"},
+          {"os": "macos-15-intel", "python-version": "3.14"},
+          {"os": "macos-26-intel", "python-version": "3.10"},
+          {"os": "macos-26-intel", "python-version": "3.14"},
+          {"os": "windows-latest", "python-version": "3.10"},
+          {"os": "windows-latest", "python-version": "3.14"},
+          {"os": "windows-11-arm", "python-version": "3.11"},
+          {"os": "windows-11-arm", "python-version": "3.14"}
+          ]'
+          ||
+          '[
+          {"os": "ubuntu-latest", "python-version": "3.14"},
+          {"os": "macos-latest", "python-version": "3.14"},
+          {"os": "windows-latest", "python-version": "3.12"},
+          {"os": "ubuntu-24.04-arm", "python-version": "3.12"}
+          ]'
+          ) }}
     uses: ./.github/workflows/_run_tests.yml
     secrets: inherit
     with:

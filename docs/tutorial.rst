@@ -111,6 +111,28 @@ All particles listed by
 :meth:`MCEq.particlemanager.ParticleManager.print_particle_tables` are
 available to :meth:`MCEq.core.MCEqRun.get_solution`.
 
+Energies below 5 GeV
+....................
+
+The default grid starts at :data:`MCEq.config.e_min` = 5 GeV, where the 1D
+(collinear) transport is exact to about 1 %. Sub-GeV hadrons and muons scatter
+to wide angles and cross more air per unit depth than the collinear transport
+books. Lowering ``e_min`` before constructing :class:`MCEq.core.MCEqRun` (the
+muon-number example above needs it) switches on a correction for this path
+elongation: each operator column is scaled by the species' mean sec(theta),
+read from a table of 2D solutions for the run's zenith, depth and kind of
+initial condition (primary flux or single primary)::
+
+    import MCEq.config as config
+    config.e_min = 0.1
+    mceq = MCEqRun(interaction_model="SIBYLL23E", primary_model=(pm.GlobalSplineFit, "2026.1"), theta_deg=0.0)
+
+Muon spectra then follow the angle-integrated 2D solution to about 1 % from
+0.1 GeV, hadrons to 2-4 % above 0.3 GeV (up to 10 % below); neutrino fluxes
+are unchanged by it. The extra cost is a few percent of a solve. Set
+``config.secant_1d_table = None`` for the plain 1D transport, or use the 2D
+database for angular distributions (:mod:`MCEq.operators.secant_table`).
+
 Changing geometrical and atmospheric parameters
 ...............................................
 
@@ -231,10 +253,16 @@ it is off by default, so ``solve_fullsky`` agrees with
 :meth:`~MCEq.core.MCEqRun.solve`. It needs an
 atmosphere with a location: ``USStd``, ``BK_USStd`` and the averaged
 ``KM3NeT`` set have none. Atmospheres of a named site use cutoff maps
-shipped with MCEq (downgoing directions on a 5° grid, IGRF at
-:data:`MCEq.geometry.cutoff.CUTOFF_DATE`); detector-centred MSIS atmospheres
+shipped with MCEq (penumbra-resolved effective cutoffs of downgoing
+directions on a 5° grid, traced from where each line of sight enters the
+atmosphere, IGRF at :data:`MCEq.geometry.cutoff.CUTOFF_DATE`; azimuth from
+North, clockwise); detector-centred MSIS atmospheres
 trace the full sky with gtracr on first use and cache the map under
-``<config.data_dir>/gtracr_cutoffs/``. Without an ``azimuth_grid`` the
+``<config.data_dir>/gtracr_cutoffs/``. The cutoff is applied in the collinear
+1D picture (the primary arrives along the line of sight). Below a few GeV
+the secondaries' angular spread and muon bending mix primaries of different
+directions and cutoffs, so 1D angular distributions (East–West, horizon)
+are approximate there; sky-averaged suppression is reproduced better. Without an ``azimuth_grid`` the
 transmitted primary flux is averaged over azimuth. Passing a 2-D ``phi0``
 puts the caller in charge of the per-pixel primary — the cutoff is then
 *not* applied on top, with a warning.

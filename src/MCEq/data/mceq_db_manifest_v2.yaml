@@ -93,3 +93,17 @@ files:
     values_dtype: float32
     note: SIBYLL 2.3e Legendre yields (m2m SIBYLL23E_legendre_20261008); needs mceq_base_air_2d_legendre_v2.h5;
       stencil bin-averaged
+  mceq_secant1d_FLUKA20251_air_v2.h5:
+    sha256: 6b492b860d012b2cac27f6a733165ead19f101f73f86cadaf903c9cb509fb3e4
+    size: 18610208
+    kind: secant_1d
+    models:
+      air:
+      - FLUKA20251
+    source:
+      key: 2d
+      file: mceq_base_air_2d_legendre_v2.h5
+      sha256: a97f043d477241279f7f92d1b705fee2c8dca1c679cdacbe15be9617dcf37bbe
+      verbatim: false
+    note: '1D sec(theta) path elongation from 2D solves of the default 2D package (FLUKA20251
+      angles): inclusive (GSF 2026.1) and shower (1 PeV p), zeniths 0/60/75/85/90 deg'
