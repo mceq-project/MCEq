@@ -13,7 +13,6 @@ from MCEq import config
 from MCEq.data.hdf5_store import HDF5Store
 from MCEq.operators import scattering
 from MCEq.operators.matrix_builder import MatrixBuilder
-
 from tests.test_data_hdf5_decode import NEXT_CH, backend
 from tests.test_muon_scattering_coulomb import AIR_INTEGER_A, _backend
 
@@ -120,9 +119,12 @@ def test_muon_damping_stops_below_muon_scattering_e_min(monkeypatch, db):
     builder.is_2d, builder.n_k, builder.k_grid = True, 2, l_grid
     builder._layout = _backend(db)
     for name, value in dict(
-        muon_multiple_scattering=True, muon_scattering_model="screened-coulomb",
-        muon_scattering_finite_nuclei=True, muon_scattering_e_min=0.05,
-        enable_em=False, floatlen=np.float64,
+        muon_multiple_scattering=True,
+        muon_scattering_model="screened-coulomb",
+        muon_scattering_finite_nuclei=True,
+        muon_scattering_e_min=0.05,
+        enable_em=False,
+        floatlen=np.float64,
     ).items():
         monkeypatch.setattr(config, name, value)
     builder._energy_grid = SimpleNamespace(c=e_kin, d=3)

@@ -329,6 +329,7 @@ class _BlocksStub:
 
     _csr_from_blocks = MatrixBuilder._csr_from_blocks
     _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
+    _em_scattering_damping = MatrixBuilder._em_scattering_damping
 
     def __init__(self, is_2d, n_k=3, dim=8):
         self.is_2d = is_2d
@@ -588,6 +589,7 @@ class _CacheStub:
 
     def __init__(self, dim=6):
         self._mceq_db = SimpleNamespace(is_2d=False)
+        self.matrix_builder = SimpleNamespace(em_exact_columns=lambda: None)
         self.int_m = sp.csr_matrix(_toy_matrix(dim, 0.3))
         self.dec_m = sp.csr_matrix(_toy_matrix(dim, 0.1))
 

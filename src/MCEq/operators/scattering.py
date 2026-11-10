@@ -221,8 +221,12 @@ def electron_mode_rates(e_kin, l_grid, layout):
     e_kin = np.asarray(e_kin, dtype=float)
     ell = np.asarray(l_grid, dtype=float)
     return _screened_coulomb_cached(
-        e_kin.tobytes(), ell.tobytes(), comp.tobytes(), comp.shape,
-        float(ELECTRON_MASS), False,
+        e_kin.tobytes(),
+        ell.tobytes(),
+        comp.tobytes(),
+        comp.shape,
+        float(ELECTRON_MASS),
+        False,
     ).copy()
 
 

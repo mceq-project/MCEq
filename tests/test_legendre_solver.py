@@ -322,7 +322,6 @@ def test_skewed_cluster_basis_falls_back_to_schur():
     np.testing.assert_allclose(sol, ref, rtol=1e-4)
 
 
-
 @pytest.mark.parametrize("backend", ["numpy", CUDA])
 def test_stiff_mode_damping_needs_own_column_bases(backend):
     """A damping far above 1/h on the coupled columns of one species (e+-
@@ -336,7 +335,9 @@ def test_stiff_mode_damping_needs_own_column_bases(backend):
     l_grid, n_sp, n_e = np.arange(8), 2, 5
     n, n_k = n_sp * n_e, 8
     rng = np.random.default_rng(7)
-    ops = build_secant_kernel_ops(l_grid, np.logspace(-2, 1, n_e), n_sp, 75.0, e_max=0.5)
+    ops = build_secant_kernel_ops(
+        l_grid, np.logspace(-2, 1, n_e), n_sp, 75.0, e_max=0.5
+    )
     blocks, decs = [], []
     for ell in l_grid:
         m = sp.random(n, n, density=0.3, random_state=rng).toarray() * 0.2
@@ -357,7 +358,9 @@ def test_stiff_mode_damping_needs_own_column_bases(backend):
     ref = sl.expm((hadr + ri * dec) @ S) @ phi0
     cols = np.arange(n_e)
 
-    op = compile_operator(sp.csr_matrix(hadr), sp.csr_matrix(dec), ops, exact_columns=cols)
+    op = compile_operator(
+        sp.csr_matrix(hadr), sp.csr_matrix(dec), ops, exact_columns=cols
+    )
     cb = op.column_basis
     assert len(cb.idx) == np.isin(ops["low_e_idx"], cols).sum() > 0
     assert np.all(cb.lam < 0)
@@ -367,8 +370,14 @@ def test_stiff_mode_damping_needs_own_column_bases(backend):
     def solve(nsteps, exact):
         dX = np.full((nsteps, 1), 1.0 / nsteps)
         sol, _ = solve_etd2(
-            nsteps, dX, np.full_like(dX, ri), sp.csr_matrix(hadr), sp.csr_matrix(dec),
-            phi0[:, None], backend=backend, sec_ops=ops,
+            nsteps,
+            dX,
+            np.full_like(dX, ri),
+            sp.csr_matrix(hadr),
+            sp.csr_matrix(dec),
+            phi0[:, None],
+            backend=backend,
+            sec_ops=ops,
             exact_columns=cols if exact else None,
         )
         return sol[:, 0]
