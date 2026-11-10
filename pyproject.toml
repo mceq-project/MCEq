@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "h5py",
     "particletools",
-    "crflux>1.0.5",
+    "crflux>=2.2",
     "scipy",
     "numpy",
     "tqdm",
@@ -33,7 +33,7 @@ dependencies = [
     "pyyaml",
     "jacobi",
     "threadpoolctl",
-    "gtracr>=2.0",
+    "gtracr>=3.0",
 ]
 
 [project.optional-dependencies]

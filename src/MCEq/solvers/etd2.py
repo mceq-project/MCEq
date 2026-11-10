@@ -47,8 +47,108 @@ def _serial_dense_blas(be):
     return blas.limit(limits=1)
 
 
+class TangentOperator:
+    """Derivatives ``G_k = d A / d p_k`` of the interaction operator for
+    tangent columns (:func:`etd2_driver`).
+
+    ``mats``: sparse matrices in the state's own order, the derivative of the
+    matrix ``compile_operator`` receives as ``int_m`` (the hadronic part on
+    Legendre databases). Each is split like ``int_m``: its off-diagonal enters
+    with ``int_off x`` (before the backward-removal mixing), its diagonal after
+    it, both in the operator's layout.
+
+    The tangent columns are the ETD2 solution of the tangent equations, with
+    ``G_k`` in the explicit source. Where ``G_k`` has no diagonal they equal
+    the derivative of the ETD2 solution; a diagonal (e.g. a change of the
+    interaction length) also changes the exponential factors of the cascade,
+    and the two then differ by the step error of the scheme.
+
+    ``curvature`` adds the second derivatives ``d^2 phi / d p_k^2`` (the
+    diagonal of the Hessian). ``extra`` passive columns follow the derivative
+    columns: states carried with the same operator and path but without
+    sources, e.g. the transported derivatives of the initial state with
+    respect to primary-flux parameters (the cascade is linear in the initial
+    state).
+    """
+
+    def __init__(self, mats, curvature=False, extra=0):
+        import scipy.sparse as sp
+
+        if extra < 0:
+            raise ValueError("TangentOperator: extra must be >= 0")
+        self.n = len(mats)
+        self.curvature = bool(curvature)
+        self.extra = int(extra)
+        self.derivative_columns = self.n * (2 if self.curvature else 1)
+        self.columns = 1 + self.derivative_columns + self.extra
+        self._mats = [sp.csr_matrix(m, copy=True) for m in mats]
+        self._bound = None
+        self._bound_to = None
+
+    def bind(self, be, dtype):
+        """Compiled sources for a backend: ``sources(x, F, part)`` adds
+        ``G S x`` of ``part`` ("off" or "diag") into the tangent columns of F.
+
+        Kept for the next solve with the same operator, dtype and device.
+        """
+        import scipy.sparse as sp
+
+        key = (np.dtype(dtype), be.xp, getattr(be, "device_id", None))
+        bound = self._bound_to
+        if bound is not None and bound[0] is be.op and bound[1:] == key:
+            return self._bound
+        xp = be.xp
+        perm = be.op.layout.perm
+        diags, offs = [], []
+        for m in self._mats:
+            d = m.diagonal()
+            off = (m - sp.diags(d)).tocsr()
+            off.eliminate_zeros()
+            if perm is not None:
+                d = d[perm]
+                off = off[perm][:, perm].tocsr()
+            diags.append(d)
+            offs.append(off.astype(dtype))
+        n, dim, curvature = self.n, be.op.dim, self.curvature
+        if xp is np:
+            to_sparse, device = sp.csr_matrix, nullcontext()
+        else:
+            import cupyx.scipy.sparse as csp
+
+            to_sparse, device = csp.csr_matrix, xp.cuda.Device(be.device_id)
+        with device:  # the backend's device, before be.bind selects it
+            D = xp.asarray(np.stack(diags, axis=1).astype(dtype))  # (dim, n)
+            stacked = to_sparse(sp.vstack(offs, format="csr"))  # (n dim, dim)
+            if curvature:
+                block = to_sparse(sp.block_diag(offs, format="csr"))  # (n dim, n dim)
+
+        def sources(x, F, part):
+            phi = x[:, 0]
+            if part == "off":
+                F[:, 1 : 1 + n] += (stacked @ phi).reshape(n, dim).T
+                if curvature:
+                    psi = x[:, 1 : 1 + n].T.reshape(n * dim)
+                    F[:, 1 + n : 1 + 2 * n] += 2 * (block @ psi).reshape(n, dim).T
+            else:
+                F[:, 1 : 1 + n] += D * phi[:, None]
+                if curvature:
+                    F[:, 1 + n : 1 + 2 * n] += 2 * D * x[:, 1 : 1 + n]
+
+        self._bound, self._bound_to = sources, (be.op, *key)
+        return sources
+
+
 def etd2_driver(
-    nsteps, dX, rho_inv, be, phi, grid_idcs, schedule=None, phi0_per_pixel=None
+    nsteps,
+    dX,
+    rho_inv,
+    be,
+    phi,
+    grid_idcs,
+    schedule=None,
+    phi0_per_pixel=None,
+    tangent=None,
+    col_scale=None,
 ):
     """ETD2RK step loop for every route and backend.
 
@@ -74,6 +174,20 @@ def etd2_driver(
         :class:`MCEq.solvers.schedule.CarouselSchedule` and the per-pixel
         initial states ``(dim, K_total)``; requires per-lane paths and no
         snapshots.
+      tangent: a :class:`TangentOperator` (shared path only). Column 0 of
+        ``phi`` is the cascade; columns ``1..n`` integrate the derivatives
+        ``psi_k = d phi / d p_k`` of an operator linear in ``p``,
+        ``d psi_k / dX = (A + ri B) S psi_k + G_k S phi``, and with
+        ``tangent.curvature`` columns ``n+1..2n`` the second derivatives,
+        ``d chi_k / dX = (A + ri B) S chi_k + 2 G_k S psi_k``; the last
+        ``tangent.extra`` columns are passive (no sources). They share
+        the cascade's operator and path, so they cost extra columns, not
+        extra solves.
+      col_scale: :class:`MCEq.operators.secant_table.ColumnScale`, the column scaling ``s`` of the
+        whole operator, ``dPhi/dX = (A + ri B) diag(s) Phi``, one ``s`` per
+        lane with per-lane paths (the carousel), else one for all. The
+        diagonal takes ``s`` exactly, the remainder acts on ``s Phi``
+        (:mod:`MCEq.operators.secant_table`); uncoupled operators only.
 
     Returns:
       ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
@@ -110,6 +224,15 @@ def etd2_driver(
                 f"= ({dim}, {schedule.K_total}); got {phi0_per_pixel.shape}"
             )
 
+    if tangent is not None:
+        if per_lane or schedule is not None:
+            raise ValueError("etd2_driver: tangent columns need one shared path")
+        if K != tangent.columns:
+            raise ValueError(
+                f"etd2_driver: tangent needs {tangent.columns} columns, got {K}"
+            )
+        sources = tangent.bind(be, dtype)
+
     be.bind(dim, K, per_lane, nsteps)
     phc, F_phi, F_a, a = be.state_buffers(dim, K)
 
@@ -139,10 +262,20 @@ def etd2_driver(
 
         def apply_off(x, F, ri):
             be.apply_off(x, F, ri)
+            if tangent is not None:
+                sources(x, F, "off")  # produced particles: mixed like int_off x
             lead = F[: mix.n_D * mix.N].reshape(mix.n_D, mix.N * K)
             lmm(M_mix, lead, out=mix_out)
             xp.copyto(lead, mix_out)
             be.apply_band(x, F)
+            if tangent is not None:
+                sources(x, F, "diag")
+    elif tangent is not None:
+
+        def apply_off(x, F, ri):
+            be.apply_off(x, F, ri)
+            sources(x, F, "off")
+            sources(x, F, "diag")
     else:
         apply_off = be.apply_off
 
@@ -196,6 +329,23 @@ def etd2_driver(
         def eval_F(x, F, ri):
             apply_off(x, F, ri)
 
+    if col_scale is not None:
+        if coupled:
+            raise ValueError("etd2_driver: col_scale needs an uncoupled operator")
+        scl = col_scale
+        perm = slice(None) if lay.perm is None else np.asarray(lay.perm)
+        cs_rows = be.asarray(np.asarray(scl.rows)[:, perm], np.float64)
+        cs_idx, cs_w = be.asarray(scl.idx, np.int64), be.asarray(scl.weight, np.float64)
+        cs_lane = be.asarray(scl.lane, np.int64)
+        s_64 = xp.ones((dim, K if per_lane else 1), dtype=np.float64)
+        s_col = xp.ones_like(s_64, dtype=dtype)
+        x_s = xp.empty((dim, K), dtype=dtype)
+        eval_paraxial = eval_F
+
+        def eval_F(x, F, ri):
+            xp.multiply(s_col, x, out=x_s)
+            eval_paraxial(x_s, F, ri)
+
     if schedule is not None:
         sol_pixel = xp.empty((dim, schedule.K_total), dtype=dtype)
         phi0_pp = to_layout(be.asarray(scale * phi0_per_pixel))
@@ -214,6 +364,12 @@ def etd2_driver(
     with _serial_dense_blas(be), np.errstate(over="ignore", invalid="ignore"):
         for k in range(nsteps):
             # 1. factors of the full state, corner included
+            if col_scale is not None and scl.step_starts[k + 1] > scl.step_starts[k]:
+                ev = slice(int(scl.step_starts[k]), int(scl.step_starts[k + 1]))
+                mixed = (cs_rows[cs_idx[ev]] * cs_w[ev, :, None]).sum(axis=1)
+                s_64[:, cs_lane[ev]] = mixed.T
+                xp.copyto(s_col, s_64)
+                be.scale_diagonals(s_64 if per_lane else s_64[:, 0])
             h64, ri64 = dX_64[k], ri_64[k]  # (K,) lane rows or one value, fp64
             ri = ri_b[k]  # the same in the state dtype
             eD, hphi1, hphi2 = be.diag_factors(h64, ri64)
@@ -241,6 +397,8 @@ def etd2_driver(
                 grid_sol.append(phc.copy())
                 grid_step += 1
 
+    if col_scale is not None:
+        be.scale_diagonals(None)
     be.synchronize()
     elapsed = time() - start
     info(

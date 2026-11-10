@@ -307,6 +307,32 @@ the carousel, finished columns are read out and reloaded with the next path
 while the others continue (:func:`~MCEq.solvers.schedule_lpt`,
 :func:`~MCEq.solvers.compile_carousel_schedule`).
 
+Tangent columns
+===============
+
+For an operator family :math:`A(p) = A + \sum_k p_k G_k` the derivatives
+:math:`\psi_k = \partial\Phi/\partial p_k` obey the cascade equation with
+a source,
+
+.. math::
+
+   \frac{\mathrm{d}\psi_k}{\mathrm{d}X} = (A + \rho^{-1} B)\,S\,\psi_k
+     + G_k\,S\,\Phi ,
+
+and the second derivatives :math:`\chi_k = \partial^2\Phi/\partial p_k^2`
+the same with the source :math:`2\,G_k S \psi_k`.
+:class:`~MCEq.solvers.TangentOperator` carries them as extra columns of
+the state on the cascade's path: they share the diagonal factors, and the
+sources enter :math:`F` (stages 2 and 4 below), the off-diagonal of
+:math:`G_k` before the Legendre backward-removal mixing as the
+off-diagonal of :math:`A` does. Where :math:`G_k` has no diagonal the
+columns are the derivatives of the ETD2 solution itself. A diagonal part of
+:math:`G_k` also changes :math:`D`, and the columns then differ from the
+derivative of the ETD2 solution by the step error of the scheme. Passive
+columns, states without a source, carry derivatives with respect to the
+initial state. :meth:`~MCEq.core.MCEqRun.solve_batch` assembles the columns
+(``tangent=``).
+
 Summary of one step
 ===================
 

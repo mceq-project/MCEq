@@ -9,7 +9,7 @@ name: Notebooks
 # `--ignore` line is the whole change when a notebook becomes executable).
 #
 # A separate workflow rather than a job in test.yaml: the trigger differs. A
-# notebook edit must not start the 40-job test matrix, and test.yaml's path
+# notebook edit must not start the full test matrix, and test.yaml's path
 # filter would have to grow docs/examples/** for a job here to fire at all.
 # One ubuntu job on one Python is enough -- the notebooks exercise no
 # platform-specific code, and the wheel matrix already covers the build.

@@ -68,7 +68,9 @@ The solver is layered like the matrix build:
    path) and the LPT carousel (``(nsteps, K)`` per-lane paths with harvest /
    reset events, see :func:`schedule_lpt` and
    :func:`compile_carousel_schedule`), with or without the sec(θ) coupling.
-   The stages of a step are listed on :ref:`solver-math`.
+   On a shared path it also integrates the tangent columns of a
+   :class:`TangentOperator`, parameter derivatives of the cascade. The stages
+   of a step are listed on :ref:`solver-math`.
 
 Precision
 =========
