@@ -159,6 +159,9 @@ keys of :data:`MCEq.core.DENSITY_MODELS`:
 - 'AIRS' - tabulated AIRS satellite data at the South Pole, extended above the
   tables with NRLMSISE-00. The tables are not provided; pass their directory
   as ``table_path``: ``('AIRS', ('SouthPole', 'January', True, '/path/to/airs'))``.
+- 'Shibata' - Shibata's three-layer fit of the US Standard Atmosphere, as in
+  Gaisser's book: ``('Shibata', ('USStd', None))``
+  (:class:`MCEq.geometry.density_profiles.ShibataAtmosphere`).
 - 'Isothermal' - simple isothermal model with scale height 6.3 km.
 - 'GeneralizedTarget' - piece-wise homogeneous density.
 

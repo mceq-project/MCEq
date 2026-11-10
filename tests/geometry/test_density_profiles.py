@@ -113,6 +113,7 @@ def test_msis_atm(loc, season, expected):
         (dp.CorsikaAtmosphere, ("USStd", None)),
         (dp.MSIS00Atmosphere, ("SouthPole", "January")),
         (dp.IsothermalAtmosphere, ("Nowhere", None)),
+        (dp.ShibataAtmosphere, ("USStd", None)),
     ],
 )
 def test_common_atmosphere_interface(cls, args):
