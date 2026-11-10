@@ -1093,9 +1093,15 @@ class MCEqRun(BatchSolver):
                     sec_ops,
                     band=self.matrix_builder.dEdx_band,
                     mode_mix=mix,
+                    exact_columns=self.matrix_builder.em_exact_columns(),
                 )
             else:
-                op = compile_operator(self.int_m, self.dec_m, sec_ops)
+                op = compile_operator(
+                    self.int_m,
+                    self.dec_m,
+                    sec_ops,
+                    exact_columns=self.matrix_builder.em_exact_columns(),
+                )
             cache[coupled] = entry = (self.int_m, self.dec_m, sec_ops, op)
         return entry[3]
 
