@@ -437,3 +437,20 @@ def test_b4_cs_db_has_no_ice_to_water_substitution_at_all(monkeypatch, tmp_path)
         assert np.array_equal(cs["index_d"][p], ice_table[ip, :])
     assert not np.array_equal(cs["index_d"][11], water_table[0, :])
     assert cs["parents"][-len(fixtures.EM_CS_PARENTS) :] == fixtures.EM_CS_PARENTS
+
+
+@pytest.mark.parametrize("a_em", [None, 14.6568])
+def test_em_cs_for_another_target_mass_is_refused(monkeypatch, tmp_path, a_em):
+    """An EM ``cs`` table must be stamped with MCEq's <A> of the medium."""
+    had = fixtures.build_database(tmp_path / "had.h5", medium="air")
+    em = fixtures.build_em_database(
+        tmp_path / "em.h5", {"air": (fixtures.EM_CHANNELS, 1.0)}
+    )
+    with h5py.File(em, "a") as f:
+        attrs = f["electromagnetic/air/cs"].attrs
+        if a_em is None:
+            del attrs["mceq_target_mass"]
+        else:
+            attrs["mceq_target_mass"] = a_em
+    with pytest.raises(ValueError, match="Rebuild the EM database"):
+        em_backend(monkeypatch, had, em, "air").cs_db(fixtures.MODEL)

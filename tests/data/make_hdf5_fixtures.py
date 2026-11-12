@@ -75,6 +75,8 @@ import h5py
 import numpy as np
 from scipy.sparse import block_diag, csr_matrix
 
+from MCEq.misc import average_A_target
+
 #: Energy grid: 20 bins at 10/decade starting at 1 GeV, so 1 -- 100 GeV.
 N_E = 20
 E_BINS = 10.0 ** (np.arange(N_E + 1) / 10.0)
@@ -263,6 +265,7 @@ def build_em_database(path, variants):
             _write_pack(group, "emca_mats", channels, 1, 2, None)
             cs_dset = group.create_dataset("cs", data=em_cs_table(cs_scale))
             cs_dset.attrs["projectiles"] = np.array(EM_CS_PARENTS, dtype=np.int64)
+            cs_dset.attrs["mceq_target_mass"] = average_A_target(medium)
     return path
 
 

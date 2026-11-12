@@ -34,7 +34,7 @@ DB_DIR = pathlib.Path(os.environ.get("MCEQ_GENERIC_LOSSES_DB_DIR", "/nonexistent
 #: was reproduced on; ``generic`` table 0.00146 .. 11.6 boost).
 V13_DB = DB_DIR / "mceq_db_v13_1mev_compact_lext_DPMJETIII193.h5"
 #: PPM EM companion DB (enable_em is on, as in the repro driver).
-EM_DB = DB_DIR / "mceq_db_real-ppm-10dec_EM.h5"
+EM_DB = DB_DIR / "mceq_db_real-ppm-10dec-v2_EM.h5"
 
 pytestmark = pytest.mark.xdist_group("generic_losses_stability")
 

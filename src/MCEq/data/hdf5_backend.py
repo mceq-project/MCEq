@@ -17,6 +17,7 @@ from MCEq.data.hadronic_models import (
 )
 from MCEq.misc import (
     _eval_energy_cuts,
+    average_A_target,
     energy_grid,
     info,
     normalize_hadronic_model_name,
@@ -598,6 +599,14 @@ class HDF5Backend:
             em_cs, em_cs_attrs = self._em_store.read_table(
                 f"electromagnetic/{medium}/cs"
             )
+            a_em = em_cs_attrs.get("mceq_target_mass")
+            a_mceq = average_A_target(self.medium)
+            if a_em is None or not np.isclose(a_em, a_mceq, rtol=1e-6):
+                raise ValueError(
+                    f"{self.em_fname}: EM cross sections built for <A> = {a_em}, "
+                    f"MCEq uses {a_mceq:.6g} for {self.medium}. "
+                    "Rebuild the EM database."
+                )
             em_parents = list(em_cs_attrs["projectiles"])
 
             for ip, p in enumerate(em_parents):
