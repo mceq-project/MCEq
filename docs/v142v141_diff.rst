@@ -1,5 +1,22 @@
 .. _v142v141_diff:
 
+MCEq v1.4.3
+###########
+
+.. attention::
+  MCEq v1.4.3 is a **database bugfix release**.
+
+MCEq v1.4.3 replaces the default database with mceq_db_lext_dpm193_v143.h5, 
+which fixes the blend between the high-energy models and DPMJET-III 19.3 (#209). 
+
+In v1.4.2, every model except EPOS-LHC-R carried only part of the DPMJET yield, with no high-energy share, 
+in the lowest one or two blend bins.
+
+v1.4.3 gives DPMJET the full weight in those bins and moves the EPOS-LHC cross-section transition to 20 GeV, 
+where its yields already switch.
+
+This does not effect the lepton fluxes above 100 GeV.
+
 MCEq v1.4.2
 ###########
 

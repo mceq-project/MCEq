@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+# MCEq 1.4.3 (2026-11-16)
+
+## Bug Fixes
+
+- Fixes the low-energy extension of the MCEq database
+  ([#209](https://github.com/mceq-project/MCEq/issues/209)).
+
+  The LE region below approx. 80 GeV blends over into the low energy model, which is DPMJET-III-19.3.
+  This fixes a bug where the high-energy did not provided any data to blend and the weight given to the LE model was 
+  below 1.
+  The HE/LE blend now gives DPMJET-III 19.3 the full weight in the region the HE model does not provide. ([#214](https://github.com/mceq-project/MCEq/pull/214))
+
+
 # MCEq 1.4.2 (2026-09-07)
 
 ## Bug Fixes
