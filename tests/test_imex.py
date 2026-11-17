@@ -232,16 +232,26 @@ def test_tangent_columns_are_derivatives(n_k, groups):
 
 @pytest.mark.skipif(not config.has_cuda, reason="CuPy not available")
 @pytest.mark.parametrize("n_k", [1, 3])
-def test_sweep_on_cupy_matches_numpy(n_k):
+def test_cuda_kernel_matches_array_sweep(n_k):
+    """The fp64 kernel is the array sweep to round-off; the default fp32 kernel to fp32 precision."""
     import cupy as cp
 
+    from MCEq.solvers.backends.imex_cuda import CudaLevelKernel
+
     b = np.random.default_rng(0).random((n_k, 2 * N_BINS, 3))
-    host = ImexStepper(*_cascade(n_k)).sweep
+    op, e_tot = _cascade(n_k)
+    host = ImexStepper(op, e_tot).sweep
     host.prepare(GAMMA * 3.0, 0.1)
+    expected = host.solve(b)
     gpu = ImexStepper(*_cascade(n_k, xp=cp)).sweep
     gpu.prepare(GAMMA * 3.0, 0.1)
     np.testing.assert_allclose(
-        cp.asnumpy(gpu.solve(cp.asarray(b))), host.solve(b), rtol=1e-12
+        cp.asnumpy(gpu.solve(cp.asarray(b))), expected, rtol=1e-5
+    )
+    gpu._kernel = CudaLevelKernel(gpu, np.float64)
+    gpu.prepare(GAMMA * 3.0, 0.1)
+    np.testing.assert_allclose(
+        cp.asnumpy(gpu.solve(cp.asarray(b))), expected, rtol=1e-12
     )
 
 
