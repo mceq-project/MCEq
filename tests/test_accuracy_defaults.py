@@ -14,6 +14,7 @@ from MCEq.operators.matrix_builder import MatrixBuilder
 
 class _Run(SimpleNamespace):
     _calculate_integration_path = MCEqRun._calculate_integration_path
+    _integrator = staticmethod(lambda shared=True: "etd2")
     _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
 
 

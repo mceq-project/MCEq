@@ -1989,6 +1989,7 @@ class _StubMCEq:
     _em_cascade_step_scale = MCEqRun._em_cascade_step_scale
     _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
     _calculate_integration_path = MCEqRun._calculate_integration_path
+    _integrator = staticmethod(lambda shared=True: "etd2")
 
     def __init__(self, r_known=0.5, density_model=None):
         import scipy.sparse as sp
