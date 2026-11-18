@@ -28,7 +28,7 @@ on first use, see {ref}`data-installation`. Every model of the v1.4 database
 (`DPMJETIII193`, `EPOSLHC`, `EPOSLHCR`, `QGSJETII04`, `QGSJETIII`, `SIBYLL21`,
 `SIBYLL23D`, `SIBYLL23E` and the `SIBYLL23ESTAR*` variants) is available under
 the same name; FLUKA20251, PYTHIA8CASCADE and PYTHIA8ANGANTYR are new.
-`mceq_db_lext_dpm193_v142.h5` can still be selected with
+`mceq_db_lext_dpm193_v143.h5` can still be selected with
 `config.mceq_db_fname`.
 
 FLUKA20251 is blended in below 80 GeV by default
@@ -61,7 +61,7 @@ particles. Check convergence by repeating a solve with smaller values.
 
 | setting | v1.4 | v2 |
 |---|---|---|
-| `mceq_db_fname` | `mceq_db_lext_dpm193_v142.h5` | `mceq_base_air_1d_v2.h5` |
+| `mceq_db_fname` | `mceq_db_lext_dpm193_v143.h5` | `mceq_base_air_1d_v2.h5` |
 | `average_loss_operator` | `True` | `False` |
 | `loss_stencil_method` (new) | | `"expfit_low_upwind2"` |
 | `generic_losses_all_charged` | `False` | `True`: all charged hadrons lose energy continuously |
