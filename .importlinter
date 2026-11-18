@@ -16,7 +16,7 @@ layers =
     solvers
     operators
     particlemanager
-    initial_state
+    initial_state | zfactors
     bin_average | data
     misc
     config
