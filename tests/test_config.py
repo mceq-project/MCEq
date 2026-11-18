@@ -5,7 +5,7 @@ import pytest
 import MCEq.config as cfg
 from MCEq.data import download
 
-DEFAULT_DB = "mceq_db_lext_dpm193_v142.h5"
+DEFAULT_DB = "mceq_db_lext_dpm193_v143.h5"
 CUSTOM_DB = "mceq_db_v140reduced_compact.h5"
 OLD_DBS = ("mceq_db_lext_dpm193_v140.h5", "mceq_db_lext_dpm191.h5")
 

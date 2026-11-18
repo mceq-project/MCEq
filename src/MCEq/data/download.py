@@ -92,8 +92,8 @@ def models_on_grid(manifest, grid_sig) -> dict[str, list[str]]:
 base_url = "https://github.com/afedynitch/MCEq/releases/download/"
 release_tag = "builds_on_azure/"
 # sha256 checksum of the default database file (config.mceq_db_fname),
-# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v142.h5
-file_checksum = "247f40203436c69431db4d393316940636badb2c231f68d51870fb49bf476946"
+# https://github.com/afedynitch/MCEq/releases/download/builds_on_azure/mceq_db_lext_dpm193_v143.h5
+file_checksum = "a2f61dbe0e48d2e4eb3ffab47a5794497551e8f3b13064932093c13461e2a25c"
 
 
 class FileIntegrityCheck:
@@ -177,7 +177,7 @@ def _download_file(url, outfile, checksum=None):
             if total_size and wrote != total_size:
                 raise OSError("Incomplete MCEq database download")
         digest = FileIntegrityCheck(temporary).get_file_checksum()
-        if outfile.name == "mceq_db_lext_dpm193_v142.h5" and digest != file_checksum:
+        if outfile.name == "mceq_db_lext_dpm193_v143.h5" and digest != file_checksum:
             raise OSError("MCEq database download checksum mismatch")
         if checksum is not None and digest != checksum.lower():
             raise OSError(
@@ -220,7 +220,7 @@ def ensure_db_available(cfg):
     if filepath.exists():
         is_complete = (
             FileIntegrityCheck(filepath, file_checksum).succeeded()
-            if mceq_db_fname == "mceq_db_lext_dpm193_v142.h5"
+            if mceq_db_fname == "mceq_db_lext_dpm193_v143.h5"
             else True
         )
     else:

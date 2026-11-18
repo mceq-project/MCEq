@@ -118,5 +118,5 @@ reports), and the CI workflows fetch through it.
 ## Older databases
 
 v2 reads the single-file v1.4 databases (for example
-`mceq_db_lext_dpm193_v142.h5`): set `config.mceq_db_fname` to the file name. A
+`mceq_db_lext_dpm193_v143.h5`): set `config.mceq_db_fname` to the file name. A
 single file is used as is, without the manifest.
