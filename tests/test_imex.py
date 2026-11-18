@@ -12,7 +12,6 @@ from MCEq.solvers.imex import (
     GAMMA,
     ImexOperator,
     ImexStepper,
-    TangentSources,
     imex_driver,
 )
 
@@ -217,9 +216,8 @@ def test_tangent_columns_are_derivatives(n_k, groups):
     op = ImexOperator(*args)
     stepper = ImexStepper(op, e_tot, rtol=1e-13)
     tangent = SimpleNamespace(_mats=[g], curvature=False, extra=1, groups=groups)
-    stepper.tangent = TangentSources(tangent, op)
     phi = np.stack([nominal, np.zeros_like(nominal), passive], axis=2).reshape(dim, -1)
-    out, _ = imex_driver(nsteps, dX, ri, stepper, phi)
+    out, _ = imex_driver(nsteps, dX, ri, stepper, phi, tangent=tangent)
     out = out.reshape(dim, groups, 3)
     fd = (solve(1e-4) - solve(-1e-4)) / 2e-4
     np.testing.assert_allclose(out[:, :, 0], solve(0.0), rtol=1e-10)

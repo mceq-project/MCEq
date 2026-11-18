@@ -5,11 +5,15 @@ the transfer graph; no factorization, steps limited by accuracy. The method is d
 (section "IMEX step").
 """
 
+from contextlib import nullcontext
 from graphlib import TopologicalSorter
 
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
+
+from MCEq import config
+from MCEq.operators.legendre import backward_removal, dense_count
 
 #: ARS(2,2,2) coefficients.
 GAMMA = 1.0 - 1.0 / np.sqrt(2.0)
@@ -426,12 +430,13 @@ class ImexStepper:
       op: an :class:`ImexOperator`.
       e_tot: ``(N,)`` total energy of every state (the sweep's order).
       rtol: relative residual of the stage solves.
+      gpu: CUDA device of a CuPy ``op``, or None.
 
     ``tangent``: :class:`TangentSources` of tangent columns, or None.
     """
 
-    def __init__(self, op, e_tot, rtol=1e-8):
-        self.op, self.rtol = op, rtol
+    def __init__(self, op, e_tot, rtol=1e-8, gpu=None):
+        self.op, self.rtol, self.gpu = op, rtol, gpu
         self.sweep = LevelSweep(op, e_tot)
         self.tangent = None
         self.iterations = []
@@ -466,7 +471,16 @@ class ImexStepper:
         return self._solve(rhs_3, c, ri, x0=stage_2)
 
 
-def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=()):
+def _device_context(stepper):
+    """The CUDA device context of ``stepper``, or a null context."""
+    if stepper.gpu is None:
+        return nullcontext()
+    import cupy
+
+    return cupy.cuda.Device(stepper.gpu)
+
+
+def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=(), tangent=None):
     """Run ``nsteps`` IMEX steps along a path.
 
     Args:
@@ -474,6 +488,7 @@ def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=()):
       stepper: an :class:`ImexStepper`.
       phi: initial state, ``(dim,)`` or ``(dim, K)`` in MCEq's order.
       grid_idcs: step indices after which to snapshot the state.
+      tangent: :class:`~MCEq.solvers.etd2.TangentOperator` of the columns of ``phi``, or None.
 
     Returns:
       ``(solution, grid_snapshots)`` on the host in float64, shaped like ``phi`` and
@@ -481,11 +496,82 @@ def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=()):
     """
     op = stepper.op
     phi = np.asarray(phi, dtype=np.float64)
-    x = op.xp.asarray(phi.reshape((op.n_k, op.N) + phi.shape[1:]))
     snapshots = {int(k) for k in grid_idcs}
     grid_sol = []
-    for k in range(nsteps):
-        x = stepper.step(x, float(dX[k]), float(rho_inv[k]))
-        if k in snapshots:
-            grid_sol.append(_to_host(x).reshape(phi.shape))
-    return _to_host(x).reshape(phi.shape), np.array(grid_sol)
+    with _device_context(stepper):
+        stepper.tangent = None if tangent is None else TangentSources(tangent, op)
+        x = op.xp.asarray(phi.reshape((op.n_k, op.N) + phi.shape[1:]))
+        for k in range(nsteps):
+            x = stepper.step(x, float(dX[k]), float(rho_inv[k]))
+            if k in snapshots:
+                grid_sol.append(_to_host(x).reshape(phi.shape))
+        return _to_host(x).reshape(phi.shape), np.array(grid_sol)
+
+
+def imex_stepper(builder, dec_m, particles, e_grid, db, sec_ops=None, gpu=None):
+    """:class:`ImexStepper` of an MCEq run.
+
+    Args:
+      builder: the run's ``MatrixBuilder`` (``int_m_hadr``, ``dEdx_band``).
+      dec_m: decay matrix.
+      particles: the run's particles (``mceqidx``, ``lidx``, ``uidx``, ``mass``, ``is_em``, ``is_lepton``).
+      e_grid: kinetic-energy grid.
+      db: the run's database (``is_2d``, ``n_k``, ``k_grid``); 2D runs mix the leading modes with the
+        backward removal when ``config.legendre_backward_removal`` is set.
+      sec_ops: sec(theta) operator set (``T_P``, ``low_e_idx``), or None.
+      gpu: CUDA device to run on with CuPy, or None for numpy.
+    """
+    n_k = db.n_k if db.is_2d else 1
+    mix = None
+    if db.is_2d and config.legendre_backward_removal:
+        mix = backward_removal(dense_count(db.k_grid) - 1)
+    coupling = None if sec_ops is None else (sec_ops["T_P"], sec_ops["low_e_idx"])
+    N = dec_m.shape[0] // n_k
+    light, e_tot = np.zeros(N, dtype=bool), np.zeros(N)
+    for p in particles:
+        if p.mceqidx >= 0:
+            light[p.lidx : p.uidx] = p.is_em or p.is_lepton
+            e_tot[p.lidx : p.uidx] = np.asarray(e_grid) + p.mass
+    if gpu is None:
+        xp, device = np, nullcontext()
+    else:
+        import cupy as xp
+
+        device = xp.cuda.Device(gpu)
+    with device:
+        op = ImexOperator(
+            builder.int_m_hadr,
+            dec_m,
+            builder.dEdx_band,
+            light,
+            np.arange(N) // len(e_grid),
+            n_k,
+            mix,
+            coupling,
+            xp,
+        )
+        return ImexStepper(op, e_tot, gpu=gpu)
+
+
+def choose_integrator(name, *, is_2d, supported, stiffness_cap):
+    """``"etd2"`` or ``"imex"`` for ``config.integrator`` ``name``.
+
+    ``"auto"`` takes IMEX on 2D runs whose ETD2 step cap ``stiffness_cap()`` (g/cm^2) is below
+    ``config.imex_auto_dx``, ETD2 otherwise. ``supported`` is False where IMEX does not apply (no
+    shared path, 1D secant table): ``"auto"`` then takes ETD2 and ``"imex"`` raises.
+    """
+    name = name.lower()
+    if name not in ("auto", "etd2", "imex"):
+        raise ValueError(
+            f"config.integrator must be 'auto', 'etd2' or 'imex', got {name!r}"
+        )
+    if name == "imex" and not supported:
+        raise NotImplementedError(
+            "The IMEX integrator needs one shared path and no 1D secant table "
+            "(config.secant_1d_table = None)."
+        )
+    if name != "auto":
+        return name
+    if supported and is_2d and stiffness_cap() < config.imex_auto_dx:
+        return "imex"
+    return "etd2"
