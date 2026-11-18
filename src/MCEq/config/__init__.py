@@ -205,6 +205,17 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
+#: Integrator: ``"auto"`` (IMEX for stiff 2D runs, i.e. EM showers, ETD2
+#: otherwise), ``"etd2"`` or ``"imex"`` (:ref:`solver-math`, "IMEX step").
+integrator = "auto"
+
+#: ETD2 stiffness cap in g/cm^2 below which ``"auto"`` takes IMEX on 2D runs.
+imex_auto_dx = 0.5
+
+#: Path of the IMEX integrator (no stiffness caps). eps 0.3 suffices for EM
+#: observables; hadron decay products at high altitude need eps <= 0.05.
+imex_path = {"eps": 0.05, "dX_max": 5.0}
+
 #: Cap EM integration steps at ``em_step_safety / r_EM``, with ``r_EM`` the
 #: spectral radius of the e+/-/gamma off-diagonal block of ``int_m``.
 em_adaptive_step = False

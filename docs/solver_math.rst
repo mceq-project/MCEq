@@ -333,6 +333,50 @@ columns, states without a source, carry derivatives with respect to the
 initial state. :meth:`~MCEq.core.MCEqRun.solve_batch` assembles the columns
 (``tangent=``).
 
+IMEX step
+=========
+
+``config.integrator`` selects the step:
+
+- ``"auto"`` (default): IMEX on 2D runs whose ETD2 step cap from the
+  continuous losses and the EM cascade is below ``config.imex_auto_dx``
+  (0.5 g/cm²), ETD2 otherwise. In practice this is IMEX for 2D EM showers
+  (cap 0.008 g/cm², about 20× faster than ETD2) and ETD2 for hadronic runs and
+  all 1D runs, where ETD2 is faster.
+- ``"etd2"`` or ``"imex"`` force one. IMEX needs one shared path (no
+  per-condition paths in :meth:`~MCEq.core.MCEqRun.solve_batch`) and no 1D
+  secant table.
+
+IMEX steps follow ``config.imex_path`` (``eps``, ``dX_max``) without the
+stiffness caps. The default ``eps = 0.05`` keeps hadron decay products at
+high altitude accurate; pure EM observables (Xmax, N) allow ``eps = 0.3``.
+
+**Split.** :class:`~MCEq.solvers.imex.ImexOperator` treats implicitly
+(:math:`F_I(x) = Jx`) the diagonal, the transfers inside a species and
+inside the EM/lepton sector, the decays and the loss band; the hadronic
+production between species is explicit (:math:`F_E`).
+
+**Step.** ARS(2,2,2), second order and L-stable in :math:`J`, with
+:math:`\gamma = 1 - 1/\sqrt2`, :math:`\delta = 1 - 1/(2\gamma)`:
+
+.. math::
+
+   (I - \gamma h J)\,Y = \Phi_n + \gamma h\,F_E(\Phi_n), \qquad
+   (I - \gamma h J)\,\Phi_{n+1} = \Phi_n + h\left[\delta F_E(\Phi_n)
+     + (1-\delta) F_E(Y) + (1-\gamma) J Y\right].
+
+Both systems are solved by GMRES to a relative residual of 1e-8,
+preconditioned by :class:`~MCEq.solvers.imex.LevelSweep`: a forward
+substitution over the transfer graph of :math:`J` that drops the few entries
+pointing up in energy, with dense :math:`n_P \times n_P` blocks for the
+sec(θ) coupling in 2D. The code runs on numpy, or on CUDA with
+``kernel_config`` CUDA, where the sweep is a CUDA graph of per-level kernels
+in fp32 (:mod:`MCEq.solvers.backends.imex_cuda`); GMRES keeps the fp64
+residual.
+
+**Tangent columns.** In :meth:`~MCEq.core.MCEqRun.solve_batch` the sources
+:math:`G_k S\Phi` of the derivative columns enter the explicit part.
+
 Summary of one step
 ===================
 
@@ -354,6 +398,10 @@ Stages of :func:`~MCEq.solvers.etd2_driver`, with the backend method
 References
 ==========
 
+- U. M. Ascher, S. J. Ruuth, R. J. Spiteri, *Implicit-explicit
+  Runge-Kutta methods for time-dependent partial differential equations*,
+  Appl. Numer. Math. 25 (1997) 151; Y. Saad, M. H. Schultz, *GMRES*, SIAM J.
+  Sci. Stat. Comput. 7 (1986) 856.
 - S. M. Cox, P. C. Matthews, *Exponential time differencing for stiff
   systems*, J. Comput. Phys. 176 (2002) 430; M. Hochbruck, A. Ostermann,
   *Exponential integrators*, Acta Numerica 19 (2010) 209.

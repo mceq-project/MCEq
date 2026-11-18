@@ -614,6 +614,12 @@ class MCEqRun(BatchSolver):
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
         X0 = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
+        if self._integrator() == "imex":
+            phi0 = self._stack_modes(self._phi0)
+            self._solution, self.grid_sol = self._run_imex(
+                nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops
+            )
+            return
         sol, grid_sol = self._run_etd2(
             nsteps,
             dX,
@@ -647,13 +653,16 @@ class MCEqRun(BatchSolver):
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        integrator=None,
     ):
-        """Build the ETD2 path on ``integration_path`` unless the cached one
-        matches; ``dX_max`` is capped by the continuous-loss and EM stiffness."""
+        """Build the path of ``integrator`` (default :meth:`_integrator`) unless
+        the cached one matches; ETD2 steps are capped by the stiffness."""
         p = config.etd2_path
+        imex = (integrator or self._integrator()) == "imex"
         X_start = config.X_start if X_start is None else X_start
-        eps = p["eps"] if eps is None else eps
-        dX_max = p["dX_max"] if dX_max is None else dX_max
+        q = config.imex_path if imex else p
+        eps = q["eps"] if eps is None else eps
+        dX_max = q["dX_max"] if dX_max is None else dX_max
         if eps is None or dX_max is None:
             conservative = self._mceq_db.is_2d or any(
                 abs(particle.pdg_id[0]) == 11 for particle in self.pman.all_particles
@@ -664,11 +673,8 @@ class MCEqRun(BatchSolver):
                 dX_max = 2.0 if conservative else 5.0
         dX_min = p["dX_min"] if dX_min is None else dX_min
         fd_span = p["fd_span"] if fd_span is None else fd_span
-        cap = min(
-            em_cascade_dx_cap(self._em_cascade_step_scale()),
-            self._continuous_loss_dx_cap(),
-        )
-        dX_max = min(dX_max, cap)
+        if not imex:
+            dX_max = min(dX_max, self._stiffness_dx_cap())
         # A user floor must never undo the stiffness ceiling.
         dX_min = min(dX_min, dX_max)
         etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
@@ -702,6 +708,22 @@ class MCEqRun(BatchSolver):
             dX_min=dX_min,
             fd_span=fd_span,
             int_grid=int_grid,
+        )
+
+    def _integrator(self, shared=True):
+        """``config.integrator`` resolved for this run (:func:`MCEq.solvers.choose_integrator`)."""
+        return solvers.choose_integrator(
+            config.integrator,
+            is_2d=self._mceq_db.is_2d,
+            supported=shared and secant_table.table_for(self) is None,
+            stiffness_cap=self._stiffness_dx_cap,
+        )
+
+    def _stiffness_dx_cap(self):
+        """ETD2 step cap of the continuous-loss and EM stiffness in g/cm^2."""
+        return min(
+            em_cascade_dx_cap(self._em_cascade_step_scale()),
+            self._continuous_loss_dx_cap(),
         )
 
     def _continuous_loss_dx_cap(self):
@@ -1074,6 +1096,30 @@ class MCEqRun(BatchSolver):
             sol = sol.astype(dtype)
             grid_sol = grid_sol.astype(dtype)
         return sol, grid_sol
+
+    def _run_imex(
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops=None, tangent=None
+    ):
+        """Integrate with :func:`MCEq.solvers.imex_driver` (on the GPU with a CUDA
+        ``kernel_config``); the stepper is cached per matrices and ``sec_ops``."""
+        kernel = config.kernel_config.lower()
+        on_cuda = detect.ALIASES.get(kernel, kernel) == "cuda_etd2"
+        key = (self.int_m, self.dec_m, sec_ops, self._cuda_device if on_cuda else None)
+        cached = self.__dict__.get("_imex_cache")
+        if cached is None or any(a is not b for a, b in zip(cached[0], key)):
+            stepper = solvers.imex_stepper(
+                self.matrix_builder,
+                self.dec_m,
+                self.pman.all_particles,
+                self.e_grid,
+                self._mceq_db,
+                sec_ops,
+                gpu=key[3],
+            )
+            self._imex_cache = cached = (key, stepper)
+        return solvers.imex_driver(
+            nsteps, dX, rho_inv, cached[1], phi0, grid_idcs, tangent=tangent
+        )
 
     def _run_etd2_carousel(
         self,
