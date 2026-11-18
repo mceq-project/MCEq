@@ -1,2 +1,0 @@
-CUDA kernel for the IMEX preconditioner sweep (fp32, one CUDA graph per sweep):
-2D EM steps about 2× faster on the GPU than the CuPy array sweep.
