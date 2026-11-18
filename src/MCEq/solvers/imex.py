@@ -268,7 +268,13 @@ class LevelSweep:
                     (asarray(local), asarray(slot[a + local])) if len(local) else None
                 )
         self._prepared = None
-        self._slices = [self._level_slices(a, b, csr) for a, b in self.levels]
+        self._kernel = self._slices = None
+        if self.xp is np:
+            self._slices = [self._level_slices(a, b, csr) for a, b in self.levels]
+        else:
+            from MCEq.solvers.backends.imex_cuda import CudaLevelKernel
+
+            self._kernel = CudaLevelKernel(self)
 
     @staticmethod
     def _order(pattern, e_tot):
@@ -331,14 +337,21 @@ class LevelSweep:
             n_P = op.T_P.shape[0]
             wc = w[xp.asarray(self.corner), :n_P]
             K = xp.eye(n_P)[None] - c * op.T_P[None, :, :n_P] * wc[:, None, :]
+            if self._kernel is not None:  # preconditioner only: the kernel's precision
+                K = K.astype(self._kernel.dtype)
             kinv = xp.linalg.inv(K)
         self._prepared = (c, ri, den, w, kinv)
+        if self._kernel is not None:
+            self._kernel.set_step(self._prepared)
 
     def solve(self, rhs):
         """Solve the lower system for a mode-major ``rhs`` ``(n_k, N)`` or ``(n_k, N, K)``; returns the same layout."""
         xp = self.xp
         b = xp.moveaxis(rhs.reshape(rhs.shape[:2] + (-1,)), 0, 1)[xp.asarray(self.perm)]
-        x = self._solve_levels(b)
+        if self._kernel is not None:
+            x = self._kernel(b)
+        else:
+            x = self._solve_levels(b)
         return xp.moveaxis(x[xp.asarray(self.inv_perm)], 0, 1).reshape(rhs.shape)
 
     def _solve_levels(self, b):

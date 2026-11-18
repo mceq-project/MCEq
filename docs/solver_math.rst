@@ -369,8 +369,10 @@ Both systems are solved by GMRES to a relative residual of 1e-8,
 preconditioned by :class:`~MCEq.solvers.imex.LevelSweep`: a forward
 substitution over the transfer graph of :math:`J` that drops the few entries
 pointing up in energy, with dense :math:`n_P \times n_P` blocks for the
-sec(θ) coupling in 2D. The code runs on numpy, or on CuPy with
-``kernel_config`` CUDA.
+sec(θ) coupling in 2D. The code runs on numpy, or on CUDA with
+``kernel_config`` CUDA, where the sweep is a CUDA graph of per-level kernels
+in fp32 (:mod:`MCEq.solvers.backends.imex_cuda`); GMRES keeps the fp64
+residual.
 
 **Tangent columns.** In :meth:`~MCEq.core.MCEqRun.solve_batch` the sources
 :math:`G_k S\Phi` of the derivative columns enter the explicit part.
