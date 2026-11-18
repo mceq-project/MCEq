@@ -9,6 +9,7 @@ import numpy as np
 
 import MCEq.data
 import MCEq.solvers as solvers
+import MCEq.zfactors as zfactors
 from MCEq import config
 from MCEq.batch import BatchSolver, resolve_dtype
 from MCEq.config import detect
@@ -613,6 +614,12 @@ class MCEqRun(BatchSolver):
         sec_ops = self._resolve_secant()
         self._warn_low_energy_cuda_fp32(dtype, sec_ops)
         X0 = getattr(self, "_cached_etd2_path_params", (config.X_start,))[0]
+        if self._integrator() == "imex":
+            phi0 = self._stack_modes(self._phi0)
+            self._solution, self.grid_sol = self._run_imex(
+                nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops
+            )
+            return
         sol, grid_sol = self._run_etd2(
             nsteps,
             dX,
@@ -646,13 +653,16 @@ class MCEqRun(BatchSolver):
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        integrator=None,
     ):
-        """Build the ETD2 path on ``integration_path`` unless the cached one
-        matches; ``dX_max`` is capped by the continuous-loss and EM stiffness."""
+        """Build the path of ``integrator`` (default :meth:`_integrator`) unless
+        the cached one matches; ETD2 steps are capped by the stiffness."""
         p = config.etd2_path
+        imex = (integrator or self._integrator()) == "imex"
         X_start = config.X_start if X_start is None else X_start
-        eps = p["eps"] if eps is None else eps
-        dX_max = p["dX_max"] if dX_max is None else dX_max
+        q = config.imex_path if imex else p
+        eps = q["eps"] if eps is None else eps
+        dX_max = q["dX_max"] if dX_max is None else dX_max
         if eps is None or dX_max is None:
             conservative = self._mceq_db.is_2d or any(
                 abs(particle.pdg_id[0]) == 11 for particle in self.pman.all_particles
@@ -663,11 +673,8 @@ class MCEqRun(BatchSolver):
                 dX_max = 2.0 if conservative else 5.0
         dX_min = p["dX_min"] if dX_min is None else dX_min
         fd_span = p["fd_span"] if fd_span is None else fd_span
-        cap = min(
-            em_cascade_dx_cap(self._em_cascade_step_scale()),
-            self._continuous_loss_dx_cap(),
-        )
-        dX_max = min(dX_max, cap)
+        if not imex:
+            dX_max = min(dX_max, self._stiffness_dx_cap())
         # A user floor must never undo the stiffness ceiling.
         dX_min = min(dX_min, dX_max)
         etd2_params = (X_start, eps, dX_max, dX_min, fd_span)
@@ -701,6 +708,22 @@ class MCEqRun(BatchSolver):
             dX_min=dX_min,
             fd_span=fd_span,
             int_grid=int_grid,
+        )
+
+    def _integrator(self, shared=True):
+        """``config.integrator`` resolved for this run (:func:`MCEq.solvers.choose_integrator`)."""
+        return solvers.choose_integrator(
+            config.integrator,
+            is_2d=self._mceq_db.is_2d,
+            supported=shared and secant_table.table_for(self) is None,
+            stiffness_cap=self._stiffness_dx_cap,
+        )
+
+    def _stiffness_dx_cap(self):
+        """ETD2 step cap of the continuous-loss and EM stiffness in g/cm^2."""
+        return min(
+            em_cascade_dx_cap(self._em_cascade_step_scale()),
+            self._continuous_loss_dx_cap(),
         )
 
     def _continuous_loss_dx_cap(self):
@@ -949,92 +972,24 @@ class MCEqRun(BatchSolver):
         min_energy=0.3,
         use_cs_scaling=True,
     ):
-        r"""Energy-dependent Z-factor of ``projectile -> secondary`` interactions.
-
-        ``definition="thunman"`` (any value but ``"primary_e"``) is the moment
-        of Thunman, Ingelman and Gondolo (1996) at the secondary energy,
-
-        .. math::
-
-            Z(E) = \int_E^\infty dE'\,\frac{\phi_N(E')}{\phi_N(E)}
-                \frac{\lambda_N(E)}{\lambda_N(E')}\frac{dn(E', E)}{dE},
-
-        as a matrix row :math:`Z_i = \sum_j C_{ij}\,\sigma_j\phi_j /
-        (\sigma_i\phi_i)`, with :math:`\phi` the proton (for a neutron
-        projectile the neutron) flux of the primary model and :math:`\sigma`
-        the production cross section, which ``use_cs_scaling=False`` drops.
-        Under Feynman scaling and a power law :math:`E^{-(\gamma+1)}` it is
-        :math:`\int_0^1 x^{\gamma-1}F(x)dx`.
-
-        ``definition="primary_e"`` is the column at the projectile energy
-        :math:`E_j`, weighted by :math:`\phi_N(E_j)/\phi_N(E_i)` over the
-        secondaries above ``min_energy`` (:meth:`MCEqParticle.parent_column`
-        for stencil-averaged tables). Values below ``min_energy`` are 0.
-
-        Returns:
-          (numpy.ndarray): Z on ``e_grid``
-        """
-        proj = self.pman[projectile_pdg]
-        sec = self.pman[secondary_pdg]
-        if not proj.is_projectile:
-            raise Exception(f"{proj.name} is not a projectile particle.")
-        info(10, f"Computing e-dependent Zfactor for {proj.name} -> {sec.name}")
-        if sec not in proj.hadr_yields:
-            raise Exception(f"{sec.name} is not a secondary particle of {proj.name}.")
-
-        p_flux, n_flux = self.pmodel.p_and_n_flux(self.e_grid)[1:]
-        nuc_flux = np.asarray(
-            n_flux if proj.pdg_id[0] == 2112 else p_flux, dtype=np.float64
+        """Energy-dependent Z-factor of ``projectile -> secondary`` interactions on
+        ``e_grid`` (:func:`MCEq.zfactors.z_factor`)."""
+        return zfactors.z_factor(
+            self.pman[projectile_pdg],
+            self.pman[secondary_pdg],
+            self.e_grid,
+            self.pmodel,
+            definition,
+            min_energy,
+            use_cs_scaling,
         )
-        smat = np.asarray(proj.hadr_yields[sec], dtype=np.float64)
-        proj_cs = np.asarray(proj.prod_cross_section(), dtype=np.float64)
-        e = np.asarray(self.e_grid, dtype=np.float64)
-        zfac = np.zeros_like(e)
-
-        if definition == "primary_e":
-            below = np.flatnonzero(e < min_energy)
-            min_idx = int(below[-1]) if len(below) else 0
-            for p_eidx in np.flatnonzero(e >= min_energy):
-                col = proj.parent_column(smat, p_eidx)
-                nuc_fac = nuc_flux[p_eidx] / nuc_flux[min_idx : p_eidx + 1]
-                zfac[p_eidx] = np.sum(col[min_idx : p_eidx + 1] * nuc_fac)
-            return zfac
-
-        # Thunman et al. 1996: a row of the table against the projectile flux
-        weight = nuc_flux * proj_cs if use_cs_scaling else nuc_flux.copy()
-        source = smat @ weight
-        ok = (e >= min_energy) & (weight > 0)
-        zfac[ok] = source[ok] / weight[ok]
-        return zfac
 
     def decay_z_factor(self, parent_pdg, child_pdg, gamma=None):
-        r"""Energy-dependent decay Z-factor (Lipari 1993) at the daughter energy.
-
-        The matrix row :math:`Z_i = \sum_j D_{ij} S_j / S_i` against a parent
-        spectrum :math:`S(E) \propto E^{\gamma}`; ``gamma`` defaults to the
-        nucleon index of the primary model at the daughter energy. Under scaling
-        it is :math:`\int_0^1 x^{-\gamma-1} dN/dx\,dx`.
-
-        Returns:
-          (numpy.ndarray): Z on ``e_grid``
-        """
-        proj = self.pman[parent_pdg]
-        sec = self.pman[child_pdg]
-        if proj.is_stable:
-            raise Exception(f"{proj.name} does not decay.")
-        info(10, f"Computing e-dependent decay Zfactor for {proj.name} -> {sec.name}")
-        if sec not in proj.decay_dists:
-            raise Exception(f"{sec.name} is not a a child particle of {proj.name}.")
-
-        e = np.asarray(self.e_grid, dtype=np.float64)
-        if gamma is None:
-            gamma = self.pmodel.nucleon_gamma(e)
-        gamma = np.broadcast_to(np.asarray(gamma, dtype=np.float64), e.shape)
-        dmat = np.asarray(proj.decay_dists[sec], dtype=np.float64)
-        zfac = np.zeros_like(e)
-        for i in range(len(e)):
-            zfac[i] = dmat[i] @ ((e / e[i]) ** gamma[i])
-        return zfac
+        """Energy-dependent decay Z-factor at the daughter energy on ``e_grid``
+        (:func:`MCEq.zfactors.decay_z_factor`)."""
+        return zfactors.decay_z_factor(
+            self.pman[parent_pdg], self.pman[child_pdg], self.e_grid, self.pmodel, gamma
+        )
 
     def _resolve_secant(self):
         """sec(theta) operators for the solve, or None if secant mode is off."""
@@ -1141,6 +1096,30 @@ class MCEqRun(BatchSolver):
             sol = sol.astype(dtype)
             grid_sol = grid_sol.astype(dtype)
         return sol, grid_sol
+
+    def _run_imex(
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops=None, tangent=None
+    ):
+        """Integrate with :func:`MCEq.solvers.imex_driver` (on the GPU with a CUDA
+        ``kernel_config``); the stepper is cached per matrices and ``sec_ops``."""
+        kernel = config.kernel_config.lower()
+        on_cuda = detect.ALIASES.get(kernel, kernel) == "cuda_etd2"
+        key = (self.int_m, self.dec_m, sec_ops, self._cuda_device if on_cuda else None)
+        cached = self.__dict__.get("_imex_cache")
+        if cached is None or any(a is not b for a, b in zip(cached[0], key)):
+            stepper = solvers.imex_stepper(
+                self.matrix_builder,
+                self.dec_m,
+                self.pman.all_particles,
+                self.e_grid,
+                self._mceq_db,
+                sec_ops,
+                gpu=key[3],
+            )
+            self._imex_cache = cached = (key, stepper)
+        return solvers.imex_driver(
+            nsteps, dX, rho_inv, cached[1], phi0, grid_idcs, tangent=tangent
+        )
 
     def _run_etd2_carousel(
         self,

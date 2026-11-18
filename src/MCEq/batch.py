@@ -432,8 +432,17 @@ class BatchSolver:
         )
         phi0_mat = self._stack_modes(phi0_mat)
 
+        # conditions=[c] (tangents) share one path
+        integrator = self._integrator(
+            shared=conditions is None or len(set(map(repr, conditions))) == 1
+        )
         path_kwargs = dict(
-            X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+            integrator=integrator,
         )
         if conditions is None:
             if int_grid is not None and np.any(np.diff(int_grid) < 0):
@@ -460,7 +469,13 @@ class BatchSolver:
         shared = all(p is paths[0] for p in paths)
 
         start = time()
-        if shared:
+        if integrator == "imex":
+            nsteps, dX, rho_inv, grid_idcs = paths[0]
+            sol, grid_sol = self._run_imex(
+                nsteps, dX, rho_inv, phi0_mat, grid_idcs, sec_ops, tangent=tangent
+            )
+            sol, grid_sol = sol.astype(dtype), grid_sol.astype(dtype)
+        elif shared:
             nsteps, dX, rho_inv, grid_idcs = paths[0]
             info(2, f"solve_batch: shared path, K={K}, nsteps={nsteps}")
             sol, grid_sol = self._run_etd2(
@@ -651,6 +666,7 @@ class BatchSolver:
         dX_max=None,
         dX_min=None,
         fd_span=None,
+        integrator=None,
         path_workers=0,
     ):
         """One integration path per condition (see :meth:`solve_batch`).
@@ -699,7 +715,12 @@ class BatchSolver:
         saved_zen = getattr(saved_dm, "theta_deg", None)
         saved_az = getattr(saved_dm, "_current_azimuth_deg", None)
         kwargs = dict(
-            X_start=X_start, eps=eps, dX_max=dX_max, dX_min=dX_min, fd_span=fd_span
+            X_start=X_start,
+            eps=eps,
+            dX_max=dX_max,
+            dX_min=dX_min,
+            fd_span=fd_span,
+            integrator=integrator,
         )
         try:
             # Each distinct density model is built once.

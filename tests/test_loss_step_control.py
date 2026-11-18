@@ -83,6 +83,8 @@ def test_run_guard_clamps_override_and_floor_and_refreshes_settings(monkeypatch)
 
     class _Run(SimpleNamespace):
         _calculate_integration_path = MCEqRun._calculate_integration_path
+        _integrator = staticmethod(lambda shared=True: "etd2")
+        _stiffness_dx_cap = MCEqRun._stiffness_dx_cap
         _continuous_loss_dx_cap = MCEqRun._continuous_loss_dx_cap
 
     run = _Run(
