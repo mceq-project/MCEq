@@ -42,24 +42,37 @@ class HDF5Backend:
 
     def scattering_rate_table(self):
         """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
-        Coulomb rates of the medium cut to the energy window, or None.
+        Coulomb muon rates of the medium cut to the energy window, or None.
 
         ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
         on the file's grid, its inputs as attributes for ``scattering.mode_rates``
         to check), read once per medium: rebuilds then reopen nothing. Computed
         with ``mceq_em.coulomb_scattering``.
         """
+        path = f"material_scattering/{self.medium}/screened_coulomb_rates"
+        return self._rate_table(self._had, path)
+
+    def electron_scattering_rate_table(self):
+        """The e+- rates of the 2D EM database, as :meth:`scattering_rate_table`.
+
+        ``electromagnetic/<medium>/electron_scattering_rates``, written by
+        mceq-maintenance-tools ``--mode em_collinear_2d``.
+        """
+        path = f"electromagnetic/{self.medium}/electron_scattering_rates"
+        return self._rate_table(self._em_store, path)
+
+    def _rate_table(self, store, path):
+        """``(rates cut to the window, l_grid, e_grid, attrs)`` at ``path``, or None; cached."""
         cache = self.__dict__.setdefault("_scattering_rate_tables", {})
-        if self.medium not in cache:
-            path = f"material_scattering/{self.medium}/screened_coulomb_rates"
-            got, cache[self.medium] = self._had.read_optional_table(path), None
+        if path not in cache:
+            got, cache[path] = store.read_optional_table(path), None
             if got is not None:
                 rates, attrs, common = got
                 l_grid = np.asarray(common.get("k_grid", []), dtype=float)
                 if np.shape(rates) == (l_grid.size, np.size(common["e_grid"])):
                     cut = rates[:, self._cuts]
-                    cache[self.medium] = cut, l_grid, self._energy_grid.c, attrs
-        return cache[self.medium]
+                    cache[path] = cut, l_grid, self._energy_grid.c, attrs
+        return cache[path]
 
     def __init__(
         self,
@@ -154,6 +167,16 @@ class HDF5Backend:
     @property
     def energy_grid(self):
         return self._energy_grid
+
+    def _check_em_modes(self):
+        """Refuse an EM database whose Legendre modes differ from the run's."""
+        k_em = self._em_store.attrs("common").get("k_grid")
+        if k_em is None or not np.array_equal(np.asarray(k_em), self.k_grid):
+            raise ValueError(
+                f"{config.em_db_fname} is not a 2D EM database on the modes of "
+                f"{config.mceq_db_fname}; make one with mceq-maintenance-tools "
+                "--mode em_collinear_2d."
+            )
 
     def _gen_db_dictionary(self, pack, eqv=None):
         index_d = {}
@@ -390,6 +413,8 @@ class HDF5Backend:
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
+            if self.is_2d:
+                self._check_em_modes()
             em_index = self._gen_db_dictionary(
                 self._em_store.read_channel_pack(
                     f"electromagnetic/{self.medium}", "emca_mats"

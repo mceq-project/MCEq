@@ -198,8 +198,21 @@ mode obeys :eq:`linear` with its own :math:`A(l_k)`, :math:`B(l_k)`; in the
 paraxial approximation the modes are decoupled and form one block-diagonal
 system of dimension :math:`n_k N`. The mode :math:`l = 0` is the
 angle-integrated flux. The only :math:`l`-dependent diagonal entry is the
-muon multiple-scattering rate :math:`-\Gamma(E, l)`
+multiple-scattering rate :math:`-\Gamma(E, l)` of muons and, in EM runs
+(``config.enable_em`` and ``config.em_multiple_scattering``), of e±
 (:mod:`MCEq.operators.scattering`), integrated exactly as part of :math:`D`.
+
+**EM in 2D.** γ and e± production enters every mode with the 1D block
+(collinear: bremsstrahlung and pair production emit at angles
+:math:`\sim m_e/E`, and :math:`P_l(1) = 1`). The 2D EM database holds these
+blocks per mode; mceq-maintenance-tools ``--mode em_collinear_2d`` makes it
+from the 1D one, and a 2D run refuses an EM database on other modes. e±
+scatter with the screened Coulomb rate for the electron mass and point
+nuclei, which the same step writes into the 2D EM database from mceq-EM
+(``electromagnetic/<medium>/electron_scattering_rates``). At MeV this rate reaches :math:`\sim 10^4` cm²/g at high :math:`l`
+(muons :math:`\sim 10^5`), beyond what the ETD2 corner treatment below
+integrates stably; ``config.integrator = "auto"`` therefore runs 2D EM
+showers with IMEX (`IMEX step`_), which has no such limit.
 
 With ``config.legendre_backward_removal`` the off-diagonal production and
 decay terms of the dense block of modes are multiplied by :math:`I - R`,
@@ -274,7 +287,7 @@ stays in the remainder. The exactly integrated operator is the diagonal
    \qquad \Delta_{j,i} = D^f_{j,i} - D^0_i,
 
 with :math:`D^f` the full diagonal on the corner and :math:`\Delta` its
-:math:`l`-dependent part, the muon multiple-scattering damping
+:math:`l`-dependent part, the multiple-scattering damping
 (:attr:`~MCEq.operators.compiled.CompiledOperator.exact_slot_diagonals`).
 :math:`\Delta` does not commute with :math:`S_P`; its diagonal in the basis
 joins :math:`L`, which keeps the step stable, and only its mode mixing stays
