@@ -179,6 +179,16 @@ class HDF5Backend:
     def energy_grid(self):
         return self._energy_grid
 
+    def _check_em_modes(self):
+        """Refuse an EM database whose Legendre modes differ from the run's."""
+        k_em = self._em_store.attrs("common").get("k_grid")
+        if k_em is None or not np.array_equal(np.asarray(k_em), self.k_grid):
+            raise ValueError(
+                f"{config.em_db_fname} is not a 2D EM database on the modes of "
+                f"{config.mceq_db_fname}; make one with mceq-maintenance-tools "
+                "--mode em_collinear_2d."
+            )
+
     def _gen_db_dictionary(self, pack, eqv=None):
         index_d = {}
         relations = defaultdict(list)
@@ -414,6 +424,8 @@ class HDF5Backend:
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
+            if self.is_2d:
+                self._check_em_modes()
             em_index = self._gen_db_dictionary(
                 self._em_store.read_channel_pack(
                     f"electromagnetic/{self.medium}", "emca_mats"

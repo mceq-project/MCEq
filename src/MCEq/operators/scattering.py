@@ -1,4 +1,4 @@
-r"""Multiple Coulomb scattering of muons in the 2D transport.
+r"""Multiple Coulomb scattering of muons and e+- in the 2D transport.
 
 A 2D state is a set of ``n_k`` angular modes, the Legendre moments
 ``<P_l(cos theta)>``. Scattering couples neither modes nor energies: it adds a
@@ -61,8 +61,13 @@ cut to the run's energy window, when the muon mass, the ``finite_nuclei``
 switch and the grids it records match the run; otherwise it computes the
 rate, memoised for the process.
 
-Only muons are treated. Hadrons interact before scattering matters, and the
-e+- angular distribution is set by the EM cascade kinematics.
+Muons and, with ``config.enable_em`` and ``config.em_multiple_scattering``,
+e+- are treated; hadrons interact before scattering matters. e+- take the
+screened Coulomb rate with the electron mass and point nuclei
+(``finite_nuclei=False``: the muon-specific electron kinematic limit does not
+apply, no Mott factor), computed in seconds, so no table. At MeV the rates
+reach ~1e5 cm^2/g at high l; ETD2 cannot step through them, so
+``config.integrator = "auto"`` takes IMEX for 2D EM runs.
 """
 
 from __future__ import annotations
@@ -78,6 +83,7 @@ __all__ = [
     "MUON_MASS",
     "mode_rates",
     "muon_state_offsets",
+    "electron_state_offsets",
     "screened_coulomb_rate_legendre",
     "theta_s_squared",
     "transport_cross_sections",
@@ -105,6 +111,9 @@ MUON_MASS = 0.10566
 #: Helicity 0 is the unpolarised species; +-1 appear with
 #: ``config.muon_helicity_dependence``.
 MUON_KEYS = tuple((pdg, hel) for pdg in (13, -13) for hel in (0, 1, -1))
+
+#: PDG ids and helicity of the e+- species of the EM cascade.
+ELECTRON_KEYS = ((11, 0), (-11, 0))
 
 _HBARC = constants.hbar * constants.c / constants.electron_volt * 1e-7  # GeV cm
 _BOHR = constants.physical_constants["Bohr radius"][0] * 100  # cm
@@ -214,13 +223,23 @@ def muon_state_offsets(pdg2pref):
     state vector, which is what ``lidx`` and a non-negative ``mceqidx`` say;
     disabled species have neither.
     """
-    offsets = []
-    for key in MUON_KEYS:
-        if key in pdg2pref:
-            particle = pdg2pref[key]
-            if hasattr(particle, "lidx") and getattr(particle, "mceqidx", -1) >= 0:
-                offsets.append(particle.lidx)
-    return offsets
+    return _state_offsets(pdg2pref, MUON_KEYS)
+
+
+def electron_state_offsets(pdg2pref):
+    """State-vector row offsets of the e+- species, as :func:`muon_state_offsets`."""
+    return _state_offsets(pdg2pref, ELECTRON_KEYS)
+
+
+def _state_offsets(pdg2pref, keys):
+    """Offsets of the species ``keys`` that have a slot in the state vector."""
+    return [
+        pdg2pref[key].lidx
+        for key in keys
+        if key in pdg2pref
+        and hasattr(pdg2pref[key], "lidx")
+        and getattr(pdg2pref[key], "mceqidx", -1) >= 0
+    ]
 
 
 def _elements(e_kin, composition, muon_mass):
