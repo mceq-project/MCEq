@@ -336,32 +336,28 @@ initial state. :meth:`~MCEq.core.MCEqRun.solve_batch` assembles the columns
 IMEX step
 =========
 
-``config.integrator = "imex"`` replaces the ETD2RK step by an
-implicit-explicit one (:mod:`MCEq.solvers.imex`). Its steps are limited by
-accuracy and by the non-stiff part only, not by the continuous-loss band,
-the EM transfers or the multiple-scattering damping.
+``config.integrator`` selects the step:
 
-**Split.** With the operand :math:`\tilde x = Sx` (identity on 1D and
-paraxial runs) and :math:`M` the backward-removal mixing of the leading
-modes (identity on 1D runs),
+- ``"auto"`` (default): IMEX on 2D runs whose ETD2 step cap from the
+  continuous losses and the EM cascade is below ``config.imex_auto_dx``
+  (0.5 g/cm²), ETD2 otherwise. In practice this is IMEX for 2D EM showers
+  (cap 0.008 g/cm², about 20× faster than ETD2) and ETD2 for hadronic runs and
+  all 1D runs, where ETD2 is faster.
+- ``"etd2"`` or ``"imex"`` force one. IMEX needs one shared path (no
+  per-condition paths in :meth:`~MCEq.core.MCEqRun.solve_batch`) and no 1D
+  secant table.
 
-.. math::
+IMEX steps follow ``config.imex_path`` (``eps``, ``dX_max``) without the
+stiffness caps. The default ``eps = 0.05`` keeps hadron decay products at
+high altitude accurate; pure EM observables (Xmax, N) allow ``eps = 0.3``.
 
-   F(x) = D\tilde x + M\left(A_\mathrm{off} + \rho^{-1}B_\mathrm{off}\right)\tilde x
-        + L_\mathrm{off}\tilde x ,
+**Split.** :class:`~MCEq.solvers.imex.ImexOperator` treats implicitly
+(:math:`F_I(x) = Jx`) the diagonal, the transfers inside a species and
+inside the EM/lepton sector, the decays and the loss band; the hadronic
+production between species is explicit (:math:`F_E`).
 
-with :math:`L` the loss band. :class:`~MCEq.solvers.imex.ImexOperator`
-puts into the explicit part :math:`F_E` the entries of
-:math:`A_\mathrm{off}` between different species with a hadron as parent or
-daughter (hadronic production, rates of order :math:`1/\lambda_\mathrm{int}`);
-the diagonal, the transfers inside a species (continuous losses folded into
-:math:`A`, redistribution) and inside the EM/lepton sector, the decays and the
-band form the
-implicit part :math:`F_I(x) = J x`.
-
-**Step.** ARS(2,2,2) with :math:`\gamma = 1 - 1/\sqrt2`,
-:math:`\delta = 1 - 1/(2\gamma)` and :math:`J` at the step's
-:math:`\rho^{-1}_n`:
+**Step.** ARS(2,2,2), second order and L-stable in :math:`J`, with
+:math:`\gamma = 1 - 1/\sqrt2`, :math:`\delta = 1 - 1/(2\gamma)`:
 
 .. math::
 
@@ -369,73 +365,15 @@ implicit part :math:`F_I(x) = J x`.
    (I - \gamma h J)\,\Phi_{n+1} = \Phi_n + h\left[\delta F_E(\Phi_n)
      + (1-\delta) F_E(Y) + (1-\gamma) J Y\right].
 
-The scheme is second order and L-stable in :math:`J`
-(:class:`~MCEq.solvers.imex.ImexStepper`).
+Both systems are solved by GMRES to a relative residual of 1e-8,
+preconditioned by :class:`~MCEq.solvers.imex.LevelSweep`: a forward
+substitution over the transfer graph of :math:`J` that drops the few entries
+pointing up in energy, with dense :math:`n_P \times n_P` blocks for the
+sec(θ) coupling in 2D. The code runs on numpy, or on CuPy with
+``kernel_config`` CUDA.
 
-**Stage solves.** Both systems are solved by restarted GMRES
-(:func:`~MCEq.solvers.imex.gmres`), preconditioned with an exact solve of
-the "lower" part of :math:`I - \gamma h J`
-(:class:`~MCEq.solvers.imex.LevelSweep`). The states are ordered by the
-strongly connected components of the transfer graph of :math:`J`, in
-topological order, and inside a component by descending total energy. Only
-the entries inside a component that point up in this order are left out of
-the preconditioner: the loss-stencil rows reaching up in energy and
-bin-average corrections of the decays. Everything else is lower block
-triangular and is solved level by level (a level is the set of states whose
-inputs are all known). A state is one block over the modes: diagonal
-outside the corner, and in the corner
-
-.. math::
-
-   \left(I - c\,\mathrm{diag}(d)\,S\right)x = r, \qquad
-   y = T_P x:\quad \left(I - c\,T_{PP}\,\mathrm{diag}\!\left(\frac{d_P}{1 - c\,d_P}\right)\right) y
-     = T_P \frac{r}{1 - c\,d},
-
-with :math:`c = \gamma h`, :math:`d` the state's diagonal over the modes and
-:math:`x = (r + c\,d \circ E_P y)/(1 - c\,d)`; the :math:`n_P \times n_P`
-matrices are inverted once per step, batched over the corner states. With
-``xp = cupy`` the same array code runs on the GPU. GMRES keeps the
-preconditioned vectors (flexible GMRES), so the sweep may be an inexact
-preconditioner; the residual is the fp64 operator's. With a warm
-start, GMRES needs about 5 to 10 iterations per stage on the 2D EM
-operator.
-
-**Tangent columns.** The sources :math:`G_k S\Phi` (and :math:`2G_kS\psi_k`)
-enter the explicit part (:class:`~MCEq.solvers.imex.TangentSources`), the
-off-diagonal of :math:`G_k` mixed like the production. Where :math:`G_k`
-holds only production between species the columns are the derivatives of
-the IMEX solution itself; other entries make them differ by the step error,
-as for ETD2. Groups of independent cascades with their columns
-(``tangent.groups``) share one solve.
-
-**Path.** :math:`\rho^{-1}` is the step mean, as for ETD2; the steps follow
-``config.imex_path`` (:math:`\epsilon` and ``dX_max``) and the requested
-grid, without the stiffness caps.
-
-**Choice.** ``config.integrator = "auto"`` (default) takes IMEX on 2D runs
-whose ETD2 stiffness cap (continuous losses with the sec(θ) coupling, EM
-cascade) is below ``config.imex_auto_dx`` = 0.5 g/cm², and ETD2 otherwise.
-IMEX pays off only where many cheap ETD2 steps are replaced by few
-expensive ones and the ETD2 step itself is expensive. Measured on the
-reduced grid with SIBYLL-2.3e (wall times, RTX 3090 / 48-core EPYC, MKL;
-hadronic: H3a, 0° / 80°):
-
-========================  ========  =================  =================
-case                      ETD2 cap  ETD2               IMEX
-========================  ========  =================  =================
-1D EM, p 1 TeV            0.031     2.5 s GPU, 7 s MKL 8 s GPU, 24 s CPU
-2D EM, γ 1 TeV            0.008     355 s GPU, 1.8 h*  16 s GPU, 20 min*
-2D hadronic, e_min 0.1    2.4       7 / 23 s GPU       13 / 40 s GPU
-3-mode Kamioka sources    —         5–8 s GPU          20–30 s GPU
-========================  ========  =================  =================
-
-\* CPU, extrapolated from the per-step cost (ETD2 MKL 51 ms, IMEX numpy 5 s).
-IMEX GPU times with the CUDA level kernel; the array sweep on CuPy is
-about 2× slower in 2D EM.
-
-Hadronic runs keep caps of 2 g/cm² or more down to e_min = 0.1 GeV, so
-their ETD2 steps are set by the density, as are the IMEX steps. 1D EM
-needs 100× more ETD2 steps, but at 0.1–0.2 ms per step.
+**Tangent columns.** In :meth:`~MCEq.core.MCEqRun.solve_batch` the sources
+:math:`G_k S\Phi` of the derivative columns enter the explicit part.
 
 Summary of one step
 ===================

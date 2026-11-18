@@ -38,16 +38,16 @@ def _matrices(n_k=1, cycle=True, seed=1):
         if cycle and k > 0:
             band[k, k - 1] = 8.0  # stencil entry reaching one bin up
     ints, decs = [], []
-    for l in range(n_k):
+    for mode in range(n_k):
         a = np.zeros((N, N))
         b = np.zeros((N, N))
         for k in range(N_BINS):
             h = N_BINS + k
-            a[k, k] = -0.03 - 0.01 * l  # light interaction (+ mode damping)
+            a[k, k] = -0.03 - 0.01 * mode  # light interaction (+ mode damping)
             a[:k, k] = 0.002  # light -> light, downward
             a[h, h] = -0.02
             a[N_BINS:h, h] = 0.001  # hadron redistribution, downward (implicit)
-            a[:k, h] = 0.004 * rng.random(k) / (1 + l)  # hadron -> light (explicit)
+            a[:k, h] = 0.004 * rng.random(k) / (1 + mode)  # hadron -> light (explicit)
             b[h, h] = -50.0
             b[min(k + 1, N_BINS - 1), h] = 45.0  # decay feeds light one bin up
         ints.append(a)

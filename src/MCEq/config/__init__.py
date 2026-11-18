@@ -205,23 +205,15 @@ etd2_path = {
     "fd_span": 0.01,
 }
 
-#: Integrator of :meth:`MCEq.core.MCEqRun.solve` and ``solve_batch``:
-#: ``"etd2"`` (exponential RK2, every backend and route), ``"imex"``
-#: (:mod:`MCEq.solvers.imex`, stiff part implicit; 1D and 2D, numpy or CUDA by
-#: ``kernel_config``, shared paths only, no 1D secant table) or ``"auto"``:
-#: IMEX on 2D runs whose ETD2 stiffness cap is below ``imex_auto_dx`` (EM
-#: showers, cap 0.008 g/cm^2), else ETD2. Hadronic runs have caps >= 2 g/cm^2,
-#: and 1D EM steps of ETD2 are cheap enough to win despite the 0.03 g/cm^2 cap
-#: (:ref:`solver-math`).
+#: Integrator: ``"auto"`` (IMEX for stiff 2D runs, i.e. EM showers, ETD2
+#: otherwise), ``"etd2"`` or ``"imex"`` (:ref:`solver-math`, "IMEX step").
 integrator = "auto"
 
-#: Threshold in g/cm^2 of the ETD2 stiffness cap below which ``"auto"`` takes IMEX.
+#: ETD2 stiffness cap in g/cm^2 below which ``"auto"`` takes IMEX on 2D runs.
 imex_auto_dx = 0.5
 
-#: Path of the IMEX integrator: within-step log inverse-density variation
-#: and step ceiling in g/cm^2 (accuracy limits, not stability limits).
-#: EM shower observables (Xmax, N) hold to eps 0.3; decay products of hadrons
-#: at high altitude need eps <= 0.05.
+#: Path of the IMEX integrator (no stiffness caps). eps 0.3 suffices for EM
+#: observables; hadron decay products at high altitude need eps <= 0.05.
 imex_path = {"eps": 0.05, "dX_max": 5.0}
 
 #: Cap EM integration steps at ``em_step_safety / r_EM``, with ``r_EM`` the
