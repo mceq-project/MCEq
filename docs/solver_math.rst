@@ -153,6 +153,25 @@ below (1 without it): :func:`~MCEq.solvers.path.continuous_loss_rate`,
 their one-step map is bounded for any step under the diagonal-exact
 splitting. The cap is a heuristic, not a stability proof.
 
+**Muon loss split.** A continuous loss carries only the mean
+:math:`\mu_h`; for the radiative muon losses of a steep spectrum that
+underestimates the flux after long paths (about 1.5 % for muons near the
+horizon above 100 GeV). With ``config.muon_loss_split`` (default) and a
+``muon_losses/<medium>`` group in the database, runs without the EM cascade
+split every muon loss at the fraction :math:`v^* = 0.1` of the muon energy:
+the band carries the soft loss below :math:`v^*`, and the losses above
+(bremsstrahlung, pair production, photonuclear, knock-on electrons) are a
+jump matrix :math:`J` in the same diagonal block,
+:math:`\mathrm{diag}(1/w)\, J\, \mathrm{diag}(w)` on the flux, :math:`J` in
+counts and :math:`w` the bin widths
+(:meth:`~MCEq.operators.matrix_builder.MatrixBuilder.muon_jump_operator`).
+:math:`J` joins the band, so it does not raise the step cap :eq:`losscap`
+noticeably (rates of order 1e-5 per g/cm²) and in 2D bypasses the backward
+removal. The tables come from mceq-EM cross sections
+(mceq-maintenance-tools ``--mode muon_losses``); below 1 GeV the soft loss
+is the total one and there are no jumps. EM runs keep the muon channels of
+the EM database.
+
 **The EM cascade.** With ``config.em_adaptive_step`` (off by default) the
 step is also capped at ``config.em_step_safety`` (0.12) divided by
 :math:`r_{\mathrm{EM}}`, the spectral radius of the off-diagonal

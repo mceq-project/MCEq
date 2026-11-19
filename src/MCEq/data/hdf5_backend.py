@@ -617,6 +617,22 @@ class HDF5Backend:
 
         return {"parents": parents, "index_d": index_d}
 
+    def _muon_loss_split(self):
+        """``(soft_dedx, hard_rates)`` of ``muon_losses/<medium>`` on the run's
+        energy window, or None: EM runs, ``config.muon_loss_split`` or
+        ``config.enable_cont_rad_loss`` off, or no group in the database."""
+        path = f"muon_losses/{self.medium}"
+        if (
+            config.enable_em
+            or not config.muon_loss_split
+            or not config.enable_cont_rad_loss
+            or not self._had.has(path)
+        ):
+            return None
+        group = self._had.read_group_datasets(path)
+        hard = group["hard_rates"][self._cuts][:, self._cuts]
+        return group["soft_dedx"][self._cuts], hard
+
     def continuous_loss_db(self):
         self._check_subgroup_exists(self._had, "continuous_losses", self.medium)
         if config.enable_em or not config.enable_cont_rad_loss:
@@ -664,13 +680,19 @@ class HDF5Backend:
                 # Tuple (boost, dEdx)
                 generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
 
+        split = self._muon_loss_split()
+        muon_hard = None
+        if split is not None:
+            soft, muon_hard = split
+            for pdg in (13, -13):
+                for hel in [0, 1, -1]:
+                    index_d[(pdg, hel)] = soft
+
+        out = {"parents": sorted(list(index_d)), "index_d": index_d}
+        out["muon_hard"] = muon_hard
         if generic_dedx is not None:
-            return {
-                "parents": sorted(list(index_d)),
-                "index_d": index_d,
-                "generic": generic_dedx,
-            }
-        return {"parents": sorted(list(index_d)), "index_d": index_d}
+            out["generic"] = generic_dedx
+        return out
 
 
 def he_le_weight(energy, transition, trwidth, dtype):

@@ -246,6 +246,14 @@ enable_energy_loss = True
 #: False: only muons (and e+-, see ``enable_em_ion``) carry continuous losses.
 generic_losses_all_charged = True
 
+#: Muons in runs without the EM cascade: losses above the fraction v* of the
+#: muon energy (bremsstrahlung, pair production, photonuclear, knock-on
+#: electrons) as discrete jumps, losses below as a continuous dE/dX, from the
+#: base database's ``muon_losses/<medium>`` group (mceq-maintenance-tools
+#: ``--mode muon_losses``). False, or a database without the group: all muon
+#: losses continuous (``continuous_losses/<medium>/total``).
+muon_loss_split = True
+
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
 enable_cont_rad_loss = True
