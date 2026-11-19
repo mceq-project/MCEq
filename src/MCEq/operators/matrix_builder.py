@@ -399,7 +399,7 @@ class MatrixBuilder:
                 rows.append(r + rc.lidx)
                 cols.append(cc + rp.lidx)
                 vals.append(slab[r, cc])
-            for lidcs, damping in dampings if self.k_grid[k] != 0 else ():
+            for lidcs, damping in dampings if dampings and self.k_grid[k] != 0 else ():
                 for lidx in lidcs:
                     diag = np.arange(lidx, lidx + n_e)
                     rows.append(diag)
