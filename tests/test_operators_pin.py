@@ -329,6 +329,7 @@ class _BlocksStub:
 
     _csr_from_blocks = MatrixBuilder._csr_from_blocks
     _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
+    _electron_scattering_damping = MatrixBuilder._electron_scattering_damping
 
     def __init__(self, is_2d, n_k=3, dim=8):
         self.is_2d = is_2d
