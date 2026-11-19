@@ -1,7 +1,7 @@
 schema: 1
 release: v2.0.0
 url_base: https://github.com/mceq-project/MCEq/releases/download/v2.0.0/
-created: '2026-10-14T21:22:15'
+created: '2026-11-19T11:36:33'
 defaults:
   1d: mceq_base_air_1d_v2.h5
   2d: mceq_base_air_2d_legendre_v2.h5
@@ -17,8 +17,8 @@ grids:
     k_grid_sha256: 4bb0b69088252aa6355e8af54d2e40ed2f0a1648df08cdd1a9a180f746cc79d2
 files:
   mceq_base_air_1d_v2.h5:
-    sha256: 6f35a9c45158b2b2952029dc58a7330e6c2b825f4aab81304dd941224b09c50c
-    size: 76484963
+    sha256: 47433299710882763f94f14fffde925447acdbabd375da0c73bcbf0624896ad6
+    size: 76844696
     grid: 1d-150
     spine: true
     models:
@@ -29,13 +29,14 @@ files:
       - SIBYLL23E
     source:
       key: 1d
-      file: mceq_db_v2_1d_stencil.h5
-      sha256: eb910eb7c1d40a918739c11717f72f14ab190920b5231c65a5428ce4fa909827
+      file: mceq_db_v2_1d_stencil_ml.h5
+      sha256: 03bad62fc15ad1d0ab055645d1f26d31e9675ca741d84f8ba1e70d25f5137fe0
       verbatim: false
-    note: default 1D package; models used for the paper's 1D figures; stencil bin-averaged
+    note: default 1D package; models used for the paper's 1D figures; stencil bin-averaged;
+      muon loss split (muon_losses)
   mceq_extra_models_air_1d_v2.h5:
-    sha256: f3092ca01fe15945ad9e4246da55120239807595861848cb882e11d1ba3c8cb7
-    size: 288432867
+    sha256: 61e1f058c6b4d83de05ae3592077ef4846b4546f40ecb53fa48f8350982efffc
+    size: 288788770
     grid: 1d-150
     spine: true
     models:
@@ -55,14 +56,14 @@ files:
       - SIBYLL23ESTARSTRANGE
     source:
       key: 1d
-      file: mceq_db_v2_1d_stencil.h5
-      sha256: eb910eb7c1d40a918739c11717f72f14ab190920b5231c65a5428ce4fa909827
+      file: mceq_db_v2_1d_stencil_ml.h5
+      sha256: 03bad62fc15ad1d0ab055645d1f26d31e9675ca741d84f8ba1e70d25f5137fe0
       verbatim: false
-    note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*,
-      SIBYLL21/23D/23ESTAR*); stencil bin-averaged
+    note: all other 1D models (DPMJETIII193, EPOSLHC, EPOSLHCR, PYTHIA8*, QGSJET*, SIBYLL21/23D/23ESTAR*);
+      stencil bin-averaged; muon loss split (muon_losses)
   mceq_base_air_2d_legendre_v2.h5:
-    sha256: a97f043d477241279f7f92d1b705fee2c8dca1c679cdacbe15be9617dcf37bbe
-    size: 455798944
+    sha256: 968a6c9034738ac81bced2ea1740b8221dbe4183dd0cc194e57c0b05ffb46157
+    size: 455865290
     grid: 2d-150x90
     spine: true
     models:
@@ -70,15 +71,15 @@ files:
       - FLUKA20251
     source:
       key: 2d
-      file: mceq_db_legendre_native_stencil.h5
-      sha256: 43c19c8f6b3e8490ef2ceef660d23b49eb3947b18365a8a69b7cfdb4e2600fb9
+      file: mceq_db_legendre_native_stencil_ml.h5
+      sha256: 4f2c6d5e40d8b092b58fc63f1bd57979ec6d0b21d8be8c1308d42f7e833bc8fa
       verbatim: false
     values_dtype: float32
-    note: default 2D package, 150 bins x 90 Legendre modes (FLUKA20251 native Legendre,
-      both hemispheres); air composition for muon scattering; stencil bin-averaged;
-      precomputed muon scattering rates
+    note: default 2D package, 150 bins x 90 Legendre modes (FLUKA20251 native Legendre, both
+      hemispheres); air composition for muon scattering; stencil bin-averaged; precomputed
+      muon scattering rates; muon loss split (muon_losses)
   mceq_model_SIBYLL23E_air_2d_legendre_v2.h5:
-    sha256: faef1ed7ab193d70a40ab33ef1f334b14e7ecd2c426c29d21814140f9a141c87
+    sha256: 232e3c39283bdd209d86781bad093202eba868fe805178c00df2bfba06c1189f
     size: 967581791
     grid: 2d-150x90
     spine: false
@@ -87,14 +88,14 @@ files:
       - SIBYLL23E
     source:
       key: 2d
-      file: mceq_db_legendre_native_stencil.h5
-      sha256: 43c19c8f6b3e8490ef2ceef660d23b49eb3947b18365a8a69b7cfdb4e2600fb9
+      file: mceq_db_legendre_native_stencil_ml.h5
+      sha256: 4f2c6d5e40d8b092b58fc63f1bd57979ec6d0b21d8be8c1308d42f7e833bc8fa
       verbatim: false
     values_dtype: float32
     note: SIBYLL 2.3e Legendre yields (m2m SIBYLL23E_legendre_20261008); needs mceq_base_air_2d_legendre_v2.h5;
       stencil bin-averaged
   mceq_secant1d_FLUKA20251_air_v2.h5:
-    sha256: 6b492b860d012b2cac27f6a733165ead19f101f73f86cadaf903c9cb509fb3e4
+    sha256: 4550c8f53d9f3fabf58b98eb1f1c344c51cc7921d51832f4673a5540a9b70ce6
     size: 18610208
     kind: secant_1d
     models:
@@ -103,7 +104,7 @@ files:
     source:
       key: 2d
       file: mceq_base_air_2d_legendre_v2.h5
-      sha256: a97f043d477241279f7f92d1b705fee2c8dca1c679cdacbe15be9617dcf37bbe
+      sha256: 968a6c9034738ac81bced2ea1740b8221dbe4183dd0cc194e57c0b05ffb46157
       verbatim: false
     note: '1D sec(theta) path elongation from 2D solves of the default 2D package (FLUKA20251
       angles): inclusive (GSF 2026.1) and shower (1 PeV p), zeniths 0/60/75/85/90 deg'
