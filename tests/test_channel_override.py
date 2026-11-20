@@ -82,8 +82,8 @@ class TestOverrideMechanics:
     def test_mod_pprod_multiplies_on_top(self, run_sib21):
         """The two mechanisms compose: the Barr-style factor applies to
         the injected matrix, not to the file matrix. (``_gen_mod_matrix``
-        zeroes the lower triangle, so the factor is 2 above the diagonal
-        and 0 on/below it.)"""
+        sets the lower triangle to 1, so the factor is 2 on/above the
+        diagonal and 1 below it.)"""
         table = run_sib21._interactions
         base = table.index_d[((2212, 0), (211, 0))]
         m = np.ones_like(base) * 2.0
