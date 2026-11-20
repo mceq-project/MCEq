@@ -617,6 +617,33 @@ class HDF5Backend:
 
         return {"parents": parents, "index_d": index_d}
 
+    def _add_mu_soft_dedx(self, index_d):
+        """Add the EM DB's restricted muon radiative loss to the ±13 entries.
+
+        EM databases built with the muon v*-split store the soft (v < v*)
+        radiative dE/dX as ``electromagnetic/<medium>/mu_soft_dedx``; the hard
+        part is the discrete mu->mu channel. Databases without it: no-op.
+
+        Parameters:
+            index_d (dict): ``{(pdg, helicity): dE/dX}``, modified in place.
+        """
+        path = f"electromagnetic/{self.medium}/mu_soft_dedx"
+        if not self._em_store.has(path):
+            return
+        soft = self._em_store.read_dataset(path)
+        if soft.size != self._e_grid_full.size:
+            # EM DB on its own grid (e.g. extended to lower energies):
+            # stored negative, so interpolate linearly in log(E).
+            em_eg = np.asarray(self._em_store.attrs("common")["e_grid"])
+            soft = np.interp(np.log(self._e_grid_full), np.log(em_eg), soft)
+        soft = soft[self._cuts]
+        info(3, "Adding the EM mu_soft_dedx to the muon ionization dE/dX.")
+        for pid in (13, -13):
+            for hel in (0, 1, -1):
+                if (pid, hel) in index_d:
+                    # Helicity entries alias one array: assign, don't add in place.
+                    index_d[(pid, hel)] = index_d[(pid, hel)] + soft
+
     def continuous_loss_db(self):
         self._check_subgroup_exists(self._had, "continuous_losses", self.medium)
         if config.enable_em or not config.enable_cont_rad_loss:
@@ -663,6 +690,9 @@ class HDF5Backend:
             else:
                 # Tuple (boost, dEdx)
                 generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
+
+        if config.enable_em:
+            self._add_mu_soft_dedx(index_d)
 
         if generic_dedx is not None:
             return {
