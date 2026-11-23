@@ -34,7 +34,7 @@ def test_stored_table_is_used():
 @pytest.mark.parametrize(
     ("change", "match"),
     [
-        ({"mass": 0.1057}, "muon mass"),
+        ({"mass": 0.1057}, "made for mass"),
         ({"ell": ELL[:-1]}, "modes"),
         ({"e": E * 1.001}, "modes"),
     ],
