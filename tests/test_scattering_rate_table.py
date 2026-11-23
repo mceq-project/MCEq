@@ -46,7 +46,7 @@ def test_table_for_other_inputs_is_refused(change, match):
 
 def test_missing_table_is_refused():
     layout = SimpleNamespace(scattering_rate_table=lambda: None)
-    with pytest.raises(ValueError, match="no muon scattering rates"):
+    with pytest.raises(ValueError, match="muon_multiple_scattering"):
         scattering.mode_rates(E, ELL, layout, MUON_MASS)
 
 
