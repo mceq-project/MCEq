@@ -322,26 +322,19 @@ class MatrixBuilder:
     def _muon_scattering_damping(self):
         """Return muon offsets and negative rates, shape (n_k, n_energy).
 
-        The rate of the selected model (:mod:`MCEq.operators.scattering`)
-        enters the interaction diagonal, which ETD2 integrates exactly.
+        The database's rate (:mod:`MCEq.operators.scattering`) enters the
+        interaction diagonal, which ETD2 integrates exactly.
         """
         if not (self.is_2d and config.muon_multiple_scattering):
             return None
-        # Prefer pman's (13, 0) mass; fall back to the PDG value.
-        try:
-            mu_mass = float(self._pman[(13, 0)].mass)
-        except (KeyError, AttributeError):
-            mu_mass = scattering.MUON_MASS
         muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
         damping = -scattering.mode_rates(
-            config.muon_scattering_model,
             self._energy_grid.c,
             self.k_grid,
-            getattr(self, "_layout", None),
-            mu_mass,
-            config.muon_scattering_finite_nuclei,
+            self._layout,
+            float(self._pman[(13, 0)].mass),
         )
         return muon_lidcs, damping
 

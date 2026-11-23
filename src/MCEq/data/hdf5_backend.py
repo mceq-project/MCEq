@@ -40,38 +40,14 @@ class HDF5Backend:
                 stack.enter_context(self._em_store.session())
             yield
 
-    def scattering_composition(self):
-        """Elemental composition of the medium, rows ``(Z, A [g/mol], atom fraction)``.
-
-        Read from ``material_scattering/<medium>/composition``; the screened
-        Coulomb scattering model needs it.
-        """
-        group = f"material_scattering/{self.medium}"
-        if not self._had.has(f"{group}/composition"):
-            raise ValueError(
-                f"{group}/composition is absent from {self.had_fname}. Use a "
-                "database with this medium or set "
-                "config.muon_scattering_model = 'gaussian'."
-            )
-        comp = np.asarray(self._had.read_group_datasets(group)["composition"], float)
-        if (
-            comp.ndim != 2
-            or comp.shape[1] != 3
-            or not np.all(np.isfinite(comp))
-            or np.any(comp <= 0)
-            or np.any(comp[:, 0] != np.round(comp[:, 0]))
-            or not np.isclose(comp[:, 2].sum(), 1.0, rtol=0, atol=1e-6)
-        ):
-            raise ValueError(f"Invalid composition at {group}/composition")
-        return comp
-
     def scattering_rate_table(self):
         """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
         Coulomb rates of the medium cut to the energy window, or None.
 
         ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
         on the file's grid, its inputs as attributes for ``scattering.mode_rates``
-        to check), read once per medium: rebuilds then reopen nothing.
+        to check), read once per medium: rebuilds then reopen nothing. Written by
+        mceq-maintenance-tools from ``mceq_em.coulomb_scattering``.
         """
         cache = self.__dict__.setdefault("_scattering_rate_tables", {})
         if self.medium not in cache:
