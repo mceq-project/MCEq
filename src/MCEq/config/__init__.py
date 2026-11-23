@@ -310,6 +310,13 @@ muon_helicity_dependence = True
 #: against MC runs with scattering switched off.
 muon_multiple_scattering = True
 
+#: Coulomb scattering of e+- in 2D runs with ``enable_em``, with the rates of
+#: the 2D EM database (``electromagnetic/<medium>/electron_scattering_rates``,
+#: see :mod:`MCEq.operators.scattering`). The 2D EM tables are collinear
+#: (production angles ~m_e/E), so without it the EM cascade keeps the angles of
+#: its parents.
+em_multiple_scattering = True
+
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
 #: over-predicting the wide-angle density of species in local

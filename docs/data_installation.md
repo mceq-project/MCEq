@@ -70,6 +70,9 @@ python -m MCEq.data.download --verify             # exit 1 if a file is stale
 For 2D runs point `config.mceq_db_fname` at a Legendre 2D base file; a model
 it does not hold is resolved through the manifest in the same way, from the
 packages on its grid.
+With `config.enable_em`, a 2D run also needs `config.em_db_fname` to be a 2D EM
+database on the same Legendre modes, which also carries the e± multiple-scattering
+rates. A 1D EM file in a 2D run is refused.
 
 If no file in the release provides the requested model, the error lists the
 models that are available.
