@@ -138,20 +138,20 @@ class MatrixBuilder:
                         or (config.generic_losses_all_charged and pid != 11)
                     ):
                         info(5, "Cont. loss for", parent.name)
-                        if config.enable_cont_rad_loss:
-                            # Kept for the int_m_hadr / dEdx_band split.
-                            band = self.cont_loss_operator(parent.pdg_id)
-                            if pid == 13 and parent.muon_hard_rates is not None:
-                                band = band + self.muon_jump_operator(parent)
-                            self._contloss_bands[idx] = band
-                            self._contloss_upwind_rows[idx] = self._closure_rows_for(
-                                parent.pdg_id
-                            )
-                            self._preband_blocks[idx] = self.C_blocks[idx].copy()
-                            if self.is_2d:
-                                self.C_blocks[idx] += band[None, :, :]
-                            else:
-                                self.C_blocks[idx] += band
+                        # The backend loads the ionization set when
+                        # enable_cont_rad_loss is off; the band stays.
+                        band = self.cont_loss_operator(parent.pdg_id)
+                        if pid == 13 and parent.muon_hard_rates is not None:
+                            band = band + self.muon_jump_operator(parent)
+                        self._contloss_bands[idx] = band
+                        self._contloss_upwind_rows[idx] = self._closure_rows_for(
+                            parent.pdg_id
+                        )
+                        self._preband_blocks[idx] = self.C_blocks[idx].copy()
+                        if self.is_2d:
+                            self.C_blocks[idx] += band[None, :, :]
+                        else:
+                            self.C_blocks[idx] += band
 
         self.int_m = self._csr_from_blocks(self.C_blocks, apply_muon_scattering=True)
         self.int_m_hadr = self._csr_from_blocks(
