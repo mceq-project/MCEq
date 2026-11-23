@@ -167,8 +167,8 @@ counts and :math:`w` the bin widths
 (:meth:`~MCEq.operators.matrix_builder.MatrixBuilder.muon_jump_operator`).
 :math:`J` joins the band, so it does not raise the step cap :eq:`losscap`
 noticeably (rates of order 1e-5 per g/cm²) and in 2D bypasses the backward
-removal. The tables come from mceq-EM cross sections
-(mceq-maintenance-tools ``--mode muon_losses``); below 1 GeV the soft loss
+removal. The tables come from mceq-EM cross sections, in the base
+database's ``muon_losses/<medium>`` group; below 1 GeV the soft loss
 is the total one and there are no jumps. EM runs keep the muon channels of
 the EM database.
 

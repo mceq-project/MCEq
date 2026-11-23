@@ -71,10 +71,9 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 prompt_ctau = 2.6842
 
 #: Bin-averaged rates for databases with stencil-averaged tables: the decay and
-#: interaction rates of the parents the database marks (mceq-maintenance-tools
-#: ``bin_average``) become banded stencil operators instead of diagonals, so the
-#: counted decays and interactions are bin integrals. No effect on databases
-#: without the marks.
+#: interaction rates of the parents the database marks become banded stencil
+#: operators instead of diagonals, so the counted decays and interactions are bin
+#: integrals. No effect on databases without the marks.
 bin_average_rates = True
 
 #: Approximate value for the maximum density expected. Used by the
@@ -249,9 +248,8 @@ generic_losses_all_charged = True
 #: Muons in runs without the EM cascade: losses above the fraction v* of the
 #: muon energy (bremsstrahlung, pair production, photonuclear, knock-on
 #: electrons) as discrete jumps, losses below as a continuous dE/dX, from the
-#: base database's ``muon_losses/<medium>`` group (mceq-maintenance-tools
-#: ``--mode muon_losses``). False, or a database without the group: all muon
-#: losses continuous (``continuous_losses/<medium>/total``).
+#: base database's ``muon_losses/<medium>`` group. False, or a database without
+#: the group: all muon losses continuous (``continuous_losses/<medium>/total``).
 muon_loss_split = True
 
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit

@@ -471,8 +471,7 @@ class HDF5Backend:
                     f"2D database '{self.had_fname}': the 'polarized' "
                     "decay dataset does not declare layout='superset'. "
                     "Legacy delta-layout 2D databases are not supported; "
-                    "rebuild the database with current "
-                    "mceq-maintenance-tools."
+                    "use a current v2 database."
                 )
         dec_index = self._gen_db_dictionary(
             self._had.read_channel_pack("decays", decay_dset_name),
@@ -563,8 +562,7 @@ class HDF5Backend:
                     f"Cross-section table '{medium}/{mname}' in "
                     f"'{self.had_fname}' has no 'parents' attribute. "
                     "Legacy databases using 'projectiles' are not "
-                    "supported; rebuild the database with current "
-                    "mceq-maintenance-tools."
+                    "supported; use a current v2 database."
                 )
             parents = list(cs_attrs["parents"])
             for ip, p in enumerate(parents):
