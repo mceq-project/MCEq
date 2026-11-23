@@ -468,3 +468,20 @@ def test_identity_mod_pprod_leaves_the_matrix_unchanged():
     table.index_d = {((2212, 0), (2212, 0)): base}
     assert table._set_mod_pprod(2212, 2212, scale, ("scale", 1.0)) is True
     np.testing.assert_array_equal(table.get_matrix((2212, 0), (2212, 0)), base)
+
+
+def x_lab(xmat, egrid):
+    """Modification by x itself."""
+    return np.array(xmat)
+
+
+def test_mod_pprod_modifies_the_sub_diagonal_at_its_x():
+    """The modification acts on every entry, children above the parent bin (x > 1) too."""
+    table = interactions([(2212, 0), (2112, 0)])
+    base = np.random.default_rng(2).random((3, GRID.d, GRID.d))
+    table.relations = {(2212, 0): [(2212, 0)]}
+    table.index_d = {((2212, 0), (2212, 0)): base}
+    assert table._set_mod_pprod(2212, 2212, x_lab, ()) is True
+    x = GRID.c[:, None] / GRID.c[None, :]
+    assert x[1, 0] > 1
+    np.testing.assert_allclose(table.get_matrix((2212, 0), (2212, 0)), base * x)
