@@ -153,6 +153,25 @@ below (1 without it): :func:`~MCEq.solvers.path.continuous_loss_rate`,
 their one-step map is bounded for any step under the diagonal-exact
 splitting. The cap is a heuristic, not a stability proof.
 
+**Muon loss split.** A continuous loss carries only the mean
+:math:`\mu_h`; for the radiative muon losses of a steep spectrum that
+underestimates the flux after long paths (about 1.5 % for muons near the
+horizon above 100 GeV). With ``config.muon_loss_split`` (default) and a
+``muon_losses/<medium>`` group in the database, runs without the EM cascade
+split every muon loss at the fraction :math:`v^* = 0.1` of the muon energy:
+the band carries the soft loss below :math:`v^*`, and the losses above
+(bremsstrahlung, pair production, photonuclear, knock-on electrons) are a
+jump matrix :math:`J` in the same diagonal block,
+:math:`\mathrm{diag}(1/w)\, J\, \mathrm{diag}(w)` on the flux, :math:`J` in
+counts and :math:`w` the bin widths
+(:meth:`~MCEq.operators.matrix_builder.MatrixBuilder.muon_jump_operator`).
+:math:`J` joins the band, so it does not raise the step cap :eq:`losscap`
+noticeably (rates of order 1e-5 per g/cm²) and in 2D bypasses the backward
+removal. The tables come from mceq-EM cross sections, in the base
+database's ``muon_losses/<medium>`` group; below 1 GeV the soft loss
+is the total one and there are no jumps. EM runs keep the muon channels of
+the EM database.
+
 **The EM cascade.** With ``config.em_adaptive_step`` (off by default) the
 step is also capped at ``config.em_step_safety`` (0.12) divided by
 :math:`r_{\mathrm{EM}}`, the spectral radius of the off-diagonal
@@ -179,8 +198,20 @@ mode obeys :eq:`linear` with its own :math:`A(l_k)`, :math:`B(l_k)`; in the
 paraxial approximation the modes are decoupled and form one block-diagonal
 system of dimension :math:`n_k N`. The mode :math:`l = 0` is the
 angle-integrated flux. The only :math:`l`-dependent diagonal entry is the
-muon multiple-scattering rate :math:`-\Gamma(E, l)`
+multiple-scattering rate :math:`-\Gamma(E, l)` of muons and, in EM runs
+(``config.enable_em`` and ``config.em_multiple_scattering``), of e±
 (:mod:`MCEq.operators.scattering`), integrated exactly as part of :math:`D`.
+
+**EM in 2D.** γ and e± production enters every mode with the 1D block
+(collinear: bremsstrahlung and pair production emit at angles
+:math:`\sim m_e/E`, and :math:`P_l(1) = 1`). The 2D EM database holds these
+blocks per mode, made from the 1D one, and a 2D run refuses an EM database on other modes. e±
+scatter with the screened Coulomb rate for the electron mass and point
+nuclei, which the same step writes into the 2D EM database from mceq-EM
+(``electromagnetic/<medium>/electron_scattering_rates``). At MeV this rate reaches :math:`\sim 10^4` cm²/g at high :math:`l`
+(muons :math:`\sim 10^5`), beyond what the ETD2 corner treatment below
+integrates stably; ``config.integrator = "auto"`` therefore runs 2D EM
+showers with IMEX (`IMEX step`_), which has no such limit.
 
 With ``config.legendre_backward_removal`` the off-diagonal production and
 decay terms of the dense block of modes are multiplied by :math:`I - R`,
@@ -255,7 +286,7 @@ stays in the remainder. The exactly integrated operator is the diagonal
    \qquad \Delta_{j,i} = D^f_{j,i} - D^0_i,
 
 with :math:`D^f` the full diagonal on the corner and :math:`\Delta` its
-:math:`l`-dependent part, the muon multiple-scattering damping
+:math:`l`-dependent part, the multiple-scattering damping
 (:attr:`~MCEq.operators.compiled.CompiledOperator.exact_slot_diagonals`).
 :math:`\Delta` does not commute with :math:`S_P`; its diagonal in the basis
 joins :math:`L`, which keeps the step stable, and only its mode mixing stays

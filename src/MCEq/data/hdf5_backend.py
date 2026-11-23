@@ -40,50 +40,38 @@ class HDF5Backend:
                 stack.enter_context(self._em_store.session())
             yield
 
-    def scattering_composition(self):
-        """Elemental composition of the medium, rows ``(Z, A [g/mol], atom fraction)``.
-
-        Read from ``material_scattering/<medium>/composition``; the screened
-        Coulomb scattering model needs it.
-        """
-        group = f"material_scattering/{self.medium}"
-        if not self._had.has(f"{group}/composition"):
-            raise ValueError(
-                f"{group}/composition is absent from {self.had_fname}. Use a "
-                "database with this medium or set "
-                "config.muon_scattering_model = 'gaussian'."
-            )
-        comp = np.asarray(self._had.read_group_datasets(group)["composition"], float)
-        if (
-            comp.ndim != 2
-            or comp.shape[1] != 3
-            or not np.all(np.isfinite(comp))
-            or np.any(comp <= 0)
-            or np.any(comp[:, 0] != np.round(comp[:, 0]))
-            or not np.isclose(comp[:, 2].sum(), 1.0, rtol=0, atol=1e-6)
-        ):
-            raise ValueError(f"Invalid composition at {group}/composition")
-        return comp
-
     def scattering_rate_table(self):
         """``(rates, l_grid, e_grid, attrs)`` of the precomputed screened
-        Coulomb rates of the medium cut to the energy window, or None.
+        Coulomb muon rates of the medium cut to the energy window, or None.
 
         ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
         on the file's grid, its inputs as attributes for ``scattering.mode_rates``
-        to check), read once per medium: rebuilds then reopen nothing.
+        to check), read once per medium: rebuilds then reopen nothing. Computed
+        with ``mceq_em.coulomb_scattering``.
         """
+        path = f"material_scattering/{self.medium}/screened_coulomb_rates"
+        return self._rate_table(self._had, path)
+
+    def electron_scattering_rate_table(self):
+        """The e+- rates of the 2D EM database, as :meth:`scattering_rate_table`.
+
+        ``electromagnetic/<medium>/electron_scattering_rates``.
+        """
+        path = f"electromagnetic/{self.medium}/electron_scattering_rates"
+        return self._rate_table(self._em_store, path)
+
+    def _rate_table(self, store, path):
+        """``(rates cut to the window, l_grid, e_grid, attrs)`` at ``path``, or None; cached."""
         cache = self.__dict__.setdefault("_scattering_rate_tables", {})
-        if self.medium not in cache:
-            path = f"material_scattering/{self.medium}/screened_coulomb_rates"
-            got, cache[self.medium] = self._had.read_optional_table(path), None
+        if path not in cache:
+            got, cache[path] = store.read_optional_table(path), None
             if got is not None:
                 rates, attrs, common = got
                 l_grid = np.asarray(common.get("k_grid", []), dtype=float)
                 if np.shape(rates) == (l_grid.size, np.size(common["e_grid"])):
                     cut = rates[:, self._cuts]
-                    cache[self.medium] = cut, l_grid, self._energy_grid.c, attrs
-        return cache[self.medium]
+                    cache[path] = cut, l_grid, self._energy_grid.c, attrs
+        return cache[path]
 
     def __init__(
         self,
@@ -178,6 +166,15 @@ class HDF5Backend:
     @property
     def energy_grid(self):
         return self._energy_grid
+
+    def _check_em_modes(self):
+        """Refuse an EM database whose Legendre modes differ from the run's."""
+        k_em = self._em_store.attrs("common").get("k_grid")
+        if k_em is None or not np.array_equal(np.asarray(k_em), self.k_grid):
+            raise ValueError(
+                f"{config.em_db_fname} is not a 2D EM database on the modes of "
+                f"{config.mceq_db_fname}."
+            )
 
     def _gen_db_dictionary(self, pack, eqv=None):
         index_d = {}
@@ -414,6 +411,8 @@ class HDF5Backend:
             info(2, "Injecting EM matrices into interaction_db.")
             self._check_subgroup_exists(self._em_store, "/", "electromagnetic")
             self._check_subgroup_exists(self._em_store, "electromagnetic", self.medium)
+            if self.is_2d:
+                self._check_em_modes()
             em_index = self._gen_db_dictionary(
                 self._em_store.read_channel_pack(
                     f"electromagnetic/{self.medium}", "emca_mats"
@@ -471,8 +470,7 @@ class HDF5Backend:
                     f"2D database '{self.had_fname}': the 'polarized' "
                     "decay dataset does not declare layout='superset'. "
                     "Legacy delta-layout 2D databases are not supported; "
-                    "rebuild the database with current "
-                    "mceq-maintenance-tools."
+                    "use a current v2 database."
                 )
         dec_index = self._gen_db_dictionary(
             self._had.read_channel_pack("decays", decay_dset_name),
@@ -563,8 +561,7 @@ class HDF5Backend:
                     f"Cross-section table '{medium}/{mname}' in "
                     f"'{self.had_fname}' has no 'parents' attribute. "
                     "Legacy databases using 'projectiles' are not "
-                    "supported; rebuild the database with current "
-                    "mceq-maintenance-tools."
+                    "supported; use a current v2 database."
                 )
             parents = list(cs_attrs["parents"])
             for ip, p in enumerate(parents):
@@ -617,6 +614,22 @@ class HDF5Backend:
 
         return {"parents": parents, "index_d": index_d}
 
+    def _muon_loss_split(self):
+        """``(soft_dedx, hard_rates)`` of ``muon_losses/<medium>`` on the run's
+        energy window, or None: EM runs, ``config.muon_loss_split`` or
+        ``config.enable_cont_rad_loss`` off, or no group in the database."""
+        path = f"muon_losses/{self.medium}"
+        if (
+            config.enable_em
+            or not config.muon_loss_split
+            or not config.enable_cont_rad_loss
+            or not self._had.has(path)
+        ):
+            return None
+        group = self._had.read_group_datasets(path)
+        hard = group["hard_rates"][self._cuts][:, self._cuts]
+        return group["soft_dedx"][self._cuts], hard
+
     def continuous_loss_db(self):
         self._check_subgroup_exists(self._had, "continuous_losses", self.medium)
         if config.enable_em or not config.enable_cont_rad_loss:
@@ -664,13 +677,19 @@ class HDF5Backend:
                 # Tuple (boost, dEdx)
                 generic_dedx = (cl_db_hadrons[k][0], cl_db_hadrons[k][1])
 
+        split = self._muon_loss_split()
+        muon_hard = None
+        if split is not None:
+            soft, muon_hard = split
+            for pdg in (13, -13):
+                for hel in [0, 1, -1]:
+                    index_d[(pdg, hel)] = soft
+
+        out = {"parents": sorted(list(index_d)), "index_d": index_d}
+        out["muon_hard"] = muon_hard
         if generic_dedx is not None:
-            return {
-                "parents": sorted(list(index_d)),
-                "index_d": index_d,
-                "generic": generic_dedx,
-            }
-        return {"parents": sorted(list(index_d)), "index_d": index_d}
+            out["generic"] = generic_dedx
+        return out
 
 
 def he_le_weight(energy, transition, trwidth, dtype):

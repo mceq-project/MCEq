@@ -71,10 +71,9 @@ density_model = ("CORSIKA", ("BK_USStd", None))
 prompt_ctau = 2.6842
 
 #: Bin-averaged rates for databases with stencil-averaged tables: the decay and
-#: interaction rates of the parents the database marks (mceq-maintenance-tools
-#: ``bin_average``) become banded stencil operators instead of diagonals, so the
-#: counted decays and interactions are bin integrals. No effect on databases
-#: without the marks.
+#: interaction rates of the parents the database marks become banded stencil
+#: operators instead of diagonals, so the counted decays and interactions are bin
+#: integrals. No effect on databases without the marks.
 bin_average_rates = True
 
 #: Approximate value for the maximum density expected. Used by the
@@ -246,6 +245,13 @@ enable_energy_loss = True
 #: False: only muons (and e+-, see ``enable_em_ion``) carry continuous losses.
 generic_losses_all_charged = True
 
+#: Muons in runs without the EM cascade: losses above the fraction v* of the
+#: muon energy (bremsstrahlung, pair production, photonuclear, knock-on
+#: electrons) as discrete jumps, losses below as a continuous dE/dX, from the
+#: base database's ``muon_losses/<medium>`` group. False, or a database without
+#: the group: all muon losses continuous (``continuous_losses/<medium>/total``).
+muon_loss_split = True
+
 #: Treat radiation (bremsstrahlung) as continuous loss, disable if explicit
 #: electromagnetic cross sections available
 enable_cont_rad_loss = True
@@ -299,21 +305,17 @@ use_isospin_sym = True
 #: ``enable_em`` is set.
 muon_helicity_dependence = True
 
-#: Coulomb scattering of muons in the 2D transport (see
-#: :mod:`MCEq.operators.scattering`). Disable only to compare against MC runs
-#: with scattering switched off.
+#: Coulomb scattering of muons in the 2D transport, with the rates of the
+#: database (see :mod:`MCEq.operators.scattering`). Disable only to compare
+#: against MC runs with scattering switched off.
 muon_multiple_scattering = True
 
-#: Muon scattering model: "screened-coulomb" (screened Rutherford, with the
-#: single-scattering tail; needs the medium composition in the database) or
-#: "gaussian" (CORSIKA Gauss approximation, Gaussian core only).
-muon_scattering_model = "screened-coulomb"
-
-#: Screened Coulomb only: nuclear form factor and electron kinematic limit as
-#: in Geant4's WentzelVI cross section (see :mod:`MCEq.operators.scattering`).
-#: False restores point nuclei, whose Rutherford tail over-populates large
-#: angles above ~1 GeV.
-muon_scattering_finite_nuclei = True
+#: Coulomb scattering of e+- in 2D runs with ``enable_em``, with the rates of
+#: the 2D EM database (``electromagnetic/<medium>/electron_scattering_rates``,
+#: see :mod:`MCEq.operators.scattering`). The 2D EM tables are collinear
+#: (production angles ~m_e/E), so without it the EM cascade keeps the angles of
+#: its parents.
+em_multiple_scattering = True
 
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,

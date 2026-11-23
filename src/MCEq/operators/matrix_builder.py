@@ -141,6 +141,8 @@ class MatrixBuilder:
                         if config.enable_cont_rad_loss:
                             # Kept for the int_m_hadr / dEdx_band split.
                             band = self.cont_loss_operator(parent.pdg_id)
+                            if pid == 13 and parent.muon_hard_rates is not None:
+                                band = band + self.muon_jump_operator(parent)
                             self._contloss_bands[idx] = band
                             self._contloss_upwind_rows[idx] = self._closure_rows_for(
                                 parent.pdg_id
@@ -210,6 +212,16 @@ class MatrixBuilder:
 
         op_step = np.eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
         return np.linalg.matrix_power(op_step, n_steps) - np.eye(self._energy_grid.d)
+
+    def muon_jump_operator(self, particle):
+        """Hard muon losses of the muon loss split on the flux (per GeV).
+
+        ``muon_hard_rates`` moves counts; on the flux it is
+        ``diag(1/w) J diag(w)``. It joins the loss band: losses keep the
+        direction, so 2D runs exempt it from the backward removal.
+        """
+        w = np.asarray(self._energy_grid.w, dtype=np.float64)
+        return particle.muon_hard_rates * w[None, :] / w[:, None]
 
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
@@ -322,38 +334,55 @@ class MatrixBuilder:
     def _muon_scattering_damping(self):
         """Return muon offsets and negative rates, shape (n_k, n_energy).
 
-        The rate of the selected model (:mod:`MCEq.operators.scattering`)
-        enters the interaction diagonal, which ETD2 integrates exactly.
+        The database's rate (:mod:`MCEq.operators.scattering`) enters the
+        interaction diagonal, which ETD2 integrates exactly.
         """
         if not (self.is_2d and config.muon_multiple_scattering):
             return None
-        # Prefer pman's (13, 0) mass; fall back to the PDG value.
-        try:
-            mu_mass = float(self._pman[(13, 0)].mass)
-        except (KeyError, AttributeError):
-            mu_mass = scattering.MUON_MASS
         muon_lidcs = scattering.muon_state_offsets(self._pman.pdg2pref)
         if not muon_lidcs:
             return None
         damping = -scattering.mode_rates(
-            config.muon_scattering_model,
             self._energy_grid.c,
             self.k_grid,
-            getattr(self, "_layout", None),
-            mu_mass,
-            config.muon_scattering_finite_nuclei,
+            self._layout,
+            float(self._pman[(13, 0)].mass),
         )
         return muon_lidcs, damping
+
+    def _electron_scattering_damping(self):
+        """Return e+- offsets and negative rates, shape (n_k, n_energy), or
+        None outside 2D runs with ``enable_em`` and ``em_multiple_scattering``."""
+        if not (self.is_2d and config.enable_em and config.em_multiple_scattering):
+            return None
+        lidcs = scattering.electron_state_offsets(self._pman.pdg2pref)
+        if not lidcs:
+            return None
+        damping = -scattering.electron_mode_rates(
+            self._energy_grid.c,
+            self.k_grid,
+            self._layout,
+            float(self._pman[(11, 0)].mass),
+        )
+        return lidcs, damping
 
     def _csr_from_blocks(self, blocks, apply_muon_scattering=False):
         """Assemble the per-channel blocks into the global CSR operator.
 
         2D blocks ``(n_k, dim, dim)`` give one CSR per mode, joined block-diagonally.
-        ``apply_muon_scattering`` adds :meth:`_muon_scattering_damping` to the muon diagonals.
+        ``apply_muon_scattering`` adds :meth:`_muon_scattering_damping` to the muon
+        diagonals and :meth:`_electron_scattering_damping` to the e+- diagonals.
         """
-        mu_damp = None
+        dampings = []
         if self.is_2d and apply_muon_scattering:
-            mu_damp = self._muon_scattering_damping()
+            dampings = [
+                d
+                for d in (
+                    self._muon_scattering_damping(),
+                    self._electron_scattering_damping(),
+                )
+                if d is not None
+            ]
         n_e = self.dim
         shape = (self.dim_states, self.dim_states)
         per_mode_csr = []
@@ -373,14 +402,12 @@ class MatrixBuilder:
                 rows.append(r + rc.lidx)
                 cols.append(cc + rp.lidx)
                 vals.append(slab[r, cc])
-            if mu_damp is not None and self.k_grid[k] != 0:
-                muon_lidcs, all_damping = mu_damp
-                damping = all_damping[k]
-                for lidx in muon_lidcs:
+            for lidcs, damping in dampings if dampings and self.k_grid[k] != 0 else ():
+                for lidx in lidcs:
                     diag = np.arange(lidx, lidx + n_e)
                     rows.append(diag)
                     cols.append(diag)
-                    vals.append(damping)
+                    vals.append(damping[k])
             if rows:
                 m = sp.coo_matrix(
                     (

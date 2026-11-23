@@ -1,8 +1,8 @@
-"""The precomputed screened Coulomb rates a 2D database may carry.
+"""Muon scattering rates come from the database's table, never computed.
 
-``material_scattering/<medium>/screened_coulomb_rates`` (written by
-mceq-maintenance-tools) replaces the ~l_max^2 evaluation of
-``screened_coulomb_rate_legendre`` when the inputs it records match the run.
+The physics is tested in mceq-EM (``mceq_em.coulomb_scattering``); here: the
+table is used on the run's grid, refused when it does not match, and placed on
+the muon diagonals of every mode.
 """
 
 from types import SimpleNamespace
@@ -11,49 +11,43 @@ import h5py
 import numpy as np
 import pytest
 
+from MCEq import config
 from MCEq.operators import scattering
+from MCEq.operators.matrix_builder import MatrixBuilder
 
+MUON_MASS = 0.10566
 E = np.logspace(-1, 2, 7)
 ELL = np.array([0.0, 1.0, 2.0, 5.0, 12.0])
-COMP = np.array([[7, 14.0, 0.78], [8, 16.0, 0.21], [18, 40.0, 0.01]])
+TABLE = np.arange(ELL.size * E.size, dtype=float).reshape(ELL.size, E.size)
 
 
-def _layout(rates, finite=True, mass=scattering.MUON_MASS, ell=ELL, e=E):
-    attrs = {"finite_nuclei": finite, "muon_mass": mass}
-    return SimpleNamespace(
-        scattering_rate_table=lambda: (rates, ell, e, attrs),
-        scattering_composition=lambda: COMP,
-    )
+def _layout(rates=TABLE, mass=MUON_MASS, ell=ELL, e=E):
+    attrs = {"finite_nuclei": True, "muon_mass": mass, "model": "screened-coulomb"}
+    return SimpleNamespace(scattering_rate_table=lambda: (rates, ell, e, attrs))
 
 
-def test_stored_table_is_used_when_the_inputs_match():
-    stored = np.arange(ELL.size * E.size, dtype=float).reshape(ELL.size, E.size)
-    got = scattering.mode_rates("screened-coulomb", E, ELL, _layout(stored))
-    assert np.array_equal(got, stored)
+def test_stored_table_is_used():
+    got = scattering.mode_rates(E, ELL, _layout(), MUON_MASS)
+    assert np.array_equal(got, TABLE)
 
 
 @pytest.mark.parametrize(
-    "change",
-    [{"finite": False}, {"mass": 0.1057}, {"ell": ELL[:-1]}, {"e": E * 1.001}],
+    ("change", "match"),
+    [
+        ({"mass": 0.1057}, "made for mass"),
+        ({"ell": ELL[:-1]}, "modes"),
+        ({"e": E * 1.001}, "modes"),
+    ],
 )
-def test_stored_table_is_ignored_when_an_input_differs(change):
-    layout = _layout(np.full((ELL.size, E.size), -1.0), **change)
-    got = scattering.mode_rates("screened-coulomb", E, ELL, layout)
-    want = scattering.screened_coulomb_rate_legendre(E, ELL, COMP)
-    assert np.array_equal(got, want)
+def test_table_for_other_inputs_is_refused(change, match):
+    with pytest.raises(ValueError, match=match):
+        scattering.mode_rates(E, ELL, _layout(**change), MUON_MASS)
 
 
-def test_computed_rates_are_memoised():
-    scattering._screened_coulomb_cached.cache_clear()
-    layout = SimpleNamespace(scattering_composition=lambda: COMP)
-    a = scattering.mode_rates("screened-coulomb", E, ELL, layout, finite_nuclei=False)
-    a[:] = 0.0  # the caller's copy, not the cached array
-    b = scattering.mode_rates("screened-coulomb", E, ELL, layout, finite_nuclei=False)
-    info = scattering._screened_coulomb_cached.cache_info()
-    assert info.hits == 1 and info.misses == 1
-    assert np.array_equal(
-        b, scattering.screened_coulomb_rate_legendre(E, ELL, COMP, finite_nuclei=False)
-    )
+def test_missing_table_is_refused():
+    layout = SimpleNamespace(scattering_rate_table=lambda: None)
+    with pytest.raises(ValueError, match="muon_multiple_scattering"):
+        scattering.mode_rates(E, ELL, layout, MUON_MASS)
 
 
 def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
@@ -67,11 +61,10 @@ def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
     path = tmp_path / "table.h5"
     with h5py.File(path, "w") as f:
         f.create_group("common").attrs.update({"e_grid": e_full, "k_grid": k_grid})
-        f["material_scattering/air/composition"] = COMP
         ds = f.create_dataset(
             f"material_scattering/air/{scattering.RATE_TABLE}", data=table
         )
-        ds.attrs.update({"finite_nuclei": True, "muon_mass": scattering.MUON_MASS})
+        ds.attrs.update({"finite_nuclei": True, "muon_mass": MUON_MASS})
     backend = HDF5Backend.__new__(HDF5Backend)
     backend._had, backend.medium = HDF5Store(path), "air"
     backend._cuts = slice(3, 9)
@@ -84,9 +77,38 @@ def test_backend_cuts_the_stored_table_to_the_energy_window(tmp_path):
     assert len(reads) == 1
     assert np.array_equal(rates, table[:, 3:9])
     assert np.array_equal(l_grid, k_grid) and np.array_equal(e_grid, e_full[3:9])
-    assert attrs["finite_nuclei"]
-    got = scattering.mode_rates("screened-coulomb", e_full[3:9], k_grid, backend)
+    got = scattering.mode_rates(e_full[3:9], k_grid, backend, MUON_MASS)
     assert np.array_equal(got, table[:, 3:9])
 
     backend.medium = "water"
     assert backend.scattering_rate_table() is None
+
+
+def test_all_muon_charges_helicities_and_operator_placement(monkeypatch):
+    k_grid, e_kin = np.array([0.0, 10.0]), np.array([1.0, 10.0])
+    table = np.array([[0.0, 0.0], [3.0, 0.5]])
+    builder = MatrixBuilder.__new__(MatrixBuilder)
+    builder.is_2d, builder.n_k, builder.k_grid = True, 2, k_grid
+    builder._layout = _layout(table, ell=k_grid, e=e_kin)
+    monkeypatch.setattr(config, "muon_multiple_scattering", True)
+    monkeypatch.setattr(config, "floatlen", np.float64)
+    builder._energy_grid = SimpleNamespace(c=e_kin, d=2)
+    particles = {
+        (pdg, hel): SimpleNamespace(lidx=2 * i, mceqidx=i, mass=MUON_MASS)
+        for i, (pdg, hel) in enumerate(((p, h) for p in (13, -13) for h in (0, -1, 1)))
+    }
+
+    class Pman(dict):
+        pass
+
+    pman = Pman(particles)
+    pman.pdg2pref, pman.dim_states, pman.dim = particles, 12, 2
+    builder._pman = pman
+    matrix = builder._csr_from_blocks({}, apply_muon_scattering=True)
+    expected = np.zeros(24)
+    expected[12:24] = np.tile(-table[1], 6)
+    np.testing.assert_array_equal(matrix.diagonal(), expected)
+    assert matrix.nnz == 12
+
+    monkeypatch.setattr(config, "muon_multiple_scattering", False)
+    assert builder._csr_from_blocks({}, apply_muon_scattering=True).nnz == 0

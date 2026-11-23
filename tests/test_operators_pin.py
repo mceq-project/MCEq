@@ -34,7 +34,7 @@ import scipy.sparse as sp
 
 from MCEq import config
 from MCEq.core import MatrixBuilder, MCEqRun
-from MCEq.operators import loss_stencil, scattering
+from MCEq.operators import loss_stencil
 from tests.helpers import operators as operator_helpers
 from tests.helpers.operators import STENCILS, build_cell_operators, pinned_config
 from tests.helpers.sparse import canonical_csr_problems, sparse_digest
@@ -288,6 +288,10 @@ def test_the_canonical_check_rejects_a_de_canonicalised_matrix():
     assert all("and the buffers say True" in line for line in problems), problems
 
 
+#: Muon mass of the stub species and its rate table, GeV.
+_STUB_MUON_MASS = 0.10566
+
+
 class _StubParticle:
     """A cascade species as the assembly and the muon damping see one."""
 
@@ -297,7 +301,7 @@ class _StubParticle:
         self.pdg_id = pdg_id
         self.lidx = lidx
         self.uidx = lidx + dim
-        self.mass = scattering.MUON_MASS
+        self.mass = _STUB_MUON_MASS
 
 
 class _StubPman:
@@ -317,7 +321,8 @@ class _BlocksStub:
     ``_csr_from_blocks`` reads ``is_2d``, the three dimensions, ``k_grid``,
     ``config.floatlen`` and the particle manager's ``mceqidx2pref``;
     ``_muon_scattering_damping`` additionally reads ``_energy_grid.c``,
-    ``pdg2pref`` and ``config.muon_multiple_scattering``. Both are borrowed
+    ``pdg2pref``, the rate table of ``_layout`` and
+    ``config.muon_multiple_scattering``. Both are borrowed
     unbound, so the production assembly runs — including the COO scatter, the
     ``block_diag`` stitch and the ``kappa^2`` damping — with no database;
     `assembly_config` monkeypatches the globals they read.
@@ -329,6 +334,7 @@ class _BlocksStub:
 
     _csr_from_blocks = MatrixBuilder._csr_from_blocks
     _muon_scattering_damping = MatrixBuilder._muon_scattering_damping
+    _electron_scattering_damping = MatrixBuilder._electron_scattering_damping
 
     def __init__(self, is_2d, n_k=3, dim=8):
         self.is_2d = is_2d
@@ -343,6 +349,10 @@ class _BlocksStub:
         self.dim_states = len(species) * dim
         self._pman = _StubPman(species)
         self._energy_grid = SimpleNamespace(c=np.logspace(-1, 3, dim), d=dim)
+        rates = np.outer(self.k_grid * (self.k_grid + 1), 1 / self._energy_grid.c)
+        attrs = {"muon_mass": _STUB_MUON_MASS}
+        table = (rates, self.k_grid, self._energy_grid.c, attrs)
+        self._layout = SimpleNamespace(scattering_rate_table=lambda: table)
 
     def blocks(self):
         """``(child, parent) -> block``, shaped as the builder expects.
@@ -367,11 +377,9 @@ class _BlocksStub:
 
 @pytest.fixture
 def assembly_config(monkeypatch):
-    """Fix the globals `_csr_from_blocks` reads. The stub
-    has no database, so the Gaussian model (no medium composition) is used."""
+    """Fix the globals `_csr_from_blocks` reads; the stub carries its own rate table."""
     monkeypatch.setattr(config, "floatlen", np.float64)
     monkeypatch.setattr(config, "muon_multiple_scattering", True)
-    monkeypatch.setattr(config, "muon_scattering_model", "gaussian")
 
 
 @pytest.mark.parametrize("is_2d", [False, True], ids=["1d", "2d"])

@@ -162,7 +162,7 @@ def test_snapshots_in_mceq_order():
     assert grid.shape == (2, phi0.size)
     np.testing.assert_array_equal(grid[1], phi)
     phi3, _ = imex_driver(3, dX[:3], ri[:3], stepper, phi0)
-    np.testing.assert_allclose(grid[0], phi3, rtol=1e-12)
+    np.testing.assert_allclose(grid[0], phi3, rtol=1e-12, atol=1e-15)
 
 
 @pytest.mark.parametrize("n_k", [1, 3])

@@ -45,7 +45,6 @@ _CONFIG_KEYS = (
     "kernel_config",
     "muon_helicity_dependence",
     "muon_multiple_scattering",
-    "muon_scattering_model",
     "secant_theta_transport",
     "secant_theta_cap_deg",
 )
@@ -77,9 +76,6 @@ def mceq_2d(baseline):
         config.kernel_config = str(baseline["kernel_config"])
         config.muon_helicity_dependence = bool(baseline["muon_helicity_dependence"])
         config.muon_multiple_scattering = bool(baseline["muon_multiple_scattering"])
-        config.muon_scattering_model = str(
-            baseline.get("muon_scattering_model", "gaussian")
-        )
         config.secant_theta_transport = str(baseline["secant_theta_transport"])
         config.secant_theta_cap_deg = float(baseline["secant_theta_cap_deg"])
 
