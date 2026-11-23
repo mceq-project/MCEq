@@ -305,21 +305,10 @@ use_isospin_sym = True
 #: ``enable_em`` is set.
 muon_helicity_dependence = True
 
-#: Coulomb scattering of muons in the 2D transport (see
-#: :mod:`MCEq.operators.scattering`). Disable only to compare against MC runs
-#: with scattering switched off.
+#: Coulomb scattering of muons in the 2D transport, with the rates of the
+#: database (see :mod:`MCEq.operators.scattering`). Disable only to compare
+#: against MC runs with scattering switched off.
 muon_multiple_scattering = True
-
-#: Muon scattering model: "screened-coulomb" (screened Rutherford, with the
-#: single-scattering tail; needs the medium composition in the database) or
-#: "gaussian" (CORSIKA Gauss approximation, Gaussian core only).
-muon_scattering_model = "screened-coulomb"
-
-#: Screened Coulomb only: nuclear form factor and electron kinematic limit as
-#: in Geant4's WentzelVI cross section (see :mod:`MCEq.operators.scattering`).
-#: False restores point nuclei, whose Rutherford tail over-populates large
-#: angles above ~1 GeV.
-muon_scattering_finite_nuclei = True
 
 #: sec(theta) path-elongation correction for the 2D transport. The
 #: paraxial solver books all losses per unit axis-projected depth,
