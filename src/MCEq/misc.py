@@ -81,14 +81,13 @@ def normalize_hadronic_model_name(name):
 
 
 def gen_xmat(energy_grid):
-    """Matrix of x_lab = E_child/E_parent, cached and reused while ``energy_grid.d`` is unchanged."""
+    """Matrix of x_lab = E_child/E_parent (rows child, columns parent; x > 1 below the
+    diagonal), cached and reused while ``energy_grid.d`` is unchanged."""
     global _xmat
     dims = (energy_grid.d, energy_grid.d)
     if _xmat is None or _xmat.shape != dims:
-        _xmat = np.zeros(dims)
-        for eidx in range(energy_grid.d):
-            xvec = energy_grid.c[: eidx + 1] / energy_grid.c[eidx]
-            _xmat[: eidx + 1, eidx] = xvec
+        c = np.asarray(energy_grid.c, dtype=float)
+        _xmat = c[:, None] / c[None, :]
     return _xmat
 
 

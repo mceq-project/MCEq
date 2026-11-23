@@ -143,6 +143,8 @@ class Interactions:
         :math:`x = \\frac{E_{\\rm secondary}}{E_{\\rm primary}}` is the
         secondary energy divided by the projectile energy. ``x_func`` can be an
         arbitrary function modifying the :math:`x_\\text{lab}` distribution.
+        It acts on every entry, including children above the parent bin
+        (:math:`x > 1`, the bin-average stencil entries).
         Run this method each time you change ``x_func``, or its parameters,
         not each time you change modified particle.
         The ``args`` are passed to the function.
@@ -157,13 +159,7 @@ class Interactions:
         info(2, "Generating modification matrix for", x_func.__name__, args)
 
         xmat = gen_xmat(self.energy_grid)
-
-        # select the relevant slice of interaction matrix
-        modmat = x_func(xmat, self.energy_grid.c, *args)
-        # Children above the parent bin (x > 1, the bin-average stencil) stay unmodified.
-        modmat[np.tril_indices(self.energy_grid.d, -1)] = 1.0
-
-        return np.asarray(modmat)
+        return np.asarray(x_func(xmat, self.energy_grid.c, *args))
 
     def _set_mod_pprod(self, prim_pdg, sec_pdg, x_func, args):
         """Sets combination of parent/secondary for error propagation.
