@@ -11,8 +11,7 @@ unchanged.
 The rates are physics input like the cross sections. mceq-EM computes them
 (``mceq_em.coulomb_scattering``: screened Coulomb, Wentzel kernel with the
 nuclear form factor and the electron kinematic limit of Geant4's WentzelVI),
-and mceq-maintenance-tools (``--mode scattering_rates``) writes them into the
-2D databases at ``material_scattering/<medium>/screened_coulomb_rates``, one
+and the 2D databases store them at ``material_scattering/<medium>/screened_coulomb_rates``, one
 row per mode and one column per energy bin of the file, with the muon mass,
 the model and the grids as attributes. MCEq cuts the table to the run's energy
 window; a database without it, or one made for another muon mass or other
@@ -49,7 +48,7 @@ def mode_rates(e_kin, l_grid, layout, muon_mass):
     """
     stored = layout.scattering_rate_table()
     fix = (
-        "; make it with mceq-maintenance-tools --mode scattering_rates "
+        "; use a 2D database that carries it (the v2 2D packages do) "
         "or set config.muon_multiple_scattering = False."
     )
     if stored is None:

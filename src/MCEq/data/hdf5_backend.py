@@ -46,8 +46,8 @@ class HDF5Backend:
 
         ``material_scattering/<medium>/screened_coulomb_rates`` (``(n_k, n_e)``
         on the file's grid, its inputs as attributes for ``scattering.mode_rates``
-        to check), read once per medium: rebuilds then reopen nothing. Written by
-        mceq-maintenance-tools from ``mceq_em.coulomb_scattering``.
+        to check), read once per medium: rebuilds then reopen nothing. Computed
+        with ``mceq_em.coulomb_scattering``.
         """
         cache = self.__dict__.setdefault("_scattering_rate_tables", {})
         if self.medium not in cache:
