@@ -205,8 +205,7 @@ multiple-scattering rate :math:`-\Gamma(E, l)` of muons and, in EM runs
 **EM in 2D.** γ and e± production enters every mode with the 1D block
 (collinear: bremsstrahlung and pair production emit at angles
 :math:`\sim m_e/E`, and :math:`P_l(1) = 1`). The 2D EM database holds these
-blocks per mode; mceq-maintenance-tools ``--mode em_collinear_2d`` makes it
-from the 1D one, and a 2D run refuses an EM database on other modes. e±
+blocks per mode, made from the 1D one, and a 2D run refuses an EM database on other modes. e±
 scatter with the screened Coulomb rate for the electron mass and point
 nuclei, which the same step writes into the 2D EM database from mceq-EM
 (``electromagnetic/<medium>/electron_scattering_rates``). At MeV this rate reaches :math:`\sim 10^4` cm²/g at high :math:`l`

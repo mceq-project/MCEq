@@ -87,7 +87,7 @@ def electron_mode_rates(e_kin, l_grid, layout, mass):
     run's electron mass [GeV].
     """
     fix = (
-        "; make the EM database with mceq-maintenance-tools --mode em_collinear_2d "
+        "; use a 2D EM database that carries them "
         "or set config.em_multiple_scattering = False."
     )
     return _checked(

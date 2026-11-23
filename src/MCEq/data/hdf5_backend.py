@@ -55,8 +55,7 @@ class HDF5Backend:
     def electron_scattering_rate_table(self):
         """The e+- rates of the 2D EM database, as :meth:`scattering_rate_table`.
 
-        ``electromagnetic/<medium>/electron_scattering_rates``, written by
-        mceq-maintenance-tools ``--mode em_collinear_2d``.
+        ``electromagnetic/<medium>/electron_scattering_rates``.
         """
         path = f"electromagnetic/{self.medium}/electron_scattering_rates"
         return self._rate_table(self._em_store, path)
@@ -174,8 +173,7 @@ class HDF5Backend:
         if k_em is None or not np.array_equal(np.asarray(k_em), self.k_grid):
             raise ValueError(
                 f"{config.em_db_fname} is not a 2D EM database on the modes of "
-                f"{config.mceq_db_fname}; make one with mceq-maintenance-tools "
-                "--mode em_collinear_2d."
+                f"{config.mceq_db_fname}."
             )
 
     def _gen_db_dictionary(self, pack, eqv=None):

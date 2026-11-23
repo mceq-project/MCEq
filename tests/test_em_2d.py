@@ -65,7 +65,7 @@ def test_missing_electron_table_is_refused(monkeypatch):
     builder = _em_builder(monkeypatch, L_GRID, E_KIN, None)
     monkeypatch.setattr(config, "enable_em", True)
     monkeypatch.setattr(config, "em_multiple_scattering", True)
-    with pytest.raises(ValueError, match="em_collinear_2d"):
+    with pytest.raises(ValueError, match="em_multiple_scattering"):
         builder._csr_from_blocks({}, apply_muon_scattering=True)
 
 
@@ -91,7 +91,7 @@ def test_one_dimensional_em_database_is_refused_in_a_2d_run(
 ):
     two_d = backend(monkeypatch, hdf5_fixture_dbs["two_d_width4"])
     two_d._em_store = HDF5Store(str(hdf5_fixture_dbs["one_d_width4"]))
-    with pytest.raises(ValueError, match="em_collinear_2d"):
+    with pytest.raises(ValueError, match="not a 2D EM database"):
         two_d._check_em_modes()
     two_d._em_store = HDF5Store(str(hdf5_fixture_dbs["two_d_width4"]))
     two_d._check_em_modes()
