@@ -160,8 +160,8 @@ class Interactions:
 
         # select the relevant slice of interaction matrix
         modmat = x_func(xmat, self.energy_grid.c, *args)
-        # Set lower triangular indices to 0. (should be not necessary)
-        modmat[np.tril_indices(self.energy_grid.d, -1)] = 0.0
+        # Children above the parent bin (x > 1, the bin-average stencil) stay unmodified.
+        modmat[np.tril_indices(self.energy_grid.d, -1)] = 1.0
 
         return np.asarray(modmat)
 

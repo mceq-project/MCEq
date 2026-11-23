@@ -454,3 +454,17 @@ def test_em_cs_for_another_target_mass_is_refused(monkeypatch, tmp_path, a_em):
             attrs["mceq_target_mass"] = a_em
     with pytest.raises(ValueError, match="Rebuild the EM database"):
         em_backend(monkeypatch, had, em, "air").cs_db(fixtures.MODEL)
+
+
+def test_identity_mod_pprod_leaves_the_matrix_unchanged():
+    """An x_func of 1 must not change the channel: ``_gen_mod_matrix`` used to zero the
+    lower triangle (child bin above the parent, the bin-average stencil entries)."""
+    table = interactions([(2212, 0), (2112, 0)])
+    rng = np.random.default_rng(1)
+    base = rng.random(
+        (3, GRID.d, GRID.d)
+    )  # (n_k, child, parent), dense incl. sub-diagonal
+    table.relations = {(2212, 0): [(2212, 0)]}
+    table.index_d = {((2212, 0), (2212, 0)): base}
+    assert table._set_mod_pprod(2212, 2212, scale, ("scale", 1.0)) is True
+    np.testing.assert_array_equal(table.get_matrix((2212, 0), (2212, 0)), base)
