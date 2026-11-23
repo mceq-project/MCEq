@@ -99,6 +99,8 @@ class MCEqParticle:
         self.has_contloss = False
         #: continuous losses in GeV/(g/cm2)
         self.dEdX = None
+        #: hard muon loss rates ``[j, i]`` per g/cm^2 in counts, or None
+        self.muon_hard_rates = None
         #: ``{secondary: yield matrix}`` of the interactions
         self.hadr_yields = {}
         #: ``{child: decay matrix}``
@@ -427,6 +429,8 @@ class ParticleManager:
             if p.pdg_id in contloss_db:
                 p.has_contloss = True
                 p.dEdX = contloss_db[p.pdg_id]
+                if abs(p.pdg_id[0]) == 13:
+                    p.muon_hard_rates = contloss_db.muon_hard
             elif config.generic_losses_all_charged and p.is_charged and not p.is_em:
                 # The stopping power of all charged particles is close to the
                 # proton one at the same beta*gamma; clip to the tabulated range.

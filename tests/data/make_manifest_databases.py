@@ -66,7 +66,7 @@ def _write_package(src, dest, models, spine):
         out.attrs["mceq_db_manifest"] = MANIFEST
         out.attrs["mceq_db_spine"] = spine
         out.attrs["mceq_db_models"] = json.dumps(models)
-        for grp in ("common", "decays", "continuous_losses"):
+        for grp in ("common", "decays", "continuous_losses", "muon_losses"):
             if grp in src and (spine or grp == "common"):
                 out.copy(src[grp], grp)
         for medium, names in models.items():
