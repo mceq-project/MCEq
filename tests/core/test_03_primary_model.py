@@ -54,10 +54,12 @@ def test_mceq_init_particles_list(particle_list, projectiles):
 # 5-bin deposition): 1e4/1e5 move by -0.5..-1.1 %. The 1e3 primary sits in the
 # window's bottom bin and is deposited there whole; all three sums are then
 # the small negative grid-floor artifact.
+# Recalibrated 2026-11-19 for the muon loss split (CI data with muon_losses):
+# muons +0.07 % (1e4), +0.03 % (1e5); the 1e3 artifact moves by 2 %.
 testdata_primary = [
-    [1000.0, -2.9003951412724785e-06, -2.4910732672426333e-06, -1.974010187449733e-08],
-    [10000.0, 0.09741721126754312, 0.024575276002663494, 0.0009408426985247038],
-    [100000.0, 0.8971998138182111, 0.2839005632398807, 0.013565562484574582],
+    [1000.0, -2.838698128838252e-06, -2.491074894717802e-06, -1.9742326496132953e-08],
+    [10000.0, 0.09748535153077952, 0.024575280579485628, 0.0009408472320332607],
+    [100000.0, 0.8975028630543932, 0.2839005798140334, 0.013565578346354846],
 ]
 
 ids_primary = [f"energy={primary[0]}" for primary in testdata_primary]

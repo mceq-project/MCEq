@@ -507,6 +507,9 @@ class ContinuousLosses:
         #: Raw ``(boost, dEdX)`` table behind :attr:`generic_spl`, used to
         #: clamp arguments to the tabulated range.
         self.generic_table = None
+        #: Hard muon loss rates ``[j, i]`` per g/cm^2 in counts (muon loss
+        #: split), or None
+        self.muon_hard = None
         # Load defaults
         self.load_db()
 
@@ -526,6 +529,7 @@ class ContinuousLosses:
         index = self.mceq_db.continuous_loss_db()
         self.parents = index["parents"]
         self.index_d = index["index_d"]
+        self.muon_hard = index.get("muon_hard")
         if "generic" not in index:
             raise Exception("New data file needed to support generic losses.")
         generic = index["generic"]

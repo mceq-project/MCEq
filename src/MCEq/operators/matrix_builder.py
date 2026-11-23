@@ -141,6 +141,8 @@ class MatrixBuilder:
                         if config.enable_cont_rad_loss:
                             # Kept for the int_m_hadr / dEdx_band split.
                             band = self.cont_loss_operator(parent.pdg_id)
+                            if pid == 13 and parent.muon_hard_rates is not None:
+                                band = band + self.muon_jump_operator(parent)
                             self._contloss_bands[idx] = band
                             self._contloss_upwind_rows[idx] = self._closure_rows_for(
                                 parent.pdg_id
@@ -210,6 +212,16 @@ class MatrixBuilder:
 
         op_step = np.eye(self._energy_grid.d) + op_mat * config.loss_step_for_average
         return np.linalg.matrix_power(op_step, n_steps) - np.eye(self._energy_grid.d)
+
+    def muon_jump_operator(self, particle):
+        """Hard muon losses of the muon loss split on the flux (per GeV).
+
+        ``muon_hard_rates`` moves counts; on the flux it is
+        ``diag(1/w) J diag(w)``. It joins the loss band: losses keep the
+        direction, so 2D runs exempt it from the backward removal.
+        """
+        w = np.asarray(self._energy_grid.w, dtype=np.float64)
+        return particle.muon_hard_rates * w[None, :] / w[:, None]
 
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate

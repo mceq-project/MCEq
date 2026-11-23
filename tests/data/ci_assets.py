@@ -29,16 +29,16 @@ RELEASE_URL = "https://github.com/mceq-project/MCEq/releases/download/ci-assets/
 #: File name in ``src/MCEq/data`` -> sha256.
 PINS = {
     "mceq_db_manifest_ci_v2.yaml": (
-        "21865c8cff3c6b82fad89c04e6fc91cb010924273d69d46087fb285e23036bd9"
+        "77ce2b252ba17e04e5577684c9796189a36cf9e6142eb75b231591735b00d91a"
     ),
     "mceq_ci_base_air_1d_v2.h5": (
-        "f20f913a20e6c9b25ad438c94d94cdb45f81bf9bb44092064ee47d0fa46caf63"
+        "81e2d4f1694b7875e637076c39abb057b62ce8802ea3e91555025943afd5622a"
     ),
     "mceq_ci_extra_models_air_1d_v2.h5": (
-        "363d7c85edd96a98e187251f7c067ea6625939c2a92c7d3c608bee4e9c933e43"
+        "7fad8c450291fa07e63d287d4c87c635cb3dfd5d72e50e17abe5dfd2e824104b"
     ),
     "mceq_ci_base_air_2d_legendre_v2.h5": (
-        "22a6614270807eaa33b2d6d448030d2eb55e87efe2c7bf0bc7f08b63125a3838"
+        "eeeaebf05b8c8a8fbe620dc37c2a7b56e3b68865f344252178e3bfa1e4743d1e"
     ),
 }
 

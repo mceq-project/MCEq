@@ -1,7 +1,7 @@
 r"""Bin-averaged decay and interaction rates for stencil-averaged tables.
 
-Stencil-averaged yield and decay tables (the ``bin_average`` step of
-mceq-maintenance-tools) act on the parent's count density inside each bin,
+Stencil-averaged yield and decay tables act on the parent's count density
+inside each bin,
 reconstructed as the degree-:math:`2r` polynomial in
 :math:`\xi = \log_{10}(E/E_j)/h` that reproduces the cell contents of bins
 :math:`j-r \ldots j+r`. The count of decays (interactions) in bin :math:`j` is
