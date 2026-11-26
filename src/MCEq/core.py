@@ -1098,7 +1098,7 @@ class MCEqRun(BatchSolver):
         return sol, grid_sol
 
     def _run_imex(
-        self, nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops=None, tangent=None
+        self, nsteps, dX, rho_inv, phi0, grid_idcs, sec_ops=None, tangent=None, **kw
     ):
         """Integrate with :func:`MCEq.solvers.imex_driver` (on the GPU with a CUDA
         ``kernel_config``); the stepper is cached per matrices and ``sec_ops``."""
@@ -1118,7 +1118,7 @@ class MCEqRun(BatchSolver):
             )
             self._imex_cache = cached = (key, stepper)
         return solvers.imex_driver(
-            nsteps, dX, rho_inv, cached[1], phi0, grid_idcs, tangent=tangent
+            nsteps, dX, rho_inv, cached[1], phi0, grid_idcs, tangent=tangent, **kw
         )
 
     def _run_etd2_carousel(

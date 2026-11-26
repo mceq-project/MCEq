@@ -338,6 +338,8 @@ class BatchSolver:
         dX_min=None,
         fd_span=None,
         tangent=None,
+        source=None,
+        project=None,
     ):
         """Solve K independent cascade problems with one operator.
 
@@ -387,6 +389,12 @@ class BatchSolver:
             ``tangent.columns`` columns: the cascade, its first derivatives
             with respect to the operator parameters, with curvature their
             second derivatives, and the passive columns last.
+          source (:class:`MCEq.source.Source` | None): point sources
+            added to the state where the path passes their depth (nearest step
+            boundary); one shared path, ETD2 or IMEX, no tangent columns.
+          project (np.ndarray | None): ``(n_obs, dim_states)``; the ``int_grid``
+            snapshots are then ``project @ state`` per column, in
+            ``result.grid_sol`` with shape ``(n_grid, n_obs, K)``.
 
         Returns:
           :class:`MCEqBatchResult`
@@ -467,12 +475,33 @@ class BatchSolver:
 
         nsteps_per_col = np.array([p[0] for p in paths], dtype=np.int32)
         shared = all(p is paths[0] for p in paths)
+        extra = {}
+        if source is not None or project is not None:
+            if not shared or tangent is not None:
+                raise NotImplementedError(
+                    "solve_batch: source and project need one shared path and no "
+                    "tangent columns"
+                )
+            if source is not None:
+                from MCEq.source import bin_on_path
+
+                X0 = self._cached_etd2_path_params[0]
+                extra["source"] = bin_on_path(source, X0, paths[0][1])
+            if project is not None:
+                extra["project"] = project
 
         start = time()
         if integrator == "imex":
             nsteps, dX, rho_inv, grid_idcs = paths[0]
             sol, grid_sol = self._run_imex(
-                nsteps, dX, rho_inv, phi0_mat, grid_idcs, sec_ops, tangent=tangent
+                nsteps,
+                dX,
+                rho_inv,
+                phi0_mat,
+                grid_idcs,
+                sec_ops,
+                tangent=tangent,
+                **extra,
             )
             sol, grid_sol = sol.astype(dtype), grid_sol.astype(dtype)
         elif shared:
@@ -490,6 +519,7 @@ class BatchSolver:
                 col_scale=secant_table.column_scale(
                     self, dX, self._cached_etd2_path_params[0]
                 ),
+                **extra,
             )
         else:
             if tangent is not None:

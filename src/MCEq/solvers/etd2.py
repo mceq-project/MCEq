@@ -149,6 +149,8 @@ def etd2_driver(
     phi0_per_pixel=None,
     tangent=None,
     col_scale=None,
+    source=None,
+    project=None,
 ):
     """ETD2RK step loop for every route and backend.
 
@@ -188,6 +190,12 @@ def etd2_driver(
         lane with per-lane paths (the carousel), else one for all. The
         diagonal takes ``s`` exactly, the remainder acts on ``s Phi``
         (:mod:`MCEq.operators.secant_table`); uncoupled operators only.
+      source: ``(starts, rows, cols, vals)`` of
+        :func:`MCEq.source.bin_on_path`: ``vals`` are added to the
+        state at step boundary ``b`` (``starts[b]:starts[b+1]``; boundary 0 is
+        the initial state), shared path and uncoupled operators only.
+      project: ``(n_obs, dim)`` matrix in the state's order; snapshots are
+        then ``project @ state``, ``(n_obs, K)`` each, instead of the state.
 
     Returns:
       ``(solution, grid_snapshots)`` of ``phi``'s rank, or the harvested
@@ -232,6 +240,13 @@ def etd2_driver(
                 f"etd2_driver: tangent needs {tangent.columns} columns, got {K}"
             )
         sources = tangent.bind(be, dtype)
+    if (source is not None or project is not None) and (
+        coupled or per_lane or schedule is not None
+    ):
+        raise ValueError(
+            "etd2_driver: source and project need one shared path and an "
+            "uncoupled operator"
+        )
 
     be.bind(dim, K, per_lane, nsteps)
     phc, F_phi, F_a, a = be.state_buffers(dim, K)
@@ -243,8 +258,30 @@ def etd2_driver(
         return x if lay.inv_perm is None else x[xp.asarray(lay.inv_perm)]
 
     # fp32 carries s phi (see :func:`_fp32_scale`); undone on the way out
-    scale = 1.0 if fp64 else _fp32_scale(phi, phi0_per_pixel)
+    peak = phi0_per_pixel
+    if source is not None and len(source[3]):
+        peak = np.asarray(source[3])
+    scale = 1.0 if fp64 else _fp32_scale(phi, peak)
     phc[:] = to_layout(be.asarray(scale * phi.reshape(dim, K)))
+
+    if source is not None:
+        s_starts = np.asarray(source[0])
+        rows = np.asarray(source[1])
+        if lay.inv_perm is not None:  # state row -> layout row
+            rows = np.asarray(lay.inv_perm)[rows]
+        s_rows = xp.asarray(rows)
+        s_cols = xp.asarray(np.asarray(source[2]))
+        s_vals = be.asarray(scale * np.asarray(source[3]))
+
+        def inject(b):
+            lo, hi = int(s_starts[b]), int(s_starts[b + 1])
+            if hi > lo:  # (row, col) unique within a boundary
+                phc[s_rows[lo:hi], s_cols[lo:hi]] += s_vals[lo:hi]
+
+        inject(0)
+    if project is not None:
+        P = np.asarray(project, dtype=np.float64)
+        P_lay = be.asarray(P if lay.perm is None else P[:, np.asarray(lay.perm)])
 
     # the path, uploaded once: fp64 for the factor stage, the state dtype
     # for the SpMM
@@ -385,6 +422,9 @@ def etd2_driver(
             eval_F(a, F_a, ri)
             be.corrector(a, F_a, F_phi, hphi2, out=phc)
 
+            if source is not None:
+                inject(k + 1)
+
             # 5. harvest finished lanes BEFORE the reset reloads them
             if schedule is not None:
                 lo, hi = int(cs[k]), int(cs[k + 1])
@@ -394,7 +434,7 @@ def etd2_driver(
                 if hi > lo:
                     phc[:, rj[lo:hi]] = phi0_pp[:, rp[lo:hi]]
             elif grid_idcs and grid_step < len(grid_idcs) and grid_idcs[grid_step] == k:
-                grid_sol.append(phc.copy())
+                grid_sol.append(phc.copy() if project is None else P_lay @ phc)
                 grid_step += 1
 
     if col_scale is not None:
@@ -418,6 +458,11 @@ def etd2_driver(
             rotate(snapshot, V)
     sol = be.to_host(from_layout(phc)) / scale
     grid = np.array([])
+    if grid_sol and project is not None:
+        grid = be.to_host(xp.stack(grid_sol)) / scale
+        if not batched:
+            grid = grid[:, :, 0]
+        return sol if batched else sol[:, 0], grid
     if grid_sol:
         grid = xp.stack(grid_sol)
         grid = (

@@ -493,7 +493,17 @@ def _device_context(stepper):
     return cupy.cuda.Device(stepper.gpu)
 
 
-def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=(), tangent=None):
+def imex_driver(
+    nsteps,
+    dX,
+    rho_inv,
+    stepper,
+    phi,
+    grid_idcs=(),
+    tangent=None,
+    source=None,
+    project=None,
+):
     """Run ``nsteps`` IMEX steps along a path.
 
     Args:
@@ -502,10 +512,13 @@ def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=(), tangent=None):
       phi: initial state, ``(dim,)`` or ``(dim, K)`` in MCEq's order.
       grid_idcs: step indices after which to snapshot the state.
       tangent: :class:`~MCEq.solvers.etd2.TangentOperator` of the columns of ``phi``, or None.
+      source: ``(starts, rows, cols, vals)`` of :func:`MCEq.source.bin_on_path`, added to
+        the state at the step boundaries (boundary 0 is the initial state).
+      project: ``(n_obs, dim)`` matrix; snapshots are then ``project @ state``.
 
     Returns:
       ``(solution, grid_snapshots)`` on the host in float64, shaped like ``phi`` and
-      ``(len(grid_idcs),) + phi.shape``.
+      ``(len(grid_idcs),) + phi.shape`` (``(len(grid_idcs), n_obs, K)`` with ``project``).
     """
     op = stepper.op
     phi = np.asarray(phi, dtype=np.float64)
@@ -513,12 +526,39 @@ def imex_driver(nsteps, dX, rho_inv, stepper, phi, grid_idcs=(), tangent=None):
     grid_sol = []
     with _device_context(stepper):
         stepper.tangent = None if tangent is None else TangentSources(tangent, op)
-        x = op.xp.asarray(phi.reshape((op.n_k, op.N) + phi.shape[1:]))
+        xp = op.xp
+        x = xp.asarray(phi.reshape((op.n_k, op.N) + phi.shape[1:]))
+        flat = (op.n_k * op.N, -1)
+        if source is not None:
+            if phi.ndim != 2:
+                raise ValueError("imex_driver: a source needs a (dim, K) state")
+            s_starts = np.asarray(source[0])
+            s_rows, s_cols, s_vals = (xp.asarray(np.asarray(a)) for a in source[1:])
+
+            def inject(x, b):
+                lo, hi = int(s_starts[b]), int(s_starts[b + 1])
+                if hi > lo:  # (row, col) unique within a boundary
+                    xf = x.reshape(flat)
+                    xf[s_rows[lo:hi], s_cols[lo:hi]] += s_vals[lo:hi]
+                    x = xf.reshape(x.shape)
+                return x
+
+            x = inject(x, 0)
+        if project is not None:
+            P = xp.asarray(np.asarray(project, dtype=np.float64))
         for k in range(nsteps):
             x = stepper.step(x, float(dX[k]), float(rho_inv[k]))
+            if source is not None:
+                x = inject(x, k + 1)
             if k in snapshots:
-                grid_sol.append(_to_host(x).reshape(phi.shape))
-        return _to_host(x).reshape(phi.shape), np.array(grid_sol)
+                if project is None:
+                    grid_sol.append(_to_host(x).reshape(phi.shape))
+                else:
+                    grid_sol.append(_to_host(P @ x.reshape(flat)).reshape(len(P), -1))
+        grid = np.array(grid_sol)
+        if project is not None and phi.ndim == 1 and grid.size:
+            grid = grid[:, :, 0]
+        return _to_host(x).reshape(phi.shape), grid
 
 
 def imex_stepper(builder, dec_m, particles, e_grid, db, sec_ops=None, gpu=None):
